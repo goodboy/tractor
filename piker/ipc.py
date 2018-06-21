@@ -81,6 +81,9 @@ class Channel:
                 f"A stream was provided with local addr {self.laddr}"
             )
         self._destaddr = destaddr or self.squeue.raddr
+        # set after handshake - always uid of far end
+        self.uid = None
+        self.event = None
 
     def __repr__(self):
         if self.squeue:
@@ -106,6 +109,7 @@ class Channel:
         return stream
 
     async def send(self, item):
+        log.debug(f"send `{item}`")
         await self.squeue.put(item)
 
     async def recv(self):
@@ -180,3 +184,6 @@ class Channel:
                 continue
             else:
                 return
+
+    def connected(self):
+        return self.squeue is not None
