@@ -27,7 +27,7 @@ class StreamQueue:
         while True:
             try:
                 data = await self.stream.receive_some(2**10)
-                log.trace(f"Data is {data}")
+                log.trace(f"received {data}")
             except trio.BrokenStreamError:
                 log.error(f"Stream connection {self.raddr} broke")
                 return
@@ -109,7 +109,7 @@ class Channel:
         return stream
 
     async def send(self, item):
-        log.debug(f"send `{item}`")
+        log.trace(f"send `{item}`")
         await self.squeue.put(item)
 
     async def recv(self):
