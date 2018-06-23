@@ -23,9 +23,6 @@ log = get_logger('tractor')
 # set at startup and after forks
 _current_actor = None
 
-# for debugging
-log = get_console_log('info')
-
 
 class ActorFailure(Exception):
     "General actor failure"
