@@ -60,8 +60,7 @@ async def spawn(is_arbiter):
     assert actor.is_arbiter == is_arbiter
 
     # arbiter should always have an empty statespace as it's redundant
-    sp_shouldbe = statespace if not is_arbiter else {}
-    assert actor.statespace == sp_shouldbe
+    assert actor.statespace == statespace
 
     if actor.is_arbiter:
         async with tractor.open_nursery() as nursery:
