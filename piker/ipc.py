@@ -86,7 +86,6 @@ class Channel:
         self._destaddr = destaddr or self.squeue.raddr
         # set after handshake - always uid of far end
         self.uid = None
-        self.event = None
 
     def __repr__(self):
         if self.squeue:
@@ -122,12 +121,10 @@ class Channel:
             if self._autorecon:
                 await self._reconnect()
                 return await self.recv()
-            self.squeue = None
 
     async def aclose(self, *args):
         log.debug(f"Closing {self}")
         await self.squeue.stream.aclose()
-        self.squeue = None
 
     async def __aenter__(self):
         await self.connect()
@@ -184,7 +181,6 @@ class Channel:
                 if not self._autorecon:
                     raise
             await self.aclose()
-            self.squeue = None
             if self._autorecon:  # attempt reconnect
                 await self._reconnect()
                 continue
