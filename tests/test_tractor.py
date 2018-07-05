@@ -6,7 +6,7 @@ from functools import partial
 
 import pytest
 import trio
-from piker import tractor
+import tractor
 
 
 @pytest.fixture
