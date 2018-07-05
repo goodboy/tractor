@@ -51,7 +51,6 @@ def test_local_actor_async_func():
 # NOTE: this func must be defined at module level in order for the
 # interal pickling infra of the forkserver to work
 async def spawn(is_arbiter):
-    # name = 'doggy-service'
     statespace = {'doggy': 10, 'kitty': 4}
     namespaces = ['piker.brokers.core']
 
@@ -72,8 +71,7 @@ async def spawn(is_arbiter):
                 rpc_module_paths=namespaces,
             )
             assert len(nursery._children) == 1
-            assert not portal._event.is_set()
-            assert portal._uid in tractor.current_actor()._peers
+            assert portal.channel.uid in tractor.current_actor()._peers
     else:
         return 10
 
@@ -88,8 +86,7 @@ def test_local_arbiter_subactor_global_state():
     )
 
 
-@pytest.mark.trio
-async def test_rx_price_quotes_from_brokerd(us_symbols):
+async def rx_price_quotes_from_brokerd(us_symbols):
     """Verify we can spawn a daemon actor and retrieve streamed price data.
     """
     async with tractor.find_actor('brokerd') as portals:
@@ -136,3 +133,11 @@ async def test_rx_price_quotes_from_brokerd(us_symbols):
     # arbitter is cancelled here due to `find_actors()` internals
     # (which internally uses `get_arbiter` which kills its channel
     # server scope on exit)
+
+
+def test_rx_price_quotes_from_brokerd(us_symbols):
+    tractor.run(
+        rx_price_quotes_from_brokerd,
+        us_symbols,
+        name='arbiter',
+    )
