@@ -67,8 +67,10 @@ def get_console_log(level: str = None, name: str = None) -> logging.Logger:
     '''
     log = get_logger(name)  # our root logger
 
-    if level:
-        log.setLevel(level.upper() if not isinstance(level, int) else level)
+    if not level:
+        return
+
+    log.setLevel(level.upper() if not isinstance(level, int) else level)
 
     if not any(
         handler.stream == sys.stderr for handler in log.handlers
