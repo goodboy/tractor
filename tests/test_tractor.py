@@ -247,7 +247,6 @@ async def test_trynamic_trio():
             'gretchen',
             main=partial(say_hello, 'donny'),
             rpc_module_paths=[__name__],
-            # outlive_main=True
         )
         print(await gretchen.result())
         print(await donny.result())
@@ -361,6 +360,7 @@ async def aggregate(seed):
             async for value in await portal.run(
                 __name__, 'stream_data', seed=seed
             ):
+                # leverage trio's built-in backpressure
                 await q.put(value)
 
             await q.put(None)

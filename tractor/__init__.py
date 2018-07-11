@@ -867,6 +867,7 @@ class ActorNursery:
 
         log.debug(f"Waiting on all subactors to complete")
         await self.wait()
+        self.cancelled = True
         log.debug(f"All subactors for {self} have terminated")
 
     async def __aexit__(self, etype, value, tb):
@@ -891,7 +892,6 @@ class ActorNursery:
             except Exception as err:
                 log.warn(f"Nursery caught {err}, cancelling")
                 await self.cancel()
-                self.cancelled = True
                 raise
             log.debug(f"Nursery teardown complete")
 
