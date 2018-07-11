@@ -255,6 +255,17 @@ async def test_movie_theatre_convo():
         await portal.cancel_actor()
 
 
+@tractor_test
+async def test_movie_theatre_convo_main_task():
+    async with tractor.open_nursery() as n:
+        portal = await n.start_actor('some_linguist', main=cellar_door)
+
+    # The ``async with`` will unblock here since the 'some_linguist'
+    # actor has completed its main task ``cellar_door``.
+
+    print(await portal.result())
+
+
 def cellar_door():
     return "Dang that's beautiful"
 
@@ -355,7 +366,7 @@ async def a_quadruple_example():
     # a nursery which spawns "actors"
     async with tractor.open_nursery() as nursery:
 
-        seed = int(10)
+        seed = int(1e3)
         import time
         pre_start = time.time()
 
@@ -375,17 +386,19 @@ async def a_quadruple_example():
         print(f"STREAM TIME = {time.time() - start}")
         print(f"STREAM + SPAWN TIME = {time.time() - pre_start}")
         assert result_stream == list(range(seed)) + [None]
+        return result_stream
 
 
 async def cancel_after(wait):
     with trio.move_on_after(wait):
-        await a_quadruple_example()
+        return await a_quadruple_example()
 
 
 def test_a_quadruple_example():
     """Verify the *show me the code* readme example works.
     """
-    tractor.run(cancel_after, 2, arbiter_addr=_arb_addr)
+    results = tractor.run(cancel_after, 2, arbiter_addr=_arb_addr)
+    assert results
 
 
 def test_not_fast_enough_quad():
@@ -394,4 +407,5 @@ def test_not_fast_enough_quad():
 
     This also serves as a kind of "we'd like to eventually be this fast test".
     """
-    tractor.run(cancel_after, 1, arbiter_addr=_arb_addr)
+    results = tractor.run(cancel_after, 1, arbiter_addr=_arb_addr)
+    assert results is None
