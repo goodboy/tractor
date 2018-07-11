@@ -5,6 +5,7 @@ from typing import Coroutine, Tuple
 
 import msgpack
 import trio
+from async_generator import asynccontextmanager
 
 from .log import get_logger
 log = get_logger('ipc')
@@ -189,3 +190,14 @@ class Channel:
 
     def connected(self):
         return self.squeue.connected() if self.squeue else False
+
+
+@asynccontextmanager
+async def _connect_chan(host, port):
+    """Create and connect a channel with disconnect on
+    context manager teardown.
+    """
+    chan = Channel((host, port))
+    await chan.connect()
+    yield chan
+    await chan.aclose()
