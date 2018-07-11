@@ -187,6 +187,35 @@ def test_remote_error():
         tractor.run(main, arbiter_addr=_arb_addr)
 
 
+@tractor_test
+async def test_one_cancels_all():
+    """Verify one failed actor causes all others in the nursery
+    to be cancelled just like in trio.
+
+    This is the first and only supervisory strategy at the moment.
+    """
+    try:
+        async with tractor.open_nursery() as n:
+            real_actors = []
+            for i in range(3):
+                real_actors.append(await n.start_actor(
+                    f'actor_{i}',
+                    rpc_module_paths=[__name__],
+                    outlive_main=True
+                ))
+
+            # start one actor that will fail immediately
+            await n.start_actor('extra', main=assert_err)
+
+        # should error here with a ``RemoteActorError`` containing
+        # an ``AssertionError`
+
+    except tractor.RemoteActorError:
+        assert n.cancelled is True
+    else:
+        pytest.fail("Should have gotten a remote assertion error?")
+
+
 the_line = 'Hi my name is {}'
 
 
@@ -251,7 +280,7 @@ async def test_movie_theatre_convo():
 
         # the async with will block here indefinitely waiting
         # for our actor "frank" to complete, but since it's an
-        # "outlive_main" actor it will never until cancelled
+        # "outlive_main" actor it will never end until cancelled
         await portal.cancel_actor()
 
 
@@ -367,7 +396,6 @@ async def a_quadruple_example():
     async with tractor.open_nursery() as nursery:
 
         seed = int(1e3)
-        import time
         pre_start = time.time()
 
         portal = await nursery.start_actor(
