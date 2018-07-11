@@ -3,6 +3,7 @@ Actor model API testing
 """
 import time
 from functools import partial, wraps
+from itertools import repeat
 import random
 
 import pytest
@@ -64,10 +65,12 @@ def test_local_actor_async_func():
     assert nums == list(range(10))
 
 
+statespace = {'doggy': 10, 'kitty': 4}
+
+
 # NOTE: this func must be defined at module level in order for the
 # interal pickling infra of the forkserver to work
 async def spawn(is_arbiter):
-    statespace = {'doggy': 10, 'kitty': 4}
     namespaces = [__name__]
 
     await trio.sleep(0.1)
@@ -97,7 +100,6 @@ async def spawn(is_arbiter):
 
 
 def test_local_arbiter_subactor_global_state():
-    statespace = {'doggy': 10, 'kitty': 4}
     result = tractor.run(
         spawn,
         True,
@@ -185,6 +187,30 @@ def test_remote_error():
     with pytest.raises(tractor.RemoteActorError):
         # also raises
         tractor.run(main, arbiter_addr=_arb_addr)
+
+
+async def stream_forever():
+    for i in repeat("I can see these little future bubble things"):
+        yield i
+        await trio.sleep(0.01)
+
+
+@tractor_test
+async def test_cancel_infinite_streamer():
+
+    # stream for at most 5 seconds
+    with trio.move_on_after(1) as cancel_scope:
+        async with tractor.open_nursery() as n:
+            portal = await n.start_actor(
+                f'donny',
+                rpc_module_paths=[__name__],
+                outlive_main=True
+            )
+            async for letter in await portal.run(__name__, 'stream_forever'):
+                print(letter)
+
+    assert cancel_scope.cancelled_caught
+    assert n.cancelled
 
 
 @tractor_test
