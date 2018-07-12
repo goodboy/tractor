@@ -295,12 +295,14 @@ def test_cancel_single_subactor(arb_addr):
     tractor.run(main, arbiter_addr=arb_addr)
 
 
+# this is the first 2 actors, streamer_1 and streamer_2
 async def stream_data(seed):
     for i in range(seed):
         yield i
         await trio.sleep(0)  # trigger scheduler
 
 
+# this is the third actor; the aggregator
 async def aggregate(seed):
     """Ensure that the two streams we receive match but only stream
     a single set of values to the parent.
@@ -352,6 +354,7 @@ async def aggregate(seed):
     print("AGGREGATOR COMPLETE!")
 
 
+# this is the main actor and *arbiter*
 async def a_quadruple_example():
     # a nursery which spawns "actors"
     async with tractor.open_nursery() as nursery:
