@@ -1,0 +1,13 @@
+language: python
+python:
+    - '3.6'
+    # setup.py reading README breaks this?
+    # - pypy
+    # - nightly
+
+install:
+    - cd $TRAVIS_BUILD_DIR
+    - pip install . -r requirements-test.txt
+
+script:
+    - pytest tests/
