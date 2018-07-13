@@ -2,6 +2,11 @@ tractor
 =======
 A minimalist `actor model`_ built on multiprocessing_ and trio_.
 
+|travis|
+
+.. |travis| image:: https://img.shields.io/travis/tgoodlet/tractor/master.svg
+    :target: https://travis-ci.org/tgoodlet/tractor
+
 ``tractor`` is an attempt to take trionic_ concurrency concepts and apply
 them to distributed-multicore Python.
 
@@ -212,17 +217,13 @@ a simple mechanism to restrict the functionality of the remote
 allowed remote function namespace(s).
 
 ``tractor`` is opinionated about the underlying threading model used for
-each actor. Since Python has a GIL and an actor model by definition
-shares no state, there is no reason to use anything other then a
-multiprocessing_ ``Process`` for execution. This makes ``tractor``
-programs able leverage not only multi-core hardware but also distribute
-over many hardware hosts (each *actor* can talk to all others with ease
-over standard network protocols).
-
-Eventually ``tractor`` plans to support different `supervision strategies`_ like ``erlang``.
+each *actor*. Since Python has a GIL and an actor model by definition
+shares no state between actors, it fits naturally to use a multiprocessing_
+``Process``. This allows ``tractor`` programs to leverage not only multi-core
+hardware but also distribute over many hardware hosts (each *actor* can talk
+to all others with ease over standard network protocols).
 
 .. _nursery: https://trio.readthedocs.io/en/latest/reference-core.html#nurseries-and-spawning
-.. _supervision strategies: http://erlang.org/doc/man/supervisor.html#sup_flags
 .. _causal: https://vorpus.org/blog/some-thoughts-on-asynchronous-api-design-in-a-post-asyncawait-world/#causality
 .. _cancelled: https://trio.readthedocs.io/en/latest/reference-core.html#child-tasks-and-cancellation
 
@@ -359,8 +360,9 @@ actor and print the results to your screen:
 
 
 Here there's four actors running in separate processes (using all the
-cores on you machine). Two are streaming in ``stream_data()``, one is
-aggregating values from those two in ``aggregate()`` and shipping the
+cores on you machine). Two are streaming (by **yielding** value in the
+``stream_data()`` async generator, one is aggregating values from
+those two in ``aggregate()`` (also an async generator) and shipping the
 single stream of unique values up the parent actor (the ``'MainProcess'``
 as ``multiprocessing`` calls it) which is running ``main()``. 
 
@@ -411,6 +413,9 @@ Cancellation
     tractor.run(main)
 
 Cancelling a nursery block cancels all actors spawned by it.
+Eventually ``tractor`` plans to support different `supervision strategies`_ like ``erlang``.
+
+.. _supervision strategies: http://erlang.org/doc/man/supervisor.html#sup_flags
 
 
 Remote error propagation
@@ -481,6 +486,11 @@ multiple RPC calls to an actor can access global data using the per actor
                     'checker', main=check_statespace,
                     statespace=statespace
                 )
+
+
+Of course you don't have to use the ``statespace`` variable (it's mostly
+a convenience for passing simple data to newly spawned actors); building
+out a state sharing system per-actor is totally up to you.
 
 
 How do actors find each other (a poor man's *service discovery*)?
