@@ -12,7 +12,7 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope='session', autouse=True)
 def loglevel(request):
-    orig = tractor._default_loglevel
-    level = tractor._default_loglevel = request.config.option.loglevel
+    orig = tractor.log._default_loglevel
+    level = tractor.log._default_loglevel = request.config.option.loglevel
     yield level
-    tractor._default_loglevel = orig
+    tractor.log._default_loglevel = orig
