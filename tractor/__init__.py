@@ -7,7 +7,7 @@ from functools import partial
 import trio
 
 from .log import get_console_log, get_logger, get_loglevel
-from ._ipc import _connect_chan
+from ._ipc import _connect_chan, Channel
 from ._actor import (
     Actor, _start_actor, Arbiter, get_arbiter, find_actor
 )
@@ -18,7 +18,7 @@ from ._portal import RemoteActorError
 
 __all__ = [
     'current_actor', 'find_actor', 'get_arbiter', 'open_nursery',
-    'RemoteActorError',
+    'RemoteActorError', 'Channel',
 ]
 
 
