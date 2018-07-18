@@ -7,6 +7,7 @@ import logging
 import colorlog
 
 _proj_name = 'tractor'
+_default_loglevel = None
 
 # Super sexy formatting thanks to ``colorlog``.
 # (NOTE: we use the '{' format style)
@@ -89,3 +90,7 @@ def get_console_log(level: str = None, name: str = None) -> logging.Logger:
         log.addHandler(handler)
 
     return log
+
+
+def get_loglevel():
+    return _default_loglevel
