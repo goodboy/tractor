@@ -65,8 +65,8 @@ class ActorNursery:
             fs_deats = addr, alive_fd, pid, st_pid, st_fd = (
                 fs._forkserver_address,
                 fs._forkserver_alive_fd,
-                fs._forkserver_pid,
-                semaphore_tracker._semaphore_tracker._pid,
+                getattr(fs, '_forkserver_pid', None),
+                getattr(semaphore_tracker._semaphore_tracker, '_pid', None),
                 semaphore_tracker._semaphore_tracker._fd,
             )
         else:
