@@ -165,6 +165,7 @@ class Actor:
         self._listeners = []
         self._parent_chan = None
         self._accept_host = None
+        self._fs_deats = None
 
     async def wait_for_peer(self, uid):
         """Wait for a connection back from a spawned actor with a given
@@ -361,9 +362,10 @@ class Actor:
         finally:
             log.debug(f"Exiting msg loop for {chan} from {chan.uid}")
 
-    def _fork_main(self, accept_addr, parent_addr=None):
+    def _fork_main(self, accept_addr, fs_deats, parent_addr=None):
         # after fork routine which invokes a fresh ``trio.run``
         # log.warn("Log level after fork is {self.loglevel}")
+        self._fs_deats = fs_deats
         from ._trionics import ctx
         if self.loglevel is not None:
             get_console_log(self.loglevel)
