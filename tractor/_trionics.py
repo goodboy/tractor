@@ -8,13 +8,14 @@ from multiprocessing import forkserver, semaphore_tracker
 import trio
 from async_generator import asynccontextmanager, aclosing
 
-from . import _forkserver_hackzorz  # overrides stdlib
+from . import _forkserver_hackzorz
 from ._state import current_actor
 from .log import get_logger, get_loglevel
 from ._actor import Actor, ActorFailure
 from ._portal import Portal
 
 
+_forkserver_hackzorz.override_stdlib()
 ctx = mp.get_context("forkserver")
 log = get_logger('tractor')
 
@@ -29,7 +30,7 @@ class ActorNursery:
         # portals spawned with ``run_in_actor()``
         self._cancel_after_result_on_exit = set()
         self.cancelled = False
-        self._fs = None
+        self._forkserver = None
 
     async def __aenter__(self):
         return self
@@ -53,16 +54,16 @@ class ActorNursery:
         )
         parent_addr = self._actor.accept_addr
         assert parent_addr
-        self._fs = fs = forkserver._forkserver
+        self._forkserver = fs = forkserver._forkserver
         if mp.current_process().name == 'MainProcess' and (
-            not self._actor._fs_deats
+            not self._actor._forkserver_info
         ):
             # if we're the "main" process start the forkserver only once
             # and pass it's ipc info to downstream children
 
             # forkserver.set_forkserver_preload(rpc_module_paths)
             forkserver.ensure_running()
-            fs_deats = addr, alive_fd, pid, st_pid, st_fd = (
+            fs_info = addr, alive_fd, pid, st_pid, st_fd = (
                 fs._forkserver_address,
                 fs._forkserver_alive_fd,
                 getattr(fs, '_forkserver_pid', None),
@@ -70,17 +71,17 @@ class ActorNursery:
                 semaphore_tracker._semaphore_tracker._fd,
             )
         else:
-            fs_deats = (
+            fs_info = (
                 fs._forkserver_address,
                 fs._forkserver_alive_fd,
                 fs._forkserver_pid,
                 semaphore_tracker._semaphore_tracker._pid,
                 semaphore_tracker._semaphore_tracker._fd,
-             ) = self._actor._fs_deats
+             ) = self._actor._forkserver_info
 
         proc = ctx.Process(
             target=actor._fork_main,
-            args=(bind_addr, fs_deats, parent_addr),
+            args=(bind_addr, fs_info, parent_addr),
             # daemon=True,
             name=name,
         )

@@ -256,20 +256,29 @@ class AdultSemaphoreTracker(semaphore_tracker.SemaphoreTracker):
         return self._fd
 
 
-# override the stdlib's stuff
 _semaphore_tracker = AdultSemaphoreTracker()
-semaphore_tracker._semaphore_tracker = _semaphore_tracker
-semaphore_tracker.ensure_running = _semaphore_tracker.ensure_running
-semaphore_tracker.register = _semaphore_tracker.register
-semaphore_tracker.unregister = _semaphore_tracker.unregister
-semaphore_tracker.getfd = _semaphore_tracker.getfd
-
-
 _forkserver = AdultForkServer()
-forkserver._forkserver = _forkserver
-forkserver.main = main
-forkserver._serve_one = _serve_one
-forkserver.ensure_running = _forkserver.ensure_running
-forkserver.get_inherited_fds = _forkserver.get_inherited_fds
-forkserver.connect_to_new_process = _forkserver.connect_to_new_process
-forkserver.set_forkserver_preload = _forkserver.set_forkserver_preload
+
+
+def override_stdlib():
+    """Override the stdlib's ``multiprocessing.forkserver`` behaviour
+    such that our local "manually managed" version from above can be
+    used instead.
+
+    This allows avoiding spawning superfluous additional forkservers
+    and semaphore trackers for each actor nursery used to create new
+    sub-actors from sub-actors.
+    """
+    semaphore_tracker._semaphore_tracker = _semaphore_tracker
+    semaphore_tracker.ensure_running = _semaphore_tracker.ensure_running
+    semaphore_tracker.register = _semaphore_tracker.register
+    semaphore_tracker.unregister = _semaphore_tracker.unregister
+    semaphore_tracker.getfd = _semaphore_tracker.getfd
+
+    forkserver._forkserver = _forkserver
+    forkserver.main = main
+    forkserver._serve_one = _serve_one
+    forkserver.ensure_running = _forkserver.ensure_running
+    forkserver.get_inherited_fds = _forkserver.get_inherited_fds
+    forkserver.connect_to_new_process = _forkserver.connect_to_new_process
+    forkserver.set_forkserver_preload = _forkserver.set_forkserver_preload
