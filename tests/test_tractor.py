@@ -448,7 +448,7 @@ def test_a_quadruple_example():
     assert results
 
 
-@pytest.mark.parametrize('cancel_delay', list(range(1, 8)))
+@pytest.mark.parametrize('cancel_delay', list(range(1, 7)))
 def test_not_fast_enough_quad(cancel_delay):
     """Verify we can cancel midway through the quad example and all actors
     cancel gracefully.
