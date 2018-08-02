@@ -76,19 +76,19 @@ async def spawn(is_arbiter):
     await trio.sleep(0.1)
     actor = tractor.current_actor()
     assert actor.is_arbiter == is_arbiter
-
-    # arbiter should always have an empty statespace as it's redundant
     assert actor.statespace == statespace
 
     if actor.is_arbiter:
         async with tractor.open_nursery() as nursery:
             # forks here
-            portal = await nursery.start_actor(
+            portal = await nursery.run_in_actor(
                 'sub-actor',
-                main=partial(spawn, False),
+                spawn,
+                is_arbiter=False,
                 statespace=statespace,
                 rpc_module_paths=namespaces,
             )
+
             assert len(nursery._children) == 1
             assert portal.channel.uid in tractor.current_actor()._peers
             # be sure we can still get the result
@@ -128,9 +128,6 @@ async def stream_from_single_subactor():
                     'streamerd',
                     rpc_module_paths=[__name__],
                     statespace={'global_dict': {}},
-                    # don't start a main func - use rpc
-                    # currently the same as outlive_main=False
-                    main=None,
                 )
 
                 seq = range(10)
@@ -172,7 +169,7 @@ def test_remote_error():
     async def main():
         async with tractor.open_nursery() as nursery:
 
-            portal = await nursery.start_actor('errorer', main=assert_err)
+            portal = await nursery.run_in_actor('errorer', assert_err)
 
             # get result(s) from main task
             try:
@@ -204,7 +201,6 @@ async def test_cancel_infinite_streamer():
             portal = await n.start_actor(
                 f'donny',
                 rpc_module_paths=[__name__],
-                outlive_main=True
             )
             async for letter in await portal.run(__name__, 'stream_forever'):
                 print(letter)
@@ -227,17 +223,17 @@ async def test_one_cancels_all():
                 real_actors.append(await n.start_actor(
                     f'actor_{i}',
                     rpc_module_paths=[__name__],
-                    outlive_main=True
                 ))
 
             # start one actor that will fail immediately
-            await n.start_actor('extra', main=assert_err)
+            await n.run_in_actor('extra', assert_err)
 
         # should error here with a ``RemoteActorError`` containing
         # an ``AssertionError`
 
     except tractor.RemoteActorError:
         assert n.cancelled is True
+        assert not n._children
     else:
         pytest.fail("Should have gotten a remote assertion error?")
 
@@ -263,16 +259,15 @@ async def test_trynamic_trio():
     async with tractor.open_nursery() as n:
         print("Alright... Action!")
 
-        donny = await n.start_actor(
+        donny = await n.run_in_actor(
             'donny',
-            main=partial(say_hello, 'gretchen'),
-            rpc_module_paths=[__name__],
-            outlive_main=True
+            say_hello,
+            other_actor='gretchen',
         )
-        gretchen = await n.start_actor(
+        gretchen = await n.run_in_actor(
             'gretchen',
-            main=partial(say_hello, 'donny'),
-            rpc_module_paths=[__name__],
+            say_hello,
+            other_actor='donny',
         )
         print(await gretchen.result())
         print(await donny.result())
@@ -296,7 +291,6 @@ async def test_movie_theatre_convo():
             'frank',
             # enable the actor to run funcs from this current module
             rpc_module_paths=[__name__],
-            outlive_main=True,
         )
 
         print(await portal.run(__name__, 'movie_theatre_question'))
@@ -304,18 +298,18 @@ async def test_movie_theatre_convo():
         print(await portal.run(__name__, 'movie_theatre_question'))
 
         # the async with will block here indefinitely waiting
-        # for our actor "frank" to complete, but since it's an
-        # "outlive_main" actor it will never end until cancelled
+        # for our actor "frank" to complete, we cancel 'frank'
+        # to avoid blocking indefinitely
         await portal.cancel_actor()
 
 
 @tractor_test
 async def test_movie_theatre_convo_main_task():
     async with tractor.open_nursery() as n:
-        portal = await n.start_actor('some_linguist', main=cellar_door)
+        portal = await n.run_in_actor('frank', movie_theatre_question)
 
-    # The ``async with`` will unblock here since the 'some_linguist'
-    # actor has completed its main task ``cellar_door``.
+    # The ``async with`` will unblock here since the 'frank'
+    # actor has completed its main task ``movie_theatre_question()``.
 
     print(await portal.result())
 
@@ -329,7 +323,7 @@ async def test_most_beautiful_word():
     """The main ``tractor`` routine.
     """
     async with tractor.open_nursery() as n:
-        portal = await n.start_actor('some_linguist', main=cellar_door)
+        portal = await n.run_in_actor('some_linguist', cellar_door)
 
     # The ``async with`` will unblock here since the 'some_linguist'
     # actor has completed its main task ``cellar_door``.
@@ -375,7 +369,6 @@ async def aggregate(seed):
             portal = await nursery.start_actor(
                 name=f'streamer_{i}',
                 rpc_module_paths=[__name__],
-                outlive_main=True,  # daemonize these actors
             )
 
             portals.append(portal)
@@ -416,7 +409,6 @@ async def aggregate(seed):
     print("AGGREGATOR COMPLETE!")
 
 
-# @tractor_test
 async def a_quadruple_example():
     # a nursery which spawns "actors"
     async with tractor.open_nursery() as nursery:
@@ -424,10 +416,10 @@ async def a_quadruple_example():
         seed = int(1e3)
         pre_start = time.time()
 
-        portal = await nursery.start_actor(
-            name='aggregator',
-            # executed in the actor's "main task" immediately
-            main=partial(aggregate, seed),
+        portal = await nursery.run_in_actor(
+            'aggregator',
+            aggregate,
+            seed=seed,
         )
 
         start = time.time()
@@ -449,17 +441,18 @@ async def cancel_after(wait):
 
 
 def test_a_quadruple_example():
-    """Verify the *show me the code* readme example works.
+    """This also serves as a kind of "we'd like to eventually be this
+    fast test".
     """
-    results = tractor.run(cancel_after, 2, arbiter_addr=_arb_addr)
+    results = tractor.run(cancel_after, 2.1, arbiter_addr=_arb_addr)
     assert results
 
 
-def test_not_fast_enough_quad():
+@pytest.mark.parametrize('cancel_delay', list(range(1, 8)))
+def test_not_fast_enough_quad(cancel_delay):
     """Verify we can cancel midway through the quad example and all actors
     cancel gracefully.
-
-    This also serves as a kind of "we'd like to eventually be this fast test".
     """
-    results = tractor.run(cancel_after, 1, arbiter_addr=_arb_addr)
+    delay = 1 + cancel_delay/10
+    results = tractor.run(cancel_after, delay, arbiter_addr=_arb_addr)
     assert results is None
