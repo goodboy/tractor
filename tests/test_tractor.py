@@ -168,6 +168,8 @@ def test_remote_error(arb_addr):
 
 async def stream_forever():
     for i in repeat("I can see these little future bubble things"):
+        # each yielded value is sent over the ``Channel`` to the
+        # parent actor
         yield i
         await trio.sleep(0.01)
 
@@ -175,16 +177,20 @@ async def stream_forever():
 @tractor_test
 async def test_cancel_infinite_streamer():
 
-    # stream for at most 5 seconds
+    # stream for at most 1 seconds
     with trio.move_on_after(1) as cancel_scope:
         async with tractor.open_nursery() as n:
             portal = await n.start_actor(
                 f'donny',
                 rpc_module_paths=[__name__],
             )
+
+            # this async for loop streams values from the above
+            # async generator running in a separate process
             async for letter in await portal.run(__name__, 'stream_forever'):
                 print(letter)
 
+    # we support trio's cancellation system
     assert cancel_scope.cancelled_caught
     assert n.cancelled
 
@@ -230,6 +236,7 @@ async def test_movie_theatre_convo():
     """The main ``tractor`` routine.
     """
     async with tractor.open_nursery() as n:
+
         portal = await n.start_actor(
             'frank',
             # enable the actor to run funcs from this current module
@@ -237,24 +244,13 @@ async def test_movie_theatre_convo():
         )
 
         print(await portal.run(__name__, 'movie_theatre_question'))
-        # calls the subactor a 2nd time
+        # call the subactor a 2nd time
         print(await portal.run(__name__, 'movie_theatre_question'))
 
         # the async with will block here indefinitely waiting
         # for our actor "frank" to complete, we cancel 'frank'
         # to avoid blocking indefinitely
         await portal.cancel_actor()
-
-
-@tractor_test
-async def test_movie_theatre_convo_main_task():
-    async with tractor.open_nursery() as n:
-        portal = await n.run_in_actor('frank', movie_theatre_question)
-
-    # The ``async with`` will unblock here since the 'frank'
-    # actor has completed its main task ``movie_theatre_question()``.
-
-    print(await portal.result())
 
 
 def cellar_door():
@@ -266,6 +262,7 @@ async def test_most_beautiful_word():
     """The main ``tractor`` routine.
     """
     async with tractor.open_nursery() as n:
+
         portal = await n.run_in_actor('some_linguist', cellar_door)
 
     # The ``async with`` will unblock here since the 'some_linguist'
@@ -370,7 +367,7 @@ async def a_quadruple_example():
 
         start = time.time()
         # the portal call returns exactly what you'd expect
-        # as if the remote "main" function was called locally
+        # as if the remote "aggregate" function was called locally
         result_stream = []
         async for value in await portal.result():
             result_stream.append(value)

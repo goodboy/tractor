@@ -1,35 +1,12 @@
 tractor
 =======
-A minimalist `actor model`_ built on multiprocessing_ and trio_.
+An async-native `actor model`_ built on trio_ and multiprocessing_.
+
 
 |travis|
 
 .. |travis| image:: https://img.shields.io/travis/tgoodlet/tractor/master.svg
     :target: https://travis-ci.org/tgoodlet/tractor
-
-``tractor`` is an attempt to take trionic_ concurrency concepts and apply
-them to distributed-multicore Python.
-
-``tractor`` lets you run and spawn Python *actors*: separate processes which are internally
-running a ``trio`` scheduler and task tree (also known as an `async sandwich`_).
-
-Actors communicate with each other by sending *messages* over channels_, but the details of this
-in ``tractor`` is by default hidden and *actors* can instead easily invoke remote asynchronous
-functions using *portals*.
-
-``tractor``'s tenets non-comprehensively include:
-
-- no spawning of processes *willy-nilly*; causality_ is paramount!
-- `shared nothing architecture`_
-- remote errors `always propagate`_ back to the caller
-- verbatim support for ``trio``'s cancellation_ system
-- no use of *proxy* objects to wrap RPC calls
-- an immersive debugging experience
-- be simple, be small
-
-.. warning:: ``tractor`` is in alpha-alpha and is expected to change rapidly!
-    Expect nothing to be set in stone and your ideas about where it should go
-    to be greatly appreciated!
 
 .. _actor model: https://en.wikipedia.org/wiki/Actor_model
 .. _trio: https://github.com/python-trio/trio
@@ -41,6 +18,54 @@ functions using *portals*.
 .. _shared nothing architecture: https://en.wikipedia.org/wiki/Shared-nothing_architecture
 .. _cancellation: https://trio.readthedocs.io/en/latest/reference-core.html#cancellation-and-timeouts
 .. _channels: https://en.wikipedia.org/wiki/Channel_(programming)
+.. _chaos engineering: http://principlesofchaos.org/
+
+
+What's this? Spawning event loops in subprocesses?
+--------------------------------------------------
+Close, but not quite.
+
+``tractor`` is an attempt to take trionic_ concurrency concepts and apply
+them to distributed multi-core Python.
+
+``tractor`` lets you run and spawn *actors*: separate processes which run a ``trio``
+scheduler and task tree (also known as an `async sandwich`_).
+*Actors* communicate by sending messages_ over channels_ and avoid sharing any state.
+This `actor model`_ allows for highly distributed software architecture which works just as
+well on multiple cores as it does over many hosts.
+``tractor`` takes much inspiration from pulsar_ and execnet_ but attempts to be much more
+focussed on sophistication of the lower level distributed architecture
+as well as have first class support for modern async Python.
+``tractor`` does **not** use ``asyncio`` hence **no** event loops.
+
+The first step to grok ``tractor`` is to get the basics of ``trio``
+down. A great place to start is the `trio docs`_ and this `blog post`_
+by njsmith_.
+
+.. _messages: https://en.wikipedia.org/wiki/Message_passing
+.. _trio docs: https://trio.readthedocs.io/en/latest/
+.. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
+.. _njsmith: https://github.com/njsmith/
+
+
+Philosophy
+----------
+``tractor``'s tenets non-comprehensively include:
+
+- no spawning of processes *willy-nilly*; causality_ is paramount!
+- `shared nothing architecture`_
+- remote errors `always propagate`_ back to the caller
+- verbatim support for ``trio``'s cancellation_ system
+- no use of *proxy* objects to wrap RPC calls
+- an immersive debugging experience
+- anti-fragility through `chaos engineering`_
+
+.. warning:: ``tractor`` is in alpha-alpha and is expected to change rapidly!
+    Expect nothing to be set in stone. Your ideas about where it should go
+    are greatly appreciated!
+
+.. _pulsar: http://quantmind.github.io/pulsar/design.html
+.. _execnet: https://codespeak.net/execnet/
 
 
 Install
@@ -52,28 +77,10 @@ No PyPi release yet!
     pip install git+git://github.com/tgoodlet/tractor.git
 
 
-What's this? Spawning event loops in subprocesses?
---------------------------------------------------
-Close, but not quite.
-
-The first step to grok ``tractor`` is to get the basics of ``trio``
-down. A great place to start is the `trio docs`_ and this `blog post`_
-by njsmith_.
-
-``tractor`` takes much inspiration from pulsar_ and execnet_ but attempts to be much more
-minimal, focus on sophistication of the lower level distributed architecture,
-and of course does **not** use ``asyncio``, hence **no** event loops.
-
-.. _trio docs: https://trio.readthedocs.io/en/latest/
-.. _pulsar: http://quantmind.github.io/pulsar/design.html
-.. _execnet: https://codespeak.net/execnet/
-.. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _njsmith: https://github.com/njsmith/
-
-
 A trynamic first scene
 ----------------------
-As a first example let's spawn a couple *actors* and have them run their lines:
+Let's direct a couple *actors* and have them run their lines for
+the hip new film we're shooting:
 
 .. code:: python
 
@@ -101,50 +108,108 @@ As a first example let's spawn a couple *actors* and have them run their lines:
         async with tractor.open_nursery() as n:
             print("Alright... Action!")
 
-            donny = await n.start_actor(
+            donny = await n.run_in_actor(
                 'donny',
-                main=partial(say_hello, 'gretchen'),
-                rpc_module_paths=[_this_module],
-                outlive_main=True
+                say_hello,
+                other_actor='gretchen',
             )
-            gretchen = await n.start_actor(
+            gretchen = await n.run_in_actor(
                 'gretchen',
-                main=partial(say_hello, 'donny'),
-                rpc_module_paths=[_this_module],
+                say_hello,
+                other_actor='donny',
             )
             print(await gretchen.result())
             print(await donny.result())
             await donny.cancel_actor()
-            print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")
+            print("CUTTTT CUUTT CUT!!! Donny!! You're supposed to say...")
 
 
     tractor.run(main)
 
 
-Here, we've spawned two actors, *donny* and *gretchen* in separate
-processes. Each starts up and begins executing their *main task*
-defined by an async function, ``say_hello()``.  The function instructs
-each actor to find their partner and say hello by calling their
-partner's ``hi()`` function using a something called a *portal*. Each
-actor receives a response and relays that back to the parent actor (in
-this case our "director").
-
-To gain more insight as to how ``tractor`` accomplishes all this please
-read on!
+We spawn two *actors*, *donny* and *gretchen*.
+Each actor starts up and executes their *main task* defined by an
+async function, ``say_hello()``.  The function instructs each actor
+to find their partner and say hello by calling their partner's
+``hi()`` function using something called a *portal*. Each actor
+receives a response and relays that back to the parent actor (in
+this case our "director" executing ``main()``).
 
 
 Actor spawning and causality
 ----------------------------
 ``tractor`` tries to take ``trio``'s concept of causal task lifetimes
-to multi-process land. Accordingly ``tractor``'s actor nursery behaves
-similar to the nursery_ in ``trio``. That is, an ``ActorNursery``
-created with ``tractor.open_nursery()`` waits on spawned sub-actors to
-complete (or error) in the same causal_ way ``trio`` waits on spawned
-subtasks. This includes errors from any one sub-actor causing all other
-actors spawned by the nursery to be cancelled_.
+to multi-process land. Accordingly, ``tractor``'s *actor nursery* behaves
+similar to ``trio``'s nursery_. That is, ``tractor.open_nursery()``
+opens an ``ActorNursery`` which waits on spawned *actors* to complete
+(or error) in the same causal_ way ``trio`` waits on spawned subtasks.
+This includes errors from any one actor causing all other actors
+spawned by the same nursery to be cancelled_.
 
-To spawn an actor open a *nursery block* and use the ``start_actor()``
+To spawn an actor and run a function in it, open a *nursery block*
+and use the ``run_in_actor()`` method:
+
+.. code:: python
+
+    import tractor
+
+
+        def cellar_door():
+            return "Dang that's beautiful"
+
+
+        async def main():
+            """The main ``tractor`` routine.
+            """
+            async with tractor.open_nursery() as n:
+
+                portal = await n.run_in_actor('frank', movie_theatre_question)
+
+            # The ``async with`` will unblock here since the 'frank'
+            # actor has completed its main task ``movie_theatre_question()``.
+
+            print(await portal.result())
+
+
+    tractor.run(main)
+
+
+What's going on?
+
+- an initial *actor* is started with ``tractor.run()`` and told to execute
+  its main task_: ``main()``
+
+- inside ``main()`` an actor is *spawned* using an ``ActorNusery`` and is told
+  to run a single function: ``cellar_door()``
+
+- a ``portal`` instance (we'll get to what it is shortly)
+  returned from ``nursery.run_in_actor()`` is used to communicate with
+  the newly spawned *sub-actor*
+
+- the second actor, *frank*, in a new *process* running a new ``trio`` task_
+  then executes ``cellar_door()`` and returns its result over a *channel* back
+  to the parent actor
+
+- the parent actor retrieves the subactor's (*frank*) *final result* using ``portal.result()``
+  much like you'd expect from a future_.
+
+This ``run_in_actor()`` API should look very familiar to users of
+``asyncio``'s run_in_executor_ which uses a ``concurrent.futures`` Executor_.
+
+Since you might also want to spawn long running *worker* or *daemon*
+actors, each actor's *lifetime* can be determined based on the spawn
 method:
+
+- if the actor is spawned using ``run_in_actor()`` it terminates when
+  its *main* task completes (i.e. when the (async) function submitted
+  to it *returns*). The ``with tractor.open_nursery()`` exits only once
+  all actors' main function/task complete (just like the nursery_ in ``trio``)
+
+- actors can be spawned to *live forever* using the ``start_actor()``
+  method and act like an RPC daemon that runs indefinitely (the
+  ``with tractor.open_nursery()`` wont' exit) until cancelled_
+
+Had we wanted the latter form in our example it would have looked like:
 
 .. code:: python
 
@@ -159,15 +224,15 @@ method:
         """The main ``tractor`` routine.
         """
         async with tractor.open_nursery() as n:
+
             portal = await n.start_actor(
                 'frank',
                 # enable the actor to run funcs from this current module
                 rpc_module_paths=[__name__],
-                outlive_main=True,
             )
 
             print(await portal.run(__name__, 'movie_theatre_question'))
-            # calls the subactor a 2nd time
+            # call the subactor a 2nd time
             print(await portal.run(__name__, 'movie_theatre_question'))
 
             # the async with will block here indefinitely waiting
@@ -175,46 +240,13 @@ method:
             # "outlive_main" actor it will never end until cancelled
             await portal.cancel_actor()
 
-Notice the ``portal`` instance returned from ``nursery.start_actor()``,
-we'll get to that shortly.
-
-Spawned actor lifetimes can be configured in one of two ways:
-
-- the actor terminates when its *main* task completes (the default if
-  the ``main`` kwarg is provided)
-- the actor can be told to ``outlive_main=True`` and thus act like an RPC
-  daemon where it runs indefinitely until cancelled
-
-Had we wanted the former in our example it would have been much simpler:
-
-.. code:: python
-
-    def cellar_door():
-        return "Dang that's beautiful"
-
-
-    async def main():
-        """The main ``tractor`` routine.
-        """
-        async with tractor.open_nursery() as n:
-            portal = await n.start_actor('some_linguist', main=cellar_door)
-
-        # The ``async with`` will unblock here since the 'some_linguist'
-        # actor has completed its main task ``cellar_door``.
-
-        print(await portal.result())
-
-
-Note that the main task's *final result(s)* (returned from the provided
-``main`` function) is **always** accessed using ``Portal.result()`` much
-like you'd expect from a future_.
 
 The ``rpc_module_paths`` `kwarg` above is a list of module path
 strings that will be loaded and made accessible for execution in the
 remote actor through a call to ``Portal.run()``. For now this is
 a simple mechanism to restrict the functionality of the remote
-(daemonized) actor and uses Python's module system to limit the
-allowed remote function namespace(s).
+(and possibly daemonized) actor and uses Python's module system to
+limit the allowed remote function namespace(s).
 
 ``tractor`` is opinionated about the underlying threading model used for
 each *actor*. Since Python has a GIL and an actor model by definition
@@ -223,15 +255,18 @@ shares no state between actors, it fits naturally to use a multiprocessing_
 hardware but also distribute over many hardware hosts (each *actor* can talk
 to all others with ease over standard network protocols).
 
+.. _task: https://trio.readthedocs.io/en/latest/reference-core.html#tasks-let-you-do-multiple-things-at-once
 .. _nursery: https://trio.readthedocs.io/en/latest/reference-core.html#nurseries-and-spawning
 .. _causal: https://vorpus.org/blog/some-thoughts-on-asynchronous-api-design-in-a-post-asyncawait-world/#causality
 .. _cancelled: https://trio.readthedocs.io/en/latest/reference-core.html#child-tasks-and-cancellation
+.. _run_in_executor: https://docs.python.org/3/library/asyncio-eventloop.html#executor
+.. _Executor: https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor
 
 
-Transparent function calling using *portals*
---------------------------------------------
-``tractor`` introdces the concept of a *portal* which is an API
-borrowed_ from ``trio``. A portal may seems similar to the idea of
+Transparent remote function calling using *portals*
+---------------------------------------------------
+``tractor`` introduces the concept of a *portal* which is an API
+borrowed_ from ``trio``. A portal may seem similar to the idea of
 a RPC future_ except a *portal* allows invoking remote *async* functions and
 generators and intermittently blocking to receive responses. This allows
 for fully async-native IPC between actors.
@@ -255,11 +290,53 @@ This *portal* approach turns out to be paricularly exciting with the
 introduction of `asynchronous generators`_ in Python 3.6! It means that
 actors can compose nicely in a data processing pipeline.
 
+As an example here's an actor that streams for 1 second from a remote async
+generator function running in a separate actor:
+
+.. code:: python
+
+    from itertools import repeat
+    import trio
+    import tractor
+
+
+    async def stream_forever():
+        for i in repeat("I can see these little future bubble things"):
+            # each yielded value is sent over the ``Channel`` to the
+            # parent actor
+            yield i
+            await trio.sleep(0.01)
+
+
+    async def main():
+        # stream for at most 1 seconds
+        with trio.move_on_after(1) as cancel_scope:
+            async with tractor.open_nursery() as n:
+                portal = await n.start_actor(
+                    f'donny',
+                    rpc_module_paths=[__name__],
+                )
+
+                # this async for loop streams values from the above
+                # async generator running in a separate process
+                async for letter in await portal.run(__name__, 'stream_forever'):
+                    print(letter)
+
+        # we support trio's cancellation system
+        assert cancel_scope.cancelled_caught
+        assert n.cancelled
+
+
+    tractor.run(main)
+
+
+Alright, let's get fancy.
+
 Say you wanted to spawn two actors which each pulling data feeds from
 two different sources (and wanted this work spread across 2 cpus).
 You also want to aggregate these feeds, do some processing on them and then
-deliver the final result stream to a client (or in this case parent)
-actor and print the results to your screen:
+deliver the final result stream to a client (or in this case parent) actor
+and print the results to your screen:
 
 .. code:: python
 
@@ -287,7 +364,6 @@ actor and print the results to your screen:
                 portal = await nursery.start_actor(
                     name=f'streamer_{i}',
                     rpc_module_paths=[__name__],
-                    outlive_main=True,  # daemonize these actors
                 )
 
                 portals.append(portal)
@@ -337,15 +413,15 @@ actor and print the results to your screen:
             import time
             pre_start = time.time()
 
-            portal = await nursery.start_actor(
-                name='aggregator',
-                # executed in the actor's "main task" immediately
-                main=partial(aggregate, seed),
+            portal = await nursery.run_in_actor(
+                'aggregator',
+                aggregate,
+                seed=seed,
             )
 
             start = time.time()
             # the portal call returns exactly what you'd expect
-            # as if the remote "main" function was called locally
+            # as if the remote "aggregate" function was called locally
             result_stream = []
             async for value in await portal.result():
                 result_stream.append(value)
@@ -360,15 +436,11 @@ actor and print the results to your screen:
 
 
 Here there's four actors running in separate processes (using all the
-cores on you machine). Two are streaming (by **yielding** value in the
+cores on you machine). Two are streaming by *yielding* values from the
 ``stream_data()`` async generator, one is aggregating values from
 those two in ``aggregate()`` (also an async generator) and shipping the
 single stream of unique values up the parent actor (the ``'MainProcess'``
 as ``multiprocessing`` calls it) which is running ``main()``. 
-
-There has also been some discussion about adding support for reactive
-programming primitives and native support for asyncitertools_ like libs -
-so keep an eye out for that!
 
 .. _future: https://en.wikipedia.org/wiki/Futures_and_promises
 .. _borrowed:
@@ -380,38 +452,7 @@ so keep an eye out for that!
 
 Cancellation
 ------------
-``tractor`` supports ``trio``'s cancellation_ system verbatim:
-
-.. code:: python
-
-    import trio
-    import tractor
-    from itertools import repeat
-
-
-    async def stream_forever():
-        for i in repeat("I can see these little future bubble things"):
-            yield i
-            await trio.sleep(0.01)
-
-
-    async def main():
-        # stream for at most 1 second
-        with trio.move_on_after(1) as cancel_scope:
-            async with tractor.open_nursery() as n:
-                portal = await n.start_actor(
-                    f'donny',
-                    rpc_module_paths=[__name__],
-                    outlive_main=True
-                )
-                async for letter in await portal.run(__name__, 'stream_forever'):
-                    print(letter)
-
-        assert cancel_scope.cancelled_caught
-        assert n.cancelled
-
-    tractor.run(main)
-
+``tractor`` supports ``trio``'s cancellation_ system verbatim.
 Cancelling a nursery block cancels all actors spawned by it.
 Eventually ``tractor`` plans to support different `supervision strategies`_ like ``erlang``.
 
@@ -421,13 +462,14 @@ Eventually ``tractor`` plans to support different `supervision strategies`_ like
 Remote error propagation
 ------------------------
 Any task invoked in a remote actor should ship any error(s) back to the calling
-actor where it is raised and expected to be dealt with. This way remote actor's
+actor where it is raised and expected to be dealt with. This way remote actors
 are never cancelled unless explicitly asked or there's a bug in ``tractor`` itself.
 
 .. code:: python
 
     async def assert_err():
         assert 0
+
 
     async def main():
         async with tractor.open_nursery() as n:
@@ -436,11 +478,10 @@ are never cancelled unless explicitly asked or there's a bug in ``tractor`` itse
                 real_actors.append(await n.start_actor(
                     f'actor_{i}',
                     rpc_module_paths=[__name__],
-                    outlive_main=True
                 ))
 
             # start one actor that will fail immediately
-            await n.start_actor('extra', main=assert_err)
+            await n.run_in_actor('extra', assert_err)
 
         # should error here with a ``RemoteActorError`` containing
         # an ``AssertionError`` and all the other actors have been cancelled
@@ -482,8 +523,9 @@ multiple RPC calls to an actor can access global data using the per actor
 
         async def main():
             async with tractor.open_nursery() as n:
-                await n.start_actor(
-                    'checker', main=check_statespace,
+                await n.run_in_actor(
+                    'checker',
+                    check_statespace,
                     statespace=statespace
                 )
 
@@ -579,6 +621,8 @@ Stuff I'd like to see ``tractor`` do one day:
 - a distributed log ledger for tracking cluster behaviour
 - a slick multi-process aware debugger much like in celery_
   but with better `pdb++`_ support
+- an extensive `chaos engineering`_ test suite
+- support for reactive programming primitives and native support for asyncitertools_ like libs
 
 If you're interested in tackling any of these please do shout about it on the
 `trio gitter channel`_!
