@@ -624,11 +624,14 @@ async def _start_actor(actor, main, host, port, arbiter_addr, nursery=None):
                 arbiter_addr=arbiter_addr,
             )
         )
-        result = await main()
-        # XXX: If spawned locally, the actor is cancelled when this
-        # context is complete given that there are no more active
-        # peer channels connected to it.
-        actor.cancel_server()
+        if main is not None:
+            result = await main()
+            # XXX: If spawned with a dedicated "main function",
+            # the actor is cancelled when this context is complete
+            # given that there are no more active peer channels connected to it.
+            actor.cancel_server()
+
+    # block on actor to complete
 
     # unset module state
     _state._current_actor = None
