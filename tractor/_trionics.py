@@ -59,11 +59,10 @@ class ActorNursery:
             not self._actor._forkserver_info
         ):
             # if we're the "main" process start the forkserver only once
-            # and pass it's ipc info to downstream children
-
+            # and pass its ipc info to downstream children
             # forkserver.set_forkserver_preload(rpc_module_paths)
             forkserver.ensure_running()
-            fs_info = addr, alive_fd, pid, st_pid, st_fd = (
+            fs_info = (
                 fs._forkserver_address,
                 fs._forkserver_alive_fd,
                 getattr(fs, '_forkserver_pid', None),
