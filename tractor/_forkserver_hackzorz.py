@@ -26,7 +26,7 @@ from multiprocessing.context import reduction
 SIGNED_STRUCT = struct.Struct('q')     # large enough for pid_t
 
 
-class AdultForkServer(ForkServer):
+class PatchedForkServer(ForkServer):
 
     def connect_to_new_process(self, fds):
         '''Request forkserver to create a child process.
@@ -55,7 +55,7 @@ class AdultForkServer(ForkServer):
                         reduction.sendfds(client, allfds)
                         break
                     except OSError as err:
-                        if err.args[0] == 9:
+                        if err.errno == errno.EBADF:
                             print(f"Bad FD {err}")
                             client = socket.socket(socket.AF_UNIX)
                             client.connect(self._forkserver_address)
@@ -248,7 +248,7 @@ def write_signed(fd, n):
         msg = msg[nbytes:]
 
 
-class AdultSemaphoreTracker(semaphore_tracker.SemaphoreTracker):
+class PatchedSemaphoreTracker(semaphore_tracker.SemaphoreTracker):
     """Stop GD ensuring everything is running...
     """
     def getfd(self):
@@ -256,8 +256,8 @@ class AdultSemaphoreTracker(semaphore_tracker.SemaphoreTracker):
         return self._fd
 
 
-_semaphore_tracker = AdultSemaphoreTracker()
-_forkserver = AdultForkServer()
+_semaphore_tracker = PatchedSemaphoreTracker()
+_forkserver = PatchedForkServer()
 
 
 def override_stdlib():
