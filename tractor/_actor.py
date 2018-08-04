@@ -189,8 +189,7 @@ class Actor:
         self,
         stream: trio.SocketStream,
     ):
-        """
-        Entry point for new inbound connections to the channel server.
+        """Entry point for new inbound connections to the channel server.
         """
         self._no_more_peers.clear()
         chan = Channel(stream=stream)
@@ -456,7 +455,7 @@ class Actor:
                 try:
                     await self._parent_chan.send(
                         {'error': traceback.format_exc(), 'cid': 'internal'})
-                except trio.ClosedStreamError:
+                except trio.ClosedResourceError:
                     log.error(
                         f"Failed to ship error to parent "
                         f"{self._parent_chan.uid}, channel was closed")
