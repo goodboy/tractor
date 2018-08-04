@@ -282,10 +282,8 @@ class Actor:
                 if msg is None:  # terminate sentinel
                     log.debug(
                         f"Cancelling all tasks for {chan} from {chan.uid}")
-                    scopes = self._rpc_tasks.pop(chan, None)
-                    if scopes:
-                        for scope, func in scopes:
-                            scope.cancel()
+                    for scope, func in self._rpc_tasks.pop(chan, ()):
+                        scope.cancel()
 
                     log.debug(
                             f"Msg loop signalled to terminate for"
