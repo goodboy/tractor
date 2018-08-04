@@ -57,7 +57,7 @@ class StreamQueue:
     async def get(self):
         return await self._agen.asend(None)
 
-    async def __aiter__(self):
+    def __aiter__(self):
         return self._agen
 
     def connected(self):

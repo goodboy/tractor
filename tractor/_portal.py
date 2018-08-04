@@ -173,7 +173,7 @@ class Portal:
                 # send cancel cmd - might not get response
                 await self.run('self', 'cancel')
                 return True
-        except trio.ClosedStreamError:
+        except trio.ClosedResourceError:
             log.warn(
                 f"{self.channel} for {self.channel.uid} was already closed?")
             return False
