@@ -42,20 +42,6 @@ async def _do_handshake(actor, chan):
     return uid
 
 
-async def result_from_q(q, chan):
-    """Process a msg from a remote actor.
-    """
-    first_msg = await q.get()
-    if 'return' in first_msg:
-        return 'return', first_msg, q
-    elif 'yield' in first_msg:
-        return 'yield', first_msg, q
-    elif 'error' in first_msg:
-        raise RemoteActorError(f"{chan.uid}\n" + first_msg['error'])
-    else:
-        raise ValueError(f"{first_msg} is an invalid response packet?")
-
-
 class Portal:
     """A 'portal' to a(n) (remote) ``Actor``.
 
@@ -67,7 +53,12 @@ class Portal:
     """
     def __init__(self, channel):
         self.channel = channel
+        # when this is set to a tuple returned from ``_submit()`` then
+        # it is expected that ``result()`` will be awaited at some point
+        # during the portal's lifetime
         self._result = None
+        self._expect_result = None
+        self._errored = False
 
     async def aclose(self):
         log.debug(f"Closing {self}")
@@ -75,26 +66,56 @@ class Portal:
         # gets in!
         await self.channel.aclose()
 
-    async def run(self, ns, func, **kwargs):
-        """Submit a function to be scheduled and run by actor, return its
-        (stream of) result(s).
+    async def _submit(self, ns, func, **kwargs):
+        """Submit a function to be scheduled and run by actor, return the
+        associated caller id, response queue, response type str,
+        first message packet as a tuple.
+
+        This is an async call.
         """
+        # ship a function call request to the remote actor
+        cid, q = await current_actor().send_cmd(self.channel, ns, func, kwargs)
+
+        # wait on first response msg and handle (this should be
+        # in an immediate response)
+        first_msg = await q.get()
+        functype = first_msg.get('functype')
+
+        if functype == 'function' or functype == 'asyncfunction':
+            resp_type = 'return'
+        elif functype == 'asyncgen':
+            resp_type = 'yield'
+        elif 'error' in first_msg:
+            raise RemoteActorError(
+                f"{self.channel.uid}\n" + first_msg['error'])
+        else:
+            raise ValueError(f"{first_msg} is an invalid response packet?")
+
+        return cid, q, resp_type, first_msg
+
+    async def _submit_for_result(self, ns, func, **kwargs):
+        assert self._expect_result is None, \
+                "A pending main result has already been submitted"
+        self._expect_result = await self._submit(ns, func, **kwargs)
+
+    async def run(self, ns, func, **kwargs):
+        """Submit a function to be scheduled and run by actor, wrap and return
+        its (stream of) result(s).
+
+        This is a blocking call.
+        """
+        return await self._return_from_resptype(
+            *(await self._submit(ns, func, **kwargs))
+        )
+
+    async def _return_from_resptype(self, cid, q, resptype, first_msg):
         # TODO: not this needs some serious work and thinking about how
         # to make async-generators the fundamental IPC API over channels!
         # (think `yield from`, `gen.send()`, and functional reactive stuff)
-        actor = current_actor()
-        # ship a function call request to the remote actor
-        cid, q = await actor.send_cmd(self.channel, ns, func, kwargs)
-        # wait on first response msg and handle
-        return await self._return_from_resptype(
-            cid, *(await result_from_q(q, self.channel)))
-
-    async def _return_from_resptype(self, cid, resptype, first_msg, q):
 
         if resptype == 'yield':
 
             async def yield_from_q():
-                yield first_msg['yield']
                 try:
                     async for msg in q:
                         try:
@@ -103,8 +124,9 @@ class Portal:
                             if 'stop' in msg:
                                 break  # far end async gen terminated
                             else:
-                                raise RemoteActorError(msg['error'])
-                except GeneratorExit:
+                                raise RemoteActorError(
+                                    f"{self.channel.uid}\n" + msg['error'])
+                except StopAsyncIteration:
                     log.debug(
                         f"Cancelling async gen call {cid} to "
                         f"{self.channel.uid}")
@@ -113,22 +135,24 @@ class Portal:
             return yield_from_q()
 
         elif resptype == 'return':
-            return first_msg['return']
+            msg = await q.get()
+            try:
+                return msg['return']
+            except KeyError:
+                raise RemoteActorError(
+                    f"{self.channel.uid}\n" + msg['error'])
         else:
             raise ValueError(f"Unknown msg response type: {first_msg}")
 
     async def result(self):
         """Return the result(s) from the remote actor's "main" task.
         """
-        if self._result is None:
-            q = current_actor().get_waitq(self.channel.uid, 'main')
-            resptype, first_msg, q = (await result_from_q(q, self.channel))
+        if self._expect_result is None:
+            raise RuntimeError("This portal is not expecting a final result?")
+        elif self._result is None:
             self._result = await self._return_from_resptype(
-                'main', resptype, first_msg, q)
-            log.warn(
-                f"Retrieved first result `{self._result}` "
-                f"for {self.channel.uid}")
-        # await q.put(first_msg)  # for next consumer (e.g. nursery)
+                *self._expect_result
+            )
         return self._result
 
     async def close(self):
@@ -153,7 +177,9 @@ class Portal:
             log.warn(
                 f"{self.channel} for {self.channel.uid} was already closed?")
             return False
-
+        else:
+            log.warn(f"May have failed to cancel {self.channel.uid}")
+            return False
 
 class LocalPortal:
     """A 'portal' to a local ``Actor``.

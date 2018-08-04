@@ -10,4 +10,4 @@ install:
     - pip install . -r requirements-test.txt
 
 script:
-    - pytest tests/
+    - pytest tests/ --no-print-logs

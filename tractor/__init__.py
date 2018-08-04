@@ -49,23 +49,22 @@ async def _main(async_fn, args, kwargs, name, arbiter_addr):
         log.info(f"Arbiter seems to exist @ {host}:{port}")
         actor = Actor(
             name or 'anonymous',
-            main=main,
             arbiter_addr=arbiter_addr,
             **kwargs
         )
         host, port = (host, 0)
     else:
         # start this local actor as the arbiter
-        # this should eventually get passed `outlive_main=True`?
         actor = Arbiter(
-            name or 'arbiter', main=main, arbiter_addr=arbiter_addr, **kwargs)
+            name or 'arbiter', arbiter_addr=arbiter_addr, **kwargs)
 
     # ``Actor._async_main()`` creates an internal nursery if one is not
     # provided and thus blocks here until it's main task completes.
     # Note that if the current actor is the arbiter it is desirable
     # for it to stay up indefinitely until a re-election process has
     # taken place - which is not implemented yet FYI).
-    return await _start_actor(actor, host, port, arbiter_addr=arbiter_addr)
+    return await _start_actor(
+        actor, main, host, port, arbiter_addr=arbiter_addr)
 
 
 def run(

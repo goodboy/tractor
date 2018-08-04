@@ -2,9 +2,10 @@
 ``trio`` inspired apis and helpers
 """
 import multiprocessing as mp
+import inspect
 
 import trio
-from async_generator import asynccontextmanager
+from async_generator import asynccontextmanager, aclosing
 
 from ._state import current_actor
 from .log import get_logger, get_loglevel
@@ -22,9 +23,9 @@ class ActorNursery:
     def __init__(self, actor, supervisor=None):
         self.supervisor = supervisor  # TODO
         self._actor = actor
-        # We'll likely want some way to cancel all sub-actors eventually
-        # self.cancel_scope = cancel_scope
         self._children = {}
+        # portals spawned with ``run_in_actor()``
+        self._cancel_after_result_on_exit = set()
         self.cancelled = False
 
     async def __aenter__(self):
@@ -33,11 +34,9 @@ class ActorNursery:
     async def start_actor(
         self,
         name: str,
-        main=None,
         bind_addr=('127.0.0.1', 0),
         statespace=None,
         rpc_module_paths=None,
-        outlive_main=False,  # sub-actors die when their main task completes
         loglevel=None,  # set log level per subactor
     ):
         loglevel = loglevel or self._actor.loglevel or get_loglevel()
@@ -46,8 +45,6 @@ class ActorNursery:
             # modules allowed to invoked funcs from
             rpc_module_paths=rpc_module_paths or [],
             statespace=statespace,  # global proc state vars
-            main=main,  # main coroutine to be invoked
-            outlive_main=outlive_main,
             loglevel=loglevel,
             arbiter_addr=current_actor()._arb_addr,
         )
@@ -59,6 +56,11 @@ class ActorNursery:
             # daemon=True,
             name=name,
         )
+        # register the process before start in case we get a cancel
+        # request before the actor has fully spawned - then we can wait
+        # for it to fully come up before sending a cancel request
+        self._children[actor.uid] = [actor, proc, None]
+
         proc.start()
         if not proc.is_alive():
             raise ActorFailure("Couldn't start sub-actor?")
@@ -69,7 +71,39 @@ class ActorNursery:
         # local actor by the time we get a ref to it
         event, chan = await self._actor.wait_for_peer(actor.uid)
         portal = Portal(chan)
-        self._children[(name, proc.pid)] = (actor, proc, portal)
+        self._children[actor.uid][2] = portal
+        return portal
+
+    async def run_in_actor(
+        self,
+        name,
+        fn,
+        bind_addr=('127.0.0.1', 0),
+        rpc_module_paths=None,
+        statespace=None,
+        loglevel=None,  # set log level per subactor
+        **kwargs,  # explicit args to ``fn``
+    ):
+        """Spawn a new actor, run a lone task, then terminate the actor and
+        return its result.
+
+        Actors spawned using this method are kept alive at nursery teardown
+        until the task spawned by executing ``fn`` completes at which point
+        the actor is terminated.
+        """
+        mod_path = fn.__module__
+        portal = await self.start_actor(
+            name,
+            rpc_module_paths=[mod_path],
+            bind_addr=bind_addr,
+            statespace=statespace,
+        )
+        await portal._submit_for_result(
+            mod_path,
+            fn.__name__,
+            **kwargs
+        )
+        self._cancel_after_result_on_exit.add(portal)
         return portal
 
     async def wait(self):
@@ -82,27 +116,34 @@ class ActorNursery:
             # please god don't hang
             proc.join()
             log.debug(f"Joined {proc}")
-            event = self._actor._peers.get(actor.uid)
-            if isinstance(event, trio.Event):
-                event.set()
-                log.warn(
-                    f"Cancelled `wait_for_peer()` call since {actor.uid}"
-                    f" is already dead!")
-            if not portal._result:
-                log.debug(f"Faking result for {actor.uid}")
-                q = self._actor.get_waitq(actor.uid, 'main')
-                q.put_nowait({'return': None, 'cid': 'main'})
+            self._children.pop(actor.uid)
 
-        async def wait_for_result(portal):
-            if portal.channel.connected():
-                log.debug(f"Waiting on final result from {subactor.uid}")
-                await portal.result()
+        async def wait_for_result(portal, actor):
+            # cancel the actor gracefully
+            log.info(f"Cancelling {portal.channel.uid} gracefully")
+            await portal.cancel_actor()
+
+            log.debug(f"Waiting on final result from {subactor.uid}")
+            res = await portal.result()
+            # if it's an async-gen then we should alert the user
+            # that we're cancelling it
+            if inspect.isasyncgen(res):
+                log.warn(
+                    f"Blindly consuming asyncgen for {actor.uid}")
+                with trio.fail_after(1):
+                    async with aclosing(res) as agen:
+                        async for item in agen:
+                            log.debug(f"Consuming item {item}")
 
         # unblocks when all waiter tasks have completed
+        children = self._children.copy()
         async with trio.open_nursery() as nursery:
-            for subactor, proc, portal in self._children.values():
+            for subactor, proc, portal in children.values():
                 nursery.start_soon(wait_for_proc, proc, subactor, portal)
-                nursery.start_soon(wait_for_result, portal)
+                if proc.is_alive() and (
+                    portal in self._cancel_after_result_on_exit
+                ):
+                    nursery.start_soon(wait_for_result, portal, subactor)
 
     async def cancel(self, hard_kill=False):
         """Cancel this nursery by instructing each subactor to cancel
@@ -111,20 +152,37 @@ class ActorNursery:
         If ``hard_killl`` is set to ``True`` then kill the processes
         directly without any far end graceful ``trio`` cancellation.
         """
+        def do_hard_kill(proc):
+            log.warn(f"Hard killing subactors {self._children}")
+            proc.terminate()
+            # XXX: below doesn't seem to work?
+            # send KeyBoardInterrupt (trio abort signal) to sub-actors
+            # os.kill(proc.pid, signal.SIGINT)
+
         log.debug(f"Cancelling nursery")
-        for subactor, proc, portal in self._children.values():
-            if proc is mp.current_process():
-                # XXX: does this even make sense?
-                await subactor.cancel()
-            else:
-                if hard_kill:
-                    log.warn(f"Hard killing subactors {self._children}")
-                    proc.terminate()
-                    # XXX: doesn't seem to work?
-                    # send KeyBoardInterrupt (trio abort signal) to sub-actors
-                    # os.kill(proc.pid, signal.SIGINT)
-                else:
-                    await portal.cancel_actor()
+        with trio.fail_after(3):
+            async with trio.open_nursery() as n:
+                for subactor, proc, portal in self._children.values():
+                    if hard_kill:
+                        do_hard_kill(proc)
+                    else:
+                        if portal is None:  # actor hasn't fully spawned yet
+                            event = self._actor._peer_connected[subactor.uid]
+                            log.warn(
+                                f"{subactor.uid} wasn't finished spawning?")
+                            await event.wait()
+                            # channel/portal should now be up
+                            _, _, portal = self._children[subactor.uid]
+                            if portal is None:
+                                # cancelled while waiting on the event?
+                                chan = self._actor._peers[subactor.uid][-1]
+                                if chan:
+                                    portal = Portal(chan)
+                                else:  # there's no other choice left
+                                    do_hard_kill(proc)
+
+                        # spawn cancel tasks async
+                        n.start_soon(portal.cancel_actor)
 
         log.debug(f"Waiting on all subactors to complete")
         await self.wait()
@@ -134,32 +192,37 @@ class ActorNursery:
     async def __aexit__(self, etype, value, tb):
         """Wait on all subactor's main routines to complete.
         """
-        if etype is not None:
-            # XXX: hypothetically an error could be raised and then
-            # a cancel signal shows up slightly after in which case the
-            # else block here might not complete? Should both be shielded?
-            if etype is trio.Cancelled:
+        try:
+            if etype is not None:
+                # XXX: hypothetically an error could be raised and then
+                # a cancel signal shows up slightly after in which case the
+                # else block here might not complete? Should both be shielded?
                 with trio.open_cancel_scope(shield=True):
-                    log.warn(
-                        f"{current_actor().uid} was cancelled with {etype}"
-                        ", cancelling actor nursery")
-                    await self.cancel()
+                    if etype is trio.Cancelled:
+                        log.warn(
+                            f"{current_actor().uid} was cancelled with {etype}"
+                            ", cancelling actor nursery")
+                        await self.cancel()
+                    else:
+                        log.exception(
+                            f"{current_actor().uid} errored with {etype}, "
+                            "cancelling actor nursery")
+                        await self.cancel()
             else:
-                log.exception(
-                    f"{current_actor().uid} errored with {etype}, "
-                    "cancelling actor nursery")
-                await self.cancel()
-        else:
-            # XXX: this is effectively the lone cancellation/supervisor
-            # strategy which exactly mimicks trio's behaviour
-            log.debug(f"Waiting on subactors {self._children} to complete")
-            try:
-                await self.wait()
-            except Exception as err:
-                log.warn(f"Nursery caught {err}, cancelling")
-                await self.cancel()
-                raise
-            log.debug(f"Nursery teardown complete")
+                # XXX: this is effectively the lone cancellation/supervisor
+                # strategy which exactly mimicks trio's behaviour
+                log.debug(f"Waiting on subactors {self._children} to complete")
+                try:
+                    await self.wait()
+                except Exception as err:
+                    log.warn(f"Nursery caught {err}, cancelling")
+                    await self.cancel()
+                    raise
+                log.debug(f"Nursery teardown complete")
+        except Exception:
+            log.exception("Error on nursery exit:")
+            await self.wait()
+            raise
 
 
 @asynccontextmanager
