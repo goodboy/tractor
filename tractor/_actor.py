@@ -278,7 +278,7 @@ class Actor:
         # worked out we'll likely want to use that!
         log.debug(f"Entering msg loop for {chan} from {chan.uid}")
         try:
-            async for msg in chan.aiter_recv():
+            async for msg in chan:
                 if msg is None:  # terminate sentinel
                     log.debug(
                         f"Cancelling all tasks for {chan} from {chan.uid}")
