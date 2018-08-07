@@ -16,7 +16,7 @@ from multiprocessing import (
     forkserver, semaphore_tracker, spawn, process, util
 )
 from multiprocessing.forkserver import (
-        ForkServer, MAXFDS_TO_SEND, write_unsigned,
+        ForkServer, MAXFDS_TO_SEND
         # _serve_one,
 )
 from multiprocessing.context import reduction
@@ -156,8 +156,7 @@ def main(listener_fd, alive_r, preload, main_path=None, sys_path=None):
                                 returncode = os.WEXITSTATUS(sts)
                             # Send exit code to client process
                             try:
-                                # write_signed(child_w, returncode)
-                                write_unsigned(child_w, returncode)
+                                write_signed(child_w, returncode)
                             except BrokenPipeError:
                                 # client vanished
                                 pass
@@ -206,8 +205,7 @@ def main(listener_fd, alive_r, preload, main_path=None, sys_path=None):
                         else:
                             # Send pid to client process
                             try:
-                                # write_signed(child_w, pid)
-                                write_unsigned(child_w, pid)
+                                write_signed(child_w, pid)
                             except BrokenPipeError:
                                 # client vanished
                                 pass
