@@ -2,33 +2,13 @@
 Actor model API testing
 """
 import time
-from functools import partial, wraps
 from itertools import repeat
-import random
 
 import pytest
 import trio
 import tractor
 
-
-_arb_addr = '127.0.0.1', random.randint(1000, 9999)
-
-
-def tractor_test(fn):
-    """
-    Use:
-
-    @tractor_test
-    async def test_whatever():
-        await ...
-    """
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        __tracebackhide__ = True
-        return tractor.run(
-            partial(fn, *args), arbiter_addr=_arb_addr, **kwargs)
-
-    return wrapper
+from conftest import tractor_test
 
 
 @pytest.mark.trio
@@ -44,7 +24,7 @@ async def test_no_arbitter():
             pass
 
 
-def test_local_actor_async_func():
+def test_local_actor_async_func(arb_addr):
     """Verify a simple async function in-process.
     """
     nums = []
@@ -58,7 +38,7 @@ def test_local_actor_async_func():
             await trio.sleep(0.1)
 
     start = time.time()
-    tractor.run(print_loop, arbiter_addr=_arb_addr)
+    tractor.run(print_loop, arbiter_addr=arb_addr)
 
     # ensure the sleeps were actually awaited
     assert time.time() - start >= 1
@@ -99,13 +79,13 @@ async def spawn(is_arbiter):
         return 10
 
 
-def test_local_arbiter_subactor_global_state():
+def test_local_arbiter_subactor_global_state(arb_addr):
     result = tractor.run(
         spawn,
         True,
         name='arbiter',
         statespace=statespace,
-        arbiter_addr=_arb_addr,
+        arbiter_addr=arb_addr,
     )
     assert result == 10
 
@@ -153,17 +133,17 @@ async def stream_from_single_subactor():
                 # await nursery.cancel()
 
 
-def test_stream_from_single_subactor():
+def test_stream_from_single_subactor(arb_addr):
     """Verify streaming from a spawned async generator.
     """
-    tractor.run(stream_from_single_subactor, arbiter_addr=_arb_addr)
+    tractor.run(stream_from_single_subactor, arbiter_addr=arb_addr)
 
 
 async def assert_err():
     assert 0
 
 
-def test_remote_error():
+def test_remote_error(arb_addr):
     """Verify an error raises in a subactor is propagated to the parent.
     """
     async def main():
@@ -183,7 +163,7 @@ def test_remote_error():
 
     with pytest.raises(tractor.RemoteActorError):
         # also raises
-        tractor.run(main, arbiter_addr=_arb_addr)
+        tractor.run(main, arbiter_addr=arb_addr)
 
 
 async def stream_forever():
@@ -236,43 +216,6 @@ async def test_one_cancels_all():
         assert not n._children
     else:
         pytest.fail("Should have gotten a remote assertion error?")
-
-
-the_line = 'Hi my name is {}'
-
-
-async def hi():
-    return the_line.format(tractor.current_actor().name)
-
-
-async def say_hello(other_actor):
-    await trio.sleep(0.4)  # wait for other actor to spawn
-    async with tractor.find_actor(other_actor) as portal:
-        return await portal.run(__name__, 'hi')
-
-
-@tractor_test
-async def test_trynamic_trio():
-    """Main tractor entry point, the "master" process (for now
-    acts as the "director").
-    """
-    async with tractor.open_nursery() as n:
-        print("Alright... Action!")
-
-        donny = await n.run_in_actor(
-            'donny',
-            say_hello,
-            other_actor='gretchen',
-        )
-        gretchen = await n.run_in_actor(
-            'gretchen',
-            say_hello,
-            other_actor='donny',
-        )
-        print(await gretchen.result())
-        print(await donny.result())
-        await donny.cancel_actor()
-        print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")
 
 
 def movie_theatre_question():
@@ -335,7 +278,7 @@ def do_nothing():
     pass
 
 
-def test_cancel_single_subactor():
+def test_cancel_single_subactor(arb_addr):
 
     async def main():
 
@@ -349,7 +292,7 @@ def test_cancel_single_subactor():
             # would hang otherwise
             await nursery.cancel()
 
-    tractor.run(main, arbiter_addr=_arb_addr)
+    tractor.run(main, arbiter_addr=arb_addr)
 
 
 async def stream_data(seed):
@@ -440,19 +383,19 @@ async def cancel_after(wait):
         return await a_quadruple_example()
 
 
-def test_a_quadruple_example():
+def test_a_quadruple_example(arb_addr):
     """This also serves as a kind of "we'd like to eventually be this
     fast test".
     """
-    results = tractor.run(cancel_after, 2.1, arbiter_addr=_arb_addr)
+    results = tractor.run(cancel_after, 2.1, arbiter_addr=arb_addr)
     assert results
 
 
 @pytest.mark.parametrize('cancel_delay', list(range(1, 7)))
-def test_not_fast_enough_quad(cancel_delay):
+def test_not_fast_enough_quad(arb_addr, cancel_delay):
     """Verify we can cancel midway through the quad example and all actors
     cancel gracefully.
     """
     delay = 1 + cancel_delay/10
-    results = tractor.run(cancel_after, delay, arbiter_addr=_arb_addr)
+    results = tractor.run(cancel_after, delay, arbiter_addr=arb_addr)
     assert results is None

@@ -189,8 +189,7 @@ class Actor:
         self,
         stream: trio.SocketStream,
     ):
-        """
-        Entry point for new inbound connections to the channel server.
+        """Entry point for new inbound connections to the channel server.
         """
         self._no_more_peers.clear()
         chan = Channel(stream=stream)
@@ -279,7 +278,7 @@ class Actor:
         # worked out we'll likely want to use that!
         log.debug(f"Entering msg loop for {chan} from {chan.uid}")
         try:
-            async for msg in chan.aiter_recv():
+            async for msg in chan:
                 if msg is None:  # terminate sentinel
                     log.debug(
                         f"Cancelling all tasks for {chan} from {chan.uid}")
@@ -435,7 +434,7 @@ class Actor:
                 async with get_arbiter(*arbiter_addr) as arb_portal:
                     await arb_portal.run(
                         'self', 'register_actor',
-                        name=self.name, sockaddr=self.accept_addr)
+                        uid=self.uid, sockaddr=self.accept_addr)
                     registered_with_arbiter = True
 
                 task_status.started()
@@ -456,7 +455,7 @@ class Actor:
                 try:
                     await self._parent_chan.send(
                         {'error': traceback.format_exc(), 'cid': 'internal'})
-                except trio.ClosedStreamError:
+                except trio.ClosedResourceError:
                     log.error(
                         f"Failed to ship error to parent "
                         f"{self._parent_chan.uid}, channel was closed")
@@ -523,7 +522,7 @@ class Actor:
             if arbiter_addr is not None:
                 async with get_arbiter(*arbiter_addr) as arb_portal:
                     await arb_portal.run(
-                        'self', 'unregister_actor', name=self.name)
+                        'self', 'unregister_actor', uid=self.uid)
         except OSError:
             log.warn(f"Unable to unregister {self.name} from arbiter")
 
@@ -581,24 +580,30 @@ class Actor:
 
 class Arbiter(Actor):
     """A special actor who knows all the other actors and always has
-    access to the top level nursery.
+    access to a top level nursery.
 
     The arbiter is by default the first actor spawned on each host
     and is responsible for keeping track of all other actors for
     coordination purposes. If a new main process is launched and an
     arbiter is already running that arbiter will be used.
     """
-    _registry = defaultdict(list)
     is_arbiter = True
 
+    def __init__(self, *args, **kwargs):
+        self._registry = defaultdict(list)
+        super().__init__(*args, **kwargs)
+
     def find_actor(self, name):
-        return self._registry[name]
+        for uid, actor in self._registry.items():
+            if name in uid:
+                print('found it!')
+                return actor
 
-    def register_actor(self, name, sockaddr):
-        self._registry[name].append(sockaddr)
+    def register_actor(self, uid, sockaddr):
+        self._registry[uid].append(sockaddr)
 
-    def unregister_actor(self, name):
-        self._registry.pop(name, None)
+    def unregister_actor(self, uid):
+        self._registry.pop(uid, None)
 
 
 async def _start_actor(actor, main, host, port, arbiter_addr, nursery=None):
