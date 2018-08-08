@@ -21,9 +21,9 @@ An async-native `actor model`_ built on trio_ and multiprocessing_.
 .. _chaos engineering: http://principlesofchaos.org/
 
 
-What's this? Spawning event loops in subprocesses?
---------------------------------------------------
-Close, but not quite.
+What's this? Spawning event loops in processes?
+-----------------------------------------------
+Heh, yeah pretty much.
 
 ``tractor`` is an attempt to take trionic_ concurrency concepts and apply
 them to distributed multi-core Python.
@@ -34,18 +34,16 @@ scheduler and task tree (also known as an `async sandwich`_).
 This `actor model`_ allows for highly distributed software architecture which works just as
 well on multiple cores as it does over many hosts.
 ``tractor`` takes much inspiration from pulsar_ and execnet_ but attempts to be much more
-focussed on sophistication of the lower level distributed architecture
-as well as have first class support for modern async Python.
-``tractor`` does **not** use ``asyncio`` hence **no** event loops.
+focussed on sophistication of the lower level distributed architecture as well as have first
+class support for `modern async Python`_.
 
 The first step to grok ``tractor`` is to get the basics of ``trio``
-down. A great place to start is the `trio docs`_ and this `blog post`_
-by njsmith_.
+down. A great place to start is the `trio docs`_ and this `blog post`_.
 
 .. _messages: https://en.wikipedia.org/wiki/Message_passing
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _njsmith: https://github.com/njsmith/
+.. _modern async Python: https://www.python.org/dev/peps/pep-0525/
 
 
 Philosophy
