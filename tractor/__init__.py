@@ -9,7 +9,7 @@ import trio
 from .log import get_console_log, get_logger, get_loglevel
 from ._ipc import _connect_chan, Channel
 from ._actor import (
-    Actor, _start_actor, Arbiter, get_arbiter, find_actor
+    Actor, _start_actor, Arbiter, get_arbiter, find_actor, wait_for_actor
 )
 from ._trionics import open_nursery
 from ._state import current_actor
@@ -17,8 +17,13 @@ from ._portal import RemoteActorError
 
 
 __all__ = [
-    'current_actor', 'find_actor', 'get_arbiter', 'open_nursery',
-    'RemoteActorError', 'Channel',
+    'current_actor',
+    'find_actor',
+    'get_arbiter',
+    'wait_for_actor',
+    'open_nursery',
+    'RemoteActorError',
+    'Channel',
 ]
 
 

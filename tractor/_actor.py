@@ -14,8 +14,13 @@ from async_generator import asynccontextmanager, aclosing
 
 from ._ipc import Channel, _connect_chan
 from .log import get_console_log, get_logger
-from ._portal import (Portal, open_portal, _do_handshake, LocalPortal,
-                      maybe_open_nursery)
+from ._portal import (
+    Portal,
+    open_portal,
+    _do_handshake,
+    LocalPortal,
+    maybe_open_nursery
+)
 from . import _state
 from ._state import current_actor
 
@@ -293,12 +298,12 @@ class Actor:
                 cid = msg.get('cid')
                 if cid:
                     if cid == 'internal':  # internal actor error
-                        # import pdb; pdb.set_trace()
                         raise InternalActorError(
                             f"{chan.uid}\n" + msg['error'])
 
                     # deliver response to local caller/waiter
                     await self._push_result(chan.uid, cid, msg)
+
                     log.debug(
                         f"Waiting on next msg for {chan} from {chan.uid}")
                     continue
@@ -591,16 +596,44 @@ class Arbiter(Actor):
 
     def __init__(self, *args, **kwargs):
         self._registry = defaultdict(list)
+        self._waiters = {}
         super().__init__(*args, **kwargs)
 
     def find_actor(self, name):
-        for uid, actor in self._registry.items():
+        for uid, sockaddr in self._registry.items():
             if name in uid:
-                print('found it!')
-                return actor
+                return sockaddr
+
+    async def wait_for_actor(self, name):
+        """Wait for a particular actor to register.
+
+        This is a blocking call if no actor by the provided name is currently
+        registered.
+        """
+        sockaddrs = []
+
+        for (aname, _), sockaddr in self._registry.items():
+            if name == aname:
+                sockaddrs.append(sockaddr)
+
+        if not sockaddrs:
+            waiter = trio.Event()
+            self._waiters.setdefault(name, []).append(waiter)
+            await waiter.wait()
+            for uid in self._waiters[name]:
+                sockaddrs.append(self._registry[uid])
+
+        return sockaddrs
 
     def register_actor(self, uid, sockaddr):
-        self._registry[uid].append(sockaddr)
+        name, uuid = uid
+        self._registry[uid] = sockaddr
+
+        # pop and signal all waiter events
+        events = self._waiters.pop(name, ())
+        self._waiters.setdefault(name, []).append(uid)
+        for event in events:
+            event.set()
 
     def unregister_actor(self, uid):
         self._registry.pop(uid, None)
@@ -633,7 +666,7 @@ async def _start_actor(actor, main, host, port, arbiter_addr, nursery=None):
             result = await main()
             # XXX: If spawned with a dedicated "main function",
             # the actor is cancelled when this context is complete
-            # given that there are no more active peer channels connected to it.
+            # given that there are no more active peer channels connected
             actor.cancel_server()
 
     # block on actor to complete
@@ -675,17 +708,31 @@ async def find_actor(
     known to the arbiter.
     """
     actor = current_actor()
-    if not actor:
-        raise RuntimeError("No actor instance has been defined yet?")
-
     async with get_arbiter(*arbiter_sockaddr or actor._arb_addr) as arb_portal:
-        sockaddrs = await arb_portal.run('self', 'find_actor', name=name)
+        sockaddr = await arb_portal.run('self', 'find_actor', name=name)
         # TODO: return portals to all available actors - for now just
         # the last one that registered
-        if sockaddrs:
-            sockaddr = sockaddrs[-1]
+        if sockaddr:
             async with _connect_chan(*sockaddr) as chan:
                 async with open_portal(chan) as portal:
                     yield portal
         else:
             yield None
+
+
+@asynccontextmanager
+async def wait_for_actor(
+    name,
+    arbiter_sockaddr=None,
+):
+    """Wait on an actor to register with the arbiter.
+
+    A portal to the first actor which registered is be returned.
+    """
+    actor = current_actor()
+    async with get_arbiter(*arbiter_sockaddr or actor._arb_addr) as arb_portal:
+        sockaddrs = await arb_portal.run('self', 'wait_for_actor', name=name)
+        sockaddr = sockaddrs[-1]
+        async with _connect_chan(*sockaddr) as chan:
+            async with open_portal(chan) as portal:
+                yield portal
