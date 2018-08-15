@@ -139,7 +139,6 @@ class Actor:
         rpc_module_paths: [str] = [],
         statespace: dict = {},
         uid: str = None,
-        allow_rpc: bool = True,
         loglevel: str = None,
         arbiter_addr: (str, int) = None,
     ):
@@ -150,7 +149,6 @@ class Actor:
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
         self.statespace = statespace
-        self._allow_rpc = allow_rpc
         self.loglevel = loglevel
         self._arb_addr = arbiter_addr
 
@@ -189,6 +187,13 @@ class Actor:
         # exists)
         for path in self.rpc_module_paths:
             self._mods[path] = importlib.import_module(path)
+
+            # XXX: triggers an internal error which causes a hanging
+            # problem on teardown (root nursery tears down thus killing all
+            # channels before sending cancels to subactors during actor
+            # nursery teardown - has to do with await main() in MainProcess)
+            # if self.name == 'gretchen':
+            #     self._mods.pop('test_discovery')
 
     async def _stream_handler(
         self,
@@ -352,6 +357,7 @@ class Actor:
 
         except InternalActorError:
             # ship internal errors upwards
+            log.exception("Received internal error:")
             if self._parent_chan:
                 await self._parent_chan.send(
                     {'error': traceback.format_exc(), 'cid': 'internal'})
@@ -404,6 +410,9 @@ class Actor:
             async with maybe_open_nursery(nursery) as nursery:
                 self._root_nursery = nursery
 
+                # load allowed RPC module
+                self.load_namespaces()
+
                 # Startup up channel server
                 host, port = accept_addr
                 await nursery.start(partial(
@@ -434,6 +443,10 @@ class Actor:
                         await self.cancel()
                         self._parent_chan = None
 
+                    # handle new connection back to parent
+                    nursery.start_soon(
+                        self._process_messages, self._parent_chan)
+
                 # register with the arbiter if we're told its addr
                 log.debug(f"Registering {self} for role `{self.name}`")
                 async with get_arbiter(*arbiter_addr) as arb_portal:
@@ -443,14 +456,6 @@ class Actor:
                     registered_with_arbiter = True
 
                 task_status.started()
-                # handle new connection back to parent optionally
-                # begin responding to RPC
-                if self._allow_rpc:
-                    self.load_namespaces()
-                    if self._parent_chan:
-                        nursery.start_soon(
-                            self._process_messages, self._parent_chan)
-
                 log.debug("Waiting on root nursery to complete")
             # blocks here as expected if no nursery was provided until
             # the channel server is killed (i.e. this actor is
@@ -660,6 +665,7 @@ async def _start_actor(actor, main, host, port, arbiter_addr, nursery=None):
                 accept_addr=(host, port),
                 parent_addr=None,
                 arbiter_addr=arbiter_addr,
+                # nursery=nursery
             )
         )
         if main is not None:
