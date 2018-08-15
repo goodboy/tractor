@@ -148,7 +148,9 @@ class Portal:
         """Return the result(s) from the remote actor's "main" task.
         """
         if self._expect_result is None:
-            raise RuntimeError("This portal is not expecting a final result?")
+            raise RuntimeError(
+                f"Portal for {self.channel.uid} is not expecting a final"
+                "result?")
         elif self._result is None:
             self._result = await self._return_from_resptype(
                 *self._expect_result
