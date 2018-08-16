@@ -57,8 +57,8 @@ class Portal:
         # it is expected that ``result()`` will be awaited at some point
         # during the portal's lifetime
         self._result = None
+        self._exc = None
         self._expect_result = None
-        self._errored = False
 
     async def aclose(self):
         log.debug(f"Closing {self}")
@@ -139,8 +139,9 @@ class Portal:
             try:
                 return msg['return']
             except KeyError:
-                raise RemoteActorError(
+                self._exc = RemoteActorError(
                     f"{self.channel.uid}\n" + msg['error'])
+                raise self._exc
         else:
             raise ValueError(f"Unknown msg response type: {first_msg}")
 
