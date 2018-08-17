@@ -387,7 +387,7 @@ def test_a_quadruple_example(arb_addr):
     """This also serves as a kind of "we'd like to eventually be this
     fast test".
     """
-    results = tractor.run(cancel_after, 2.1, arbiter_addr=arb_addr)
+    results = tractor.run(cancel_after, 2.2, arbiter_addr=arb_addr)
     assert results
 
 
