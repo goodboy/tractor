@@ -149,9 +149,16 @@ class Portal:
         """Return the result(s) from the remote actor's "main" task.
         """
         if self._expect_result is None:
-            raise RuntimeError(
-                f"Portal for {self.channel.uid} is not expecting a final"
-                "result?")
+            # (remote) errors are slapped on the channel
+            # teardown can reraise them
+            exc = self.channel._exc
+            if exc:
+                raise RemoteActorError(f"{self.channel.uid}\n" + exc)
+            else:
+                raise RuntimeError(
+                    f"Portal for {self.channel.uid} is not expecting a final"
+                    "result?")
+
         elif self._result is None:
             self._result = await self._return_from_resptype(
                 *self._expect_result
@@ -183,6 +190,7 @@ class Portal:
         else:
             log.warn(f"May have failed to cancel {self.channel.uid}")
             return False
+
 
 class LocalPortal:
     """A 'portal' to a local ``Actor``.
