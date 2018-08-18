@@ -1,6 +1,7 @@
 """
 Actor "discovery" testing
 """
+import pytest
 import tractor
 import trio
 
@@ -49,8 +50,15 @@ async def say_hello(other_actor):
         return await portal.run(__name__, 'hi')
 
 
+async def say_hello_use_wait(other_actor):
+    async with tractor.wait_for_actor(other_actor) as portal:
+        result = await portal.run(__name__, 'hi')
+        return result
+
+
 @tractor_test
-async def test_trynamic_trio():
+@pytest.mark.parametrize('func', [say_hello, say_hello_use_wait])
+async def test_trynamic_trio(func):
     """Main tractor entry point, the "master" process (for now
     acts as the "director").
     """
@@ -59,15 +67,14 @@ async def test_trynamic_trio():
 
         donny = await n.run_in_actor(
             'donny',
-            say_hello,
+            func,
             other_actor='gretchen',
         )
         gretchen = await n.run_in_actor(
             'gretchen',
-            say_hello,
+            func,
             other_actor='donny',
         )
         print(await gretchen.result())
         print(await donny.result())
-        await donny.cancel_actor()
         print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")

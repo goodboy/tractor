@@ -7,7 +7,7 @@ python:
 
 install:
     - cd $TRAVIS_BUILD_DIR
-    - pip install . -r requirements-test.txt
+    - pip install -U . -r requirements-test.txt
 
 script:
     - pytest tests/ --no-print-logs

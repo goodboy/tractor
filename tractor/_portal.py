@@ -57,8 +57,8 @@ class Portal:
         # it is expected that ``result()`` will be awaited at some point
         # during the portal's lifetime
         self._result = None
+        self._exc = None
         self._expect_result = None
-        self._errored = False
 
     async def aclose(self):
         log.debug(f"Closing {self}")
@@ -139,8 +139,9 @@ class Portal:
             try:
                 return msg['return']
             except KeyError:
-                raise RemoteActorError(
+                self._exc = RemoteActorError(
                     f"{self.channel.uid}\n" + msg['error'])
+                raise self._exc
         else:
             raise ValueError(f"Unknown msg response type: {first_msg}")
 
@@ -148,7 +149,16 @@ class Portal:
         """Return the result(s) from the remote actor's "main" task.
         """
         if self._expect_result is None:
-            raise RuntimeError("This portal is not expecting a final result?")
+            # (remote) errors are slapped on the channel
+            # teardown can reraise them
+            exc = self.channel._exc
+            if exc:
+                raise RemoteActorError(f"{self.channel.uid}\n" + exc)
+            else:
+                raise RuntimeError(
+                    f"Portal for {self.channel.uid} is not expecting a final"
+                    "result?")
+
         elif self._result is None:
             self._result = await self._return_from_resptype(
                 *self._expect_result
@@ -180,6 +190,7 @@ class Portal:
         else:
             log.warn(f"May have failed to cancel {self.channel.uid}")
             return False
+
 
 class LocalPortal:
     """A 'portal' to a local ``Actor``.

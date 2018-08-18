@@ -94,8 +94,7 @@ the hip new film we're shooting:
 
 
     async def say_hello(other_actor):
-        await trio.sleep(0.4)  # wait for other actor to spawn
-        async with tractor.find_actor(other_actor) as portal:
+        async with tractor.wait_for_actor(other_actor) as portal:
             return await portal.run(_this_module, 'hi')
 
 
@@ -118,7 +117,6 @@ the hip new film we're shooting:
             )
             print(await gretchen.result())
             print(await donny.result())
-            await donny.cancel_actor()
             print("CUTTTT CUUTT CUT!!! Donny!! You're supposed to say...")
 
 
