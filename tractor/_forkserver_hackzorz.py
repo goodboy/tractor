@@ -29,6 +29,8 @@ SIGNED_STRUCT = struct.Struct('q')     # large enough for pid_t
 
 class PatchedForkServer(ForkServer):
 
+    _forkserver_pid = None
+
     def connect_to_new_process(self, fds):
         '''Request forkserver to create a child process.
 
