@@ -1,9 +1,11 @@
 language: python
-python:
-    - '3.6'
-    # setup.py reading README breaks this?
-    # - pypy
-    # - nightly
+
+matrix:
+    include:
+        - python: 3.6
+        - python: 3.7
+          dist: xenial
+          sudo: required
 
 install:
     - cd $TRAVIS_BUILD_DIR
