@@ -383,19 +383,31 @@ async def cancel_after(wait):
         return await a_quadruple_example()
 
 
-def test_a_quadruple_example(arb_addr):
-    """This also serves as a kind of "we'd like to eventually be this
-    fast test".
-    """
-    results = tractor.run(cancel_after, 2.2, arbiter_addr=arb_addr)
+@pytest.fixture(scope='module')
+def time_quad_ex(arb_addr):
+    start = time.time()
+    results = tractor.run(cancel_after, 3, arbiter_addr=arb_addr)
+    diff = time.time() - start
     assert results
+    return results, diff
 
 
-@pytest.mark.parametrize('cancel_delay', list(range(1, 7)))
-def test_not_fast_enough_quad(arb_addr, cancel_delay):
+def test_a_quadruple_example(time_quad_ex):
+    """This also serves as a kind of "we'd like to be this fast test"."""
+    results, diff = time_quad_ex
+    assert results
+    assert diff < 2.5
+
+
+@pytest.mark.parametrize(
+    'cancel_delay',
+    list(map(lambda i: i/10, range(3, 10)))
+)
+def test_not_fast_enough_quad(arb_addr, time_quad_ex, cancel_delay):
     """Verify we can cancel midway through the quad example and all actors
     cancel gracefully.
     """
-    delay = 1 + cancel_delay/10
+    results, diff = time_quad_ex
+    delay = diff - cancel_delay
     results = tractor.run(cancel_after, delay, arbiter_addr=arb_addr)
     assert results is None
