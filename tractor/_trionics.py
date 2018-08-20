@@ -4,6 +4,7 @@
 import multiprocessing as mp
 import inspect
 from multiprocessing import forkserver, semaphore_tracker
+import typing
 
 import trio
 from async_generator import asynccontextmanager, aclosing
@@ -23,8 +24,8 @@ log = get_logger('tractor')
 class ActorNursery:
     """Spawn scoped subprocess actors.
     """
-    def __init__(self, actor, supervisor=None):
-        self.supervisor = supervisor  # TODO
+    def __init__(self, actor: Actor):
+        # self.supervisor = supervisor  # TODO
         self._actor = actor
         self._children = {}
         # portals spawned with ``run_in_actor()``
@@ -38,11 +39,11 @@ class ActorNursery:
     async def start_actor(
         self,
         name: str,
-        bind_addr=('127.0.0.1', 0),
-        statespace=None,
-        rpc_module_paths=None,
-        loglevel=None,  # set log level per subactor
-    ):
+        bind_addr: (str, int) = ('127.0.0.1', 0),
+        statespace: dict = None,
+        rpc_module_paths: [str] = None,
+        loglevel: str = None,  # set log level per subactor
+    ) -> Portal:
         loglevel = loglevel or self._actor.loglevel or get_loglevel()
         actor = Actor(
             name,
@@ -104,14 +105,14 @@ class ActorNursery:
 
     async def run_in_actor(
         self,
-        name,
-        fn,
-        bind_addr=('127.0.0.1', 0),
-        rpc_module_paths=None,
-        statespace=None,
-        loglevel=None,  # set log level per subactor
+        name: str,
+        fn: typing.Callable,
+        bind_addr: (str, int) = ('127.0.0.1', 0),
+        rpc_module_paths: [str] = None,
+        statespace: dict = None,
+        loglevel: str = None,  # set log level per subactor
         **kwargs,  # explicit args to ``fn``
-    ):
+    ) -> Portal:
         """Spawn a new actor, run a lone task, then terminate the actor and
         return its result.
 
@@ -134,7 +135,7 @@ class ActorNursery:
         )
         return portal
 
-    async def wait(self):
+    async def wait(self) -> None:
         """Wait for all subactors to complete.
         """
         async def maybe_consume_result(portal, actor):
@@ -193,7 +194,7 @@ class ActorNursery:
                     cs = await nursery.start(wait_for_actor, portal, subactor)
                 nursery.start_soon(wait_for_proc, proc, subactor, portal, cs)
 
-    async def cancel(self, hard_kill=False):
+    async def cancel(self, hard_kill: bool = False) -> None:
         """Cancel this nursery by instructing each subactor to cancel
         iteslf and wait for all subprocesses to terminate.
 
@@ -274,7 +275,7 @@ class ActorNursery:
 
 
 @asynccontextmanager
-async def open_nursery(supervisor=None):
+async def open_nursery() -> typing.AsyncContextManager[ActorNursery]:
     """Create and yield a new ``ActorNursery``.
     """
     actor = current_actor()
@@ -282,5 +283,5 @@ async def open_nursery(supervisor=None):
         raise RuntimeError("No actor instance has been defined yet?")
 
     # TODO: figure out supervisors from erlang
-    async with ActorNursery(current_actor(), supervisor) as nursery:
+    async with ActorNursery(current_actor()) as nursery:
         yield nursery

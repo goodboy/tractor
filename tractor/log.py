@@ -92,5 +92,5 @@ def get_console_log(level: str = None, name: str = None) -> logging.Logger:
     return log
 
 
-def get_loglevel():
+def get_loglevel() -> str:
     return _default_loglevel

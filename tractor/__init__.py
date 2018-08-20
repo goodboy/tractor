@@ -3,6 +3,7 @@ tractor: An actor model micro-framework built on
          ``trio`` and ``multiprocessing``.
 """
 from functools import partial
+import typing
 
 import trio
 
@@ -32,7 +33,13 @@ _default_arbiter_host = '127.0.0.1'
 _default_arbiter_port = 1616
 
 
-async def _main(async_fn, args, kwargs, name, arbiter_addr):
+async def _main(
+    async_fn: typing.Callable[..., typing.Awaitable],
+    args: tuple,
+    kwargs: dict,
+    name: str,
+    arbiter_addr: (str, int)
+) -> typing.Any:
     """Async entry point for ``tractor``.
     """
     log = get_logger('tractor')
@@ -73,11 +80,11 @@ async def _main(async_fn, args, kwargs, name, arbiter_addr):
 
 
 def run(
-    async_fn,
-    *args,
-    name=None,
-    arbiter_addr=(_default_arbiter_host, _default_arbiter_port),
-    **kwargs
+    async_fn: typing.Callable[..., typing.Awaitable],
+    *args: ...,
+    name: str = None,
+    arbiter_addr: (str, int) = (_default_arbiter_host, _default_arbiter_port),
+    **kwargs: ...
 ):
     """Run a trio-actor async function in process.
 
