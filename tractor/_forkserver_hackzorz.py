@@ -2,6 +2,9 @@
 This is near-copy of the 3.8 stdlib's ``multiprocessing.forkserver.py``
 with some hackery to prevent any more then a single forkserver and
 semaphore tracker per ``MainProcess``.
+
+.. note:: There is no type hinting in this code base (yet) to remain as
+          a close as possible to upstream.
 """
 import os
 import socket

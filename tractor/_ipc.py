@@ -42,11 +42,11 @@ class StreamQueue:
                 yield packet
 
     @property
-    def laddr(self) -> (str, int):
+    def laddr(self) -> typing.Tuple[str, int]:
         return self._laddr
 
     @property
-    def raddr(self) -> (str, int):
+    def raddr(self) -> typing.Tuple[str, int]:
         return self._raddr
 
     async def put(self, data: typing.Any) -> int:
@@ -97,11 +97,11 @@ class Channel:
         return object.__repr__(self)
 
     @property
-    def laddr(self) -> (str, int):
+    def laddr(self) -> typing.Tuple[str, int]:
         return self.squeue.laddr if self.squeue else (None, None)
 
     @property
-    def raddr(self) -> (str, int):
+    def raddr(self) -> typing.Tuple[str, int]:
         return self.squeue.raddr if self.squeue else (None, None)
 
     async def connect(

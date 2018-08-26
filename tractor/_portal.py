@@ -31,7 +31,9 @@ async def maybe_open_nursery(nursery: trio._core._run.Nursery = None):
             yield nursery
 
 
-async def _do_handshake(actor: 'Actor', chan: 'Channel') -> (str, str):
+async def _do_handshake(
+    actor: 'Actor', chan: 'Channel'
+)-> typing.Tuple[str, str]:
     await chan.send(actor.uid)
     uid = await chan.recv()
 
@@ -69,7 +71,7 @@ class Portal:
 
     async def _submit(
         self, ns: str, func: str, **kwargs
-    ) -> (str, trio.Queue, str, dict):
+    ) -> typing.Tuple[str, trio.Queue, str, typing.Dict[str, typing.Any]]:
         """Submit a function to be scheduled and run by actor, return the
         associated caller id, response queue, response type str,
         first message packet as a tuple.
