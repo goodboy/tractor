@@ -4,7 +4,7 @@ Log like a forester!
 from functools import partial
 import sys
 import logging
-import colorlog
+import colorlog  # type: ignore
 
 _proj_name = 'tractor'
 _default_loglevel = None
@@ -69,25 +69,19 @@ def get_console_log(level: str = None, name: str = None) -> logging.Logger:
     log = get_logger(name)  # our root logger
 
     if not level:
-        return
+        return log
 
     log.setLevel(level.upper() if not isinstance(level, int) else level)
-
-    if not any(
-        handler.stream == sys.stderr for handler in log.handlers
-        if getattr(handler, 'stream', None)
-    ):
-        handler = logging.StreamHandler()
-
-        formatter = colorlog.ColoredFormatter(
-            LOG_FORMAT,
-            datefmt=DATE_FORMAT,
-            log_colors=STD_PALETTE,
-            secondary_log_colors=BOLD_PALETTE,
-            style='{',
-        )
-        handler.setFormatter(formatter)
-        log.addHandler(handler)
+    handler = logging.StreamHandler()
+    formatter = colorlog.ColoredFormatter(
+        LOG_FORMAT,
+        datefmt=DATE_FORMAT,
+        log_colors=STD_PALETTE,
+        secondary_log_colors=BOLD_PALETTE,
+        style='{',
+    )
+    handler.setFormatter(formatter)
+    log.addHandler(handler)
 
     return log
 
