@@ -2,6 +2,7 @@
 Inter-process comms abstractions
 """
 import typing
+from typing import Any, Tuple, Optional
 
 import msgpack
 import trio
@@ -14,7 +15,7 @@ log = get_logger('ipc')
 class StreamQueue:
     """Stream wrapped as a queue that delivers ``msgpack`` serialized objects.
     """
-    def __init__(self, stream: trio.SocketStream):
+    def __init__(self, stream: trio.SocketStream) -> None:
         self.stream = stream
         self._agen = self._iter_packets()
         self._laddr = self.stream.socket.getsockname()[:2]
@@ -28,7 +29,7 @@ class StreamQueue:
         while True:
             try:
                 data = await self.stream.receive_some(2**10)
-                log.trace(f"received {data}")
+                log.trace(f"received {data}")  # type: ignore
             except trio.BrokenStreamError:
                 log.error(f"Stream connection {self.raddr} broke")
                 return
@@ -42,19 +43,19 @@ class StreamQueue:
                 yield packet
 
     @property
-    def laddr(self) -> typing.Tuple[str, int]:
+    def laddr(self) -> Tuple[str, int]:
         return self._laddr
 
     @property
-    def raddr(self) -> typing.Tuple[str, int]:
+    def raddr(self) -> Tuple[str, int]:
         return self._raddr
 
-    async def put(self, data: typing.Any) -> int:
+    async def put(self, data: Any) -> int:
         async with self._send_lock:
             return await self.stream.send_all(
                 msgpack.dumps(data, use_bin_type=True))
 
-    async def get(self) -> typing.Any:
+    async def get(self) -> Any:
         return await self._agen.asend(None)
 
     def __aiter__(self):
@@ -72,21 +73,24 @@ class Channel:
     """
     def __init__(
         self,
-        destaddr: tuple = None,
-        on_reconnect: typing.Coroutine = None,
+        destaddr: Optional[Tuple[str, int]] = None,
+        on_reconnect: typing.Callable[..., typing.Awaitable] = None,
         auto_reconnect: bool = False,
         stream: trio.SocketStream = None,  # expected to be active
     ) -> None:
         self._recon_seq = on_reconnect
         self._autorecon = auto_reconnect
-        self.squeue = StreamQueue(stream) if stream else None
+        self.squeue: Optional[StreamQueue] = StreamQueue(
+            stream) if stream else None
         if self.squeue and destaddr:
             raise ValueError(
                 f"A stream was provided with local addr {self.laddr}"
             )
-        self._destaddr = destaddr or self.squeue.raddr
+        self._destaddr = self.squeue.raddr if self.squeue else destaddr
         # set after handshake - always uid of far end
-        self.uid = None
+        self.uid: Optional[Tuple[str, str]] = None
+        # set if far end actor errors internally
+        self._exc: Optional[Exception] = None
         self._agen = self._aiter_recv()
 
     def __repr__(self) -> str:
@@ -97,15 +101,15 @@ class Channel:
         return object.__repr__(self)
 
     @property
-    def laddr(self) -> typing.Tuple[str, int]:
-        return self.squeue.laddr if self.squeue else (None, None)
+    def laddr(self) -> Optional[Tuple[str, int]]:
+        return self.squeue.laddr if self.squeue else None
 
     @property
-    def raddr(self) -> typing.Tuple[str, int]:
-        return self.squeue.raddr if self.squeue else (None, None)
+    def raddr(self) -> Optional[Tuple[str, int]]:
+        return self.squeue.raddr if self.squeue else None
 
     async def connect(
-        self, destaddr: typing.Tuple[str, int] = None, **kwargs
+        self, destaddr: Tuple[str, int] = None, **kwargs
     ) -> trio.SocketStream:
         if self.connected():
             raise RuntimeError("channel is already connected?")
@@ -114,11 +118,13 @@ class Channel:
         self.squeue = StreamQueue(stream)
         return stream
 
-    async def send(self, item: typing.Any) -> None:
-        log.trace(f"send `{item}`")
+    async def send(self, item: Any) -> None:
+        log.trace(f"send `{item}`")  # type: ignore
+        assert self.squeue
         await self.squeue.put(item)
 
-    async def recv(self) -> typing.Any:
+    async def recv(self) -> Any:
+        assert self.squeue
         try:
             return await self.squeue.get()
         except trio.BrokenStreamError:
@@ -128,6 +134,7 @@ class Channel:
 
     async def aclose(self) -> None:
         log.debug(f"Closing {self}")
+        assert self.squeue
         await self.squeue.stream.aclose()
 
     async def __aenter__(self):
@@ -171,9 +178,10 @@ class Channel:
 
     async def _aiter_recv(
         self
-    ) -> typing.AsyncGenerator[typing.Any, None]:
+    ) -> typing.AsyncGenerator[Any, None]:
         """Async iterate items from underlying stream.
         """
+        assert self.squeue
         while True:
             try:
                 async for item in self.squeue:
@@ -200,7 +208,7 @@ class Channel:
 @asynccontextmanager
 async def _connect_chan(
     host: str, port: int
-) -> typing.AsyncContextManager[Channel]:
+) -> typing.AsyncGenerator[Channel, None]:
     """Create and connect a channel with disconnect on context manager
     teardown.
     """

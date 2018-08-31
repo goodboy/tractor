@@ -2,9 +2,10 @@
 Log like a forester!
 """
 from functools import partial
-import sys
 import logging
 import colorlog  # type: ignore
+from typing import Optional
+
 
 _proj_name = 'tractor'
 _default_loglevel = None
@@ -86,5 +87,5 @@ def get_console_log(level: str = None, name: str = None) -> logging.Logger:
     return log
 
 
-def get_loglevel() -> str:
+def get_loglevel() -> Optional[str]:
     return _default_loglevel

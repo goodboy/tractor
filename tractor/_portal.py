@@ -3,11 +3,13 @@ Portal api
 """
 import importlib
 import typing
+from typing import Tuple, Any, Dict, Optional
 
 import trio
 from async_generator import asynccontextmanager
 
 from ._state import current_actor
+from ._ipc import Channel
 from .log import get_logger
 
 
@@ -32,10 +34,11 @@ async def maybe_open_nursery(nursery: trio._core._run.Nursery = None):
 
 
 async def _do_handshake(
-    actor: 'Actor', chan: 'Channel'
-)-> typing.Tuple[str, str]:
+    actor: 'Actor',  # type: ignore
+    chan: Channel
+)-> Any:
     await chan.send(actor.uid)
-    uid = await chan.recv()
+    uid: Tuple[str, str] = await chan.recv()
 
     if not isinstance(uid, tuple):
         raise ValueError(f"{uid} is not a valid uid?!")
@@ -54,14 +57,16 @@ class Portal:
 
     Think of this like an native async IPC API.
     """
-    def __init__(self, channel: 'Channel'):
+    def __init__(self, channel: Channel) -> None:
         self.channel = channel
         # when this is set to a tuple returned from ``_submit()`` then
         # it is expected that ``result()`` will be awaited at some point
         # during the portal's lifetime
         self._result = None
-        self._exc = None
-        self._expect_result = None
+        self._exc: Optional[RemoteActorError] = None
+        self._expect_result: Optional[
+            Tuple[str, Any, str, Dict[str, Any]]
+        ] = None
 
     async def aclose(self) -> None:
         log.debug(f"Closing {self}")
@@ -71,7 +76,7 @@ class Portal:
 
     async def _submit(
         self, ns: str, func: str, **kwargs
-    ) -> typing.Tuple[str, trio.Queue, str, typing.Dict[str, typing.Any]]:
+    ) -> Tuple[str, trio.Queue, str, Dict[str, Any]]:
         """Submit a function to be scheduled and run by actor, return the
         associated caller id, response queue, response type str,
         first message packet as a tuple.
@@ -103,7 +108,7 @@ class Portal:
                 "A pending main result has already been submitted"
         self._expect_result = await self._submit(ns, func, **kwargs)
 
-    async def run(self, ns: str, func: str, **kwargs) -> typing.Any:
+    async def run(self, ns: str, func: str, **kwargs) -> Any:
         """Submit a function to be scheduled and run by actor, wrap and return
         its (stream of) result(s).
 
@@ -115,7 +120,7 @@ class Portal:
 
     async def _return_from_resptype(
         self, cid: str, q: trio.Queue, resptype: str, first_msg: dict
-    ) -> typing.Any:
+    ) -> Any:
         # TODO: not this needs some serious work and thinking about how
         # to make async-generators the fundamental IPC API over channels!
         # (think `yield from`, `gen.send()`, and functional reactive stuff)
@@ -152,7 +157,7 @@ class Portal:
         else:
             raise ValueError(f"Unknown msg response type: {first_msg}")
 
-    async def result(self) -> typing.Any:
+    async def result(self) -> Any:
         """Return the result(s) from the remote actor's "main" task.
         """
         if self._expect_result is None:
@@ -160,7 +165,7 @@ class Portal:
             # teardown can reraise them
             exc = self.channel._exc
             if exc:
-                raise RemoteActorError(f"{self.channel.uid}\n" + exc)
+                raise RemoteActorError(f"{self.channel.uid}\n{exc}")
             else:
                 raise RuntimeError(
                     f"Portal for {self.channel.uid} is not expecting a final"
@@ -205,22 +210,24 @@ class LocalPortal:
     A compatibility shim for normal portals but for invoking functions
     using an in process actor instance.
     """
-    def __init__(self, actor: 'Actor'):
+    def __init__(
+        self,
+        actor: 'Actor'  # type: ignore
+    ) -> None:
         self.actor = actor
 
-    async def run(self, ns: str, func: str, **kwargs) -> typing.Any:
+    async def run(self, ns: str, func: str, **kwargs) -> Any:
         """Run a requested function locally and return it's result.
         """
         obj = self.actor if ns == 'self' else importlib.import_module(ns)
-        func = getattr(obj, func)
-        return func(**kwargs)
+        return getattr(obj, func)(**kwargs)
 
 
 @asynccontextmanager
 async def open_portal(
-    channel: 'Channel',
+    channel: Channel,
     nursery: trio._core._run.Nursery = None
-) -> typing.AsyncContextManager[Portal]:
+) -> typing.AsyncGenerator[Portal, None]:
     """Open a ``Portal`` through the provided ``channel``.
 
     Spawns a background task to handle message processing.

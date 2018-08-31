@@ -15,15 +15,12 @@ import errno
 import selectors
 import warnings
 
-from multiprocessing import (
-    forkserver, semaphore_tracker, spawn, process, util,
-    connection
-)
+from multiprocessing import semaphore_tracker, spawn, process  # type: ignore
+from multiprocessing import forkserver, util, connection  # type: ignore
 from multiprocessing.forkserver import (
         ForkServer, MAXFDS_TO_SEND
-        # _serve_one,
 )
-from multiprocessing.context import reduction
+from multiprocessing.context import reduction  # type: ignore
 
 
 # taken from 3.8
