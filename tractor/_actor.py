@@ -1,15 +1,17 @@
 """
 Actor primitives and helpers
 """
-import inspect
-import importlib
 from collections import defaultdict
 from functools import partial
+from itertools import chain
+import importlib
+import inspect
 import traceback
 import uuid
-from itertools import chain
+import typing
+from typing import Dict, List, Tuple, Any, Optional, Union
 
-import trio
+import trio  # type: ignore
 from async_generator import asynccontextmanager, aclosing
 
 from ._ipc import Channel, _connect_chan
@@ -36,12 +38,28 @@ class InternalActorError(RuntimeError):
 
 
 async def _invoke(
-    actor, cid, chan, func, kwargs,
-    treat_as_gen=False,
+    actor: 'Actor',
+    cid: str,
+    chan: Channel,
+    func: typing.Callable,
+    kwargs: Dict[str, Any],
     task_status=trio.TASK_STATUS_IGNORED
 ):
     """Invoke local func and return results over provided channel.
     """
+    sig = inspect.signature(func)
+    treat_as_gen = False
+    if 'chan' in sig.parameters:
+        assert 'cid' in sig.parameters, \
+            f"{func} must accept a `cid` (caller id) kwarg"
+        kwargs['chan'] = chan
+        kwargs['cid'] = cid
+        # TODO: eventually we want to be more stringent
+        # about what is considered a far-end async-generator.
+        # Right now both actual async gens and any async
+        # function which declares a `chan` kwarg in its
+        # signature will be treated as one.
+        treat_as_gen = True
     try:
         is_async_partial = False
         is_async_gen_partial = False
@@ -135,41 +153,45 @@ class Actor:
     def __init__(
         self,
         name: str,
-        rpc_module_paths: [str] = [],
-        statespace: dict = {},
+        rpc_module_paths: List[str] = [],
+        statespace: Optional[Dict[str, Any]] = None,
         uid: str = None,
         loglevel: str = None,
-        arbiter_addr: (str, int) = None,
-    ):
+        arbiter_addr: Optional[Tuple[str, int]] = None,
+    ) -> None:
         self.name = name
         self.uid = (name, uid or str(uuid.uuid1()))
         self.rpc_module_paths = rpc_module_paths
-        self._mods = {}
+        self._mods: dict = {}
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
-        self.statespace = statespace
+        self.statespace = statespace or {}
         self.loglevel = loglevel
         self._arb_addr = arbiter_addr
 
         # filled in by `_async_main` after fork
-        self._root_nursery = None
-        self._server_nursery = None
-        self._peers = defaultdict(list)
-        self._peer_connected = {}
+        self._root_nursery: trio._core._run.Nursery = None
+        self._server_nursery: trio._core._run.Nursery = None
+        self._peers: defaultdict = defaultdict(list)
+        self._peer_connected: dict = {}
         self._no_more_peers = trio.Event()
         self._no_more_peers.set()
 
         self._no_more_rpc_tasks = trio.Event()
         self._no_more_rpc_tasks.set()
-        self._rpc_tasks = {}
+        self._rpc_tasks: Dict[
+            Channel,
+            List[Tuple[trio._core._run.CancelScope, typing.Callable]]
+        ] = {}
+        # map {uids -> {callids -> waiter queues}}
+        self._actors2calls: Dict[Tuple[str, str], Dict[str, trio.Queue]] = {}
+        self._listeners: List[trio.abc.Listener] = []
+        self._parent_chan: Optional[Channel] = None
+        self._forkserver_info: Optional[Tuple[Any, Any, Any, Any, Any]] = None
 
-        self._actors2calls = {}  # map {uids -> {callids -> waiter queues}}
-        self._listeners = []
-        self._parent_chan = None
-        self._accept_host = None
-        self._forkserver_info = None
-
-    async def wait_for_peer(self, uid):
+    async def wait_for_peer(
+        self, uid: Tuple[str, str]
+    ) -> Tuple[trio.Event, Channel]:
         """Wait for a connection back from a spawned actor with a given
         ``uid``.
         """
@@ -179,11 +201,13 @@ class Actor:
         log.debug(f"{uid} successfully connected back to us")
         return event, self._peers[uid][-1]
 
-    def load_namespaces(self):
-        # We load namespaces after fork since this actor may
-        # be spawned on a different machine from the original nursery
-        # and we need to try and load the local module code (if it
-        # exists)
+    def load_modules(self) -> None:
+        """Load allowed RPC modules locally (after fork).
+
+        Since this actor may be spawned on a different machine from
+        the original nursery we need to try and load the local module
+        code (if it exists).
+        """
         for path in self.rpc_module_paths:
             self._mods[path] = importlib.import_module(path)
 
@@ -198,7 +222,7 @@ class Actor:
     async def _stream_handler(
         self,
         stream: trio.SocketStream,
-    ):
+    ) -> None:
         """Entry point for new inbound connections to the channel server.
         """
         self._no_more_peers.clear()
@@ -256,33 +280,44 @@ class Actor:
                 await chan.send(None)
                 await chan.aclose()
 
-    async def _push_result(self, actorid, cid, msg):
+    async def _push_result(self, actorid, cid: str, msg: dict) -> None:
+        """Push an RPC result to the local consumer's queue.
+        """
         assert actorid, f"`actorid` can't be {actorid}"
         q = self.get_waitq(actorid, cid)
         log.debug(f"Delivering {msg} from {actorid} to caller {cid}")
         # maintain backpressure
         await q.put(msg)
 
-    def get_waitq(self, actorid, cid):
+    def get_waitq(
+        self,
+        actorid: Tuple[str, str],
+        cid: str
+    ) -> trio.Queue:
         log.debug(f"Getting result queue for {actorid} cid {cid}")
         cids2qs = self._actors2calls.setdefault(actorid, {})
         return cids2qs.setdefault(cid, trio.Queue(1000))
 
-    async def send_cmd(self, chan, ns, func, kwargs):
+    async def send_cmd(
+        self, chan: Channel, ns: str, func: str, kwargs: dict
+    ) -> Tuple[str, trio.Queue]:
         """Send a ``'cmd'`` message to a remote actor and return a
         caller id and a ``trio.Queue`` that can be used to wait for
         responses delivered by the local message processing loop.
         """
         cid = str(uuid.uuid1())
+        assert chan.uid
         q = self.get_waitq(chan.uid, cid)
         log.debug(f"Sending cmd to {chan.uid}: {ns}.{func}({kwargs})")
         await chan.send({'cmd': (ns, func, kwargs, self.uid, cid)})
         return cid, q
 
-    async def _process_messages(self, chan, treat_as_gen=False):
-        """Process messages async-RPC style.
+    async def _process_messages(
+        self, chan: Channel, treat_as_gen: bool = False
+    ) -> None:
+        """Process messages for the channel async-RPC style.
 
-        Process rpc requests and deliver retrieved responses from channels.
+        Receive multiplexed RPC requests and deliver responses over ``chan``.
         """
         # TODO: once https://github.com/python-trio/trio/issues/467 gets
         # worked out we'll likely want to use that!
@@ -315,6 +350,7 @@ class Actor:
                     # push any non-rpc-response error to all local consumers
                     # and mark the channel as errored
                     chan._exc = err = msg['error']
+                    assert chan.uid
                     for cid in self._actors2calls[chan.uid]:
                         await self._push_result(chan.uid, cid, msg)
                     raise InternalActorError(f"{chan.uid}\n" + err)
@@ -328,23 +364,9 @@ class Actor:
                     func = getattr(self._mods[ns], funcname)
 
                 # spin up a task for the requested function
-                sig = inspect.signature(func)
-                treat_as_gen = False
-                if 'chan' in sig.parameters:
-                    assert 'cid' in sig.parameters, \
-                        f"{func} must accept a `cid` (caller id) kwarg"
-                    kwargs['chan'] = chan
-                    kwargs['cid'] = cid
-                    # TODO: eventually we want to be more stringent
-                    # about what is considered a far-end async-generator.
-                    # Right now both actual async gens and any async
-                    # function which declares a `chan` kwarg in its
-                    # signature will be treated as one.
-                    treat_as_gen = True
-
                 log.debug(f"Spawning task for {func}")
                 cs = await self._root_nursery.start(
-                    _invoke, self, cid, chan, func, kwargs, treat_as_gen,
+                    _invoke, self, cid, chan, func, kwargs,
                     name=funcname
                 )
                 # never allow cancelling cancel requests (results in
@@ -371,7 +393,12 @@ class Actor:
         finally:
             log.debug(f"Exiting msg loop for {chan} from {chan.uid}")
 
-    def _fork_main(self, accept_addr, forkserver_info, parent_addr=None):
+    def _fork_main(
+        self,
+        accept_addr: Tuple[str, int],
+        forkserver_info: Tuple[Any, Any, Any, Any, Any],
+        parent_addr: Tuple[str, int] = None
+    ) -> None:
         # after fork routine which invokes a fresh ``trio.run``
         # log.warn("Log level after fork is {self.loglevel}")
         self._forkserver_info = forkserver_info
@@ -391,22 +418,17 @@ class Actor:
 
     async def _async_main(
         self,
-        accept_addr,
-        arbiter_addr=None,
-        parent_addr=None,
-        _main_coro=None,
-        task_status=trio.TASK_STATUS_IGNORED,
-    ):
+        accept_addr: Tuple[str, int],
+        arbiter_addr: Optional[Tuple[str, int]] = None,
+        parent_addr: Optional[Tuple[str, int]] = None,
+        task_status: trio._core._run._TaskStatus = trio.TASK_STATUS_IGNORED,
+    ) -> None:
         """Start the channel server, maybe connect back to the parent, and
         start the main task.
 
         A "root-most" (or "top-level") nursery for this actor is opened here
         and when cancelled effectively cancels the actor.
         """
-        # if this is the `MainProcess` then we get a ref to the main
-        # task's coroutine object for tossing errors into
-        self._main_coro = _main_coro
-
         arbiter_addr = arbiter_addr or self._arb_addr
         registered_with_arbiter = False
         try:
@@ -414,7 +436,7 @@ class Actor:
                 self._root_nursery = nursery
 
                 # load allowed RPC module
-                self.load_namespaces()
+                self.load_modules()
 
                 # Startup up channel server
                 host, port = accept_addr
@@ -422,12 +444,6 @@ class Actor:
                     self._serve_forever, accept_host=host, accept_port=port)
                 )
 
-                # XXX: I wonder if a better name is maybe "requester"
-                # since I don't think the notion of a "parent" actor
-                # necessarily sticks given that eventually we want
-                # ``'MainProcess'`` (the actor who initially starts the
-                # forkserver) to eventually be the only one who is
-                # allowed to spawn new processes per Python program.
                 if parent_addr is not None:
                     try:
                         # Connect back to the parent actor and conduct initial
@@ -502,10 +518,10 @@ class Actor:
         self,
         *,
         # (host, port) to bind for channel server
-        accept_host=None,
-        accept_port=0,
-        task_status=trio.TASK_STATUS_IGNORED
-    ):
+        accept_host: Tuple[str, int] = None,
+        accept_port: int = 0,
+        task_status: trio._core._run._TaskStatus = trio.TASK_STATUS_IGNORED,
+    ) -> None:
         """Start the channel server, begin listening for new connections.
 
         This will cause an actor to continue living (blocking) until
@@ -531,7 +547,7 @@ class Actor:
             self._listeners.extend(listeners)
             task_status.started()
 
-    async def _do_unreg(self, arbiter_addr):
+    async def _do_unreg(self, arbiter_addr: Optional[Tuple[str, int]]) -> None:
         # UNregister actor from the arbiter
         try:
             if arbiter_addr is not None:
@@ -541,7 +557,7 @@ class Actor:
         except OSError:
             log.warn(f"Unable to unregister {self.name} from arbiter")
 
-    async def cancel(self):
+    async def cancel(self) -> None:
         """Cancel this actor.
 
         The sequence in order is:
@@ -554,23 +570,23 @@ class Actor:
         self.cancel_server()
         self._root_nursery.cancel_scope.cancel()
 
-    async def cancel_rpc_tasks(self):
+    async def cancel_rpc_tasks(self) -> None:
         """Cancel all existing RPC responder tasks using the cancel scope
         registered for each.
         """
-        scopes = self._rpc_tasks
-        log.info(f"Cancelling all {len(scopes)} rpc tasks:\n{scopes}")
-        for chan, scopes in scopes.items():
+        tasks = self._rpc_tasks
+        log.info(f"Cancelling all {len(tasks)} rpc tasks:\n{tasks}")
+        for chan, scopes in tasks.items():
             log.debug(f"Cancelling all tasks for {chan.uid}")
             for scope, func in scopes:
                 log.debug(f"Cancelling task for {func}")
                 scope.cancel()
-        if scopes:
+        if tasks:
             log.info(
-                f"Waiting for remaining rpc tasks to complete {scopes}")
+                f"Waiting for remaining rpc tasks to complete {tasks}")
             await self._no_more_rpc_tasks.wait()
 
-    def cancel_server(self):
+    def cancel_server(self) -> None:
         """Cancel the internal channel server nursery thereby
         preventing any new inbound connections from being established.
         """
@@ -578,19 +594,22 @@ class Actor:
         self._server_nursery.cancel_scope.cancel()
 
     @property
-    def accept_addr(self):
+    def accept_addr(self) -> Optional[Tuple[str, int]]:
         """Primary address to which the channel server is bound.
         """
         try:
             return self._listeners[0].socket.getsockname()
         except OSError:
-            return
+            return None
 
-    def get_parent(self):
+    def get_parent(self) -> Portal:
+        """Return a portal to our parent actor."""
+        assert self._parent_chan, "No parent channel for this actor?"
         return Portal(self._parent_chan)
 
-    def get_chans(self, actorid):
-        return self._peers[actorid]
+    def get_chans(self, uid: Tuple[str, str]) -> List[Channel]:
+        """Return all channels to the actor with provided uid."""
+        return self._peers[uid]
 
 
 class Arbiter(Actor):
@@ -609,12 +628,16 @@ class Arbiter(Actor):
         self._waiters = {}
         super().__init__(*args, **kwargs)
 
-    def find_actor(self, name):
+    def find_actor(self, name: str) -> Optional[Tuple[str, int]]:
         for uid, sockaddr in self._registry.items():
             if name in uid:
                 return sockaddr
 
-    async def wait_for_actor(self, name):
+        return None
+
+    async def wait_for_actor(
+        self, name: str
+    ) -> List[Tuple[str, int]]:
         """Wait for a particular actor to register.
 
         This is a blocking call if no actor by the provided name is currently
@@ -635,7 +658,9 @@ class Arbiter(Actor):
 
         return sockaddrs
 
-    def register_actor(self, uid, sockaddr):
+    def register_actor(
+        self, uid: Tuple[str, str], sockaddr: Tuple[str, int]
+    ) -> None:
         name, uuid = uid
         self._registry[uid] = sockaddr
 
@@ -645,13 +670,20 @@ class Arbiter(Actor):
         for event in events:
             event.set()
 
-    def unregister_actor(self, uid):
+    def unregister_actor(self, uid: Tuple[str, str]) -> None:
         self._registry.pop(uid, None)
 
 
-async def _start_actor(actor, main, host, port, arbiter_addr, nursery=None):
-    """Spawn a local actor by starting a task to execute it's main
-    async function.
+async def _start_actor(
+    actor: Actor,
+    main: typing.Callable[..., typing.Awaitable],
+    host: str,
+    port: int,
+    arbiter_addr: Tuple[str, int],
+    nursery: trio._core._run.Nursery = None
+):
+    """Spawn a local actor by starting a task to execute it's main async
+    function.
 
     Blocks if no nursery is provided, in which case it is expected the nursery
     provider is responsible for waiting on the task to complete.
@@ -664,28 +696,21 @@ async def _start_actor(actor, main, host, port, arbiter_addr, nursery=None):
     log.info(f"Starting local {actor} @ {host}:{port}")
 
     async with trio.open_nursery() as nursery:
-
-        if main is not None:
-            main_coro = main()
-
         await nursery.start(
             partial(
                 actor._async_main,
                 accept_addr=(host, port),
                 parent_addr=None,
                 arbiter_addr=arbiter_addr,
-                _main_coro=main_coro
             )
         )
         if main is not None:
-            result = await main_coro
+            result = await main()
 
         # XXX: If spawned with a dedicated "main function",
         # the actor is cancelled when this context is complete
         # given that there are no more active peer channels connected
         actor.cancel_server()
-
-    # block on actor to complete
 
     # unset module state
     _state._current_actor = None
@@ -695,7 +720,9 @@ async def _start_actor(actor, main, host, port, arbiter_addr, nursery=None):
 
 
 @asynccontextmanager
-async def get_arbiter(host, port):
+async def get_arbiter(
+    host: str, port: int
+) -> typing.AsyncGenerator[Union[Portal, LocalPortal], None]:
     """Return a portal instance connected to a local or remote
     arbiter.
     """
@@ -715,9 +742,8 @@ async def get_arbiter(host, port):
 
 @asynccontextmanager
 async def find_actor(
-    name,
-    arbiter_sockaddr=None,
-):
+    name: str, arbiter_sockaddr: Tuple[str, int] = None
+) -> typing.AsyncGenerator[Optional[Portal], None]:
     """Ask the arbiter to find actor(s) by name.
 
     Returns a connected portal to the last registered matching actor
@@ -738,9 +764,9 @@ async def find_actor(
 
 @asynccontextmanager
 async def wait_for_actor(
-    name,
-    arbiter_sockaddr=None,
-):
+    name: str,
+    arbiter_sockaddr: Tuple[str, int] = None
+) -> typing.AsyncGenerator[Portal, None]:
     """Wait on an actor to register with the arbiter.
 
     A portal to the first actor which registered is be returned.

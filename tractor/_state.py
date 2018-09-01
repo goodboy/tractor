@@ -1,10 +1,13 @@
 """
 Per process state
 """
-_current_actor = None
+from typing import Optional
 
 
-def current_actor() -> 'Actor':
+_current_actor: Optional['Actor'] = None  # type: ignore
+
+
+def current_actor() -> 'Actor':  # type: ignore
     """Get the process-local actor instance.
     """
     if not _current_actor:

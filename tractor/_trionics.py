@@ -3,7 +3,9 @@
 """
 import multiprocessing as mp
 import inspect
-from multiprocessing import forkserver, semaphore_tracker
+from multiprocessing import forkserver, semaphore_tracker  # type: ignore
+from typing import Tuple, List, Dict, Optional, Any
+import typing
 
 import trio
 from async_generator import asynccontextmanager, aclosing
@@ -23,14 +25,17 @@ log = get_logger('tractor')
 class ActorNursery:
     """Spawn scoped subprocess actors.
     """
-    def __init__(self, actor, supervisor=None):
-        self.supervisor = supervisor  # TODO
-        self._actor = actor
-        self._children = {}
+    def __init__(self, actor: Actor) -> None:
+        # self.supervisor = supervisor  # TODO
+        self._actor: Actor = actor
+        self._children: Dict[
+            Tuple[str, str],
+            Tuple[Actor, mp.Process, Optional[Portal]]
+        ] = {}
         # portals spawned with ``run_in_actor()``
-        self._cancel_after_result_on_exit = set()
-        self.cancelled = False
-        self._forkserver = None
+        self._cancel_after_result_on_exit: set = set()
+        self.cancelled: bool = False
+        self._forkserver: forkserver.ForkServer = None
 
     async def __aenter__(self):
         return self
@@ -38,11 +43,11 @@ class ActorNursery:
     async def start_actor(
         self,
         name: str,
-        bind_addr=('127.0.0.1', 0),
-        statespace=None,
-        rpc_module_paths=None,
-        loglevel=None,  # set log level per subactor
-    ):
+        bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
+        statespace: Optional[Dict[str, Any]] = None,
+        rpc_module_paths: List[str] = None,
+        loglevel: str = None,  # set log level per subactor
+    ) -> Portal:
         loglevel = loglevel or self._actor.loglevel or get_loglevel()
         actor = Actor(
             name,
@@ -70,6 +75,7 @@ class ActorNursery:
                 semaphore_tracker._semaphore_tracker._fd,
             )
         else:
+            assert self._actor._forkserver_info
             fs_info = (
                 fs._forkserver_address,
                 fs._forkserver_alive_fd,
@@ -87,7 +93,7 @@ class ActorNursery:
         # register the process before start in case we get a cancel
         # request before the actor has fully spawned - then we can wait
         # for it to fully come up before sending a cancel request
-        self._children[actor.uid] = [actor, proc, None]
+        self._children[actor.uid] = (actor, proc, None)
 
         proc.start()
         if not proc.is_alive():
@@ -99,19 +105,19 @@ class ActorNursery:
         # local actor by the time we get a ref to it
         event, chan = await self._actor.wait_for_peer(actor.uid)
         portal = Portal(chan)
-        self._children[actor.uid][2] = portal
+        self._children[actor.uid] = (actor, proc, portal)
         return portal
 
     async def run_in_actor(
         self,
-        name,
-        fn,
-        bind_addr=('127.0.0.1', 0),
-        rpc_module_paths=None,
-        statespace=None,
-        loglevel=None,  # set log level per subactor
+        name: str,
+        fn: typing.Callable,
+        bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
+        rpc_module_paths: List[str] = None,
+        statespace: dict = None,
+        loglevel: str = None,  # set log level per subactor
         **kwargs,  # explicit args to ``fn``
-    ):
+    ) -> Portal:
         """Spawn a new actor, run a lone task, then terminate the actor and
         return its result.
 
@@ -134,7 +140,7 @@ class ActorNursery:
         )
         return portal
 
-    async def wait(self):
+    async def wait(self) -> None:
         """Wait for all subactors to complete.
         """
         async def maybe_consume_result(portal, actor):
@@ -154,7 +160,12 @@ class ActorNursery:
                             async for item in agen:
                                 log.debug(f"Consuming item {item}")
 
-        async def wait_for_proc(proc, actor, portal, cancel_scope):
+        async def wait_for_proc(
+            proc: mp.Process,
+            actor: Actor,
+            portal: Portal,
+            cancel_scope: trio._core._run.CancelScope,
+        ) -> None:
             # TODO: timeout block here?
             if proc.is_alive():
                 await trio.hazmat.wait_readable(proc.sentinel)
@@ -171,9 +182,10 @@ class ActorNursery:
                 cancel_scope.cancel()
 
         async def wait_for_actor(
-            portal, actor,
+            portal: Portal,
+            actor: Actor,
             task_status=trio.TASK_STATUS_IGNORED,
-        ):
+        ) -> None:
             # cancel the actor gracefully
             with trio.open_cancel_scope() as cs:
                 task_status.started(cs)
@@ -193,7 +205,7 @@ class ActorNursery:
                     cs = await nursery.start(wait_for_actor, portal, subactor)
                 nursery.start_soon(wait_for_proc, proc, subactor, portal, cs)
 
-    async def cancel(self, hard_kill=False):
+    async def cancel(self, hard_kill: bool = False) -> None:
         """Cancel this nursery by instructing each subactor to cancel
         iteslf and wait for all subprocesses to terminate.
 
@@ -230,6 +242,7 @@ class ActorNursery:
                                     do_hard_kill(proc)
 
                         # spawn cancel tasks async
+                        assert portal
                         n.start_soon(portal.cancel_actor)
 
         log.debug(f"Waiting on all subactors to complete")
@@ -274,7 +287,7 @@ class ActorNursery:
 
 
 @asynccontextmanager
-async def open_nursery(supervisor=None):
+async def open_nursery() -> typing.AsyncGenerator[None, ActorNursery]:
     """Create and yield a new ``ActorNursery``.
     """
     actor = current_actor()
@@ -282,5 +295,5 @@ async def open_nursery(supervisor=None):
         raise RuntimeError("No actor instance has been defined yet?")
 
     # TODO: figure out supervisors from erlang
-    async with ActorNursery(current_actor(), supervisor) as nursery:
+    async with ActorNursery(current_actor()) as nursery:
         yield nursery

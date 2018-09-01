@@ -12,4 +12,5 @@ install:
     - pip install -U . -r requirements-test.txt
 
 script:
+    - mypy tractor/  --ignore-missing-imports
     - pytest tests/ --no-print-logs
