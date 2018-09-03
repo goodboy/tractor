@@ -114,7 +114,7 @@ class ActorNursery:
         fn: typing.Callable,
         bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
         rpc_module_paths: List[str] = None,
-        statespace: dict = None,
+        statespace: Dict[str, Any] = None,
         loglevel: str = None,  # set log level per subactor
         **kwargs,  # explicit args to ``fn``
     ) -> Portal:
@@ -287,7 +287,7 @@ class ActorNursery:
 
 
 @asynccontextmanager
-async def open_nursery() -> typing.AsyncGenerator[None, ActorNursery]:
+async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
     """Create and yield a new ``ActorNursery``.
     """
     actor = current_actor()
