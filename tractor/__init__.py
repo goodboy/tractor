@@ -43,7 +43,7 @@ async def _main(
     """Async entry point for ``tractor``.
     """
     log = get_logger('tractor')
-    main = partial(async_fn, *args) if async_fn else None
+    main = partial(async_fn, *args)
     arbiter_addr = (host, port) = arbiter_addr or (
             _default_arbiter_host, _default_arbiter_port)
     get_console_log(kwargs.get('loglevel', get_loglevel()))

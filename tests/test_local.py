@@ -8,6 +8,9 @@ import trio
 import tractor
 
 
+from conftest import tractor_test
+
+
 @pytest.mark.trio
 async def test_no_arbitter():
     """An arbitter must be established before any nurseries
@@ -19,6 +22,13 @@ async def test_no_arbitter():
     with pytest.raises(RuntimeError):
         with tractor.open_nursery():
             pass
+
+
+def test_no_main():
+    """An async function **must** be passed to ``tractor.run()``.
+    """
+    with pytest.raises(TypeError):
+        tractor.run(None)
 
 
 def test_local_actor_async_func(arb_addr):
