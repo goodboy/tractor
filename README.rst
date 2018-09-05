@@ -328,7 +328,7 @@ generator function running in a separate actor:
 
 Alright, let's get fancy.
 
-Say you wanted to spawn two actors which each pulling data feeds from
+Say you wanted to spawn two actors which each pull data feeds from
 two different sources (and wanted this work spread across 2 cpus).
 You also want to aggregate these feeds, do some processing on them and then
 deliver the final result stream to a client (or in this case parent) actor
