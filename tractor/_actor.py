@@ -668,7 +668,8 @@ class Arbiter(Actor):
         events = self._waiters.pop(name, ())
         self._waiters.setdefault(name, []).append(uid)
         for event in events:
-            event.set()
+            if isinstance(event, trio.Event):
+                event.set()
 
     def unregister_actor(self, uid: Tuple[str, str]) -> None:
         self._registry.pop(uid, None)
