@@ -14,7 +14,7 @@ from conftest import tractor_test
 
 
 def sig_prog(proc, sig):
-    "Kill the actor-process with ctr-c."
+    "Kill the actor-process with ``sig``."
     proc.send_signal(sig)
     ret = proc.wait()
     assert ret
