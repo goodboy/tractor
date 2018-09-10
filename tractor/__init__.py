@@ -4,7 +4,7 @@ tractor: An actor model micro-framework built on
 """
 import importlib
 from functools import partial
-from typing import Tuple, Any
+from typing import Tuple, Any, Optional
 import typing
 
 import trio  # type: ignore
@@ -56,7 +56,7 @@ async def _main(
         async with _connect_chan(host, port):
             arbiter_found = True
     except OSError:
-        log.warn(f"No actor could be found @ {host}:{port}")
+        log.warning(f"No actor could be found @ {host}:{port}")
 
     # create a local actor and start up its main routine/task
     if arbiter_found:  # we were able to connect to an arbiter
@@ -97,14 +97,12 @@ def run(
 
 
 def run_daemon(
-    rpc_modules: Tuple[str] = (),
+    rpc_modules: Optional[Tuple[str]] = None,
     **kwargs
 ) -> None:
-    for path in rpc_modules:
+    for path in rpc_modules or ():
         importlib.import_module(path)
 
-    return run(
-        partial(trio.sleep, float('inf')),
-        rpc_module_paths=rpc_modules,
-        **kwargs
-    )
+    kwargs['rpc_module_paths'] = rpc_modules
+
+    return run(partial(trio.sleep, float('inf')), **kwargs)

@@ -153,7 +153,7 @@ class ActorNursery:
                 # if it's an async-gen then we should alert the user
                 # that we're cancelling it
                 if inspect.isasyncgen(res):
-                    log.warn(
+                    log.warning(
                         f"Blindly consuming asyncgen for {actor.uid}")
                     with trio.fail_after(1):
                         async with aclosing(res) as agen:
@@ -177,7 +177,7 @@ class ActorNursery:
             self._children.pop(actor.uid)
             # proc terminated, cancel result waiter
             if cancel_scope:
-                log.warn(
+                log.warning(
                     f"Cancelling existing result waiter task for {actor.uid}")
                 cancel_scope.cancel()
 
@@ -194,7 +194,7 @@ class ActorNursery:
                 await portal.cancel_actor()
 
             if cs.cancelled_caught:
-                log.warn("Result waiter was cancelled")
+                log.warning("Result waiter was cancelled")
 
         # unblocks when all waiter tasks have completed
         children = self._children.copy()
@@ -213,7 +213,7 @@ class ActorNursery:
         directly without any far end graceful ``trio`` cancellation.
         """
         def do_hard_kill(proc):
-            log.warn(f"Hard killing subactors {self._children}")
+            log.warning(f"Hard killing subactors {self._children}")
             proc.terminate()
             # XXX: below doesn't seem to work?
             # send KeyBoardInterrupt (trio abort signal) to sub-actors
@@ -228,7 +228,7 @@ class ActorNursery:
                     else:
                         if portal is None:  # actor hasn't fully spawned yet
                             event = self._actor._peer_connected[subactor.uid]
-                            log.warn(
+                            log.warning(
                                 f"{subactor.uid} wasn't finished spawning?")
                             await event.wait()
                             # channel/portal should now be up
@@ -260,7 +260,7 @@ class ActorNursery:
                 # else block here might not complete? Should both be shielded?
                 with trio.open_cancel_scope(shield=True):
                     if etype is trio.Cancelled:
-                        log.warn(
+                        log.warning(
                             f"{current_actor().uid} was cancelled with {etype}"
                             ", cancelling actor nursery")
                         await self.cancel()
@@ -276,7 +276,7 @@ class ActorNursery:
                 try:
                     await self.wait()
                 except Exception as err:
-                    log.warn(f"Nursery caught {err}, cancelling")
+                    log.warning(f"Nursery caught {err}, cancelling")
                     await self.cancel()
                     raise
                 log.debug(f"Nursery teardown complete")

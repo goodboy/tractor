@@ -158,11 +158,11 @@ class Channel:
                     await self.connect()
                 cancelled = cancel_scope.cancelled_caught
                 if cancelled:
-                    log.warn(
+                    log.warning(
                         "Reconnect timed out after 3 seconds, retrying...")
                     continue
                 else:
-                    log.warn("Stream connection re-established!")
+                    log.warning("Stream connection re-established!")
                     # run any reconnection sequence
                     on_recon = self._recon_seq
                     if on_recon:
@@ -171,7 +171,7 @@ class Channel:
             except (OSError, ConnectionRefusedError):
                 if not down:
                     down = True
-                    log.warn(
+                    log.warning(
                         f"Connection to {self.raddr} went down, waiting"
                         " for re-establishment")
                 await trio.sleep(1)

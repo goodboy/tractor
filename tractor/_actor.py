@@ -233,7 +233,7 @@ class Actor:
         try:
             uid = await _do_handshake(self, chan)
         except StopAsyncIteration:
-            log.warn(f"Channel {chan} failed to handshake")
+            log.warning(f"Channel {chan} failed to handshake")
             return
 
         # channel tracking
@@ -248,7 +248,7 @@ class Actor:
 
         chans = self._peers[uid]
         if chans:
-            log.warn(
+            log.warning(
                 f"already have channel(s) for {uid}:{chans}?"
             )
         log.debug(f"Registered {chan} for {uid}")
@@ -400,7 +400,7 @@ class Actor:
         parent_addr: Tuple[str, int] = None
     ) -> None:
         # after fork routine which invokes a fresh ``trio.run``
-        # log.warn("Log level after fork is {self.loglevel}")
+        # log.warning("Log level after fork is {self.loglevel}")
         self._forkserver_info = forkserver_info
         from ._trionics import ctx
         if self.loglevel is not None:
@@ -456,7 +456,7 @@ class Actor:
                         # initial handshake, report who we are, who they are
                         await _do_handshake(self, chan)
                     except OSError:  # failed to connect
-                        log.warn(
+                        log.warning(
                             f"Failed to connect to parent @ {parent_addr},"
                             " closing server")
                         await self.cancel()
@@ -555,7 +555,7 @@ class Actor:
                     await arb_portal.run(
                         'self', 'unregister_actor', uid=self.uid)
         except OSError:
-            log.warn(f"Unable to unregister {self.name} from arbiter")
+            log.warning(f"Unable to unregister {self.name} from arbiter")
 
     async def cancel(self) -> None:
         """Cancel this actor.
