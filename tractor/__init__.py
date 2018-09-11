@@ -97,12 +97,14 @@ def run(
 
 
 def run_daemon(
-    rpc_modules: Optional[Tuple[str]] = None,
+    rpc_modules: Tuple[str],
     **kwargs
 ) -> None:
-    for path in rpc_modules or ():
-        importlib.import_module(path)
-
+    """Spawn a single daemon-actor which will repond to RPC.
+    """
     kwargs['rpc_module_paths'] = rpc_modules
+
+    for path in rpc_modules:
+        importlib.import_module(path)
 
     return run(partial(trio.sleep, float('inf')), **kwargs)
