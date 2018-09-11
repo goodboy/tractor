@@ -8,6 +8,7 @@ import pytest
 import tractor
 
 
+pytest_plugins = ['pytester']
 _arb_addr = '127.0.0.1', random.randint(1000, 9999)
 
 

@@ -186,7 +186,7 @@ class Portal:
     async def cancel_actor(self) -> bool:
         """Cancel the actor on the other end of this portal.
         """
-        log.warn(
+        log.warning(
             f"Sending cancel request to {self.channel.uid} on "
             f"{self.channel}")
         try:
@@ -196,11 +196,11 @@ class Portal:
                 await self.run('self', 'cancel')
                 return True
         except trio.ClosedResourceError:
-            log.warn(
+            log.warning(
                 f"{self.channel} for {self.channel.uid} was already closed?")
             return False
         else:
-            log.warn(f"May have failed to cancel {self.channel.uid}")
+            log.warning(f"May have failed to cancel {self.channel.uid}")
             return False
 
 

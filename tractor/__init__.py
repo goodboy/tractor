@@ -2,7 +2,9 @@
 tractor: An actor model micro-framework built on
          ``trio`` and ``multiprocessing``.
 """
+import importlib
 from functools import partial
+from typing import Tuple, Any, Optional
 import typing
 
 import trio  # type: ignore
@@ -35,10 +37,10 @@ _default_arbiter_port = 1616
 
 async def _main(
     async_fn: typing.Callable[..., typing.Awaitable],
-    args: typing.Tuple,
+    args: Tuple,
     kwargs: typing.Dict[str, typing.Any],
     name: str,
-    arbiter_addr: typing.Tuple[str, int]
+    arbiter_addr: Tuple[str, int]
 ) -> typing.Any:
     """Async entry point for ``tractor``.
     """
@@ -54,7 +56,7 @@ async def _main(
         async with _connect_chan(host, port):
             arbiter_found = True
     except OSError:
-        log.warn(f"No actor could be found @ {host}:{port}")
+        log.warning(f"No actor could be found @ {host}:{port}")
 
     # create a local actor and start up its main routine/task
     if arbiter_found:  # we were able to connect to an arbiter
@@ -81,13 +83,28 @@ async def _main(
 
 def run(
     async_fn: typing.Callable[..., typing.Awaitable],
-    *args: typing.Tuple,
+    *args: Tuple,
     name: str = None,
-    arbiter_addr: typing.Tuple[str, int] = (_default_arbiter_host, _default_arbiter_port),
+    arbiter_addr: Tuple[str, int] = (
+        _default_arbiter_host, _default_arbiter_port),
     **kwargs: typing.Dict[str, typing.Any],
-):
+) -> Any:
     """Run a trio-actor async function in process.
 
     This is tractor's main entry and the start point for any async actor.
     """
     return trio.run(_main, async_fn, args, kwargs, name, arbiter_addr)
+
+
+def run_daemon(
+    rpc_modules: Tuple[str],
+    **kwargs
+) -> None:
+    """Spawn a single daemon-actor which will repond to RPC.
+    """
+    kwargs['rpc_module_paths'] = rpc_modules
+
+    for path in rpc_modules:
+        importlib.import_module(path)
+
+    return run(partial(trio.sleep, float('inf')), **kwargs)
