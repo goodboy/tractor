@@ -97,14 +97,18 @@ def run(
 
 
 def run_daemon(
-    rpc_modules: Tuple[str],
+    rpc_module_paths: Tuple[str],
     **kwargs
 ) -> None:
-    """Spawn a single daemon-actor which will repond to RPC.
-    """
-    kwargs['rpc_module_paths'] = rpc_modules
+    """Spawn daemon actor which will respond to RPC.
 
-    for path in rpc_modules:
+    This is a convenience wrapper around
+    ``tractor.run(trio.sleep(float('inf')))`` such that the first actor spawned
+    is meant to run forever handling to RPC requests.
+    """
+    kwargs['rpc_module_paths'] = rpc_module_paths
+
+    for path in rpc_module_paths:
         importlib.import_module(path)
 
     return run(partial(trio.sleep, float('inf')), **kwargs)
