@@ -705,11 +705,9 @@ async def _start_actor(
                 arbiter_addr=arbiter_addr,
             )
         )
-        if main is not None:
-            result = await main()
+        result = await main()
 
-        # XXX: If spawned with a dedicated "main function",
-        # the actor is cancelled when this context is complete
+        # XXX: the actor is cancelled when this context is complete
         # given that there are no more active peer channels connected
         actor.cancel_server()
 
