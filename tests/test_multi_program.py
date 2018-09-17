@@ -35,7 +35,8 @@ def daemon(loglevel, testdir, arb_addr):
         stderr=subprocess.PIPE,
     )
     assert not proc.returncode
-    time.sleep(0.2)
+    wait = 0.6 if sys.version_info < (3, 7) else 0.2
+    time.sleep(wait)
     yield proc
     # TODO: why sometimes does SIGINT not work on teardown?
     sig_prog(proc, signal.SIGINT)
@@ -52,6 +53,7 @@ def test_abort_on_sigint(daemon):
 
 @tractor_test
 async def test_cancel_remote_arbiter(daemon, arb_addr):
+    assert not tractor.current_actor().is_arbiter
     async with tractor.get_arbiter(*arb_addr) as portal:
         await portal.cancel_actor()
 
@@ -67,6 +69,7 @@ async def test_cancel_remote_arbiter(daemon, arb_addr):
 
 @tractor_test
 async def test_register_duplicate_name(daemon):
+    assert not tractor.current_actor().is_arbiter
     async with tractor.open_nursery() as n:
         p1 = await n.start_actor('doggy')
         p2 = await n.start_actor('doggy')
