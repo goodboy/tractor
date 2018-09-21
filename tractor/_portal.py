@@ -2,6 +2,7 @@
 Portal api
 """
 import importlib
+import inspect
 import typing
 from typing import Tuple, Any, Dict, Optional
 
@@ -220,7 +221,11 @@ class LocalPortal:
         """Run a requested function locally and return it's result.
         """
         obj = self.actor if ns == 'self' else importlib.import_module(ns)
-        return getattr(obj, func)(**kwargs)
+        func = getattr(obj, func)
+        if inspect.iscoroutinefunction(func):
+            return await func(**kwargs)
+        else:
+            return func(**kwargs)
 
 
 @asynccontextmanager
