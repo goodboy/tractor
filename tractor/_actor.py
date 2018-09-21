@@ -768,7 +768,7 @@ async def wait_for_actor(
 ) -> typing.AsyncGenerator[Portal, None]:
     """Wait on an actor to register with the arbiter.
 
-    A portal to the first actor which registered is be returned.
+    A portal to the first registered actor is returned.
     """
     actor = current_actor()
     async with get_arbiter(*arbiter_sockaddr or actor._arb_addr) as arb_portal:
