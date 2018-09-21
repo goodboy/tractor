@@ -31,6 +31,26 @@ def test_no_main():
         tractor.run(None)
 
 
+@tractor_test
+async def test_self_is_registered():
+    "Verify waiting on the arbiter to register itself using the standard api."
+    actor = tractor.current_actor()
+    assert actor.is_arbiter
+    async with tractor.wait_for_actor('arbiter') as portal:
+        assert portal.channel.uid[0] == 'arbiter'
+
+
+@tractor_test
+async def test_self_is_registered_localportal(arb_addr):
+    "Verify waiting on the arbiter to register itself using a local portal."
+    actor = tractor.current_actor()
+    assert actor.is_arbiter
+    async with tractor.get_arbiter(*arb_addr) as portal:
+        assert isinstance(portal, tractor._portal.LocalPortal)
+        sockaddr = await portal.run('self', 'wait_for_actor', name='arbiter')
+        assert sockaddr[0] == arb_addr
+
+
 def test_local_actor_async_func(arb_addr):
     """Verify a simple async function in-process.
     """
