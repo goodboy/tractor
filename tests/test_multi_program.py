@@ -16,6 +16,12 @@ from conftest import tractor_test
 def sig_prog(proc, sig):
     "Kill the actor-process with ``sig``."
     proc.send_signal(sig)
+    time.sleep(0.1)
+    if not proc.poll():
+        # TODO: why sometimes does SIGINT not work on teardown?
+        # seems to happen only when trace logging enabled?
+        proc.send_signal(signal.SIGKILL)
+
     ret = proc.wait()
     assert ret
 
@@ -38,7 +44,6 @@ def daemon(loglevel, testdir, arb_addr):
     wait = 0.6 if sys.version_info < (3, 7) else 0.2
     time.sleep(wait)
     yield proc
-    # TODO: why sometimes does SIGINT not work on teardown?
     sig_prog(proc, signal.SIGINT)
 
 
