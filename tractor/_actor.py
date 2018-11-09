@@ -218,6 +218,7 @@ class Actor:
             # - has to do with await main() in MainProcess)
             # if self.name == 'gretchen':
             #     self._mods.pop('test_discovery')
+            # TODO: how to test the above?
 
     async def _stream_handler(
         self,
@@ -399,8 +400,8 @@ class Actor:
         forkserver_info: Tuple[Any, Any, Any, Any, Any],
         parent_addr: Tuple[str, int] = None
     ) -> None:
-        # after fork routine which invokes a fresh ``trio.run``
-        # log.warning("Log level after fork is {self.loglevel}")
+        """The routine called *after fork* which invokes a fresh ``trio.run``
+        """
         self._forkserver_info = forkserver_info
         from ._trionics import ctx
         if self.loglevel is not None:
@@ -447,7 +448,7 @@ class Actor:
                 if parent_addr is not None:
                     try:
                         # Connect back to the parent actor and conduct initial
-                        # handshake (From this point on if we error ship the
+                        # handshake (From this point on if we error, ship the
                         # exception back to the parent actor)
                         chan = self._parent_chan = Channel(
                             destaddr=parent_addr,
@@ -476,14 +477,13 @@ class Actor:
 
                 task_status.started()
                 log.debug("Waiting on root nursery to complete")
-            # blocks here as expected if no nursery was provided until
-            # the channel server is killed (i.e. this actor is
-            # cancelled or signalled by the parent actor)
+
+            # blocks here as expected until the channel server is
+            # killed (i.e. this actor is cancelled or signalled by the parent)
         except Exception:
             if self._parent_chan:
                 try:
                     await self._parent_chan.send(
-                        # {'error': traceback.format_exc(), 'cid': 'internal'})
                         {'error': traceback.format_exc()})
                 except trio.ClosedResourceError:
                     log.error(

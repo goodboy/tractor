@@ -104,7 +104,7 @@ def run_daemon(
 
     This is a convenience wrapper around
     ``tractor.run(trio.sleep(float('inf')))`` such that the first actor spawned
-    is meant to run forever handling to RPC requests.
+    is meant to run forever responding to RPC requests.
     """
     kwargs['rpc_module_paths'] = rpc_module_paths
 
