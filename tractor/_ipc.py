@@ -30,7 +30,7 @@ class StreamQueue:
             try:
                 data = await self.stream.receive_some(2**10)
                 log.trace(f"received {data}")  # type: ignore
-            except trio.BrokenStreamError:
+            except trio.BrokenResourceError:
                 log.error(f"Stream connection {self.raddr} broke")
                 return
 
@@ -127,7 +127,7 @@ class Channel:
         assert self.squeue
         try:
             return await self.squeue.get()
-        except trio.BrokenStreamError:
+        except trio.BrokenResourceError:
             if self._autorecon:
                 await self._reconnect()
                 return await self.recv()
@@ -191,7 +191,7 @@ class Channel:
                     #     # optimization, passing None through all the
                     #     # time is pointless
                     #     await self.squeue.put(sent)
-            except trio.BrokenStreamError:
+            except trio.BrokenResourceError:
                 if not self._autorecon:
                     raise
             await self.aclose()
