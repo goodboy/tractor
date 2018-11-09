@@ -1,6 +1,7 @@
 """
 Log like a forester!
 """
+import sys
 from functools import partial
 import logging
 import colorlog  # type: ignore
@@ -73,16 +74,21 @@ def get_console_log(level: str = None, name: str = None) -> logging.Logger:
         return log
 
     log.setLevel(level.upper() if not isinstance(level, int) else level)
-    handler = logging.StreamHandler()
-    formatter = colorlog.ColoredFormatter(
-        LOG_FORMAT,
-        datefmt=DATE_FORMAT,
-        log_colors=STD_PALETTE,
-        secondary_log_colors=BOLD_PALETTE,
-        style='{',
-    )
-    handler.setFormatter(formatter)
-    log.addHandler(handler)
+
+    if not any(
+        handler.stream == sys.stderr for handler in log.handlers
+        if getattr(handler, 'stream', None)
+    ):
+        handler = logging.StreamHandler()
+        formatter = colorlog.ColoredFormatter(
+            LOG_FORMAT,
+            datefmt=DATE_FORMAT,
+            log_colors=STD_PALETTE,
+            secondary_log_colors=BOLD_PALETTE,
+            style='{',
+        )
+        handler.setFormatter(formatter)
+        log.addHandler(handler)
 
     return log
 
