@@ -4,10 +4,11 @@ tractor: An actor model micro-framework built on
 """
 import importlib
 from functools import partial
-from typing import Tuple, Any, Optional
+from typing import Tuple, Any
 import typing
 
 import trio  # type: ignore
+from trio import MultiError
 
 from .log import get_console_log, get_logger, get_loglevel
 from ._ipc import _connect_chan, Channel
@@ -23,10 +24,11 @@ __all__ = [
     'current_actor',
     'find_actor',
     'get_arbiter',
-    'wait_for_actor',
     'open_nursery',
-    'RemoteActorError',
+    'wait_for_actor',
     'Channel',
+    'MultiError',
+    'RemoteActorError',
 ]
 
 
