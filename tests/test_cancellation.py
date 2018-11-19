@@ -162,11 +162,14 @@ async def test_some_cancels_all(num_actors_and_errs):
         # ``MultiError`` containing an ``AssertionError`
 
     except first_err as err:
-        if isinstance(err, trio.MultiError):
+        if isinstance(err, tractor.MultiError):
             assert len(err.exceptions) == num
             for exc in err.exceptions:
-                assert exc.type == err_type
-        else:
+                if isinstance(exc, tractor.RemoteActorError):
+                    assert exc.type == err_type
+                else:
+                    assert isinstance(exc, trio.Cancelled)
+        elif isinstance(err, tractor.RemoteActorError):
             assert err.type == err_type
 
         assert n.cancelled is True
