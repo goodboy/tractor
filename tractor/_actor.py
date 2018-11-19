@@ -357,10 +357,10 @@ class Actor:
                     # (i.e. no cid was provided in the msg - see above).
                     # Push this error to all local channel consumers
                     # (normally portals) by marking the channel as errored
-                    tb_str = msg.pop('tb_str')
+                    tb_str = msg.get('tb_str')
                     assert chan.uid
                     exc = InternalActorError(
-                        f"{self.channel.uid}\n" + tb_str,
+                        f"{chan.uid}\n" + tb_str,
                         **msg,
                     )
                     chan._exc = exc

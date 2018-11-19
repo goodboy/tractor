@@ -222,7 +222,7 @@ class ActorNursery:
 
         log.debug(f"Waiting on all subactors to complete")
         children = self._children.copy()
-        errors = []
+        errors: List[Exception] = []
         # wait on run_in_actor() tasks, unblocks when all complete
         async with trio.open_nursery() as nursery:
             for subactor, proc, portal in children.values():

@@ -60,7 +60,7 @@ class Portal:
         # when this is set to a tuple returned from ``_submit()`` then
         # it is expected that ``result()`` will be awaited at some point
         # during the portal's lifetime
-        self._result = None
+        self._result: Optional[Any] = None
         # set when _submit_for_result is called
         self._expect_result: Optional[
             Tuple[str, Any, str, Dict[str, Any]]
