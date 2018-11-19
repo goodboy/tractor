@@ -36,7 +36,7 @@ setup(
     packages=[
         'tractor',
     ],
-    install_requires=['msgpack', 'trio', 'async_generator', 'colorlog'],
+    install_requires=['msgpack', 'trio>0.8', 'async_generator', 'colorlog'],
     tests_require=['pytest'],
     python_requires=">=3.6",
     keywords=[
