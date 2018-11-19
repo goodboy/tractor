@@ -125,8 +125,11 @@ async def _invoke(
         log.exception("Actor errored:")
         err_msg = pack_error(err)
         err_msg['cid'] = cid
-        await chan.send(err_msg)
-
+        try:
+            await chan.send(err_msg)
+        except trio.ClosedResourceError:
+            log.exception(
+                f"Failed to ship error to caller @ {chan.uid}")
         if cs is None:
             # error is from above code not from rpc invocation
             task_status.started(err)
