@@ -12,13 +12,10 @@ from async_generator import asynccontextmanager
 from ._state import current_actor
 from ._ipc import Channel
 from .log import get_logger
+from ._exceptions import unpack_error, NoResult, RemoteActorError
 
 
 log = get_logger('tractor')
-
-
-class RemoteActorError(RuntimeError):
-    "Remote actor exception bundled locally"
 
 
 @asynccontextmanager
@@ -64,7 +61,7 @@ class Portal:
         # it is expected that ``result()`` will be awaited at some point
         # during the portal's lifetime
         self._result = None
-        self._exc: Optional[RemoteActorError] = None
+        # set when _submit_for_result is called
         self._expect_result: Optional[
             Tuple[str, Any, str, Dict[str, Any]]
         ] = None
@@ -97,8 +94,7 @@ class Portal:
         elif functype == 'asyncgen':
             resp_type = 'yield'
         elif 'error' in first_msg:
-            raise RemoteActorError(
-                f"{self.channel.uid}\n" + first_msg['error'])
+            raise unpack_error(first_msg, self.channel)
         else:
             raise ValueError(f"{first_msg} is an invalid response packet?")
 
@@ -110,10 +106,11 @@ class Portal:
         self._expect_result = await self._submit(ns, func, **kwargs)
 
     async def run(self, ns: str, func: str, **kwargs) -> Any:
-        """Submit a function to be scheduled and run by actor, wrap and return
-        its (stream of) result(s).
+        """Submit a remote function to be scheduled and run by actor,
+        wrap and return its (stream of) result(s).
 
-        This is a blocking call.
+        This is a blocking call and returns either a value from the
+        remote rpc task or a local async generator instance.
         """
         return await self._return_from_resptype(
             *(await self._submit(ns, func, **kwargs))
@@ -137,14 +134,19 @@ class Portal:
                             if 'stop' in msg:
                                 break  # far end async gen terminated
                             else:
-                                raise RemoteActorError(
-                                    f"{self.channel.uid}\n" + msg['error'])
+                                # internal error should never get here
+                                assert msg.get('cid'), (
+                                    "Received internal error at portal?")
+                                raise unpack_error(msg, self.channel)
+
                 except StopAsyncIteration:
                     log.debug(
                         f"Cancelling async gen call {cid} to "
                         f"{self.channel.uid}")
                     raise
 
+            # TODO: use AsyncExitStack to aclose() all agens
+            # on teardown
             return yield_from_q()
 
         elif resptype == 'return':
@@ -152,30 +154,43 @@ class Portal:
             try:
                 return msg['return']
             except KeyError:
-                self._exc = RemoteActorError(
-                    f"{self.channel.uid}\n" + msg['error'])
-                raise self._exc
+                # internal error should never get here
+                assert msg.get('cid'), "Received internal error at portal?"
+                raise unpack_error(msg, self.channel)
         else:
             raise ValueError(f"Unknown msg response type: {first_msg}")
 
     async def result(self) -> Any:
         """Return the result(s) from the remote actor's "main" task.
         """
-        if self._expect_result is None:
-            # (remote) errors are slapped on the channel
-            # teardown can reraise them
-            exc = self.channel._exc
-            if exc:
-                raise RemoteActorError(f"{self.channel.uid}\n{exc}")
-            else:
-                raise RuntimeError(
-                    f"Portal for {self.channel.uid} is not expecting a final"
-                    "result?")
+        # Check for non-rpc errors slapped on the
+        # channel for which we always raise
+        exc = self.channel._exc
+        if exc:
+            raise exc
 
-        elif self._result is None:
-            self._result = await self._return_from_resptype(
-                *self._expect_result
-            )
+        # not expecting a "main" result
+        if self._expect_result is None:
+            log.warn(
+                f"Portal for {self.channel.uid} not expecting a final"
+                " result?\nresult() should only be called if subactor"
+                " was spawned with `ActorNursery.run_in_actor()`")
+            return NoResult
+
+        # expecting a "main" result
+        assert self._expect_result
+        if self._result is None:
+            try:
+                self._result = await self._return_from_resptype(
+                    *self._expect_result
+                )
+            except RemoteActorError as err:
+                self._result = err
+
+        # re-raise error on every call
+        if isinstance(self._result, RemoteActorError):
+            raise self._result
+
         return self._result
 
     async def close(self) -> None:

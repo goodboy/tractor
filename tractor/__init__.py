@@ -16,7 +16,7 @@ from ._actor import (
 )
 from ._trionics import open_nursery
 from ._state import current_actor
-from ._portal import RemoteActorError
+from ._exceptions import RemoteActorError
 
 
 __all__ = [
