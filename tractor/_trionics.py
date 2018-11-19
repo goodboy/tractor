@@ -334,7 +334,7 @@ class ActorNursery:
             log.debug(f"Waiting on subactors {self._children} to complete")
             try:
                 await self.wait()
-            except Exception as err:
+            except (Exception, trio.MultiError) as err:
                 log.warning(f"Nursery caught {err}, cancelling")
                 await self.cancel()
                 raise
