@@ -151,7 +151,7 @@ class ActorNursery:
         error propagation, and graceful subprocess tear down.
         """
         async def exhaust_portal(portal, actor):
-            """Pull final result from portal (assuming it was one).
+            """Pull final result from portal (assuming it has one).
 
             If the main task is an async generator do our best to consume
             what's left of it.
@@ -169,7 +169,7 @@ class ActorNursery:
                             async for item in agen:
                                 log.debug(f"Consuming item {item}")
                                 final.append(item)
-            except Exception as err:
+            except (Exception, trio.MultiError) as err:
                 # we reraise in the parent task via a ``trio.MultiError``
                 return err
             else:
@@ -187,8 +187,9 @@ class ActorNursery:
             """
             with trio.open_cancel_scope() as cs:
                 task_status.started(cs)
-                # this may error in which case we expect the far end
-                # actor to have already terminated itself
+                # if this call errors we store the exception for later
+                # in ``errors`` which will be reraised inside
+                # a MultiError and we still send out a cancel request
                 result = await exhaust_portal(portal, actor)
                 if isinstance(result, Exception):
                     errors.append(result)
@@ -221,6 +222,8 @@ class ActorNursery:
                 cancel_scope.cancel()
 
         log.debug(f"Waiting on all subactors to complete")
+        # since we pop each child subactor on termination,
+        # iterate a copy
         children = self._children.copy()
         errors: List[Exception] = []
         # wait on run_in_actor() tasks, unblocks when all complete
@@ -355,5 +358,6 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
 
 def is_main_process():
-    "Bool determining if this actor is running in the top-most process."
+    """Bool determining if this actor is running in the top-most process.
+    """
     return mp.current_process().name == 'MainProcess'

@@ -26,8 +26,9 @@ async def assert_err():
 )
 def test_remote_error(arb_addr, args_err):
     """Verify an error raised in a subactor that is propagated
-    to the parent nursery, contains underlying builtin erorr type
-    infot and causes cancellation and reraising.
+    to the parent nursery, contains the underlying boxed builtin
+    error type info and causes cancellation and reraising all the
+    way up the stack.
     """
     args, errtype = args_err
 
@@ -43,12 +44,12 @@ def test_remote_error(arb_addr, args_err):
                 assert err.type == errtype
                 print("Look Maa that actor failed hard, hehh")
                 raise
-            else:
-                assert 0, "Remote error was not raised?"
 
-    with pytest.raises(tractor.RemoteActorError):
-        # also raises
+    with pytest.raises(tractor.RemoteActorError) as excinfo:
         tractor.run(main, arbiter_addr=arb_addr)
+
+    # ensure boxed error is correct
+    assert excinfo.value.type == errtype
 
 
 def test_multierror(arb_addr):
@@ -139,8 +140,8 @@ async def test_cancel_infinite_streamer():
 )
 @tractor_test
 async def test_some_cancels_all(num_actors_and_errs):
-    """Verify one failed actor causes all others in the nursery
-    to be cancelled just like in trio.
+    """Verify a subset of failed subactors causes all others in
+    the nursery to be cancelled just like the strategy in trio.
 
     This is the first and only supervisory strategy at the moment.
     """
@@ -155,11 +156,10 @@ async def test_some_cancels_all(num_actors_and_errs):
                 ))
 
             for i in range(num):
-                # start one actor that will fail immediately
+                # start actor(s) that will fail immediately
                 await n.run_in_actor(f'extra_{i}', assert_err)
 
-        # should error here with a ``RemoteActorError`` or
-        # ``MultiError`` containing an ``AssertionError`
+        # should error here with a ``RemoteActorError`` or ``MultiError``
 
     except first_err as err:
         if isinstance(err, tractor.MultiError):
