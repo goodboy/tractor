@@ -41,7 +41,7 @@ def daemon(loglevel, testdir, arb_addr):
         stderr=subprocess.PIPE,
     )
     assert not proc.returncode
-    wait = 0.6 if sys.version_info < (3, 7) else 0.2
+    wait = 0.6 if sys.version_info < (3, 7) else 0.4
     time.sleep(wait)
     yield proc
     sig_prog(proc, signal.SIGINT)
