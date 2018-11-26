@@ -1,7 +1,10 @@
 import inspect
 from functools import partial, wraps
 
-from . import run
+from .. import run
+
+
+__all__ = ['tractor_test']
 
 
 def tractor_test(fn):

@@ -5,7 +5,7 @@ import random
 
 import pytest
 import tractor
-from tractor._tractor_test import tractor_test
+from tractor.testing import tractor_test
 
 
 pytest_plugins = ['pytester']
