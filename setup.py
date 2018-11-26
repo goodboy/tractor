@@ -35,6 +35,7 @@ setup(
     platforms=['linux'],
     packages=[
         'tractor',
+        'tractor.testing',
     ],
     install_requires=['msgpack', 'trio>0.8', 'async_generator', 'colorlog'],
     tests_require=['pytest'],

@@ -8,8 +8,6 @@ import subprocess
 
 import pytest
 import tractor
-
-
 from conftest import tractor_test
 
 
@@ -72,14 +70,19 @@ async def test_cancel_remote_arbiter(daemon, arb_addr):
             pass
 
 
-@tractor_test
-async def test_register_duplicate_name(daemon):
-    assert not tractor.current_actor().is_arbiter
-    async with tractor.open_nursery() as n:
-        p1 = await n.start_actor('doggy')
-        p2 = await n.start_actor('doggy')
+async def test_register_duplicate_name(daemon, arb_addr):
 
-        async with tractor.wait_for_actor('doggy') as portal:
-            assert portal.channel.uid in (p2.channel.uid, p1.channel.uid)
+    async def main():
+        assert not tractor.current_actor().is_arbiter
+        async with tractor.open_nursery() as n:
+            p1 = await n.start_actor('doggy')
+            p2 = await n.start_actor('doggy')
 
-        await n.cancel()
+            async with tractor.wait_for_actor('doggy') as portal:
+                assert portal.channel.uid in (p2.channel.uid, p1.channel.uid)
+
+            await n.cancel()
+
+    # run it manually since we want to start **after**
+    # the other "daemon" program
+    tractor.run(main, arb_addr=arbiter_addr)

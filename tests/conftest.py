@@ -2,10 +2,10 @@
 ``tractor`` testing!!
 """
 import random
-from functools import partial, wraps
 
 import pytest
 import tractor
+from tractor.testing import tractor_test
 
 
 pytest_plugins = ['pytester']
@@ -28,20 +28,3 @@ def loglevel(request):
 @pytest.fixture(scope='session')
 def arb_addr():
     return _arb_addr
-
-
-def tractor_test(fn):
-    """
-    Use:
-
-    @tractor_test
-    async def test_whatever():
-        await ...
-    """
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        # __tracebackhide__ = True
-        return tractor.run(
-            partial(fn, *args, **kwargs), arbiter_addr=_arb_addr)
-
-    return wrapper
