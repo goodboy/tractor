@@ -6,7 +6,6 @@ from functools import partial
 from itertools import chain
 import importlib
 import inspect
-import traceback
 import uuid
 import typing
 from typing import Dict, List, Tuple, Any, Optional, Union
@@ -115,6 +114,10 @@ async def _invoke(
                     with trio.open_cancel_scope() as cs:
                         task_status.started(cs)
                         await coro
+                    if not cs.cancelled_caught:
+                        # task was not cancelled so we can instruct the
+                        # far end async gen to tear down
+                        await chan.send({'stop': None, 'cid': cid})
                 else:
                     await chan.send({'functype': 'asyncfunction', 'cid': cid})
                     with trio.open_cancel_scope() as cs:
@@ -137,7 +140,13 @@ async def _invoke(
         # RPC task bookeeping
         tasks = actor._rpc_tasks.get(chan, None)
         if tasks:
-            tasks.remove((cs, func))
+            try:
+                tasks.remove((cs, func))
+            except ValueError:
+                # If we're cancelled before the task returns then the
+                # cancel scope will not have been inserted yet
+                log.warn(
+                    f"Task {func} was likely cancelled before it was started")
 
         if not tasks:
             actor._rpc_tasks.pop(chan, None)
