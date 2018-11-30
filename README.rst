@@ -605,10 +605,10 @@ see what the heck is going on. Just put the following somewhere in your code:
 
 What the future holds
 ---------------------
-Stuff I'd like to see ``tractor`` do one day:
+Stuff I'd like to see ``tractor`` do real soon:
 
 - erlang-like supervisors_
-- native support for zeromq_ as a channel transport
+- native support for `nanomsg`_ as a channel transport
 - native `gossip protocol`_ support for service discovery and arbiter election
 - a distributed log ledger for tracking cluster behaviour
 - a slick multi-process aware debugger much like in celery_
@@ -619,8 +619,8 @@ Stuff I'd like to see ``tractor`` do one day:
 If you're interested in tackling any of these please do shout about it on the
 `trio gitter channel`_!
 
-.. _supervisors: http://learnyousomeerlang.com/supervisors
-.. _zeromq: https://en.wikipedia.org/wiki/ZeroMQ
+.. _supervisors: https://github.com/tgoodlet/tractor/issues/22
+.. _nanomsg: https://github.com/tgoodlet/tractor/issues/19
 .. _gossip protocol: https://en.wikipedia.org/wiki/Gossip_protocol
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _celery: http://docs.celeryproject.org/en/latest/userguide/debugging.html
