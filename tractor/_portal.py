@@ -139,7 +139,9 @@ class Portal:
                                     "Received internal error at portal?")
                                 raise unpack_error(msg, self.channel)
 
-                except StopAsyncIteration:
+                except GeneratorExit:
+                    # for now this msg cancels an ongoing remote task
+                    await self.channel.send({'cancel': True, 'cid': cid})
                     log.debug(
                         f"Cancelling async gen call {cid} to "
                         f"{self.channel.uid}")
