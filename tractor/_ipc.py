@@ -20,7 +20,7 @@ class StreamQueue:
         self._agen = self._iter_packets()
         self._laddr = self.stream.socket.getsockname()[:2]
         self._raddr = self.stream.socket.getpeername()[:2]
-        self._send_lock = trio.Lock()
+        self._send_lock = trio.StrictFIFOLock()
 
     async def _iter_packets(self) -> typing.AsyncGenerator[dict, None]:
         """Yield packets from the underlying stream.
