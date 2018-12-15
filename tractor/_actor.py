@@ -294,8 +294,11 @@ class Actor:
             # # XXX: is this necessary (GC should do it?)
             if chan.connected():
                 log.debug(f"Disconnecting channel {chan}")
-                await chan.send(None)
-                await chan.aclose()
+                try:
+                    await chan.send(None)
+                    await chan.aclose()
+                except trio.BrokenResourceError:
+                    log.exception(f"Channel for {chan.uid} was already zonked..")
 
     async def _push_result(self, actorid, cid: str, msg: dict) -> None:
         """Push an RPC result to the local consumer's queue.
