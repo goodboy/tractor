@@ -17,7 +17,7 @@ from ._actor import (
 )
 from ._trionics import open_nursery
 from ._state import current_actor
-from ._exceptions import RemoteActorError
+from ._exceptions import RemoteActorError, ModuleNotExposed
 
 
 __all__ = [
@@ -29,6 +29,7 @@ __all__ = [
     'Channel',
     'MultiError',
     'RemoteActorError',
+    'ModuleNotExposed',
 ]
 
 

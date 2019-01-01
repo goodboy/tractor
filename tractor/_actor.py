@@ -15,7 +15,7 @@ from async_generator import asynccontextmanager, aclosing
 
 from ._ipc import Channel, _connect_chan
 from .log import get_console_log, get_logger
-from ._exceptions import pack_error, InternalActorError
+from ._exceptions import pack_error, InternalActorError, ModuleNotExposed
 from ._portal import (
     Portal,
     open_portal,
@@ -236,6 +236,12 @@ class Actor:
             #     self._mods.pop('test_discovery')
             # TODO: how to test the above?
 
+    def _get_rpc_func(self, ns, funcname):
+        try:
+            return getattr(self._mods[ns], funcname)
+        except KeyError as err:
+            raise ModuleNotExposed(*err.args)
+
     async def _stream_handler(
         self,
         stream: trio.SocketStream,
@@ -398,7 +404,14 @@ class Actor:
                 if ns == 'self':
                     func = getattr(self, funcname)
                 else:
-                    func = getattr(self._mods[ns], funcname)
+                    # complain to client about restricted modules
+                    try:
+                        func = self._get_rpc_func(ns, funcname)
+                    except (ModuleNotExposed, AttributeError) as err:
+                        err_msg = pack_error(err)
+                        err_msg['cid'] = cid
+                        await chan.send(err_msg)
+                        continue
 
                 # spin up a task for the requested function
                 log.debug(f"Spawning task for {func}")
