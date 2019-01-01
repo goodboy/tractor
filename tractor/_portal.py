@@ -4,7 +4,7 @@ Portal api
 import importlib
 import inspect
 import typing
-from typing import Tuple, Any, Dict, Optional
+from typing import Tuple, Any, Dict, Optional, Set
 
 import trio
 from async_generator import asynccontextmanager
@@ -65,7 +65,7 @@ class Portal:
         self._expect_result: Optional[
             Tuple[str, Any, str, Dict[str, Any]]
         ] = None
-        self._agens: Set(AsyncGenerator) = set()
+        self._agens: Set[typing.AsyncGenerator] = set()
 
     async def aclose(self) -> None:
         log.debug(f"Closing {self}")
