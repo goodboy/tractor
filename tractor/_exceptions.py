@@ -1,8 +1,12 @@
 """
 Our classy exception set.
 """
+import importlib
 import builtins
 import traceback
+
+
+_this_mod = importlib.import_module(__name__)
 
 
 class RemoteActorError(Exception):
@@ -10,7 +14,15 @@ class RemoteActorError(Exception):
     "Remote actor exception bundled locally"
     def __init__(self, message, type_str, **msgdata):
         super().__init__(message)
-        self.type = getattr(builtins, type_str, Exception)
+        for ns in [builtins, _this_mod]:
+            try:
+                self.type = getattr(ns, type_str)
+                break
+            except AttributeError:
+                continue
+        else:
+            self.type = Exception
+
         self.msgdata = msgdata
 
     # TODO: a trio.MultiError.catch like context manager
@@ -25,6 +37,10 @@ class InternalActorError(RemoteActorError):
 
 class NoResult(RuntimeError):
     "No final result is expected for this actor"
+
+
+class ModuleNotExposed(RuntimeError):
+    "The requested module is not exposed for RPC"
 
 
 def pack_error(exc):
