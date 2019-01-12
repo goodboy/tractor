@@ -18,7 +18,6 @@ from .log import get_console_log, get_logger
 from ._exceptions import (
     pack_error,
     unpack_error,
-    InternalActorError,
     ModuleNotExposed
 )
 from ._portal import (
@@ -228,16 +227,8 @@ class Actor:
         code (if it exists).
         """
         for path in self.rpc_module_paths:
+            log.debug(f"Attempting to import {path}")
             self._mods[path] = importlib.import_module(path)
-
-            # XXX: triggers an internal error which can cause a hanging
-            # problem (without the recently added .throw()) on teardown
-            # (root nursery tears down thus killing all channels before
-            # sending cancels to subactors during actor nursery teardown
-            # - has to do with await main() in MainProcess)
-            # if self.name == 'gretchen':
-            #     self._mods.pop('test_discovery')
-            # TODO: how to test the above?
 
     def _get_rpc_func(self, ns, funcname):
         try:
@@ -394,8 +385,7 @@ class Actor:
                     # Push this error to all local channel consumers
                     # (normally portals) by marking the channel as errored
                     assert chan.uid
-                    exc = unpack_error(
-                        msg, chan=chan, err_type=InternalActorError)
+                    exc = unpack_error(msg, chan=chan)
                     chan._exc = exc
                     raise exc
 
