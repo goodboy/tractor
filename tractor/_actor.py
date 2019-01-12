@@ -13,9 +13,14 @@ from typing import Dict, List, Tuple, Any, Optional, Union
 import trio  # type: ignore
 from async_generator import asynccontextmanager, aclosing
 
-from ._ipc import Channel, _connect_chan
+from ._ipc import Channel, _connect_chan, Context
 from .log import get_console_log, get_logger
-from ._exceptions import pack_error, InternalActorError, ModuleNotExposed
+from ._exceptions import (
+    pack_error,
+    unpack_error,
+    InternalActorError,
+    ModuleNotExposed
+)
 from ._portal import (
     Portal,
     open_portal,
@@ -46,15 +51,13 @@ async def _invoke(
     sig = inspect.signature(func)
     treat_as_gen = False
     cs = None
-    if 'chan' in sig.parameters:
-        assert 'cid' in sig.parameters, \
-            f"{func} must accept a `cid` (caller id) kwarg"
-        kwargs['chan'] = chan
-        kwargs['cid'] = cid
+    ctx = Context(chan, cid)
+    if 'ctx' in sig.parameters:
+        kwargs['ctx'] = ctx
         # TODO: eventually we want to be more stringent
         # about what is considered a far-end async-generator.
         # Right now both actual async gens and any async
-        # function which declares a `chan` kwarg in its
+        # function which declares a `ctx` kwarg in its
         # signature will be treated as one.
         treat_as_gen = True
     try:
@@ -304,7 +307,8 @@ class Actor:
                     await chan.send(None)
                     await chan.aclose()
                 except trio.BrokenResourceError:
-                    log.exception(f"Channel for {chan.uid} was already zonked..")
+                    log.exception(
+                        f"Channel for {chan.uid} was already zonked..")
 
     async def _push_result(self, actorid, cid: str, msg: dict) -> None:
         """Push an RPC result to the local consumer's queue.
@@ -389,12 +393,9 @@ class Actor:
                     # (i.e. no cid was provided in the msg - see above).
                     # Push this error to all local channel consumers
                     # (normally portals) by marking the channel as errored
-                    tb_str = msg.get('tb_str')
                     assert chan.uid
-                    exc = InternalActorError(
-                        f"{chan.uid}\n" + tb_str,
-                        **msg,
-                    )
+                    exc = unpack_error(
+                        msg, chan=chan, err_type=InternalActorError)
                     chan._exc = exc
                     raise exc
 
@@ -493,9 +494,6 @@ class Actor:
             async with trio.open_nursery() as nursery:
                 self._root_nursery = nursery
 
-                # load allowed RPC module
-                self.load_modules()
-
                 # Startup up channel server
                 host, port = accept_addr
                 await nursery.start(partial(
@@ -523,6 +521,11 @@ class Actor:
                     # handle new connection back to parent
                     nursery.start_soon(
                         self._process_messages, self._parent_chan)
+
+                # load exposed/allowed RPC modules
+                # XXX: do this **after** establishing connection to parent
+                # so that import errors are properly propagated upwards
+                self.load_modules()
 
                 # register with the arbiter if we're told its addr
                 log.debug(f"Registering {self} for role `{self.name}`")
