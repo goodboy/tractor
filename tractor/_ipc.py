@@ -205,6 +205,28 @@ class Channel:
         return self.squeue.connected() if self.squeue else False
 
 
+class Context:
+    """An IAC (inter-actor communication) context.
+
+    Allows maintaining task or protocol specific state between communicating
+    actors. A unique context is created on the receiving end for every request
+    to a remote actor.
+    """
+    def __init__(
+        self,
+        channel: Channel,
+        command_id: str,
+    ):
+        self.chan: Channel = channel
+        self.cid: str = command_id
+
+    async def send_yield(self, data):
+        await self.chan.send({'yield': data, 'cid': self.cid})
+
+    async def send_stop(self):
+        await self.chan.send({'stop': True, 'cid': self.cid})
+
+
 @asynccontextmanager
 async def _connect_chan(
     host: str, port: int
