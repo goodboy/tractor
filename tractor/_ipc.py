@@ -216,14 +216,14 @@ class Context:
         self,
         channel: Channel,
         command_id: str,
-    ):
+    ) -> None:
         self.chan: Channel = channel
         self.cid: str = command_id
 
-    async def send_yield(self, data):
+    async def send_yield(self, data: Any) -> None:
         await self.chan.send({'yield': data, 'cid': self.cid})
 
-    async def send_stop(self):
+    async def send_stop(self) -> None:
         await self.chan.send({'stop': True, 'cid': self.cid})
 
 
