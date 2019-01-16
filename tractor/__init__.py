@@ -18,6 +18,7 @@ from ._actor import (
 from ._trionics import open_nursery
 from ._state import current_actor
 from ._exceptions import RemoteActorError, ModuleNotExposed
+from . import msg
 
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     'MultiError',
     'RemoteActorError',
     'ModuleNotExposed',
+    'msg'
 ]
 
 
