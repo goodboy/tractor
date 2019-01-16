@@ -2,13 +2,12 @@
 Messaging pattern APIs and helpers.
 """
 import typing
-from typing import Dict
+from typing import Dict, Any
 from functools import partial
 
 import trio
 import wrapt
 
-from ._ipc import Context
 from .log import get_logger
 from . import current_actor
 
@@ -18,8 +17,8 @@ log = get_logger('messaging')
 
 
 async def fan_out_to_ctxs(
-    pub_gen: typing.AsyncGenerator,
-    topics2ctxs: Dict[str, Context],
+    pub_gen: typing.Callable,  # it's an async gen ... gd mypy
+    topics2ctxs: Dict[str, set],
     topic_key: str = 'key',
 ) -> None:
     """Request and fan out quotes to each subscribed actor channel.
@@ -30,7 +29,7 @@ async def fan_out_to_ctxs(
     async for published in pub_gen(
         get_topics=get_topics,
     ):
-        ctx_payloads = {}
+        ctx_payloads: Dict[str, Any] = {}
         for packet_key, data in published.items():
             # grab each suscription topic using provided key for lookup
             topic = data[topic_key]
