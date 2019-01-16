@@ -453,6 +453,8 @@ class Actor:
         self._forkserver_info = forkserver_info
         from ._trionics import ctx
         if self.loglevel is not None:
+            log.info(
+                f"Setting loglevel for {self.uid} to {self.loglevel}")
             get_console_log(self.loglevel)
         log.info(
             f"Started new {ctx.current_process()} for {self.uid}")
