@@ -61,7 +61,6 @@ Philosophy
 .. _pulsar: http://quantmind.github.io/pulsar/design.html
 .. _execnet: https://codespeak.net/execnet/
 
-
 Install
 -------
 No PyPi release yet!
@@ -199,7 +198,7 @@ method:
 
 - actors can be spawned to *live forever* using the ``start_actor()``
   method and act like an RPC daemon that runs indefinitely (the
-  ``with tractor.open_nursery()`` wont' exit) until cancelled_
+  ``with tractor.open_nursery()`` won't exit) until cancelled_
 
 Had we wanted the latter form in our example it would have looked like:
 
@@ -255,8 +254,8 @@ to all others with ease over standard network protocols).
 .. _Executor: https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor
 
 
-Transparent remote function calling using *portals*
----------------------------------------------------
+Async IPC using *portals*
+-------------------------
 ``tractor`` introduces the concept of a *portal* which is an API
 borrowed_ from ``trio``. A portal may seem similar to the idea of
 a RPC future_ except a *portal* allows invoking remote *async* functions and
@@ -494,12 +493,12 @@ a ``Supervisor`` type.
 .. _erlang strategies: http://learnyousomeerlang.com/supervisors
 
 
-Shared task state
------------------
+Actor local variables
+---------------------
 Although ``tractor`` uses a *shared-nothing* architecture between processes
-you can of course share state within an actor.  ``trio`` tasks spawned via
-multiple RPC calls to an actor can access global data using the per actor
-``statespace`` dictionary:
+you can of course share state between tasks running *within* an actor.
+``trio`` tasks spawned via multiple RPC calls to an actor can access global
+state using the per actor ``statespace`` dictionary:
 
 .. code:: python
 
@@ -561,16 +560,45 @@ The ``name`` value you should pass to ``find_actor()`` is the one you passed as 
 *first* argument to either ``tractor.run()`` or ``ActorNursery.start_actor()``.
 
 
-Using ``Channel`` directly (undocumented)
+Streaming and using channels and contexts
 -----------------------------------------
-You can use the ``Channel`` api if necessary by simply defining a
-``chan`` and ``cid`` *kwarg* in your async function definition.
-``tractor`` will treat such async functions like async generators on
-the calling side (for now anyway) such that you can push stream values
-a little more granularly if you find *yielding* values to be restrictive.
-I am purposely not documenting this feature with code because I'm not yet
-sure yet how it should be used correctly. If you'd like more details
-please feel free to ask me on the `trio gitter channel`_.
+A ``Channel`` is the API which wraps an underlying *transport* and *interchange*
+format to support *inter-actor-communication* (IAC). In its present state ``tractor``
+uses TCP and msgpack_ but hopefully more alternatives in the future.
+
+If you aren't fond of having to write an async generator to stream data
+between actors (or need something more flexible) you can instead use a
+``Context``. A context wraps an actor-local spawned task and a ``Channel``
+so that tasks executing across multiple processes can stream data
+to one another using a low level, request oriented, API.
+
+As an example if you wanted to create a streaming server without writing
+an async generator that *yields* values (which are implicitly
+shipped over a channel to the caller) you instead define an async
+function:
+
+.. code:: python
+
+   async def streamer(ctx, rate=2):
+      """A simple web response streaming server.
+      """
+      while True:
+         val = await web_request('http://data.feed.com')
+
+         # this is the same as ``yield`` in the async gen case
+         await ctx.send_yield(val)
+
+         await trio.sleep(1 / rate)
+
+
+All that's required is declaring a ``ctx`` argument name somewhere in
+your function signature and ``tractor`` will treat the async function
+like async generator as a streaming function on the client task's side.
+As you can imagine, this turns out to be handy particularly if you have
+multiple tasks streaming responses concurrently.
+
+The context idea comes from the `protocol context`_ in nanomsg_.
+It allows you to perfom IPC in a task or protocol specific way.
 
 
 Running actors standalone (without spawning)
@@ -616,12 +644,20 @@ Stuff I'd like to see ``tractor`` do real soon:
 - an extensive `chaos engineering`_ test suite
 - support for reactive programming primitives and native support for asyncitertools_ like libs
 
-If you're interested in tackling any of these please do shout about it on the
-`trio gitter channel`_!
+
+Feel like saying hi?
+--------------------
+This project is very much coupled to the ongoing development of
+``trio`` (i.e. ``tractor`` gets all its ideas from that brilliant
+community). If you want to help, have suggestions or just want to
+say hi, please feel free to ping me on the `trio gitter channel`_!
+
 
 .. _supervisors: https://github.com/tgoodlet/tractor/issues/22
 .. _nanomsg: https://github.com/tgoodlet/tractor/issues/19
+.. _nng context: https://github.com/tgoodlet/tractor/issues/19
 .. _gossip protocol: https://en.wikipedia.org/wiki/Gossip_protocol
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _celery: http://docs.celeryproject.org/en/latest/userguide/debugging.html
 .. _pdb++: https://github.com/antocuni/pdb
+.. _msgpack: https://en.wikipedia.org/wiki/MessagePack
