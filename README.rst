@@ -42,6 +42,9 @@ down. A great place to start is the `trio docs`_ and this `blog post`_.
 .. _modern async Python: https://www.python.org/dev/peps/pep-0525/
 
 
+.. contents::  Table of Contents
+
+
 Philosophy
 ----------
 ``tractor``'s tenets non-comprehensively include:
@@ -560,21 +563,20 @@ The ``name`` value you should pass to ``find_actor()`` is the one you passed as 
 *first* argument to either ``tractor.run()`` or ``ActorNursery.start_actor()``.
 
 
-Streaming and using channels and contexts
------------------------------------------
-A ``Channel`` is the API which wraps an underlying *transport* and *interchange*
-format to support *inter-actor-communication* (IAC). In its present state ``tractor``
-uses TCP and msgpack_ but hopefully more alternatives in the future.
+Streaming using channels and contexts
+-------------------------------------
+``Channel`` is the API which wraps an underlying *transport* and *interchange*
+format to enable *inter-actor-communication*. In its present state ``tractor``
+uses TCP and msgpack_.
 
 If you aren't fond of having to write an async generator to stream data
 between actors (or need something more flexible) you can instead use a
 ``Context``. A context wraps an actor-local spawned task and a ``Channel``
 so that tasks executing across multiple processes can stream data
-to one another using a low level, request oriented, API.
+to one another using a low level, request oriented API.
 
 As an example if you wanted to create a streaming server without writing
-an async generator that *yields* values (which are implicitly
-shipped over a channel to the caller) you instead define an async
+an async generator that *yields* values you instead define an async
 function:
 
 .. code:: python
@@ -593,16 +595,35 @@ function:
 
 All that's required is declaring a ``ctx`` argument name somewhere in
 your function signature and ``tractor`` will treat the async function
-like async generator as a streaming function on the client task's side.
-As you can imagine, this turns out to be handy particularly if you have
-multiple tasks streaming responses concurrently.
+like an async generator - as a streaming function from the client side.
+This turns out to be handy particularly if you have
+multiple tasks streaming responses concurrently:
 
-The context idea comes from the `protocol context`_ in nanomsg_.
-It allows you to perfom IPC in a task or protocol specific way.
+.. code:: python
+
+   async def streamer(ctx, url, rate=2):
+      """A simple web response streaming server.
+      """
+      while True:
+         val = await web_request(url)
+
+         # this is the same as ``yield`` in the async gen case
+         await ctx.send_yield(val)
+
+         await trio.sleep(1 / rate)
 
 
-Running actors standalone (without spawning)
---------------------------------------------
+   async def stream_multiple_sources(ctx, sources):
+      async with trio.open_nursery() as n:
+         for url in sources:
+            n.start_soon(streamer, ctx, url)
+
+
+The context notion comes from the context_ in nanomsg_.
+
+
+Running actors standalone
+-------------------------
 You don't have to spawn any actors using ``open_nursery()`` if you just
 want to run a single actor that connects to an existing cluster.
 All the comms and arbiter registration stuff still works. This can
@@ -654,8 +675,8 @@ say hi, please feel free to ping me on the `trio gitter channel`_!
 
 
 .. _supervisors: https://github.com/tgoodlet/tractor/issues/22
-.. _nanomsg: https://github.com/tgoodlet/tractor/issues/19
-.. _nng context: https://github.com/tgoodlet/tractor/issues/19
+.. _nanomsg: https://nanomsg.github.io/nng/index.html
+.. _context: https://nanomsg.github.io/nng/man/tip/nng_ctx.5
 .. _gossip protocol: https://en.wikipedia.org/wiki/Gossip_protocol
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _celery: http://docs.celeryproject.org/en/latest/userguide/debugging.html
