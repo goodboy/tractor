@@ -193,7 +193,7 @@ What's going on?
   much like you'd expect from a future_.
 
 This ``run_in_actor()`` API should look very familiar to users of
-``asyncio``'s run_in_executor_ which uses a ``concurrent.futures`` Executor_.
+``asyncio``'s `run_in_executor()`_ which uses a ``concurrent.futures`` Executor_.
 
 Since you might also want to spawn long running *worker* or *daemon*
 actors, each actor's *lifetime* can be determined based on the spawn
@@ -258,7 +258,7 @@ to all others with ease over standard network protocols).
 .. _nursery: https://trio.readthedocs.io/en/latest/reference-core.html#nurseries-and-spawning
 .. _causal: https://vorpus.org/blog/some-thoughts-on-asynchronous-api-design-in-a-post-asyncawait-world/#causality
 .. _cancelled: https://trio.readthedocs.io/en/latest/reference-core.html#child-tasks-and-cancellation
-.. _run_in_executor: https://docs.python.org/3/library/asyncio-eventloop.html#executor
+.. _run_in_executor(): https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.run_in_executor
 .. _Executor: https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor
 
 
