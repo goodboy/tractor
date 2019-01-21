@@ -111,6 +111,7 @@ the hip new film we're shooting:
             donny = await n.run_in_actor(
                 'donny',
                 say_hello,
+                # arguments are always named
                 other_actor='gretchen',
             )
             gretchen = await n.run_in_actor(
@@ -162,7 +163,7 @@ and use the ``run_in_actor()`` method:
             """
             async with tractor.open_nursery() as n:
 
-                portal = await n.run_in_actor('frank', movie_theatre_question)
+                portal = await n.run_in_actor('teacher', cellar_door)
 
             # The ``async with`` will unblock here since the 'frank'
             # actor has completed its main task ``movie_theatre_question()``.
