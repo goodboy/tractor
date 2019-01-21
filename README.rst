@@ -42,7 +42,7 @@ down. A great place to start is the `trio docs`_ and this `blog post`_.
 .. _modern async Python: https://www.python.org/dev/peps/pep-0525/
 
 
-.. contents::  Table of Contents
+.. contents::
 
 
 Philosophy
@@ -64,6 +64,7 @@ Philosophy
 .. _pulsar: http://quantmind.github.io/pulsar/design.html
 .. _execnet: https://codespeak.net/execnet/
 
+
 Install
 -------
 No PyPi release yet!
@@ -73,8 +74,12 @@ No PyPi release yet!
     pip install git+git://github.com/tgoodlet/tractor.git
 
 
+Examples
+--------
+
+
 A trynamic first scene
-----------------------
+**********************
 Let's direct a couple *actors* and have them run their lines for
 the hip new film we're shooting:
 
@@ -131,7 +136,7 @@ this case our "director" executing ``main()``).
 
 
 Actor spawning and causality
-----------------------------
+****************************
 ``tractor`` tries to take ``trio``'s concept of causal task lifetimes
 to multi-process land. Accordingly, ``tractor``'s *actor nursery* behaves
 similar to ``trio``'s nursery_. That is, ``tractor.open_nursery()``
@@ -258,7 +263,7 @@ to all others with ease over standard network protocols).
 
 
 Async IPC using *portals*
--------------------------
+*************************
 ``tractor`` introduces the concept of a *portal* which is an API
 borrowed_ from ``trio``. A portal may seem similar to the idea of
 a RPC future_ except a *portal* allows invoking remote *async* functions and
@@ -324,6 +329,9 @@ generator function running in a separate actor:
     tractor.run(main)
 
 
+
+A full fledged streaming service
+********************************
 Alright, let's get fancy.
 
 Say you wanted to spawn two actors which each pull data feeds from
@@ -445,7 +453,7 @@ as ``multiprocessing`` calls it) which is running ``main()``.
 
 
 Cancellation
-------------
+************
 ``tractor`` supports ``trio``'s cancellation_ system verbatim.
 Cancelling a nursery block cancels all actors spawned by it.
 Eventually ``tractor`` plans to support different `supervision strategies`_ like ``erlang``.
@@ -454,7 +462,7 @@ Eventually ``tractor`` plans to support different `supervision strategies`_ like
 
 
 Remote error propagation
-------------------------
+************************
 Any task invoked in a remote actor should ship any error(s) back to the calling
 actor where it is raised and expected to be dealt with. This way remote actors
 are never cancelled unless explicitly asked or there's a bug in ``tractor`` itself.
@@ -497,7 +505,7 @@ a ``Supervisor`` type.
 
 
 Actor local variables
----------------------
+*********************
 Although ``tractor`` uses a *shared-nothing* architecture between processes
 you can of course share state between tasks running *within* an actor.
 ``trio`` tasks spawned via multiple RPC calls to an actor can access global
@@ -530,7 +538,7 @@ out a state sharing system per-actor is totally up to you.
 
 
 How do actors find each other (a poor man's *service discovery*)?
------------------------------------------------------------------
+*****************************************************************
 Though it will be built out much more in the near future, ``tractor``
 currently keeps track of actors by ``(name: str, id: str)`` using a
 special actor called the *arbiter*. Currently the *arbiter* must exist
@@ -564,7 +572,7 @@ The ``name`` value you should pass to ``find_actor()`` is the one you passed as 
 
 
 Streaming using channels and contexts
--------------------------------------
+*************************************
 ``Channel`` is the API which wraps an underlying *transport* and *interchange*
 format to enable *inter-actor-communication*. In its present state ``tractor``
 uses TCP and msgpack_.
@@ -623,7 +631,7 @@ The context notion comes from the context_ in nanomsg_.
 
 
 Running actors standalone
--------------------------
+*************************
 You don't have to spawn any actors using ``open_nursery()`` if you just
 want to run a single actor that connects to an existing cluster.
 All the comms and arbiter registration stuff still works. This can
@@ -637,7 +645,7 @@ need to hop into a debugger. You just need to pass the existing
 
 
 Enabling logging
-----------------
+****************
 Considering how complicated distributed software can become it helps to know
 what exactly it's doing (even at the lowest levels). Luckily ``tractor`` has
 tons of logging throughout the core. ``tractor`` isn't opinionated on
