@@ -2,7 +2,7 @@
 Messaging pattern APIs and helpers.
 """
 import typing
-from typing import Dict, Any, Sequence
+from typing import Dict, Any, Set, Union
 from functools import partial
 from async_generator import aclosing
 
@@ -88,7 +88,7 @@ def modify_subs(topics2ctxs, topics, ctx):
 def pub(
     wrapped: typing.Callable = None,
     *,
-    tasks: Sequence[str] = set(),
+    tasks: Set[str] = set(),
 ):
     """Publisher async generator decorator.
 
@@ -128,7 +128,7 @@ def pub(
 
 
     The publisher must be called passing in the following arguments:
-    - ``topics: Sequence[str]`` the topic sequence or "subscriptions"
+    - ``topics: Set[str]`` the topic sequence or "subscriptions"
     - ``task_name: str`` the task to use (if ``tasks`` was passed)
     - ``ctx: Context`` the tractor context (only needed if calling the
       pub func without a nursery, otherwise this is provided implicitly)
@@ -171,7 +171,8 @@ def pub(
     if wrapped is None:
         return partial(pub, tasks=tasks)
 
-    task2lock = {None: trio.StrictFIFOLock()}
+    task2lock: Dict[Union[str, None], trio.StrictFIFOLock] = {
+        None: trio.StrictFIFOLock()}
     for name in tasks:
         task2lock[name] = trio.StrictFIFOLock()
 
