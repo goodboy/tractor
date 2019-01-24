@@ -146,8 +146,8 @@ class Portal:
                     log.warning(
                         f"Cancelling async gen call {cid} to "
                         f"{self.channel.uid}")
-                    with trio.open_cancel_scope() as cleanup_scope:
-                        cleanup_scope.shield = True
+                    with trio.move_on_after(0.5) as cs:
+                        cs.shield = True
                         # TODO: yeah.. it'd be nice if this was just an
                         # async func on the far end. Gotta figure out a
                         # better way then implicitly feeding the ctx
@@ -157,6 +157,11 @@ class Portal:
                         async with aclosing(agen) as agen:
                             async for _ in agen:
                                 pass
+                    if cs.cancelled_caught:
+                        if not self.channel.connected():
+                            log.warning(
+                                "May have failed to cancel remote task "
+                                f"{cid} for {self.channel.uid}")
                     raise
 
             # TODO: use AsyncExitStack to aclose() all agens
@@ -239,12 +244,12 @@ class Portal:
                 cancel_scope.shield = True
                 await self.run('self', 'cancel')
                 return True
+            if cancel_scope.cancelled_caught:
+                log.warning(f"May have failed to cancel {self.channel.uid}")
+                return False
         except trio.ClosedResourceError:
             log.warning(
                 f"{self.channel} for {self.channel.uid} was already closed?")
-            return False
-        else:
-            log.warning(f"May have failed to cancel {self.channel.uid}")
             return False
 
 
@@ -308,8 +313,8 @@ async def open_portal(
             if was_connected:
                 # cancel remote channel-msg loop
                 await channel.send(None)
-                await channel.aclose()
 
             # cancel background msg loop task
             msg_loop_cs.cancel()
+
             nursery.cancel_scope.cancel()
