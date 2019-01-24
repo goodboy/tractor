@@ -265,7 +265,7 @@ class Actor:
             log.warning(
                 f"already have channel(s) for {uid}:{chans}?"
             )
-        log.trace(f"Registered {chan} for {uid}")
+        log.trace(f"Registered {chan} for {uid}")  # type: ignore
         # append new channel
         self._peers[uid].append(chan)
 
@@ -650,8 +650,10 @@ class Actor:
             f"Cancelling task:\ncid: {cid}\nfunc: {func}\n"
             f"peer: {chan.uid}\n")
 
-        # if func is self.cancel_task:
-        #     return
+        # don't allow cancelling this function mid-execution
+        # (is this necessary?)
+        if func is self.cancel_task:
+            return
 
         scope.cancel()
         # wait for _invoke to mark the task complete
