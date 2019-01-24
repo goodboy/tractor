@@ -317,7 +317,7 @@ class ActorNursery:
                 # the `else:` block here might not complete?
                 # For now, shield both.
                 with trio.open_cancel_scope(shield=True):
-                    if etype is trio.Cancelled:
+                    if etype in (trio.Cancelled, KeyboardInterrupt):
                         log.warning(
                             f"Nursery for {current_actor().uid} was "
                             f"cancelled with {etype}")
