@@ -68,21 +68,21 @@ def modify_subs(topics2ctxs, topics, ctx):
     log.info(f"{ctx.chan.uid} changed subscription to {topics}")
 
     # update map from each symbol to requesting client's chan
-    for ticker in topics:
-        topics2ctxs.setdefault(ticker, set()).add(ctx)
+    for topic in topics:
+        topics2ctxs.setdefault(topic, set()).add(ctx)
 
     # remove any existing symbol subscriptions if symbol is not
     # found in ``symbols``
     # TODO: this can likely be factored out into the pub-sub api
-    for ticker in filter(
+    for topic in filter(
         lambda topic: topic not in topics, topics2ctxs.copy()
     ):
-        ctx_set = topics2ctxs.get(ticker)
+        ctx_set = topics2ctxs.get(topic)
         ctx_set.discard(ctx)
 
         if not ctx_set:
             # pop empty sets which will trigger bg quoter task termination
-            topics2ctxs.pop(ticker)
+            topics2ctxs.pop(topic)
 
 
 def pub(
