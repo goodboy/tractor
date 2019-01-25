@@ -39,7 +39,7 @@ class NoResult(RuntimeError):
     "No final result is expected for this actor"
 
 
-class ModuleNotExposed(RuntimeError):
+class ModuleNotExposed(ModuleNotFoundError):
     "The requested module is not exposed for RPC"
 
 
@@ -55,12 +55,12 @@ def pack_error(exc):
     }
 
 
-def unpack_error(msg, chan=None):
+def unpack_error(msg, chan=None, err_type=RemoteActorError):
     """Unpack an 'error' message from the wire
     into a local ``RemoteActorError``.
     """
     tb_str = msg['error'].get('tb_str', '')
-    return RemoteActorError(
+    return err_type(
         f"{chan.uid}\n" + tb_str,
         **msg['error'],
     )

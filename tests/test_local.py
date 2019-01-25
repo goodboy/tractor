@@ -7,7 +7,6 @@ import pytest
 import trio
 import tractor
 
-
 from conftest import tractor_test
 
 

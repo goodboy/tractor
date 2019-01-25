@@ -1,6 +1,8 @@
 """
 RPC related
 """
+import itertools
+
 import pytest
 import tractor
 import trio
@@ -12,17 +14,20 @@ async def sleep_back_actor(
     func_defined,
     exposed_mods,
 ):
-    async with tractor.find_actor(actor_name) as portal:
-        try:
-            await portal.run(__name__, func_name)
-        except tractor.RemoteActorError as err:
-            if not func_defined:
-                expect = AttributeError
-            if not exposed_mods:
-                expect = tractor.ModuleNotExposed
+    if actor_name:
+        async with tractor.find_actor(actor_name) as portal:
+            try:
+                await portal.run(__name__, func_name)
+            except tractor.RemoteActorError as err:
+                if not func_defined:
+                    expect = AttributeError
+                if not exposed_mods:
+                    expect = tractor.ModuleNotExposed
 
-            assert err.type is expect
-            raise
+                assert err.type is expect
+                raise
+    else:
+        await trio.sleep(float('inf'))
 
 
 async def short_sleep():
@@ -31,19 +36,40 @@ async def short_sleep():
 
 @pytest.mark.parametrize(
     'to_call', [
-        ([], 'short_sleep'),
-        ([__name__], 'short_sleep'),
-        ([__name__], 'fake_func'),
+        ([], 'short_sleep', tractor.RemoteActorError),
+        ([__name__], 'short_sleep', tractor.RemoteActorError),
+        ([__name__], 'fake_func', tractor.RemoteActorError),
+        (['tmp_mod'], 'import doggy', ModuleNotFoundError),
+        (['tmp_mod'], '4doggy', SyntaxError),
     ],
-    ids=['no_mods', 'this_mod', 'this_mod_bad_func'],
+    ids=['no_mods', 'this_mod', 'this_mod_bad_func', 'fail_to_import',
+         'fail_on_syntax'],
 )
-def test_rpc_errors(arb_addr, to_call):
+def test_rpc_errors(arb_addr, to_call, testdir):
     """Test errors when making various RPC requests to an actor
     that either doesn't have the requested module exposed or doesn't define
     the named function.
     """
-    exposed_mods, funcname = to_call
+    exposed_mods, funcname, inside_err = to_call
+    subactor_exposed_mods = []
     func_defined = globals().get(funcname, False)
+    subactor_requests_to = 'arbiter'
+    remote_err = tractor.RemoteActorError
+
+    # remote module that fails at import time
+    if exposed_mods == ['tmp_mod']:
+        # create an importable module with a bad import
+        testdir.syspathinsert()
+        # module should cause raise a ModuleNotFoundError at import
+        testdir.makefile('.py', tmp_mod=funcname)
+
+        # no need to exposed module to the subactor
+        subactor_exposed_mods = exposed_mods
+        exposed_mods = []
+        func_defined = False
+        # subactor should not try to invoke anything
+        subactor_requests_to = None
+        remote_err = trio.MultiError
 
     async def main():
         actor = tractor.current_actor()
@@ -54,12 +80,13 @@ def test_rpc_errors(arb_addr, to_call):
             await n.run_in_actor(
                 'subactor',
                 sleep_back_actor,
-                actor_name=actor.name,
-                # function from this module the subactor will invoke
-                # when it RPCs back to this actor
+                actor_name=subactor_requests_to,
+                # function from the local exposed module space
+                # the subactor will invoke when it RPCs back to this actor
                 func_name=funcname,
                 exposed_mods=exposed_mods,
                 func_defined=True if func_defined else False,
+                rpc_module_paths=subactor_exposed_mods,
             )
 
     def run():
@@ -73,8 +100,18 @@ def test_rpc_errors(arb_addr, to_call):
     if exposed_mods and func_defined:
         run()
     else:
-        # underlying errors are propogated upwards (yet)
-        with pytest.raises(tractor.RemoteActorError) as err:
+        # underlying errors are propagated upwards (yet)
+        with pytest.raises(remote_err) as err:
             run()
 
-        assert err.value.type is tractor.RemoteActorError
+        # get raw instance from pytest wrapper
+        value = err.value
+
+        # might get multiple `trio.Cancelled`s as well inside an inception
+        if isinstance(value, trio.MultiError):
+            value = next(itertools.dropwhile(
+                lambda exc: not isinstance(exc, tractor.RemoteActorError),
+                value.exceptions
+            ))
+
+        assert value.type is inside_err

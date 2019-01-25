@@ -114,7 +114,7 @@ class ActorNursery:
         name: str,
         fn: typing.Callable,
         bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
-        rpc_module_paths: List[str] = None,
+        rpc_module_paths: List[str] = [],
         statespace: Dict[str, Any] = None,
         loglevel: str = None,  # set log level per subactor
         **kwargs,  # explicit args to ``fn``
@@ -129,7 +129,7 @@ class ActorNursery:
         mod_path = fn.__module__
         portal = await self.start_actor(
             name,
-            rpc_module_paths=[mod_path],
+            rpc_module_paths=[mod_path] + rpc_module_paths,
             bind_addr=bind_addr,
             statespace=statespace,
         )
@@ -317,7 +317,7 @@ class ActorNursery:
                 # the `else:` block here might not complete?
                 # For now, shield both.
                 with trio.open_cancel_scope(shield=True):
-                    if etype is trio.Cancelled:
+                    if etype in (trio.Cancelled, KeyboardInterrupt):
                         log.warning(
                             f"Nursery for {current_actor().uid} was "
                             f"cancelled with {etype}")

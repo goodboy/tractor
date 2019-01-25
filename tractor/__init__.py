@@ -11,13 +11,14 @@ import trio  # type: ignore
 from trio import MultiError
 
 from .log import get_console_log, get_logger, get_loglevel
-from ._ipc import _connect_chan, Channel
+from ._ipc import _connect_chan, Channel, Context
 from ._actor import (
     Actor, _start_actor, Arbiter, get_arbiter, find_actor, wait_for_actor
 )
 from ._trionics import open_nursery
 from ._state import current_actor
 from ._exceptions import RemoteActorError, ModuleNotExposed
+from . import msg
 
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     'MultiError',
     'RemoteActorError',
     'ModuleNotExposed',
+    'msg'
 ]
 
 
