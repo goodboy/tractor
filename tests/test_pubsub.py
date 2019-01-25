@@ -1,5 +1,4 @@
 import time
-from functools import partial
 from itertools import cycle
 
 import pytest
@@ -7,6 +6,23 @@ import trio
 import tractor
 from async_generator import aclosing
 from tractor.testing import tractor_test
+
+
+def test_type_checks():
+
+    with pytest.raises(TypeError) as err:
+        @tractor.msg.pub
+        async def no_get_topics(yo):
+            yield
+
+    assert "must define a `get_topics`" in str(err.value)
+
+    with pytest.raises(TypeError) as err:
+        @tractor.msg.pub
+        def not_async_gen(yo):
+            pass
+
+    assert "must be an async generator function" in str(err.value)
 
 
 def is_even(i):
@@ -31,9 +47,11 @@ async def subs(which, pub_actor_name):
         if which[0] == 'even':
             pred = is_even
         else:
-            pred = lambda i: not is_even(i)
+            def pred(i):
+                return not is_even(i)
     else:
-        pred = lambda i: isinstance(i, int)
+        def pred(i):
+            return isinstance(i, int)
 
     async with tractor.find_actor(pub_actor_name) as portal:
         agen = await portal.run(__name__, 'pubber', topics=which)
@@ -41,6 +59,42 @@ async def subs(which, pub_actor_name):
             async for pkt in agen:
                 for topic, value in pkt.items():
                     assert pred(value)
+
+
+@tractor.msg.pub(tasks=['one', 'two'])
+async def multilock_pubber(get_topics):
+    yield {'doggy': 10}
+
+
+@pytest.mark.parametrize(
+    'callwith_expecterror',
+    [
+        (pubber, {}, TypeError),
+        # missing a `topics`
+        (multilock_pubber, {'ctx': None}, TypeError),
+        # missing a `task_name`
+        (multilock_pubber, {'ctx': None, 'topics': ['topic1']}, TypeError),
+        # should work
+        (multilock_pubber,
+         {'ctx': None, 'topics': ['topic1'], 'task_name': 'one'},
+         None),
+    ],
+)
+@tractor_test
+async def test_required_args(callwith_expecterror):
+    func, kwargs, err = callwith_expecterror
+
+    if err is not None:
+        with pytest.raises(err):
+            await func(**kwargs)
+    else:
+        async with tractor.open_nursery() as n:
+            # await func(**kwargs)
+            portal = await n.run_in_actor(
+                'sub', multilock_pubber, **kwargs)
+
+            async for val in await portal.result():
+                assert val == {'doggy': 10}
 
 
 @pytest.mark.parametrize(
