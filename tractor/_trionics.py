@@ -353,7 +353,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
         raise RuntimeError("No actor instance has been defined yet?")
 
     # TODO: figure out supervisors from erlang
-    async with ActorNursery(current_actor()) as nursery:
+    async with ActorNursery(actor) as nursery:
         yield nursery
 
 
