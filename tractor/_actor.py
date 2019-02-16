@@ -303,11 +303,12 @@ class Actor:
 
     async def _push_result(
         self,
-        actorid: Tuple[str, str],
+        chan: Channel,
         msg: Dict[str, Any],
     ) -> None:
         """Push an RPC result to the local consumer's queue.
         """
+        actorid = chan.uid
         assert actorid, f"`actorid` can't be {actorid}"
         cid = msg['cid']
         send_chan = self._cids2qs[(actorid, cid)]
@@ -390,10 +391,10 @@ class Actor:
                                 f" {chan} from {chan.uid}")
                         break
 
-                    log.trace(f"Received msg {msg} from {chan.uid}")
+                    log.trace(f"Received msg {msg} from {chan.uid}")  # type: ignore
                     if msg.get('cid'):
                         # deliver response to local caller/waiter
-                        await self._push_result(chan.uid, msg)
+                        await self._push_result(chan, msg)
                         log.debug(
                             f"Waiting on next msg for {chan} from {chan.uid}")
                         continue

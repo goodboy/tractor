@@ -49,9 +49,10 @@ async def _do_handshake(
 
 
 class StreamReceiveChannel(trio.abc.ReceiveChannel):
-    """A wrapper around a ``trio.abc.ReceiveChannel`` with
-    special behaviour for stream termination on both ends of
-    an inter-actor channel.
+    """A wrapper around a ``trio._channel.MemoryReceiveChannel`` with
+    special behaviour for signalling stream termination on across an
+    inter-actor ``Channel``. This is the type returned to a local task
+    which invoked a remote streaming function using `Portal.run()`.
 
     Termination rules:
     - if the local task signals stop iteration a cancel signal is
@@ -65,7 +66,7 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
         cid: str,
         rx_chan: trio.abc.ReceiveChannel,
         portal: 'Portal',
-    ):
+    ) -> None:
         self._cid = cid
         self._rx_chan = rx_chan
         self._portal = portal
@@ -84,28 +85,28 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
             await self.aclose()
             raise StopAsyncIteration
         except trio.Cancelled:
+            # relay cancels to the remote task
             await self.aclose()
             raise
         except KeyError:
-            # if 'stop' in msg:
-            #     break  # far end async gen terminated
-            # else:
             # internal error should never get here
             assert msg.get('cid'), (
                 "Received internal error at portal?")
             raise unpack_error(msg, self._portal.channel)
 
     async def aclose(self):
+        """Cancel associate remote actor task on close
+        as well as the local memory channel.
+        """
         if self._rx_chan._closed:
             log.warning(f"{self} is already closed")
             return
         cid = self._cid
-        # XXX: cancel remote task on close
-        log.warning(
-            f"Cancelling stream {cid} to "
-            f"{self._portal.channel.uid}")
         with trio.move_on_after(0.5) as cs:
             cs.shield = True
+            log.warning(
+                f"Cancelling stream {cid} to "
+                f"{self._portal.channel.uid}")
             # TODO: yeah.. it'd be nice if this was just an
             # async func on the far end. Gotta figure out a
             # better way then implicitly feeding the ctx
@@ -117,6 +118,9 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
                 pass
 
         if cs.cancelled_caught:
+            # XXX: there's no way to know if the remote task was indeed
+            # cancelled in the case where the connection is broken or
+            # some other network error occurred.
             if not self._portal.channel.connected():
                 log.warning(
                     "May have failed to cancel remote task "
