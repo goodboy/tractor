@@ -50,7 +50,7 @@ async def _do_handshake(
 
 class StreamReceiveChannel(trio.abc.ReceiveChannel):
     """A wrapper around a ``trio._channel.MemoryReceiveChannel`` with
-    special behaviour for signalling stream termination on across an
+    special behaviour for signalling stream termination across an
     inter-actor ``Channel``. This is the type returned to a local task
     which invoked a remote streaming function using `Portal.run()`.
 
@@ -126,7 +126,7 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
                     "May have failed to cancel remote task "
                     f"{cid} for {self._portal.channel.uid}")
 
-        with trio.open_cancel_scope(shield=True):
+        with trio.CancelScope(shield=True):
             await self._rx_chan.aclose()
 
     def clone(self):

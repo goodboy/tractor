@@ -14,7 +14,7 @@ async def stream_seq(sequence):
         await trio.sleep(0.1)
 
     # block indefinitely waiting to be cancelled by ``aclose()`` call
-    with trio.open_cancel_scope() as cs:
+    with trio.CancelScope() as cs:
         await trio.sleep(float('inf'))
         assert 0
     assert cs.cancelled_caught

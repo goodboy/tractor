@@ -73,7 +73,7 @@ async def _invoke(
             not is_async_gen_partial
         ):
             await chan.send({'functype': 'function', 'cid': cid})
-            with trio.open_cancel_scope() as cs:
+            with trio.CancelScope() as cs:
                 task_status.started(cs)
                 await chan.send({'return': func(**kwargs), 'cid': cid})
         else:
@@ -88,7 +88,7 @@ async def _invoke(
                 # have to properly handle the closing (aclosing)
                 # of the async gen in order to be sure the cancel
                 # is propagated!
-                with trio.open_cancel_scope() as cs:
+                with trio.CancelScope() as cs:
                     task_status.started(cs)
                     async with aclosing(coro) as agen:
                         async for item in agen:
@@ -113,7 +113,7 @@ async def _invoke(
                     # back values like an async-generator would but must
                     # manualy construct the response dict-packet-responses as
                     # above
-                    with trio.open_cancel_scope() as cs:
+                    with trio.CancelScope() as cs:
                         task_status.started(cs)
                         await coro
                     if not cs.cancelled_caught:
@@ -122,7 +122,7 @@ async def _invoke(
                         await chan.send({'stop': True, 'cid': cid})
                 else:
                     await chan.send({'functype': 'asyncfunction', 'cid': cid})
-                    with trio.open_cancel_scope() as cs:
+                    with trio.CancelScope() as cs:
                         task_status.started(cs)
                         await chan.send({'return': await coro, 'cid': cid})
     except Exception as err:
@@ -377,7 +377,7 @@ class Actor:
             # loop running despite the current task having been
             # cancelled (eg. `open_portal()` may call this method from
             # a locally spawned task)
-            with trio.open_cancel_scope(shield=shield) as cs:
+            with trio.CancelScope(shield=shield) as cs:
                 task_status.started(cs)
                 async for msg in chan:
                     if msg is None:  # loop terminate sentinel

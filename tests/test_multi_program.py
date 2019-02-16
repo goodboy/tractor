@@ -70,7 +70,7 @@ async def test_cancel_remote_arbiter(daemon, arb_addr):
             pass
 
 
-async def test_register_duplicate_name(daemon, arb_addr):
+def test_register_duplicate_name(daemon, arb_addr):
 
     async def main():
         assert not tractor.current_actor().is_arbiter
@@ -85,4 +85,4 @@ async def test_register_duplicate_name(daemon, arb_addr):
 
     # run it manually since we want to start **after**
     # the other "daemon" program
-    tractor.run(main, arb_addr=arbiter_addr)
+    tractor.run(main, arbiter_addr=arb_addr)
