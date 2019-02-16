@@ -312,8 +312,11 @@ class Actor:
         cid = msg['cid']
         send_chan = self._cids2qs[(actorid, cid)]
         assert send_chan.cid == cid
-        log.debug(f"Delivering {msg} from {actorid} to caller {cid}")
+        if 'stop' in msg:
+            log.debug(f"{send_chan} was terminated at remote end")
+            return await send_chan.aclose()
         try:
+            log.debug(f"Delivering {msg} from {actorid} to caller {cid}")
             # maintain backpressure
             await send_chan.send(msg)
         except trio.BrokenResourceError:
@@ -665,9 +668,14 @@ class Actor:
         # streaming IPC but it should be called
         # to cancel any remotely spawned task
         chan = ctx.chan
-        # the ``dict.get()`` ensures the requested task to be cancelled
-        # was indeed spawned by a request from this channel
-        scope, func, is_complete = self._rpc_tasks[(ctx.chan, cid)]
+        try:
+            # this ctx based lookup ensures the requested task to
+            # be cancelled was indeed spawned by a request from this channel
+            scope, func, is_complete = self._rpc_tasks[(ctx.chan, cid)]
+        except KeyError:
+            log.warning(f"{cid} has already completed/terminated?")
+            return
+
         log.debug(
             f"Cancelling task:\ncid: {cid}\nfunc: {func}\n"
             f"peer: {chan.uid}\n")
