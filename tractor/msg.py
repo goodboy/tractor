@@ -43,6 +43,9 @@ async def fan_out_to_ctxs(
                 for ctx in topics2ctxs.get(topic, set()):
                     ctx_payloads.setdefault(ctx, {}).update(packet),
 
+            if not ctx_payloads:
+                log.debug(f"Unconsumed values:\n{published}")
+
             # deliver to each subscriber (fan out)
             if ctx_payloads:
                 for ctx, payload in ctx_payloads.items():
@@ -50,7 +53,7 @@ async def fan_out_to_ctxs(
                         await ctx.send_yield(payload)
                     except (
                         # That's right, anything you can think of...
-                        trio.ClosedStreamError, ConnectionResetError,
+                        trio.ClosedResourceError, ConnectionResetError,
                         ConnectionRefusedError,
                     ):
                         log.warning(f"{ctx.chan} went down?")

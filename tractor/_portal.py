@@ -9,7 +9,7 @@ from functools import partial
 from dataclasses import dataclass
 
 import trio
-from async_generator import asynccontextmanager, aclosing
+from async_generator import asynccontextmanager
 
 from ._state import current_actor
 from ._ipc import Channel
@@ -36,7 +36,7 @@ async def maybe_open_nursery(nursery: trio._core._run.Nursery = None):
 async def _do_handshake(
     actor: 'Actor',  # type: ignore
     chan: Channel
-)-> Any:
+) -> Any:
     await chan.send(actor.uid)
     uid: Tuple[str, str] = await chan.recv()
 
@@ -46,6 +46,91 @@ async def _do_handshake(
     chan.uid = uid
     log.info(f"Handshake with actor {uid}@{chan.raddr} complete")
     return uid
+
+
+class StreamReceiveChannel(trio.abc.ReceiveChannel):
+    """A wrapper around a ``trio._channel.MemoryReceiveChannel`` with
+    special behaviour for signalling stream termination across an
+    inter-actor ``Channel``. This is the type returned to a local task
+    which invoked a remote streaming function using `Portal.run()`.
+
+    Termination rules:
+    - if the local task signals stop iteration a cancel signal is
+      relayed to the remote task indicating to stop streaming
+    - if the remote task signals the end of a stream, raise a
+      ``StopAsyncIteration`` to terminate the local ``async for``
+
+    """
+    def __init__(
+        self,
+        cid: str,
+        rx_chan: trio.abc.ReceiveChannel,
+        portal: 'Portal',
+    ) -> None:
+        self._cid = cid
+        self._rx_chan = rx_chan
+        self._portal = portal
+
+    # delegate directly to underlying mem channel
+    def receive_nowait(self):
+        return self._rx_chan.receive_nowait()
+
+    async def receive(self):
+        try:
+            msg = await self._rx_chan.receive()
+            return msg['yield']
+        except trio.ClosedResourceError:
+            # when the send is closed we assume the stream has
+            # terminated and signal this local iterator to stop
+            await self.aclose()
+            raise StopAsyncIteration
+        except trio.Cancelled:
+            # relay cancels to the remote task
+            await self.aclose()
+            raise
+        except KeyError:
+            # internal error should never get here
+            assert msg.get('cid'), (
+                "Received internal error at portal?")
+            raise unpack_error(msg, self._portal.channel)
+
+    async def aclose(self):
+        """Cancel associate remote actor task on close
+        as well as the local memory channel.
+        """
+        if self._rx_chan._closed:
+            log.warning(f"{self} is already closed")
+            return
+        cid = self._cid
+        with trio.move_on_after(0.5) as cs:
+            cs.shield = True
+            log.warning(
+                f"Cancelling stream {cid} to "
+                f"{self._portal.channel.uid}")
+            # TODO: yeah.. it'd be nice if this was just an
+            # async func on the far end. Gotta figure out a
+            # better way then implicitly feeding the ctx
+            # to declaring functions; likely a decorator
+            # system.
+            rchan = await self._portal.run(
+                'self', 'cancel_task', cid=cid)
+            async for _ in rchan:
+                pass
+
+        if cs.cancelled_caught:
+            # XXX: there's no way to know if the remote task was indeed
+            # cancelled in the case where the connection is broken or
+            # some other network error occurred.
+            if not self._portal.channel.connected():
+                log.warning(
+                    "May have failed to cancel remote task "
+                    f"{cid} for {self._portal.channel.uid}")
+
+        with trio.CancelScope(shield=True):
+            await self._rx_chan.aclose()
+
+    def clone(self):
+        return self
 
 
 class Portal:
@@ -67,17 +152,14 @@ class Portal:
         self._expect_result: Optional[
             Tuple[str, Any, str, Dict[str, Any]]
         ] = None
-        self._agens: Set[typing.AsyncGenerator] = set()
-
-    async def aclose(self) -> None:
-        log.debug(f"Closing {self}")
-        # XXX: won't work until https://github.com/python-trio/trio/pull/460
-        # gets in!
-        await self.channel.aclose()
+        self._streams: Set[StreamReceiveChannel] = set()
 
     async def _submit(
-        self, ns: str, func: str, **kwargs
-    ) -> Tuple[str, trio.Queue, str, Dict[str, Any]]:
+        self,
+        ns: str,
+        func: str,
+        kwargs,
+    ) -> Tuple[str, trio.abc.ReceiveChannel, str, Dict[str, Any]]:
         """Submit a function to be scheduled and run by actor, return the
         associated caller id, response queue, response type str,
         first message packet as a tuple.
@@ -85,11 +167,13 @@ class Portal:
         This is an async call.
         """
         # ship a function call request to the remote actor
-        cid, q = await current_actor().send_cmd(self.channel, ns, func, kwargs)
+        cid, recv_chan = await current_actor().send_cmd(
+            self.channel, ns, func, kwargs)
 
         # wait on first response msg and handle (this should be
         # in an immediate response)
-        first_msg = await q.get()
+
+        first_msg = await recv_chan.receive()
         functype = first_msg.get('functype')
 
         if functype == 'function' or functype == 'asyncfunction':
@@ -101,12 +185,12 @@ class Portal:
         else:
             raise ValueError(f"{first_msg} is an invalid response packet?")
 
-        return cid, q, resp_type, first_msg
+        return cid, recv_chan, resp_type, first_msg
 
     async def _submit_for_result(self, ns: str, func: str, **kwargs) -> None:
         assert self._expect_result is None, \
                 "A pending main result has already been submitted"
-        self._expect_result = await self._submit(ns, func, **kwargs)
+        self._expect_result = await self._submit(ns, func, kwargs)
 
     async def run(self, ns: str, func: str, **kwargs) -> Any:
         """Submit a remote function to be scheduled and run by actor,
@@ -116,62 +200,26 @@ class Portal:
         remote rpc task or a local async generator instance.
         """
         return await self._return_from_resptype(
-            *(await self._submit(ns, func, **kwargs))
+            *(await self._submit(ns, func, kwargs))
         )
 
     async def _return_from_resptype(
-        self, cid: str, q: trio.Queue, resptype: str, first_msg: dict
+        self,
+        cid: str,
+        recv_chan: trio.abc.ReceiveChannel,
+        resptype: str,
+        first_msg: dict
     ) -> Any:
         # TODO: not this needs some serious work and thinking about how
         # to make async-generators the fundamental IPC API over channels!
         # (think `yield from`, `gen.send()`, and functional reactive stuff)
-
         if resptype == 'yield':  # stream response
-
-            async def yield_from_q():
-                try:
-                    async for msg in q:
-                        try:
-                            yield msg['yield']
-                        except KeyError:
-                            if 'stop' in msg:
-                                break  # far end async gen terminated
-                            else:
-                                # internal error should never get here
-                                assert msg.get('cid'), (
-                                    "Received internal error at portal?")
-                                raise unpack_error(msg, self.channel)
-
-                except (GeneratorExit, trio.Cancelled):
-                    log.warning(
-                        f"Cancelling async gen call {cid} to "
-                        f"{self.channel.uid}")
-                    with trio.move_on_after(0.5) as cs:
-                        cs.shield = True
-                        # TODO: yeah.. it'd be nice if this was just an
-                        # async func on the far end. Gotta figure out a
-                        # better way then implicitly feeding the ctx
-                        # to declaring functions; likely a decorator
-                        # sytsem.
-                        agen = await self.run('self', 'cancel_task', cid=cid)
-                        async with aclosing(agen) as agen:
-                            async for _ in agen:
-                                pass
-                    if cs.cancelled_caught:
-                        if not self.channel.connected():
-                            log.warning(
-                                "May have failed to cancel remote task "
-                                f"{cid} for {self.channel.uid}")
-                    raise
-
-            # TODO: use AsyncExitStack to aclose() all agens
-            # on teardown
-            agen = yield_from_q()
-            self._agens.add(agen)
-            return agen
+            rchan = StreamReceiveChannel(cid, recv_chan, self)
+            self._streams.add(rchan)
+            return rchan
 
         elif resptype == 'return':  # single response
-            msg = await q.get()
+            msg = await recv_chan.receive()
             try:
                 return msg['return']
             except KeyError:
@@ -217,13 +265,17 @@ class Portal:
     async def _cancel_streams(self):
         # terminate all locally running async generator
         # IPC calls
-        if self._agens:
+        if self._streams:
             log.warning(
                 f"Cancelling all streams with {self.channel.uid}")
-            for agen in self._agens:
-                await agen.aclose()
+            for stream in self._streams.copy():
+                await stream.aclose()
 
-    async def close(self) -> None:
+    async def aclose(self) -> None:
+        log.debug(f"Closing {self}")
+        # TODO: once we move to implementing our own `ReceiveChannel`
+        # (including remote task cancellation inside its `.aclose()`)
+        # we'll need to .aclose all those channels here
         await self._cancel_streams()
 
     async def cancel_actor(self) -> bool:
@@ -308,7 +360,7 @@ async def open_portal(
         try:
             yield portal
         finally:
-            await portal.close()
+            await portal.aclose()
 
             if was_connected:
                 # cancel remote channel-msg loop

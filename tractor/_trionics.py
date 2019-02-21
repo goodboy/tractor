@@ -185,7 +185,7 @@ class ActorNursery:
 
             Should only be called for actors spawned with `run_in_actor()`.
             """
-            with trio.open_cancel_scope() as cs:
+            with trio.CancelScope() as cs:
                 task_status.started(cs)
                 # if this call errors we store the exception for later
                 # in ``errors`` which will be reraised inside
@@ -316,7 +316,7 @@ class ActorNursery:
                 # a cancel signal shows up slightly after in which case
                 # the `else:` block here might not complete?
                 # For now, shield both.
-                with trio.open_cancel_scope(shield=True):
+                with trio.CancelScope(shield=True):
                     if etype in (trio.Cancelled, KeyboardInterrupt):
                         log.warning(
                             f"Nursery for {current_actor().uid} was "
@@ -353,11 +353,5 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
         raise RuntimeError("No actor instance has been defined yet?")
 
     # TODO: figure out supervisors from erlang
-    async with ActorNursery(current_actor()) as nursery:
+    async with ActorNursery(actor) as nursery:
         yield nursery
-
-
-def is_main_process():
-    """Bool determining if this actor is running in the top-most process.
-    """
-    return mp.current_process().name == 'MainProcess'

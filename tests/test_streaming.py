@@ -14,7 +14,7 @@ async def stream_seq(sequence):
         await trio.sleep(0.1)
 
     # block indefinitely waiting to be cancelled by ``aclose()`` call
-    with trio.open_cancel_scope() as cs:
+    with trio.CancelScope() as cs:
         await trio.sleep(float('inf'))
         assert 0
     assert cs.cancelled_caught
@@ -91,25 +91,25 @@ async def aggregate(seed):
 
             portals.append(portal)
 
-        q = trio.Queue(500)
+        send_chan, recv_chan = trio.open_memory_channel(500)
 
-        async def push_to_q(portal):
+        async def push_to_chan(portal):
             async for value in await portal.run(
                 __name__, 'stream_data', seed=seed
             ):
                 # leverage trio's built-in backpressure
-                await q.put(value)
+                await send_chan.send(value)
 
-            await q.put(None)
+            await send_chan.send(None)
             print(f"FINISHED ITERATING {portal.channel.uid}")
 
         # spawn 2 trio tasks to collect streams and push to a local queue
         async with trio.open_nursery() as n:
             for portal in portals:
-                n.start_soon(push_to_q, portal)
+                n.start_soon(push_to_chan, portal)
 
             unique_vals = set()
-            async for value in q:
+            async for value in recv_chan:
                 if value not in unique_vals:
                     unique_vals.add(value)
                     # yield upwards to the spawning parent actor
