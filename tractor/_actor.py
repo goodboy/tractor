@@ -483,7 +483,7 @@ class Actor:
         """The routine called *after fork* which invokes a fresh ``trio.run``
         """
         self._forkserver_info = forkserver_info
-        from ._trionics import ctx
+        from ._spawn import ctx
         if self.loglevel is not None:
             log.info(
                 f"Setting loglevel for {self.uid} to {self.loglevel}")
