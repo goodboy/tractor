@@ -62,10 +62,14 @@ async def stream_from_single_subactor():
                 # await nursery.cancel()
 
 
-def test_stream_from_single_subactor(arb_addr):
+def test_stream_from_single_subactor(arb_addr, spawn_method):
     """Verify streaming from a spawned async generator.
     """
-    tractor.run(stream_from_single_subactor, arbiter_addr=arb_addr)
+    tractor.run(
+        stream_from_single_subactor,
+        arbiter_addr=arb_addr,
+        spawn_method=spawn_method,
+    )
 
 
 # this is the first 2 actors, streamer_1 and streamer_2
