@@ -28,3 +28,11 @@ def loglevel(request):
 @pytest.fixture(scope='session')
 def arb_addr():
     return _arb_addr
+
+
+def pytest_generate_tests(metafunc):
+    if 'spawn_method' in metafunc.fixturenames:
+        from multiprocessing import get_all_start_methods
+        methods = get_all_start_methods()
+        methods.remove('fork')
+        metafunc.parametrize("spawn_method", methods, scope='module')
