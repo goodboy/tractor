@@ -19,6 +19,7 @@ from ._trionics import open_nursery
 from ._state import current_actor
 from ._exceptions import RemoteActorError, ModuleNotExposed
 from . import msg
+from . import _spawn
 
 
 __all__ = [
@@ -92,12 +93,14 @@ def run(
     name: str = None,
     arbiter_addr: Tuple[str, int] = (
         _default_arbiter_host, _default_arbiter_port),
+    spawn_method: str = 'forkserver',
     **kwargs: typing.Dict[str, typing.Any],
 ) -> Any:
     """Run a trio-actor async function in process.
 
     This is tractor's main entry and the start point for any async actor.
     """
+    _spawn.try_set_start_method(spawn_method)
     return trio.run(_main, async_fn, args, kwargs, name, arbiter_addr)
 
 

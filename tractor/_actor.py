@@ -391,7 +391,8 @@ class Actor:
                                 f" {chan} from {chan.uid}")
                         break
 
-                    log.trace(f"Received msg {msg} from {chan.uid}")  # type: ignore
+                    log.trace(   # type: ignore
+                        f"Received msg {msg} from {chan.uid}")
                     if msg.get('cid'):
                         # deliver response to local caller/waiter
                         await self._push_result(chan, msg)
@@ -478,18 +479,20 @@ class Actor:
         self,
         accept_addr: Tuple[str, int],
         forkserver_info: Tuple[Any, Any, Any, Any, Any],
+        start_method: str,
         parent_addr: Tuple[str, int] = None
     ) -> None:
         """The routine called *after fork* which invokes a fresh ``trio.run``
         """
         self._forkserver_info = forkserver_info
-        from ._spawn import ctx
+        from ._spawn import try_set_start_method
+        spawn_ctx = try_set_start_method(start_method)
         if self.loglevel is not None:
             log.info(
                 f"Setting loglevel for {self.uid} to {self.loglevel}")
             get_console_log(self.loglevel)
         log.info(
-            f"Started new {ctx.current_process()} for {self.uid}")
+            f"Started new {spawn_ctx.current_process()} for {self.uid}")
         _state._current_actor = self
         log.debug(f"parent_addr is {parent_addr}")
         try:
