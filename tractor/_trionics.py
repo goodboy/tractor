@@ -1,20 +1,28 @@
 """
 ``trio`` inspired apis and helpers
 """
-import multiprocessing as mp
 import inspect
+import platform
+import multiprocessing as mp
 from typing import Tuple, List, Dict, Optional, Any
 import typing
 
 import trio
 from async_generator import asynccontextmanager, aclosing
 
-# from . import _forkserver_hackzorz
 from ._state import current_actor
 from .log import get_logger, get_loglevel
 from ._actor import Actor, ActorFailure
 from ._portal import Portal
 from . import _spawn
+
+
+if platform.system() == 'Windows':
+    async def proc_waiter(proc: mp.Process) -> None:
+        await trio.hazmat.WaitForSingleObject(proc.sentinel)
+else:
+    async def proc_waiter(proc: mp.Process) -> None:
+        await trio.hazmat.wait_readable(proc.sentinel)
 
 
 log = get_logger('tractor')
@@ -180,7 +188,8 @@ class ActorNursery:
         ) -> None:
             # TODO: timeout block here?
             if proc.is_alive():
-                await trio.hazmat.wait_readable(proc.sentinel)
+                await proc_waiter(proc)
+
             # please god don't hang
             proc.join()
             log.debug(f"Joined {proc}")
