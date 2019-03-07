@@ -1,6 +1,6 @@
 tractor
 =======
-An async-native `actor model`_ built on trio_ and multiprocessing_.
+An async-native "`actor model`_" built on trio_ and multiprocessing_.
 
 
 |travis|
@@ -23,23 +23,26 @@ An async-native `actor model`_ built on trio_ and multiprocessing_.
 
 ``tractor`` is an attempt to bring trionic_ `structured concurrency`_ to distributed multi-core Python.
 
-``tractor`` lets you run and spawn *actors*: processes which each run a ``trio``
-scheduler and task tree (also known as an `async sandwich`_).
-*Actors* communicate by sending messages_ over channels_ and avoid sharing any local state.
-This `actor model`_ allows for highly distributed software architecture which works just as
-well on multiple cores as it does over many hosts.
-``tractor`` takes much inspiration from pulsar_ and execnet_ but attempts to be much more
-focussed on sophistication of the lower level distributed architecture as well as have first
-class support for `modern async Python`_.
+``tractor`` lets you spawn ``trio`` *"actors"*: processes which each run a ``trio`` scheduler and task
+tree (also known as an `async sandwich`_). *Actors* communicate by exchanging asynchronous messages_ over
+channels_ and avoid sharing any state.  This model allows for highly distributed software architecture
+which works just as well on multiple cores as it does over many hosts.  ``tractor`` is an actor-model-*like*
+system in the sense that it adheres to the `3 axioms`_ but not does not (yet) fufill all "unrequirements_" in
+practice.
 
-The first step to grok ``tractor`` is to get the basics of ``trio``
-down. A great place to start is the `trio docs`_ and this `blog post`_.
+``tractor`` takes inspiration from pulsar_ and execnet_ but attempts to be more focussed on sophistication of
+the lower level distributed architecture as well as have first class support for streaming using `async generators`_.
+
+The first step to grok ``tractor`` is to get the basics of ``trio`` down.
+A great place to start is the `trio docs`_ and this `blog post`_.
 
 .. _messages: https://en.wikipedia.org/wiki/Message_passing
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
 .. _structured concurrency: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _modern async Python: https://www.python.org/dev/peps/pep-0525/
+.. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
+.. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
+.. _async generators: https://www.python.org/dev/peps/pep-0525/
 
 
 .. contents::
@@ -47,20 +50,25 @@ down. A great place to start is the `trio docs`_ and this `blog post`_.
 
 Philosophy
 ----------
-``tractor``'s tenets non-comprehensively include:
+``tractor`` aims to be the Python multi-processing framework *you always wanted*.
 
+Its tenets non-comprehensively include:
+
+- strict adherence to the `concept-in-progress`_ of *structured concurrency*
 - no spawning of processes *willy-nilly*; causality_ is paramount!
-- `shared nothing architecture`_
-- remote errors `always propagate`_ back to the caller
+- (remote) errors `always propagate`_ back to the parent / caller
 - verbatim support for ``trio``'s cancellation_ system
+- `shared nothing architecture`_
 - no use of *proxy* objects to wrap RPC calls
 - an immersive debugging experience
 - anti-fragility through `chaos engineering`_
+
 
 .. warning:: ``tractor`` is in alpha-alpha and is expected to change rapidly!
     Expect nothing to be set in stone. Your ideas about where it should go
     are greatly appreciated!
 
+.. _concept-in-progress: https://trio.discourse.group/t/structured-concurrency-kickoff/55
 .. _pulsar: http://quantmind.github.io/pulsar/design.html
 .. _execnet: https://codespeak.net/execnet/
 
@@ -450,7 +458,6 @@ as ``multiprocessing`` calls it) which is running ``main()``.
     https://trio.readthedocs.io/en/latest/reference-core.html#getting-back-into-the-trio-thread-from-another-thread
 .. _asynchronous generators: https://www.python.org/dev/peps/pep-0525/
 .. _remote function execution: https://codespeak.net/execnet/example/test_info.html#remote-exec-a-function-avoiding-inlined-source-part-i
-.. _asyncitertools: https://github.com/vodik/asyncitertools
 
 
 Cancellation
@@ -673,6 +680,7 @@ Stuff I'd like to see ``tractor`` do real soon:
   but with better `pdb++`_ support
 - an extensive `chaos engineering`_ test suite
 - support for reactive programming primitives and native support for asyncitertools_ like libs
+- introduction of a `capability-based security`_ model
 
 
 Feel like saying hi?
@@ -691,3 +699,5 @@ say hi, please feel free to ping me on the `trio gitter channel`_!
 .. _celery: http://docs.celeryproject.org/en/latest/userguide/debugging.html
 .. _pdb++: https://github.com/antocuni/pdb
 .. _msgpack: https://en.wikipedia.org/wiki/MessagePack
+.. _asyncitertools: https://github.com/vodik/asyncitertools
+.. _capability-based security: https://en.wikipedia.org/wiki/Capability-based_security
