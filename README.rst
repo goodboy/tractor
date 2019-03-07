@@ -82,6 +82,16 @@ No PyPi release yet!
     pip install git+git://github.com/tgoodlet/tractor.git
 
 
+Windows "gotchas"
+*****************
+`tractor` uses the stdlib's `multiprocessing` module internally which
+*can* have some *gotchas* on Windows, namely the need for calling
+`freeze_support()`_ inside the ``__main__`` context. See `#61`_ for the
+deats.
+
+.. _freeze_support(): https://docs.python.org/3/library/multiprocessing.html#multiprocessing.freeze_support
+.. _#61: https://github.com/tgoodlet/tractor/pull/61#issuecomment-470053512
+
 Examples
 --------
 
