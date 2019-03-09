@@ -26,12 +26,12 @@ An async-native "`actor model`_" built on trio_ and multiprocessing_.
 ``tractor`` lets you spawn ``trio`` *"actors"*: processes which each run a ``trio`` scheduler and task
 tree (also known as an `async sandwich`_). *Actors* communicate by exchanging asynchronous messages_ over
 channels_ and avoid sharing any state.  This model allows for highly distributed software architecture
-which works just as well on multiple cores as it does over many hosts.  ``tractor`` is an actor-model-*like*
-system in the sense that it adheres to the `3 axioms`_ but not does not (yet) fufill all "unrequirements_" in
-practice.
+which works just as well on multiple cores as it does over many hosts.
 
-``tractor`` takes inspiration from pulsar_ and execnet_ but attempts to be more focussed on sophistication of
-the lower level distributed architecture as well as have first class support for streaming using `async generators`_.
+``tractor`` is an actor-model-*like* system in the sense that it adheres to the `3 axioms`_ but not does
+not (yet) fufill all "unrequirements_" in practice. The API and design takes inspiration from pulsar_ and
+execnet_ but attempts to be more focussed on sophistication of the lower level distributed architecture as
+well as have first class support for streaming using `async generators`_.
 
 The first step to grok ``tractor`` is to get the basics of ``trio`` down.
 A great place to start is the `trio docs`_ and this `blog post`_.
@@ -84,8 +84,8 @@ No PyPi release yet!
 
 Windows "gotchas"
 *****************
-`tractor` uses the stdlib's `multiprocessing` module internally which
-*can* have some *gotchas* on Windows, namely the need for calling
+`tractor` internally uses the stdlib's `multiprocessing` package which
+*can* have some gotchas on Windows. Namely, the need for calling
 `freeze_support()`_ inside the ``__main__`` context. See `#61`_ for the
 deats.
 
@@ -647,6 +647,9 @@ multiple tasks streaming responses concurrently:
 
 The context notion comes from the context_ in nanomsg_.
 
+.. _context: https://nanomsg.github.io/nng/man/tip/nng_ctx.5
+.. _msgpack: https://en.wikipedia.org/wiki/MessagePack
+
 
 Running actors standalone
 *************************
@@ -660,6 +663,16 @@ need to hop into a debugger. You just need to pass the existing
 .. code:: python
 
     tractor.run(main, arbiter_addr=('192.168.0.10', 1616))
+
+
+Choosing a ``multiprocessing`` *start method*
+*********************************************
+``tractor`` supports selection of the `multiprocessing start method`_ via
+a ``start_method`` kwarg to ``tractor.run()``. Note that on Windows
+*spawn* it the only supported method and on nix systems *forkserver* is
+selected by default for speed.
+
+.. _multiprocessing start method: https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
 
 
 Enabling logging
@@ -692,6 +705,14 @@ Stuff I'd like to see ``tractor`` do real soon:
 - support for reactive programming primitives and native support for asyncitertools_ like libs
 - introduction of a `capability-based security`_ model
 
+.. _supervisors: https://github.com/tgoodlet/tractor/issues/22
+.. _nanomsg: https://nanomsg.github.io/nng/index.html
+.. _gossip protocol: https://en.wikipedia.org/wiki/Gossip_protocol
+.. _celery: http://docs.celeryproject.org/en/latest/userguide/debugging.html
+.. _asyncitertools: https://github.com/vodik/asyncitertools
+.. _pdb++: https://github.com/antocuni/pdb
+.. _capability-based security: https://en.wikipedia.org/wiki/Capability-based_security
+
 
 Feel like saying hi?
 --------------------
@@ -700,14 +721,4 @@ This project is very much coupled to the ongoing development of
 community). If you want to help, have suggestions or just want to
 say hi, please feel free to ping me on the `trio gitter channel`_!
 
-
-.. _supervisors: https://github.com/tgoodlet/tractor/issues/22
-.. _nanomsg: https://nanomsg.github.io/nng/index.html
-.. _context: https://nanomsg.github.io/nng/man/tip/nng_ctx.5
-.. _gossip protocol: https://en.wikipedia.org/wiki/Gossip_protocol
 .. _trio gitter channel: https://gitter.im/python-trio/general
-.. _celery: http://docs.celeryproject.org/en/latest/userguide/debugging.html
-.. _pdb++: https://github.com/antocuni/pdb
-.. _msgpack: https://en.wikipedia.org/wiki/MessagePack
-.. _asyncitertools: https://github.com/vodik/asyncitertools
-.. _capability-based security: https://en.wikipedia.org/wiki/Capability-based_security
