@@ -11,7 +11,7 @@ import trio  # type: ignore
 from trio import MultiError
 
 from .log import get_console_log, get_logger, get_loglevel
-from ._ipc import _connect_chan, Channel, Context
+from ._ipc import _connect_chan, Channel
 from ._actor import (
     Actor, _start_actor, Arbiter, get_arbiter, find_actor, wait_for_actor
 )
@@ -19,6 +19,7 @@ from ._trionics import open_nursery
 from ._state import current_actor
 from ._exceptions import RemoteActorError, ModuleNotExposed
 from . import msg
+from . import _spawn
 
 
 __all__ = [
@@ -92,12 +93,16 @@ def run(
     name: str = None,
     arbiter_addr: Tuple[str, int] = (
         _default_arbiter_host, _default_arbiter_port),
+    # the `multiprocessing` start method:
+    # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+    start_method: str = 'forkserver',
     **kwargs: typing.Dict[str, typing.Any],
 ) -> Any:
     """Run a trio-actor async function in process.
 
     This is tractor's main entry and the start point for any async actor.
     """
+    _spawn.try_set_start_method(start_method)
     return trio.run(_main, async_fn, args, kwargs, name, arbiter_addr)
 
 

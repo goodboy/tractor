@@ -1,24 +1,30 @@
 """
 ``trio`` inspired apis and helpers
 """
-import multiprocessing as mp
 import inspect
-from multiprocessing import forkserver, semaphore_tracker  # type: ignore
+import platform
+import multiprocessing as mp
 from typing import Tuple, List, Dict, Optional, Any
 import typing
 
 import trio
 from async_generator import asynccontextmanager, aclosing
 
-from . import _forkserver_hackzorz
 from ._state import current_actor
 from .log import get_logger, get_loglevel
 from ._actor import Actor, ActorFailure
 from ._portal import Portal
+from . import _spawn
 
 
-_forkserver_hackzorz.override_stdlib()
-ctx = mp.get_context("forkserver")
+if platform.system() == 'Windows':
+    async def proc_waiter(proc: mp.Process) -> None:
+        await trio.hazmat.WaitForSingleObject(proc.sentinel)
+else:
+    async def proc_waiter(proc: mp.Process) -> None:
+        await trio.hazmat.wait_readable(proc.sentinel)
+
+
 log = get_logger('tractor')
 
 
@@ -36,7 +42,6 @@ class ActorNursery:
         # cancelled when their "main" result arrives
         self._cancel_after_result_on_exit: set = set()
         self.cancelled: bool = False
-        self._forkserver: forkserver.ForkServer = None
 
     async def __aenter__(self):
         return self
@@ -60,36 +65,11 @@ class ActorNursery:
         )
         parent_addr = self._actor.accept_addr
         assert parent_addr
-        self._forkserver = fs = forkserver._forkserver
-        if mp.current_process().name == 'MainProcess' and (
-            not self._actor._forkserver_info
-        ):
-            # if we're the "main" process start the forkserver only once
-            # and pass its ipc info to downstream children
-            # forkserver.set_forkserver_preload(rpc_module_paths)
-            forkserver.ensure_running()
-            fs_info = (
-                fs._forkserver_address,
-                fs._forkserver_alive_fd,
-                getattr(fs, '_forkserver_pid', None),
-                getattr(semaphore_tracker._semaphore_tracker, '_pid', None),
-                semaphore_tracker._semaphore_tracker._fd,
-            )
-        else:
-            assert self._actor._forkserver_info
-            fs_info = (
-                fs._forkserver_address,
-                fs._forkserver_alive_fd,
-                fs._forkserver_pid,
-                semaphore_tracker._semaphore_tracker._pid,
-                semaphore_tracker._semaphore_tracker._fd,
-             ) = self._actor._forkserver_info
-
-        proc = ctx.Process(
-            target=actor._fork_main,
-            args=(bind_addr, fs_info, parent_addr),
-            # daemon=True,
-            name=name,
+        proc = _spawn.new_proc(
+            name,
+            actor,
+            bind_addr,
+            parent_addr,
         )
         # register the process before start in case we get a cancel
         # request before the actor has fully spawned - then we can wait
@@ -208,7 +188,8 @@ class ActorNursery:
         ) -> None:
             # TODO: timeout block here?
             if proc.is_alive():
-                await trio.hazmat.wait_readable(proc.sentinel)
+                await proc_waiter(proc)
+
             # please god don't hang
             proc.join()
             log.debug(f"Joined {proc}")

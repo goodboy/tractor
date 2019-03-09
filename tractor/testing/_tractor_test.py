@@ -24,7 +24,13 @@ def tractor_test(fn):
     injected to tests declaring these funcargs.
     """
     @wraps(fn)
-    def wrapper(*args, loglevel=None, arb_addr=None, **kwargs):
+    def wrapper(
+        *args,
+        loglevel=None,
+        arb_addr=None,
+        start_method='forkserver',
+        **kwargs
+    ):
         # __tracebackhide__ = True
         if 'arb_addr' in inspect.signature(fn).parameters:
             # injects test suite fixture value to test as well
@@ -34,9 +40,15 @@ def tractor_test(fn):
             # allows test suites to define a 'loglevel' fixture
             # that activates the internal logging
             kwargs['loglevel'] = loglevel
+        if 'start_method' in inspect.signature(fn).parameters:
+            # allows test suites to define a 'loglevel' fixture
+            # that activates the internal logging
+            kwargs['start_method'] = start_method
         return run(
             partial(fn, *args, **kwargs),
-            arbiter_addr=arb_addr, loglevel=loglevel
+            arbiter_addr=arb_addr,
+            loglevel=loglevel,
+            start_method=start_method,
         )
 
     return wrapper
