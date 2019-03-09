@@ -57,7 +57,7 @@ def movie_theatre_question():
 
 
 @tractor_test
-async def test_movie_theatre_convo(spawn_method):
+async def test_movie_theatre_convo(start_method):
     """The main ``tractor`` routine.
     """
     async with tractor.open_nursery() as n:
@@ -83,7 +83,7 @@ def cellar_door():
 
 
 @tractor_test
-async def test_most_beautiful_word(spawn_method):
+async def test_most_beautiful_word(start_method):
     """The main ``tractor`` routine.
     """
     async with tractor.open_nursery() as n:

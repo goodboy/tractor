@@ -28,7 +28,7 @@ def tractor_test(fn):
         *args,
         loglevel=None,
         arb_addr=None,
-        spawn_method='forkserver',
+        start_method='forkserver',
         **kwargs
     ):
         # __tracebackhide__ = True
@@ -40,15 +40,15 @@ def tractor_test(fn):
             # allows test suites to define a 'loglevel' fixture
             # that activates the internal logging
             kwargs['loglevel'] = loglevel
-        if 'spawn_method' in inspect.signature(fn).parameters:
+        if 'start_method' in inspect.signature(fn).parameters:
             # allows test suites to define a 'loglevel' fixture
             # that activates the internal logging
-            kwargs['spawn_method'] = spawn_method
+            kwargs['start_method'] = start_method
         return run(
             partial(fn, *args, **kwargs),
             arbiter_addr=arb_addr,
             loglevel=loglevel,
-            spawn_method=spawn_method,
+            start_method=start_method,
         )
 
     return wrapper

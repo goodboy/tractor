@@ -62,13 +62,13 @@ async def stream_from_single_subactor():
                 # await nursery.cancel()
 
 
-def test_stream_from_single_subactor(arb_addr, spawn_method):
+def test_stream_from_single_subactor(arb_addr, start_method):
     """Verify streaming from a spawned async generator.
     """
     tractor.run(
         stream_from_single_subactor,
         arbiter_addr=arb_addr,
-        spawn_method=spawn_method,
+        start_method=start_method,
     )
 
 

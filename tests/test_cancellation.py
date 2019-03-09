@@ -110,7 +110,7 @@ async def stream_forever():
 
 
 @tractor_test
-async def test_cancel_infinite_streamer(spawn_method):
+async def test_cancel_infinite_streamer(start_method):
 
     # stream for at most 1 seconds
     with trio.move_on_after(1) as cancel_scope:
@@ -139,7 +139,7 @@ async def test_cancel_infinite_streamer(spawn_method):
     ids=['one_actor', 'two_actors'],
 )
 @tractor_test
-async def test_some_cancels_all(num_actors_and_errs, spawn_method):
+async def test_some_cancels_all(num_actors_and_errs, start_method):
     """Verify a subset of failed subactors causes all others in
     the nursery to be cancelled just like the strategy in trio.
 
