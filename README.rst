@@ -159,7 +159,7 @@ Actor spawning and causality
 ``tractor`` tries to take ``trio``'s concept of causal task lifetimes
 to multi-process land. Accordingly, ``tractor``'s *actor nursery* behaves
 similar to ``trio``'s nursery_. That is, ``tractor.open_nursery()``
-opens an ``ActorNursery`` which waits on spawned *actors* to complete
+opens an ``ActorNursery`` which **must** wait on spawned *actors* to complete
 (or error) in the same causal_ way ``trio`` waits on spawned subtasks.
 This includes errors from any one actor causing all other actors
 spawned by the same nursery to be cancelled_.
@@ -172,22 +172,21 @@ and use the ``run_in_actor()`` method:
     import tractor
 
 
-        def cellar_door():
-            return "Dang that's beautiful"
+    def cellar_door():
+       return "Dang that's beautiful"
 
 
-        async def main():
-            """The main ``tractor`` routine.
-            """
-            async with tractor.open_nursery() as n:
+    async def main():
+        """The main ``tractor`` routine.
+        """
+        async with tractor.open_nursery() as n:
 
-                portal = await n.run_in_actor('teacher', cellar_door)
+            portal = await n.run_in_actor('some_linguist', cellar_door)
 
-            # The ``async with`` will unblock here since the 'frank'
-            # actor has completed its main task ``movie_theatre_question()``.
+        # The ``async with`` will unblock here since the 'some_linguist'
+        # actor has completed its main task ``cellar_door``.
 
-            print(await portal.result())
-
+        print(await portal.result())
 
     tractor.run(main)
 
@@ -204,11 +203,11 @@ What's going on?
   returned from ``nursery.run_in_actor()`` is used to communicate with
   the newly spawned *sub-actor*
 
-- the second actor, *frank*, in a new *process* running a new ``trio`` task_
+- the second actor, *some_linguist*, in a new *process* running a new ``trio`` task_
   then executes ``cellar_door()`` and returns its result over a *channel* back
   to the parent actor
 
-- the parent actor retrieves the subactor's (*frank*) *final result* using ``portal.result()``
+- the parent actor retrieves the subactor's *final result* using ``portal.result()``
   much like you'd expect from a future_.
 
 This ``run_in_actor()`` API should look very familiar to users of
@@ -227,7 +226,7 @@ method:
   method and act like an RPC daemon that runs indefinitely (the
   ``with tractor.open_nursery()`` won't exit) until cancelled_
 
-Had we wanted the latter form in our example it would have looked like:
+Here is a similar example using the latter method:
 
 .. code:: python
 
