@@ -581,7 +581,7 @@ find an actor's socket address by name use the ``find_actor()`` function:
             print(f"my_service is found at {my_service}")
 
 
-    tractor.run(main, service_name)
+    tractor.run(main, 'some_actor_name')
 
 
 The ``name`` value you should pass to ``find_actor()`` is the one you passed as the
