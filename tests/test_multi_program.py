@@ -8,7 +8,18 @@ import subprocess
 
 import pytest
 import tractor
+import platform
 from conftest import tractor_test
+
+# Sending signal.SIGINT on subprocess fails on windows. Use CTRL_* alternatives
+if platform.system() == 'Windows':
+    _KILL_SIGNAL = signal.CTRL_BREAK_EVENT
+    _INT_SIGNAL = signal.CTRL_C_EVENT
+    _INT_RETURN_CODE = 3221225786
+else:
+    _KILL_SIGNAL = signal.SIGKILL
+    _INT_SIGNAL = signal.SIGINT
+    _INT_RETURN_CODE = 1
 
 
 def sig_prog(proc, sig):
@@ -18,8 +29,7 @@ def sig_prog(proc, sig):
     if not proc.poll():
         # TODO: why sometimes does SIGINT not work on teardown?
         # seems to happen only when trace logging enabled?
-        proc.send_signal(signal.SIGKILL)
-
+        proc.send_signal(_KILL_SIGNAL)
     ret = proc.wait()
     assert ret
 
@@ -33,25 +43,33 @@ def daemon(loglevel, testdir, arb_addr):
             arb_addr,
             "'{}'".format(loglevel) if loglevel else None)
     ]
+    kwargs = dict()
+    if platform.system() == 'Windows':
+        # without this, tests hang on windows forever
+        kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+
     proc = testdir.popen(
         cmdargs,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        **kwargs,
     )
     assert not proc.returncode
     wait = 0.6 if sys.version_info < (3, 7) else 0.4
     time.sleep(wait)
     yield proc
-    sig_prog(proc, signal.SIGINT)
+    sig_prog(proc, _INT_SIGNAL)
 
 
 def test_abort_on_sigint(daemon):
     assert daemon.returncode is None
     time.sleep(0.1)
-    sig_prog(daemon, signal.SIGINT)
-    assert daemon.returncode == 1
+    sig_prog(daemon, _INT_SIGNAL)
+    assert daemon.returncode == _INT_RETURN_CODE
     # XXX: oddly, couldn't get capfd.readouterr() to work here?
-    assert "KeyboardInterrupt" in str(daemon.stderr.read())
+    if platform.system() != 'Windows':
+        # don't check stderr on windows as its empty when sending CTRL_C_EVENT
+        assert "KeyboardInterrupt" in str(daemon.stderr.read())
 
 
 @tractor_test

@@ -24,16 +24,17 @@ def try_set_start_method(name: str) -> mp.context.BaseContext:
     global _ctx
 
     allowed = mp.get_all_start_methods()
-    assert name in allowed
 
     if name not in allowed:
-        name == 'spawn'
+        name = 'spawn'
     elif name == 'fork':
         raise ValueError(
             "`fork` is unsupported due to incompatibility with `trio`"
         )
     elif name == 'forkserver':
         _forkserver_hackzorz.override_stdlib()
+
+    assert name in allowed
 
     _ctx = mp.get_context(name)
     return _ctx

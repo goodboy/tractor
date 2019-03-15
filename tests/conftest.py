@@ -34,5 +34,6 @@ def pytest_generate_tests(metafunc):
     if 'start_method' in metafunc.fixturenames:
         from multiprocessing import get_all_start_methods
         methods = get_all_start_methods()
-        methods.remove('fork')
+        if 'fork' in methods:  # fork not available on windows, so check before removing
+            methods.remove('fork')
         metafunc.parametrize("start_method", methods, scope='module')

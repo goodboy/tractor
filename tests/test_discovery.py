@@ -45,13 +45,15 @@ async def hi():
 
 
 async def say_hello(other_actor):
-    await trio.sleep(0.4)  # wait for other actor to spawn
+    await trio.sleep(1)  # wait for other actor to spawn
     async with tractor.find_actor(other_actor) as portal:
+        assert portal is not None
         return await portal.run(__name__, 'hi')
 
 
 async def say_hello_use_wait(other_actor):
     async with tractor.wait_for_actor(other_actor) as portal:
+        assert portal is not None
         result = await portal.run(__name__, 'hi')
         return result
 
