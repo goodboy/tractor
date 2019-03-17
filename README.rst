@@ -5,8 +5,8 @@ An async-native "`actor model`_" built on trio_ and multiprocessing_.
 
 |travis|
 
-.. |travis| image:: https://img.shields.io/travis/tgoodlet/tractor/master.svg
-    :target: https://travis-ci.org/tgoodlet/tractor
+.. |travis| image:: https://img.shields.io/travis/goodboy/tractor/master.svg
+    :target: https://travis-ci.org/goodboy/tractor
 
 .. _actor model: https://en.wikipedia.org/wiki/Actor_model
 .. _trio: https://github.com/python-trio/trio
@@ -608,7 +608,7 @@ function:
 
 .. code:: python
 
-   async def streamer(ctx, rate=2):
+   async def streamer(ctx: tractor.Context, rate: int = 2) -> None:
       """A simple web response streaming server.
       """
       while True:
@@ -628,7 +628,7 @@ multiple tasks streaming responses concurrently:
 
 .. code:: python
 
-   async def streamer(ctx, url, rate=2):
+   async def streamer(ctx: tractor.Context, rate: int = 2) -> None:
       """A simple web response streaming server.
       """
       while True:
@@ -640,7 +640,9 @@ multiple tasks streaming responses concurrently:
          await trio.sleep(1 / rate)
 
 
-   async def stream_multiple_sources(ctx, sources):
+   async def stream_multiple_sources(
+      ctx: tractor.Context, sources: List[str]
+   ) -> None:
       async with trio.open_nursery() as n:
          for url in sources:
             n.start_soon(streamer, ctx, url)
