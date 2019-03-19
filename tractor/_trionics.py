@@ -112,6 +112,7 @@ class ActorNursery:
             rpc_module_paths=[mod_path] + rpc_module_paths,
             bind_addr=bind_addr,
             statespace=statespace,
+            loglevel=loglevel,
         )
         # this marks the actor to be cancelled after its portal result
         # is retreived, see ``wait()`` below.

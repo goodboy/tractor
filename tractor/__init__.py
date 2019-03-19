@@ -10,7 +10,7 @@ import typing
 import trio  # type: ignore
 from trio import MultiError
 
-from .log import get_console_log, get_logger, get_loglevel
+from . import log
 from ._ipc import _connect_chan, Channel, Context
 from ._actor import (
     Actor, _start_actor, Arbiter, get_arbiter, find_actor, wait_for_actor
@@ -51,11 +51,14 @@ async def _main(
 ) -> typing.Any:
     """Async entry point for ``tractor``.
     """
-    log = get_logger('tractor')
+    logger = log.get_logger('tractor')
     main = partial(async_fn, *args)
     arbiter_addr = (host, port) = arbiter_addr or (
             _default_arbiter_host, _default_arbiter_port)
-    get_console_log(kwargs.get('loglevel', get_loglevel()))
+    loglevel = kwargs.get('loglevel', log.get_loglevel())
+    if loglevel is not None:
+        log._default_loglevel = loglevel
+        log.get_console_log(loglevel)
 
     # make a temporary connection to see if an arbiter exists
     arbiter_found = False
@@ -63,11 +66,11 @@ async def _main(
         async with _connect_chan(host, port):
             arbiter_found = True
     except OSError:
-        log.warning(f"No actor could be found @ {host}:{port}")
+        logger.warning(f"No actor could be found @ {host}:{port}")
 
     # create a local actor and start up its main routine/task
     if arbiter_found:  # we were able to connect to an arbiter
-        log.info(f"Arbiter seems to exist @ {host}:{port}")
+        logger.info(f"Arbiter seems to exist @ {host}:{port}")
         actor = Actor(
             name or 'anonymous',
             arbiter_addr=arbiter_addr,
