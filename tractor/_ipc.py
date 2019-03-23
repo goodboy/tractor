@@ -215,10 +215,7 @@ class Context:
     """
     chan: Channel
     cid: str
-
-    # TODO: we should probably attach the actor-task
-    # cancel scope here now that trio is exposing it
-    # as a public object
+    cancel_scope: trio.CancelScope
 
     async def send_yield(self, data: Any) -> None:
         await self.chan.send({'yield': data, 'cid': self.cid})
