@@ -1,6 +1,7 @@
 """
 Spawning basics
 """
+import pytest
 import trio
 import tractor
 
@@ -94,3 +95,42 @@ async def test_most_beautiful_word(start_method):
     # actor has completed its main task ``cellar_door``.
 
     print(await portal.result())
+
+
+async def check_loglevel(level):
+    assert tractor.current_actor().loglevel == level
+    log = tractor.log.get_logger()
+    # XXX using a level actually used inside tractor seems to trigger
+    # some kind of `logging` module bug FYI.
+    log.critical('yoyoyo')
+
+
+def test_loglevel_propagated_to_subactor(
+    start_method,
+    capfd,
+    arb_addr,
+):
+    if start_method == 'forkserver':
+        pytest.skip(
+            "a bug with `capfd` seems to make forkserver capture not work?")
+
+    level = 'critical'
+
+    async def main():
+        async with tractor.open_nursery() as tn:
+            await tn.run_in_actor(
+                'log_checker',
+                check_loglevel,
+                level=level,
+            )
+
+    tractor.run(
+        main,
+        name='arbiter',
+        loglevel=level,
+        start_method=start_method,
+        arbiter_addr=arb_addr,
+    )
+    # ensure subactor spits log message on stderr
+    captured = capfd.readouterr()
+    assert 'yoyoyo' in captured.err
