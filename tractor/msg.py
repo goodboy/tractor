@@ -12,7 +12,7 @@ import wrapt
 
 from .log import get_logger
 from . import current_actor
-from ._ipc import Context
+from ._streaming import Context, stream
 
 __all__ = ['pub']
 
@@ -261,4 +261,4 @@ def pub(
             "`get_topics` argument"
         )
 
-    return wrapper(wrapped)
+    return wrapper(stream(wrapped))

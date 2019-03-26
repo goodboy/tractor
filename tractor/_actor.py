@@ -13,7 +13,8 @@ from typing import Dict, List, Tuple, Any, Optional
 import trio  # type: ignore
 from async_generator import aclosing
 
-from ._ipc import Channel, Context
+from ._ipc import Channel
+from ._streaming import Context, _context
 from .log import get_console_log, get_logger
 from ._exceptions import (
     pack_error,
@@ -47,7 +48,13 @@ async def _invoke(
     cs = None
     cancel_scope = trio.CancelScope()
     ctx = Context(chan, cid, cancel_scope)
-    if 'ctx' in sig.parameters:
+    _context.set(ctx)
+    if getattr(func, '_tractor_stream_function', False):
+        if 'ctx' not in sig.parameters:
+            raise TypeError(
+                "The first argument to the stream function "
+                f"{func.__name__} must be `ctx: tractor.Context`"
+            )
         kwargs['ctx'] = ctx
         # TODO: eventually we want to be more stringent
         # about what is considered a far-end async-generator.
