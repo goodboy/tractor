@@ -1,4 +1,4 @@
-import contextvars
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,7 +7,7 @@ import trio
 from ._ipc import Channel
 
 
-_context = contextvars.ContextVar('context')
+_context: ContextVar['Context'] = ContextVar('context')
 
 
 @dataclass(frozen=True)
@@ -30,8 +30,7 @@ class Context:
 
 
 def current_context():
-    """Get the current streaming task's context instance.
-
+    """Get the current task's context instance.
     """
     return _context.get()
 
