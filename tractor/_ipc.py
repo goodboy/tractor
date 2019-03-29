@@ -1,7 +1,6 @@
 """
 Inter-process comms abstractions
 """
-from dataclasses import dataclass
 import typing
 from typing import Any, Tuple, Optional
 
@@ -203,28 +202,6 @@ class Channel:
 
     def connected(self) -> bool:
         return self.msgstream.connected() if self.msgstream else False
-
-
-@dataclass(frozen=True)
-class Context:
-    """An IAC (inter-actor communication) context.
-
-    Allows maintaining task or protocol specific state between communicating
-    actors. A unique context is created on the receiving end for every request
-    to a remote actor.
-    """
-    chan: Channel
-    cid: str
-
-    # TODO: we should probably attach the actor-task
-    # cancel scope here now that trio is exposing it
-    # as a public object
-
-    async def send_yield(self, data: Any) -> None:
-        await self.chan.send({'yield': data, 'cid': self.cid})
-
-    async def send_stop(self) -> None:
-        await self.chan.send({'stop': True, 'cid': self.cid})
 
 
 @asynccontextmanager

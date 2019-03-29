@@ -8,26 +8,22 @@ import importlib
 import inspect
 import uuid
 import typing
-from typing import Dict, List, Tuple, Any, Optional, Union
+from typing import Dict, List, Tuple, Any, Optional
 
 import trio  # type: ignore
-from async_generator import asynccontextmanager, aclosing
+from async_generator import aclosing
 
-from ._ipc import Channel, _connect_chan, Context
+from ._ipc import Channel
+from ._streaming import Context, _context
 from .log import get_console_log, get_logger
 from ._exceptions import (
     pack_error,
     unpack_error,
     ModuleNotExposed
 )
-from ._portal import (
-    Portal,
-    open_portal,
-    _do_handshake,
-    LocalPortal,
-)
+from ._discovery import get_arbiter
+from ._portal import Portal
 from . import _state
-from ._state import current_actor
 
 
 log = get_logger('tractor')
@@ -45,19 +41,16 @@ async def _invoke(
     kwargs: Dict[str, Any],
     task_status=trio.TASK_STATUS_IGNORED
 ):
-    """Invoke local func and return results over provided channel.
+    """Invoke local func and deliver result(s) over provided channel.
     """
-    sig = inspect.signature(func)
     treat_as_gen = False
     cs = None
-    ctx = Context(chan, cid)
-    if 'ctx' in sig.parameters:
+    cancel_scope = trio.CancelScope()
+    ctx = Context(chan, cid, cancel_scope)
+    _context.set(ctx)
+    if getattr(func, '_tractor_stream_function', False):
+        # handle decorated ``@tractor.stream`` async functions
         kwargs['ctx'] = ctx
-        # TODO: eventually we want to be more stringent
-        # about what is considered a far-end async-generator.
-        # Right now both actual async gens and any async
-        # function which declares a `ctx` kwarg in its
-        # signature will be treated as one.
         treat_as_gen = True
     try:
         is_async_partial = False
@@ -73,7 +66,7 @@ async def _invoke(
             not is_async_gen_partial
         ):
             await chan.send({'functype': 'function', 'cid': cid})
-            with trio.CancelScope() as cs:
+            with cancel_scope as cs:
                 task_status.started(cs)
                 await chan.send({'return': func(**kwargs), 'cid': cid})
         else:
@@ -88,7 +81,7 @@ async def _invoke(
                 # have to properly handle the closing (aclosing)
                 # of the async gen in order to be sure the cancel
                 # is propagated!
-                with trio.CancelScope() as cs:
+                with cancel_scope as cs:
                     task_status.started(cs)
                     async with aclosing(coro) as agen:
                         async for item in agen:
@@ -113,7 +106,7 @@ async def _invoke(
                     # back values like an async-generator would but must
                     # manualy construct the response dict-packet-responses as
                     # above
-                    with trio.CancelScope() as cs:
+                    with cancel_scope as cs:
                         task_status.started(cs)
                         await coro
                     if not cs.cancelled_caught:
@@ -122,7 +115,7 @@ async def _invoke(
                         await chan.send({'stop': True, 'cid': cid})
                 else:
                     await chan.send({'functype': 'asyncfunction', 'cid': cid})
-                    with trio.CancelScope() as cs:
+                    with cancel_scope as cs:
                         task_status.started(cs)
                         await chan.send({'return': await coro, 'cid': cid})
     except Exception as err:
@@ -174,7 +167,7 @@ class Actor:
         arbiter_addr: Optional[Tuple[str, int]] = None,
     ) -> None:
         self.name = name
-        self.uid = (name, uid or str(uuid.uuid1()))
+        self.uid = (name, uid or str(uuid.uuid4()))
         self.rpc_module_paths = rpc_module_paths
         self._mods: dict = {}
         # TODO: consider making this a dynamically defined
@@ -247,7 +240,7 @@ class Actor:
 
         # send/receive initial handshake response
         try:
-            uid = await _do_handshake(self, chan)
+            uid = await self._do_handshake(chan)
         except StopAsyncIteration:
             log.warning(f"Channel {chan} failed to handshake")
             return
@@ -351,7 +344,7 @@ class Actor:
         caller id and a ``trio.Queue`` that can be used to wait for
         responses delivered by the local message processing loop.
         """
-        cid = str(uuid.uuid1())
+        cid = str(uuid.uuid4())
         assert chan.uid
         recv_chan = self.get_memchans(chan.uid, cid)
         log.debug(f"Sending cmd to {chan.uid}: {ns}.{func}({kwargs})")
@@ -373,11 +366,12 @@ class Actor:
         msg = None
         log.debug(f"Entering msg loop for {chan} from {chan.uid}")
         try:
-            # internal scope allows for keeping this message
-            # loop running despite the current task having been
-            # cancelled (eg. `open_portal()` may call this method from
-            # a locally spawned task)
             with trio.CancelScope(shield=shield) as cs:
+                # this internal scope allows for keeping this message
+                # loop running despite the current task having been
+                # cancelled (eg. `open_portal()` may call this method from
+                # a locally spawned task) and recieve this scope using
+                # ``scope = Nursery.start()``
                 task_status.started(cs)
                 async for msg in chan:
                     if msg is None:  # loop terminate sentinel
@@ -385,7 +379,7 @@ class Actor:
                             f"Cancelling all tasks for {chan} from {chan.uid}")
                         for (channel, cid) in self._rpc_tasks:
                             if channel is chan:
-                                self.cancel_task(cid, Context(channel, cid))
+                                self._cancel_task(cid, channel)
                         log.debug(
                                 f"Msg loop signalled to terminate for"
                                 f" {chan} from {chan.uid}")
@@ -419,6 +413,16 @@ class Actor:
                         f"{ns}.{funcname}({kwargs})")
                     if ns == 'self':
                         func = getattr(self, funcname)
+                        if funcname == '_cancel_task':
+                            # XXX: a special case is made here for
+                            # remote calls since we don't want the
+                            # remote actor have to know which channel
+                            # the task is associated with and we can't
+                            # pass non-primitive types between actors.
+                            # This means you can use:
+                            #    Portal.run('self', '_cancel_task, cid=did)
+                            # without passing the `chan` arg.
+                            kwargs['chan'] = chan
                     else:
                         # complain to client about restricted modules
                         try:
@@ -537,7 +541,7 @@ class Actor:
                         )
                         await chan.connect()
                         # initial handshake, report who we are, who they are
-                        await _do_handshake(self, chan)
+                        await self._do_handshake(chan)
                     except OSError:  # failed to connect
                         log.warning(
                             f"Failed to connect to parent @ {parent_addr},"
@@ -661,21 +665,20 @@ class Actor:
         self.cancel_server()
         self._root_nursery.cancel_scope.cancel()
 
-    async def cancel_task(self, cid, ctx):
-        """Cancel a local task.
+    async def _cancel_task(self, cid, chan):
+        """Cancel a local task by call-id / channel.
 
-        Note this method will be treated as a streaming funciton
+        Note this method will be treated as a streaming function
         by remote actor-callers due to the declaration of ``ctx``
         in the signature (for now).
         """
         # right now this is only implicitly called by
         # streaming IPC but it should be called
         # to cancel any remotely spawned task
-        chan = ctx.chan
         try:
             # this ctx based lookup ensures the requested task to
             # be cancelled was indeed spawned by a request from this channel
-            scope, func, is_complete = self._rpc_tasks[(ctx.chan, cid)]
+            scope, func, is_complete = self._rpc_tasks[(chan, cid)]
         except KeyError:
             log.warning(f"{cid} has already completed/terminated?")
             return
@@ -686,7 +689,7 @@ class Actor:
 
         # don't allow cancelling this function mid-execution
         # (is this necessary?)
-        if func is self.cancel_task:
+        if func is self._cancel_task:
             return
 
         scope.cancel()
@@ -704,7 +707,7 @@ class Actor:
         log.info(f"Cancelling all {len(tasks)} rpc tasks:\n{tasks} ")
         for (chan, cid) in tasks.copy():
             # TODO: this should really done in a nursery batch
-            await self.cancel_task(cid, Context(chan, cid))
+            await self._cancel_task(cid, chan)
         # if tasks:
         log.info(
             f"Waiting for remaining rpc tasks to complete {tasks}")
@@ -734,6 +737,25 @@ class Actor:
     def get_chans(self, uid: Tuple[str, str]) -> List[Channel]:
         """Return all channels to the actor with provided uid."""
         return self._peers[uid]
+
+    async def _do_handshake(
+        self,
+        chan: Channel
+    ) -> Tuple[str, str]:
+        """Exchange (name, UUIDs) identifiers as the first communication step.
+
+        These are essentially the "mailbox addresses" found in actor model
+        parlance.
+        """
+        await chan.send(self.uid)
+        uid: Tuple[str, str] = await chan.recv()
+
+        if not isinstance(uid, tuple):
+            raise ValueError(f"{uid} is not a valid uid?!")
+
+        chan.uid = uid
+        log.info(f"Handshake with actor {uid}@{chan.raddr} complete")
+        return uid
 
 
 class Arbiter(Actor):
@@ -840,66 +862,3 @@ async def _start_actor(
     log.info("Completed async main")
 
     return result
-
-
-@asynccontextmanager
-async def get_arbiter(
-    host: str, port: int
-) -> typing.AsyncGenerator[Union[Portal, LocalPortal], None]:
-    """Return a portal instance connected to a local or remote
-    arbiter.
-    """
-    actor = current_actor()
-    if not actor:
-        raise RuntimeError("No actor instance has been defined yet?")
-
-    if actor.is_arbiter:
-        # we're already the arbiter
-        # (likely a re-entrant call from the arbiter actor)
-        yield LocalPortal(actor)
-    else:
-        async with _connect_chan(host, port) as chan:
-            async with open_portal(chan) as arb_portal:
-                yield arb_portal
-
-
-@asynccontextmanager
-async def find_actor(
-    name: str, arbiter_sockaddr: Tuple[str, int] = None
-) -> typing.AsyncGenerator[Optional[Portal], None]:
-    """Ask the arbiter to find actor(s) by name.
-
-    Returns a connected portal to the last registered matching actor
-    known to the arbiter.
-    """
-    actor = current_actor()
-    async with get_arbiter(*arbiter_sockaddr or actor._arb_addr) as arb_portal:
-        sockaddr = await arb_portal.run('self', 'find_actor', name=name)
-        # TODO: return portals to all available actors - for now just
-        # the last one that registered
-        if name == 'arbiter' and actor.is_arbiter:
-            raise RuntimeError("The current actor is the arbiter")
-        elif sockaddr:
-            async with _connect_chan(*sockaddr) as chan:
-                async with open_portal(chan) as portal:
-                    yield portal
-        else:
-            yield None
-
-
-@asynccontextmanager
-async def wait_for_actor(
-    name: str,
-    arbiter_sockaddr: Tuple[str, int] = None
-) -> typing.AsyncGenerator[Portal, None]:
-    """Wait on an actor to register with the arbiter.
-
-    A portal to the first registered actor is returned.
-    """
-    actor = current_actor()
-    async with get_arbiter(*arbiter_sockaddr or actor._arb_addr) as arb_portal:
-        sockaddrs = await arb_portal.run('self', 'wait_for_actor', name=name)
-        sockaddr = sockaddrs[-1]
-        async with _connect_chan(*sockaddr) as chan:
-            async with open_portal(chan) as portal:
-                yield portal

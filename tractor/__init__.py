@@ -11,10 +11,10 @@ import trio  # type: ignore
 from trio import MultiError
 
 from . import log
-from ._ipc import _connect_chan, Channel, Context
-from ._actor import (
-    Actor, _start_actor, Arbiter, get_arbiter, find_actor, wait_for_actor
-)
+from ._ipc import _connect_chan, Channel
+from ._streaming import Context, stream
+from ._discovery import get_arbiter, find_actor, wait_for_actor
+from ._actor import Actor, _start_actor, Arbiter
 from ._trionics import open_nursery
 from ._state import current_actor
 from ._exceptions import RemoteActorError, ModuleNotExposed
@@ -30,6 +30,7 @@ __all__ = [
     'wait_for_actor',
     'Channel',
     'Context',
+    'stream',
     'MultiError',
     'RemoteActorError',
     'ModuleNotExposed',

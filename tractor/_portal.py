@@ -33,21 +33,6 @@ async def maybe_open_nursery(nursery: trio._core._run.Nursery = None):
             yield nursery
 
 
-async def _do_handshake(
-    actor: 'Actor',  # type: ignore
-    chan: Channel
-) -> Any:
-    await chan.send(actor.uid)
-    uid: Tuple[str, str] = await chan.recv()
-
-    if not isinstance(uid, tuple):
-        raise ValueError(f"{uid} is not a valid uid?!")
-
-    chan.uid = uid
-    log.info(f"Handshake with actor {uid}@{chan.raddr} complete")
-    return uid
-
-
 class StreamReceiveChannel(trio.abc.ReceiveChannel):
     """A wrapper around a ``trio._channel.MemoryReceiveChannel`` with
     special behaviour for signalling stream termination across an
@@ -95,8 +80,8 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
             raise unpack_error(msg, self._portal.channel)
 
     async def aclose(self):
-        """Cancel associate remote actor task on close
-        as well as the local memory channel.
+        """Cancel associated remote actor task and local memory channel
+        on close.
         """
         if self._rx_chan._closed:
             log.warning(f"{self} is already closed")
@@ -107,15 +92,10 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
             log.warning(
                 f"Cancelling stream {cid} to "
                 f"{self._portal.channel.uid}")
-            # TODO: yeah.. it'd be nice if this was just an
-            # async func on the far end. Gotta figure out a
-            # better way then implicitly feeding the ctx
-            # to declaring functions; likely a decorator
-            # system.
-            rchan = await self._portal.run(
-                'self', 'cancel_task', cid=cid)
-            async for _ in rchan:
-                pass
+            # NOTE: we're telling the far end actor to cancel a task
+            # corresponding to *this actor*. The far end local channel
+            # instance is passed to `Actor._cancel_task()` implicitly.
+            await self._portal.run('self', '_cancel_task', cid=cid)
 
         if cs.cancelled_caught:
             # XXX: there's no way to know if the remote task was indeed
@@ -153,6 +133,7 @@ class Portal:
             Tuple[str, Any, str, Dict[str, Any]]
         ] = None
         self._streams: Set[StreamReceiveChannel] = set()
+        self.actor = current_actor()
 
     async def _submit(
         self,
@@ -167,7 +148,7 @@ class Portal:
         This is an async call.
         """
         # ship a function call request to the remote actor
-        cid, recv_chan = await current_actor().send_cmd(
+        cid, recv_chan = await self.actor.send_cmd(
             self.channel, ns, func, kwargs)
 
         # wait on first response msg and handle (this should be
@@ -345,7 +326,7 @@ async def open_portal(
             was_connected = True
 
         if channel.uid is None:
-            await _do_handshake(actor, channel)
+            await actor._do_handshake(channel)
 
         msg_loop_cs = await nursery.start(
             partial(
