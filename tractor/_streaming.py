@@ -1,3 +1,4 @@
+import inspect
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -39,4 +40,10 @@ def stream(func):
     """Mark an async function as a streaming routine.
     """
     func._tractor_stream_function = True
+    sig = inspect.signature(func)
+    if 'ctx' not in sig.parameters:
+        raise TypeError(
+            "The first argument to the stream function "
+            f"{func.__name__} must be `ctx: tractor.Context`"
+        )
     return func

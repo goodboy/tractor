@@ -12,7 +12,7 @@ import wrapt
 
 from .log import get_logger
 from . import current_actor
-from ._streaming import Context, stream
+from ._streaming import Context
 
 __all__ = ['pub']
 
@@ -97,29 +97,32 @@ def pub(
 ):
     """Publisher async generator decorator.
 
-    A publisher can be called multiple times from different actors
-    but will only spawn a finite set of internal tasks to stream values
-    to each caller. The ``tasks` argument to the decorator (``Set[str]``)
-    specifies the names of the mutex set of publisher tasks.
-    When the publisher function is called, an argument ``task_name`` must be
-    passed to specify which task (of the set named in ``tasks``) should be
-    used. This allows for using the same publisher with different input
-    (arguments) without allowing more concurrent tasks then necessary.
+    A publisher can be called multiple times from different actors but
+    will only spawn a finite set of internal tasks to stream values to
+    each caller. The ``tasks: Set[str]`` argument to the decorator
+    specifies the names of the mutex set of publisher tasks.  When the
+    publisher function is called, an argument ``task_name`` must be
+    passed to specify which task (of the set named in ``tasks``) should
+    be used. This allows for using the same publisher with different
+    input (arguments) without allowing more concurrent tasks then
+    necessary.
 
-    Values yielded from the decorated async generator
-    must be ``Dict[str, Dict[str, Any]]`` where the fist level key is the
-    topic string an determines which subscription the packet will be delivered
-    to and the value is a packet ``Dict[str, Any]`` by default of the form:
+    Values yielded from the decorated async generator must be
+    ``Dict[str, Dict[str, Any]]`` where the fist level key is the topic
+    string and determines which subscription the packet will be
+    delivered to and the value is a packet ``Dict[str, Any]`` by default
+    of the form:
 
     .. ::python
 
-        {topic: value}
+        {topic: str: value: Any}
 
-    The caller can instead opt to pass a ``packetizer`` callback who's return
-    value will be delivered as the published response.
+    The caller can instead opt to pass a ``packetizer`` callback who's
+    return value will be delivered as the published response.
 
-    The decorated function must *accept* an argument :func:`get_topics` which
-    dynamically returns the tuple of current subscriber topics:
+    The decorated async generator function must accept an argument
+    :func:`get_topics` which dynamically returns the tuple of current
+    subscriber topics:
 
     .. code:: python
 
@@ -162,15 +165,15 @@ def pub(
                 print(f"Subscriber received {value}")
 
 
-    Here, you don't need to provide the ``ctx`` argument since the remote actor
-    provides it automatically to the spawned task. If you were to call
-    ``pub_service()`` directly from a wrapping function you would need to
-    provide this explicitly.
+    Here, you don't need to provide the ``ctx`` argument since the
+    remote actor provides it automatically to the spawned task. If you
+    were to call ``pub_service()`` directly from a wrapping function you
+    would need to provide this explicitly.
 
-    Remember you only need this if you need *a finite set of tasks* running in
-    a single actor to stream data to an arbitrary number of subscribers. If you
-    are ok to have a new task running for every call to ``pub_service()`` then
-    probably don't need this.
+    Remember you only need this if you need *a finite set of tasks*
+    running in a single actor to stream data to an arbitrary number of
+    subscribers. If you are ok to have a new task running for every call
+    to ``pub_service()`` then probably don't need this.
     """
     # handle the decorator not called with () case
     if wrapped is None:
@@ -181,10 +184,7 @@ def pub(
     for name in tasks:
         task2lock[name] = trio.StrictFIFOLock()
 
-    async def takes_ctx(get_topics, ctx=None):
-        pass
-
-    @wrapt.decorator(adapter=takes_ctx)
+    @wrapt.decorator
     async def wrapper(agen, instance, args, kwargs):
         # this is used to extract arguments properly as per
         # the `wrapt` docs
@@ -249,7 +249,6 @@ def pub(
         # invoke it
         await _execute(*args, **kwargs)
 
-
     funcname = wrapped.__name__
     if not inspect.isasyncgenfunction(wrapped):
         raise TypeError(
@@ -261,4 +260,8 @@ def pub(
             "`get_topics` argument"
         )
 
-    return wrapper(stream(wrapped))
+    # XXX: manually monkey the wrapped function since
+    # ``wrapt.decorator`` doesn't seem to want to play nice with its
+    # whole "adapter" thing...
+    wrapped._tractor_stream_function = True  # type: ignore
+    return wrapper(wrapped)

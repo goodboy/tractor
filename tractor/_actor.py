@@ -41,26 +41,16 @@ async def _invoke(
     kwargs: Dict[str, Any],
     task_status=trio.TASK_STATUS_IGNORED
 ):
-    """Invoke local func and return results over provided channel.
+    """Invoke local func and deliver result(s) over provided channel.
     """
-    sig = inspect.signature(func)
     treat_as_gen = False
     cs = None
     cancel_scope = trio.CancelScope()
     ctx = Context(chan, cid, cancel_scope)
     _context.set(ctx)
     if getattr(func, '_tractor_stream_function', False):
-        if 'ctx' not in sig.parameters:
-            raise TypeError(
-                "The first argument to the stream function "
-                f"{func.__name__} must be `ctx: tractor.Context`"
-            )
+        # handle decorated ``@tractor.stream`` async functions
         kwargs['ctx'] = ctx
-        # TODO: eventually we want to be more stringent
-        # about what is considered a far-end async-generator.
-        # Right now both actual async gens and any async
-        # function which declares a `ctx` kwarg in its
-        # signature will be treated as one.
         treat_as_gen = True
     try:
         is_async_partial = False
