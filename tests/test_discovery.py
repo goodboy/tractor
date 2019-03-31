@@ -19,15 +19,15 @@ async def test_reg_then_unreg(arb_addr):
         uid = portal.channel.uid
 
         async with tractor.get_arbiter(*arb_addr) as aportal:
-            # local actor should be the arbiter
+            # this local actor should be the arbiter
             assert actor is aportal.actor
 
-            # sub-actor uid should be in the registry
-            await trio.sleep(0.1)  # registering is async, so..
-            assert uid in aportal.actor._registry
-            sockaddrs = actor._registry[uid]
-            # XXX: can we figure out what the listen addr will be?
-            assert sockaddrs
+            async with tractor.wait_for_actor('actor'):
+                # sub-actor uid should be in the registry
+                assert uid in aportal.actor._registry
+                sockaddrs = actor._registry[uid]
+                # XXX: can we figure out what the listen addr will be?
+                assert sockaddrs
 
         await n.cancel()  # tear down nursery
 

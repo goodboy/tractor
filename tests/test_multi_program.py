@@ -1,6 +1,7 @@
 """
 Multiple python programs invoking ``tractor.run()``
 """
+import platform
 import sys
 import time
 import signal
@@ -8,7 +9,6 @@ import subprocess
 
 import pytest
 import tractor
-import platform
 from conftest import tractor_test
 
 # Sending signal.SIGINT on subprocess fails on windows. Use CTRL_* alternatives
@@ -16,10 +16,12 @@ if platform.system() == 'Windows':
     _KILL_SIGNAL = signal.CTRL_BREAK_EVENT
     _INT_SIGNAL = signal.CTRL_C_EVENT
     _INT_RETURN_CODE = 3221225786
+    _PROC_SPAWN_WAIT = 2
 else:
     _KILL_SIGNAL = signal.SIGKILL
     _INT_SIGNAL = signal.SIGINT
     _INT_RETURN_CODE = 1
+    _PROC_SPAWN_WAIT = 0.6 if sys.version_info < (3, 7) else 0.4
 
 
 def sig_prog(proc, sig):
@@ -55,8 +57,7 @@ def daemon(loglevel, testdir, arb_addr):
         **kwargs,
     )
     assert not proc.returncode
-    wait = 0.6 if sys.version_info < (3, 7) else 0.4
-    time.sleep(wait)
+    time.sleep(_PROC_SPAWN_WAIT)
     yield proc
     sig_prog(proc, _INT_SIGNAL)
 
