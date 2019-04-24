@@ -51,7 +51,7 @@ class PatchedForkServer(ForkServer):
                       semaphore_tracker.getfd()]
             allfds += fds
 
-            # This is the only part changed
+            # XXX This is the only part changed
             try:
                 while True:
                     try:
@@ -64,7 +64,7 @@ class PatchedForkServer(ForkServer):
                             client.connect(self._forkserver_address)
                             continue
                         raise
-            # This is the only part changed
+            # XXX This is the only part changed
 
                 return parent_r, parent_w
             except Exception:
@@ -97,7 +97,7 @@ class PatchedForkServer(ForkServer):
                 self._forkserver_pid = None
 
             # XXX only thing that changed!
-            cmd = ('from tractor._forkserver_hackzorz import main; ' +
+            cmd = ('from tractor._forkserver_override import main; ' +
                    'main(%d, %d, %r, **%r)')
 
             if self._preload_modules:
@@ -231,14 +231,14 @@ def main(listener_fd, alive_r, preload, main_path=None, sys_path=None):
                     # Incoming fork request
                     with listener.accept()[0] as s:
 
-                        # Thing changed - be tolerant of socket disconnects
+                        # XXX Thing changed - be tolerant of socket disconnects
                         try:
                             # Receive fds from client
                             fds = reduction.recvfds(s, MAXFDS_TO_SEND + 1)
                         except EOFError:
                             # broken socket due to reconnection on client-side
                             continue
-                        # Thing changed - be tolerant of socket disconnects
+                        # XXX Thing changed - be tolerant of socket disconnects
 
                         if len(fds) > MAXFDS_TO_SEND:
                             raise RuntimeError(
