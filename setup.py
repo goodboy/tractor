@@ -30,8 +30,8 @@ setup(
     license='GPLv3',
     author='Tyler Goodlet',
     maintainer='Tyler Goodlet',
-    maintainer_email='tgoodlet@gmail.com',
-    url='https://github.com/tgoodlet/tractor',
+    maintainer_email='jgbt@protonmail.com',
+    url='https://github.com/goodboy/tractor',
     platforms=['linux'],
     packages=[
         'tractor',
