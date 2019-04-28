@@ -28,7 +28,7 @@ tree (also known as an `async sandwich`_). *Actors* communicate by exchanging as
 channels_ and avoid sharing any state.  This model allows for highly distributed software architecture
 which works just as well on multiple cores as it does over many hosts.
 
-``tractor`` is an actor-model-*like* system in the sense that it adheres to the `3 axioms`_ but not does
+``tractor`` is an actor-model-*like* system in the sense that it adheres to the `3 axioms`_ but does
 not (yet) fufill all "unrequirements_" in practice. The API and design takes inspiration from pulsar_ and
 execnet_ but attempts to be more focussed on sophistication of the lower level distributed architecture as
 well as have first class support for streaming using `async generators`_.
@@ -59,7 +59,7 @@ Its tenets non-comprehensively include:
 - (remote) errors `always propagate`_ back to the parent / caller
 - verbatim support for ``trio``'s cancellation_ system
 - `shared nothing architecture`_
-- no use of *proxy* objects to wrap RPC calls
+- no use of *proxy* objects or shared references between processes
 - an immersive debugging experience
 - anti-fragility through `chaos engineering`_
 
@@ -79,7 +79,7 @@ No PyPi release yet!
 
 ::
 
-    pip install git+git://github.com/tgoodlet/tractor.git
+    pip install git+git://github.com/goodboy/tractor.git
 
 
 Windows "gotchas"
@@ -90,7 +90,7 @@ Windows "gotchas"
 deats.
 
 .. _freeze_support(): https://docs.python.org/3/library/multiprocessing.html#multiprocessing.freeze_support
-.. _#61: https://github.com/tgoodlet/tractor/pull/61#issuecomment-470053512
+.. _#61: https://github.com/goodboy/tractor/pull/61#issuecomment-470053512
 
 Examples
 --------
@@ -727,6 +727,7 @@ What the future holds
 ---------------------
 Stuff I'd like to see ``tractor`` do real soon:
 
+- TLS_, duh.
 - erlang-like supervisors_
 - native support for `nanomsg`_ as a channel transport
 - native `gossip protocol`_ support for service discovery and arbiter election
@@ -737,7 +738,8 @@ Stuff I'd like to see ``tractor`` do real soon:
 - support for reactive programming primitives and native support for asyncitertools_ like libs
 - introduction of a `capability-based security`_ model
 
-.. _supervisors: https://github.com/tgoodlet/tractor/issues/22
+.. _TLS: https://trio.readthedocs.io/en/latest/reference-io.html#ssl-tls-support
+.. _supervisors: https://github.com/goodboy/tractor/issues/22
 .. _nanomsg: https://nanomsg.github.io/nng/index.html
 .. _gossip protocol: https://en.wikipedia.org/wiki/Gossip_protocol
 .. _celery: http://docs.celeryproject.org/en/latest/userguide/debugging.html
