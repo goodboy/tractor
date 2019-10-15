@@ -1,18 +1,20 @@
 language: python
+dist: xenial
+sudo: required
 
 matrix:
     include:
-        - os: windows
+        - name: "Windows, Python Latest"
+          os: windows
           language: sh
-          python: 3.7
+          python: 3.x  # only works on linux
           before_install:
-              - choco install python3
-              - export PATH="/c/Python37:/c/Python37/Scripts:$PATH"
+              - choco install python3 --params "/InstallDir:C:\\Python"
+              - export PATH="/c/Python:/c/Python/Scripts:$PATH"
               - python -m pip install --upgrade pip wheel
 
-        - python: 3.7
-          dist: xenial
-          sudo: required
+        - python: 3.7  # this works for Linux but is ignored on macOS or Windows
+        - python: 3.8
 
 install:
     - cd $TRAVIS_BUILD_DIR
