@@ -7,7 +7,7 @@ import multiprocessing as mp
 from multiprocessing import forkserver, semaphore_tracker  # type: ignore
 from typing import Tuple, Optional
 
-from . import _forkserver_hackzorz
+from . import _forkserver_override
 from ._state import current_actor
 from ._actor import Actor
 
@@ -32,7 +32,7 @@ def try_set_start_method(name: str) -> mp.context.BaseContext:
             "`fork` is unsupported due to incompatibility with `trio`"
         )
     elif name == 'forkserver':
-        _forkserver_hackzorz.override_stdlib()
+        _forkserver_override.override_stdlib()
 
     assert name in allowed
 
