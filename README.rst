@@ -82,18 +82,10 @@ No PyPi release yet!
     pip install git+git://github.com/goodboy/tractor.git
 
 
-Windows "gotchas"
-*****************
-`tractor` internally uses the stdlib's `multiprocessing` package which
-*can* have some gotchas on Windows. Namely, the need for calling
-`freeze_support()`_ inside the ``__main__`` context. See `#61`_ for the
-deats.
-
-.. _freeze_support(): https://docs.python.org/3/library/multiprocessing.html#multiprocessing.freeze_support
-.. _#61: https://github.com/goodboy/tractor/pull/61#issuecomment-470053512
-
 Examples
 --------
+Note, if you are on Windows please be sure to see the gotchas section
+before trying these.
 
 
 A trynamic first scene
@@ -705,6 +697,47 @@ a ``start_method`` kwarg to ``tractor.run()``. Note that on Windows
 selected by default for speed.
 
 .. _multiprocessing start method: https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+
+
+Windows "gotchas"
+*****************
+`tractor` internally uses the stdlib's `multiprocessing` package which
+*can* have some gotchas on Windows. Namely, the need for calling
+`freeze_support()`_ inside the ``__main__`` context.  Additionally you
+may need place you `tractor` program entry point in a seperate
+`__main__.py` module in your package in order to avoid an error like the
+following ::
+
+    Traceback (most recent call last):
+      File "C:\ProgramData\Miniconda3\envs\tractor19030601\lib\site-packages\tractor\_actor.py", line 234, in _get_rpc_func
+        return getattr(self._mods[ns], funcname)
+    KeyError: '__mp_main__'
+
+
+To avoid this, the following is the **only code** that should be in your
+main python module of the program:
+
+.. code:: python
+
+    # application/__main__.py
+    import tractor
+    import multiprocessing
+    from . import tractor_app
+
+    if __name__ == '__main__':
+        multiprocessing.freeze_support()
+        tractor.run(tractor_app.main)
+
+And execute as::
+
+    python -m application
+
+
+See `#61`_ and `#79`_ for further details.
+
+.. _freeze_support(): https://docs.python.org/3/library/multiprocessing.html#multiprocessing.freeze_support
+.. _#61: https://github.com/goodboy/tractor/pull/61#issuecomment-470053512
+.. _#79: https://github.com/goodboy/tractor/pull/79#issuecomment-470053512
 
 
 Enabling logging
