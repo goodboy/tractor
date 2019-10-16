@@ -4,8 +4,17 @@ Process spawning.
 Mostly just wrapping around ``multiprocessing``.
 """
 import multiprocessing as mp
-from multiprocessing import forkserver, semaphore_tracker  # type: ignore
-from typing import Tuple, Optional
+
+try:
+    from multiprocessing import semaphore_tracker  # type: ignore
+    resource_tracker = semaphore_tracker
+    resource_tracker._resource_tracker = resource_tracker._semaphore_tracker
+except ImportError:
+    # 3.8 introduces a more general version that also tracks shared mems
+    from multiprocessing import resource_tracker  # type: ignore
+
+from multiprocessing import forkserver  # type: ignore
+from typing import Tuple
 
 from . import _forkserver_override
 from ._state import current_actor
@@ -71,8 +80,8 @@ def new_proc(
                 fs._forkserver_address,
                 fs._forkserver_alive_fd,
                 getattr(fs, '_forkserver_pid', None),
-                getattr(semaphore_tracker._semaphore_tracker, '_pid', None),
-                semaphore_tracker._semaphore_tracker._fd,
+                getattr(resource_tracker._resource_tracker, '_pid', None),
+                resource_tracker._resource_tracker._fd,
             )
         else:
             assert curr_actor._forkserver_info
@@ -80,8 +89,8 @@ def new_proc(
                 fs._forkserver_address,
                 fs._forkserver_alive_fd,
                 fs._forkserver_pid,
-                semaphore_tracker._semaphore_tracker._pid,
-                semaphore_tracker._semaphore_tracker._fd,
+                resource_tracker._resource_tracker._pid,
+                resource_tracker._resource_tracker._fd,
              ) = curr_actor._forkserver_info
     else:
         fs_info = (None, None, None, None, None)
