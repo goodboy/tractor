@@ -215,7 +215,7 @@ def test_a_quadruple_example(time_quad_ex):
     """This also serves as a kind of "we'd like to be this fast test"."""
     results, diff = time_quad_ex
     assert results
-    this_fast = 5 if platform.system() == 'Windows' else 2.5
+    this_fast = 6 if platform.system() == 'Windows' else 2.5
     assert diff < this_fast
 
 
