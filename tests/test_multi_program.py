@@ -20,7 +20,7 @@ if platform.system() == 'Windows':
 else:
     _KILL_SIGNAL = signal.SIGKILL
     _INT_SIGNAL = signal.SIGINT
-    _INT_RETURN_CODE = 1
+    _INT_RETURN_CODE = 1 if sys.version_info < (3, 8) else -signal.SIGINT.value
     _PROC_SPAWN_WAIT = 0.6 if sys.version_info < (3, 7) else 0.4
 
 
