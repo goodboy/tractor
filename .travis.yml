@@ -13,6 +13,15 @@ matrix:
               - export PATH="/c/Python:/c/Python/Scripts:$PATH"
               - python -m pip install --upgrade pip wheel
 
+        - name: "Windows, Python 3.7"
+          os: windows
+          python: 3.7  # only works on linux
+          language: sh
+          before_install:
+              - choco install python3 --version 3.7.4 --params "/InstallDir:C:\\Python"
+              - export PATH="/c/Python:/c/Python/Scripts:$PATH"
+              - python -m pip install --upgrade pip wheel
+
         - python: 3.7  # this works for Linux but is ignored on macOS or Windows
         - python: 3.8
 

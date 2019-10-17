@@ -737,7 +737,7 @@ See `#61`_ and `#79`_ for further details.
 
 .. _freeze_support(): https://docs.python.org/3/library/multiprocessing.html#multiprocessing.freeze_support
 .. _#61: https://github.com/goodboy/tractor/pull/61#issuecomment-470053512
-.. _#79: https://github.com/goodboy/tractor/pull/79#issuecomment-470053512
+.. _#79: https://github.com/goodboy/tractor/pull/79
 
 
 Enabling logging
