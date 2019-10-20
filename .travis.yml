@@ -28,7 +28,7 @@ matrix:
 install:
     - cd $TRAVIS_BUILD_DIR
     - pip install -U pip
-    - pip install -U . -r requirements-test.txt
+    - pip install -U . -r requirements-test.txt --upgrade-strategy eager
 
 script:
     - mypy tractor/  --ignore-missing-imports
