@@ -10,8 +10,18 @@ import tractor
 from conftest import tractor_test
 
 
-async def assert_err():
+async def assert_err(delay=0):
+    await trio.sleep(delay)
     assert 0
+
+
+async def sleep_forever():
+    await trio.sleep(float('inf'))
+
+
+async def do_nuthin():
+    # just nick the scheduler
+    await trio.sleep(0)
 
 
 @pytest.mark.parametrize(
@@ -133,10 +143,29 @@ async def test_cancel_infinite_streamer(start_method):
 @pytest.mark.parametrize(
     'num_actors_and_errs',
     [
-        (1, tractor.RemoteActorError, AssertionError),
-        (2, tractor.MultiError, AssertionError)
+        # daemon actors sit idle while single task actors error out
+        (1, tractor.RemoteActorError, AssertionError, (assert_err, {}), None),
+        (2, tractor.MultiError, AssertionError, (assert_err, {}), None),
+        (3, tractor.MultiError, AssertionError, (assert_err, {}), None),
+
+        # 1 daemon actor errors out while single task actors sleep forever
+        (3, tractor.RemoteActorError, AssertionError, (sleep_forever, {}),
+         (assert_err, {}, True)),
+        # daemon actors error out after brief delay while single task
+        # actors complete quickly
+        (3, tractor.RemoteActorError, AssertionError,
+         (do_nuthin, {}), (assert_err, {'delay': 1}, True)),
+        (3, tractor.MultiError, AssertionError,
+         (assert_err, {'delay': 1}), (do_nuthin, {}, False)),
     ],
-    ids=['one_actor', 'two_actors'],
+    ids=[
+        '1_run_in_actor_fails',
+        '2_run_in_actors_fail',
+        '3_run_in_actors_fail',
+        '1_daemon_actors_fail',
+        '1_daemon_actors_fail_all_run_in_actors_dun_quick',
+        'no_daemon_actors_fail_all_run_in_actors_sleep_then_fail',
+    ],
 )
 @tractor_test
 async def test_some_cancels_all(num_actors_and_errs, start_method):
@@ -145,25 +174,50 @@ async def test_some_cancels_all(num_actors_and_errs, start_method):
 
     This is the first and only supervisory strategy at the moment.
     """
-    num, first_err, err_type = num_actors_and_errs
+    num_actors, first_err, err_type, ria_func, da_func = num_actors_and_errs
     try:
         async with tractor.open_nursery() as n:
-            real_actors = []
-            for i in range(3):
-                real_actors.append(await n.start_actor(
-                    f'actor_{i}',
+
+            # spawn the same number of deamon actors which should be cancelled
+            dactor_portals = []
+            for i in range(num_actors):
+                dactor_portals.append(await n.start_actor(
+                    f'deamon_{i}',
                     rpc_module_paths=[__name__],
                 ))
 
-            for i in range(num):
+            func, kwargs = ria_func
+            riactor_portals = []
+            for i in range(num_actors):
                 # start actor(s) that will fail immediately
-                await n.run_in_actor(f'extra_{i}', assert_err)
+                riactor_portals.append(
+                    await n.run_in_actor(f'actor_{i}', func, **kwargs))
+
+            if da_func:
+                func, kwargs, expect_error = da_func
+                for portal in dactor_portals:
+                    # if this function fails then we should error here
+                    # and the nursery should teardown all other actors
+                    try:
+                        await portal.run(__name__, func.__name__, **kwargs)
+                    except tractor.RemoteActorError as err:
+                        assert err.type == err_type
+                        # we only expect this first error to propogate
+                        # (all other daemons are cancelled before they
+                        # can be scheduled)
+                        num_actors = 1
+                        # reraise so nursery teardown is triggered
+                        raise
+                    else:
+                        if expect_error:
+                            pytest.fail(
+                                "Deamon call should fail at checkpoint?")
 
         # should error here with a ``RemoteActorError`` or ``MultiError``
 
     except first_err as err:
         if isinstance(err, tractor.MultiError):
-            assert len(err.exceptions) == num
+            assert len(err.exceptions) == num_actors
             for exc in err.exceptions:
                 if isinstance(exc, tractor.RemoteActorError):
                     assert exc.type == err_type
