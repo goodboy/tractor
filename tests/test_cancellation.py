@@ -155,6 +155,8 @@ async def test_cancel_infinite_streamer(start_method):
         # actors complete quickly
         (3, tractor.RemoteActorError, AssertionError,
          (do_nuthin, {}), (assert_err, {'delay': 1}, True)),
+        # daemon complete quickly delay while single task
+        # actors error after brief delay
         (3, tractor.MultiError, AssertionError,
          (assert_err, {'delay': 1}), (do_nuthin, {}, False)),
     ],
@@ -230,3 +232,39 @@ async def test_some_cancels_all(num_actors_and_errs, start_method):
         assert not n._children
     else:
         pytest.fail("Should have gotten a remote assertion error?")
+
+
+async def spawn_and_error(num) -> None:
+    name = tractor.current_actor().name
+    try:
+        async with tractor.open_nursery() as nursery:
+            for i in range(num):
+                await nursery.run_in_actor(
+                    f'{name}_errorer_{i}', assert_err
+                )
+    except tractor.MultiError as err:
+        assert len(err.exceptions) == num
+        raise
+    else:
+        pytest.fail("Did not raise `MultiError`?")
+
+
+@pytest.mark.parametrize(
+    'num_subactors',
+    range(1, 5),
+    ids='{}_subactors'.format,
+)
+@tractor_test
+async def test_nested_multierrors_propogate(start_method, num_subactors):
+
+    async with tractor.open_nursery() as nursery:
+
+        for i in range(num_subactors):
+            await nursery.run_in_actor(
+                f'spawner_{i}',
+                spawn_and_error,
+                num=num_subactors,
+            )
+
+        # would hang otherwise
+        await nursery.cancel()
