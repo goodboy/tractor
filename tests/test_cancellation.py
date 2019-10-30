@@ -87,6 +87,33 @@ def test_multierror(arb_addr):
         tractor.run(main, arbiter_addr=arb_addr)
 
 
+
+@pytest.mark.parametrize('delay', (0, 0.5))
+@pytest.mark.parametrize(
+    'num_subactors', range(25, 26),
+)
+def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
+    """Verify we raise a ``trio.MultiError`` out of a nursery where
+    more then one actor errors and also with a delay before failure
+    to test failure during an ongoing spawning.
+    """
+    async def main():
+        async with tractor.open_nursery() as nursery:
+            for i in range(num_subactors):
+                await nursery.run_in_actor(
+                    f'errorer{i}', assert_err, delay=delay)
+
+    with pytest.raises(trio.MultiError) as exc_info:
+        tractor.run(main, arbiter_addr=arb_addr)
+
+    assert exc_info.type == tractor.MultiError
+    err = exc_info.value
+    assert len(err.exceptions) == num_subactors
+    for exc in err.exceptions:
+        assert isinstance(exc, tractor.RemoteActorError)
+        assert exc.type == AssertionError
+
+
 def do_nothing():
     pass
 
@@ -236,35 +263,37 @@ async def test_some_cancels_all(num_actors_and_errs, start_method):
 
 async def spawn_and_error(num) -> None:
     name = tractor.current_actor().name
-    try:
-        async with tractor.open_nursery() as nursery:
-            for i in range(num):
-                await nursery.run_in_actor(
-                    f'{name}_errorer_{i}', assert_err
-                )
-    except tractor.MultiError as err:
-        assert len(err.exceptions) == num
-        raise
-    else:
-        pytest.fail("Did not raise `MultiError`?")
+    async with tractor.open_nursery() as nursery:
+        for i in range(num):
+            await nursery.run_in_actor(
+                f'{name}_errorer_{i}', assert_err
+            )
 
 
 @pytest.mark.parametrize(
     'num_subactors',
-    range(1, 5),
+    # NOTE: any more then this and the forkserver will
+    # start bailing hard...gotta look into it
+    range(4, 5),
     ids='{}_subactors'.format,
 )
 @tractor_test
-async def test_nested_multierrors_propogate(start_method, num_subactors):
+async def test_nested_multierrors(loglevel, num_subactors, start_method):
+    """Test that failed actor sets are wrapped in `trio.MultiError`s.
+    This test goes only 2 nurseries deep but we should eventually have tests
+    for arbitrary n-depth actor trees.
+    """
+    try:
+        async with tractor.open_nursery() as nursery:
 
-    async with tractor.open_nursery() as nursery:
-
-        for i in range(num_subactors):
-            await nursery.run_in_actor(
-                f'spawner_{i}',
-                spawn_and_error,
-                num=num_subactors,
-            )
-
-        # would hang otherwise
-        await nursery.cancel()
+            for i in range(num_subactors):
+                await nursery.run_in_actor(
+                    f'spawner_{i}',
+                    spawn_and_error,
+                    num=num_subactors,
+                )
+    except trio.MultiError as err:
+        assert len(err.exceptions) == num_subactors
+        for subexc in err.exceptions:
+            assert isinstance(subexc, tractor.RemoteActorError)
+            assert subexc.type is trio.MultiError
