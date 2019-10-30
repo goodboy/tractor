@@ -35,5 +35,7 @@ def pytest_generate_tests(metafunc):
         from multiprocessing import get_all_start_methods
         methods = get_all_start_methods()
         if 'fork' in methods:  # fork not available on windows, so check before removing
+            # XXX: the fork method is in general incompatible with
+            # trio's global scheduler state
             methods.remove('fork')
         metafunc.parametrize("start_method", methods, scope='module')

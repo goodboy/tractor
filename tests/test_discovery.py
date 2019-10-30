@@ -60,7 +60,7 @@ async def say_hello_use_wait(other_actor):
 
 @tractor_test
 @pytest.mark.parametrize('func', [say_hello, say_hello_use_wait])
-async def test_trynamic_trio(func):
+async def test_trynamic_trio(func, start_method):
     """Main tractor entry point, the "master" process (for now
     acts as the "director").
     """
