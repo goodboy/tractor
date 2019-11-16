@@ -32,7 +32,7 @@ setup(
     maintainer='Tyler Goodlet',
     maintainer_email='jgbt@protonmail.com',
     url='https://github.com/goodboy/tractor',
-    platforms=['linux'],
+    platforms=['linux', 'windows'],
     packages=[
         'tractor',
         'tractor.testing',
@@ -53,7 +53,8 @@ setup(
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: Implementation :: PyPy",
         "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.8",
         "Intended Audience :: Science/Research",
         "Intended Audience :: Developers",
         "Topic :: System :: Distributed Computing",
