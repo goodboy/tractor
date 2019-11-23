@@ -1,6 +1,7 @@
 """
 Cancellation and error propagation
 """
+import platform
 from itertools import repeat
 
 import pytest
@@ -85,7 +86,6 @@ def test_multierror(arb_addr):
 
     with pytest.raises(trio.MultiError):
         tractor.run(main, arbiter_addr=arb_addr)
-
 
 
 @pytest.mark.parametrize('delay', (0, 0.5))
@@ -270,19 +270,20 @@ async def spawn_and_error(num) -> None:
             )
 
 
-@pytest.mark.parametrize(
-    'num_subactors',
-    # NOTE: any more then this and the forkserver will
-    # start bailing hard...gotta look into it
-    range(4, 5),
-    ids='{}_subactors'.format,
-)
 @tractor_test
-async def test_nested_multierrors(loglevel, num_subactors, start_method):
+async def test_nested_multierrors(loglevel, start_method):
     """Test that failed actor sets are wrapped in `trio.MultiError`s.
     This test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
     """
+    if platform.system() == 'Windows':
+        # Windows CI seems to be partifcularly fragile on Python 3.8..
+        num_subactors = 2
+    else:
+        # XXX: any more then this and the forkserver will
+        # start bailing hard...gotta look into it
+        num_subactors = 4
+
     try:
         async with tractor.open_nursery() as nursery:
 
