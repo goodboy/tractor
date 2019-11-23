@@ -5,6 +5,8 @@ import importlib
 import builtins
 import traceback
 
+import trio
+
 
 _this_mod = importlib.import_module(__name__)
 
@@ -14,7 +16,7 @@ class RemoteActorError(Exception):
     "Remote actor exception bundled locally"
     def __init__(self, message, type_str, **msgdata):
         super().__init__(message)
-        for ns in [builtins, _this_mod]:
+        for ns in [builtins, _this_mod, trio]:
             try:
                 self.type = getattr(ns, type_str)
                 break

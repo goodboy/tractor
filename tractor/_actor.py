@@ -118,7 +118,7 @@ async def _invoke(
                     with cancel_scope as cs:
                         task_status.started(cs)
                         await chan.send({'return': await coro, 'cid': cid})
-    except Exception as err:
+    except (Exception, trio.MultiError) as err:
         # always ship errors back to caller
         log.exception("Actor errored:")
         err_msg = pack_error(err)
@@ -352,7 +352,8 @@ class Actor:
         return cid, recv_chan
 
     async def _process_messages(
-        self, chan: Channel,
+        self,
+        chan: Channel,
         treat_as_gen: bool = False,
         shield: bool = False,
         task_status=trio.TASK_STATUS_IGNORED,
@@ -461,7 +462,7 @@ class Actor:
 
         except trio.ClosedResourceError:
             log.error(f"{chan} form {chan.uid} broke")
-        except Exception as err:
+        except (Exception, trio.MultiError) as err:
             # ship any "internal" exception (i.e. one from internal machinery
             # not from an rpc task) to parent
             log.exception("Actor errored:")
@@ -472,7 +473,7 @@ class Actor:
             # above to trigger an error at consuming portal "checkpoints"
         except trio.Cancelled:
             # debugging only
-            log.debug("Msg loop was cancelled")
+            log.debug(f"Msg loop was cancelled for {chan}")
             raise
         finally:
             log.debug(

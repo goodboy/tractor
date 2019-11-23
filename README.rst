@@ -10,7 +10,7 @@ An async-native "`actor model`_" built on trio_ and multiprocessing_.
 
 .. _actor model: https://en.wikipedia.org/wiki/Actor_model
 .. _trio: https://github.com/python-trio/trio
-.. _multiprocessing: https://docs.python.org/3/library/multiprocessing.html
+.. _multiprocessing: https://en.wikipedia.org/wiki/Multiprocessing
 .. _trionic: https://trio.readthedocs.io/en/latest/design.html#high-level-design-principles
 .. _async sandwich: https://trio.readthedocs.io/en/latest/tutorial.html#async-sandwich
 .. _always propagate: https://trio.readthedocs.io/en/latest/design.html#exceptions-always-propagate
@@ -21,17 +21,31 @@ An async-native "`actor model`_" built on trio_ and multiprocessing_.
 .. _chaos engineering: http://principlesofchaos.org/
 
 
-``tractor`` is an attempt to bring trionic_ `structured concurrency`_ to distributed multi-core Python.
+``tractor`` is an attempt to bring trionic_ `structured concurrency`_ to
+distributed multi-core Python.
 
-``tractor`` lets you spawn ``trio`` *"actors"*: processes which each run a ``trio`` scheduler and task
-tree (also known as an `async sandwich`_). *Actors* communicate by exchanging asynchronous messages_ over
-channels_ and avoid sharing any state.  This model allows for highly distributed software architecture
-which works just as well on multiple cores as it does over many hosts.
+``tractor`` lets you spawn ``trio`` *"actors"*: processes which each run
+a ``trio`` scheduled task tree (also known as an `async sandwich`_).
+*Actors* communicate by exchanging asynchronous messages_ and avoid
+sharing any state. This model allows for highly distributed software
+architecture which works just as well on multiple cores as it does over
+many hosts.
 
-``tractor`` is an actor-model-*like* system in the sense that it adheres to the `3 axioms`_ but does
-not (yet) fufill all "unrequirements_" in practice. The API and design takes inspiration from pulsar_ and
-execnet_ but attempts to be more focussed on sophistication of the lower level distributed architecture as
-well as have first class support for streaming using `async generators`_.
+``tractor`` is an actor-model-*like* system in the sense that it adheres
+to the `3 axioms`_ but does not (yet) fulfil all "unrequirements_" in
+practise. It is an experiment in applying `structured concurrency`_
+constraints on a parallel processing system where multiple Python
+processes exist over many hosts but no process can outlive its parent.
+In `erlang` parlance, it is an architecture where every process has
+a mandatory supervisor enforced by the type system. The API design is
+almost exclusively inspired by trio_'s concepts and primitives (though
+we often lag a little). As a distributed computing system `tractor`
+attempts to place sophistication at the correct layer such that
+concurrency primitives are powerful yet simple, making it easy to build
+complex systems (you can build a "worker pool" architecture but it's
+definitely not required). There is first class support for inter-actor
+streaming using `async generators`_ and ongoing work toward a functional
+reactive style for IPC.
 
 The first step to grok ``tractor`` is to get the basics of ``trio`` down.
 A great place to start is the `trio docs`_ and this `blog post`_.
@@ -56,7 +70,7 @@ Its tenets non-comprehensively include:
 
 - strict adherence to the `concept-in-progress`_ of *structured concurrency*
 - no spawning of processes *willy-nilly*; causality_ is paramount!
-- (remote) errors `always propagate`_ back to the parent / caller
+- (remote) errors `always propagate`_ back to the parent supervisor
 - verbatim support for ``trio``'s cancellation_ system
 - `shared nothing architecture`_
 - no use of *proxy* objects or shared references between processes
