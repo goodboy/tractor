@@ -261,13 +261,26 @@ async def test_some_cancels_all(num_actors_and_errs, start_method):
         pytest.fail("Should have gotten a remote assertion error?")
 
 
-async def spawn_and_error(num) -> None:
+async def spawn_and_error(breadth, depth) -> None:
     name = tractor.current_actor().name
     async with tractor.open_nursery() as nursery:
-        for i in range(num):
-            await nursery.run_in_actor(
-                f'{name}_errorer_{i}', assert_err
-            )
+        for i in range(breadth):
+            if depth > 0:
+                args = (
+                    f'spawner_{i}_depth_{depth}',
+                    spawn_and_error,
+                )
+                kwargs = {
+                    'breadth': breadth,
+                    'depth': depth - 1,
+                }
+            else:
+                args = (
+                    f'{name}_errorer_{i}',
+                    assert_err,
+                )
+                kwargs = {}
+            await nursery.run_in_actor(*args, **kwargs)
 
 
 @tractor_test
@@ -276,25 +289,34 @@ async def test_nested_multierrors(loglevel, start_method):
     This test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
     """
-    if platform.system() == 'Windows':
-        # Windows CI seems to be partifcularly fragile on Python 3.8..
-        num_subactors = 2
-    else:
-        # XXX: any more then this and the forkserver will
-        # start bailing hard...gotta look into it
-        num_subactors = 4
+    # XXX: forkserver can't seem to handle any more then 2 depth
+    # process trees for whatever reason.
+    # Any more process levels then this and we start getting pretty slow anyway
+    depth = 3
+    subactor_breadth = 2
 
-    try:
-        async with tractor.open_nursery() as nursery:
+    with trio.fail_after(120):
+        try:
+            async with tractor.open_nursery() as nursery:
+                for i in range(subactor_breadth):
+                    await nursery.run_in_actor(
+                        f'spawner_{i}',
+                        spawn_and_error,
+                        breadth=subactor_breadth,
+                        depth=depth,
+                    )
+        except trio.MultiError as err:
+            assert len(err.exceptions) == subactor_breadth
+            for subexc in err.exceptions:
+                assert isinstance(subexc, tractor.RemoteActorError)
+                if depth > 1 and subactor_breadth > 1:
 
-            for i in range(num_subactors):
-                await nursery.run_in_actor(
-                    f'spawner_{i}',
-                    spawn_and_error,
-                    num=num_subactors,
-                )
-    except trio.MultiError as err:
-        assert len(err.exceptions) == num_subactors
-        for subexc in err.exceptions:
-            assert isinstance(subexc, tractor.RemoteActorError)
-            assert subexc.type is trio.MultiError
+                    # XXX not sure what's up with this..
+                    if platform.system() == 'Windows':
+                        assert (subexc.type is trio.MultiError) or (
+                            subexc.type is tractor.RemoteActorError)
+                    else:
+                        assert subexc.type is trio.MultiError
+                else:
+                    assert (subexc.type is tractor.RemoteActorError) or (
+                        subexc.type is trio.Cancelled)
