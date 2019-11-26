@@ -225,9 +225,19 @@ class Actor:
         the original nursery we need to try and load the local module
         code (if it exists).
         """
-        for path in self.rpc_module_paths:
-            log.debug(f"Attempting to import {path}")
-            self._mods[path] = importlib.import_module(path)
+        try:
+            for path in self.rpc_module_paths:
+                log.debug(f"Attempting to import {path}")
+                self._mods[path] = importlib.import_module(path)
+
+            # if self.name != 'arbiter':
+            #     importlib.import_module('doggy')
+            #     from celery.contrib import rdb; rdb.set_trace()
+        except ModuleNotFoundError:
+            # it is expected the corresponding `ModuleNotExposed` error
+            # will be raised later
+            log.error(f"Failed to import {path} in {self.name}")
+            raise
 
     def _get_rpc_func(self, ns, funcname):
         try:
@@ -488,7 +498,7 @@ class Actor:
                 f"Exiting msg loop for {chan} from {chan.uid} "
                 f"with last msg:\n{msg}")
 
-    def _fork_main(
+    def _mp_main(
         self,
         accept_addr: Tuple[str, int],
         forkserver_info: Tuple[Any, Any, Any, Any, Any],
@@ -500,19 +510,38 @@ class Actor:
         self._forkserver_info = forkserver_info
         from ._spawn import try_set_start_method
         spawn_ctx = try_set_start_method(start_method)
+
         if self.loglevel is not None:
             log.info(
                 f"Setting loglevel for {self.uid} to {self.loglevel}")
             get_console_log(self.loglevel)
+
         log.info(
             f"Started new {spawn_ctx.current_process()} for {self.uid}")
+
         _state._current_actor = self
+
         log.debug(f"parent_addr is {parent_addr}")
         try:
             trio.run(partial(
                 self._async_main, accept_addr, parent_addr=parent_addr))
         except KeyboardInterrupt:
             pass  # handle it the same way trio does?
+        log.info(f"Actor {self.uid} terminated")
+
+    async def _trip_main(
+        self,
+        accept_addr: Tuple[str, int],
+        parent_addr: Tuple[str, int] = None
+    ) -> None:
+        if self.loglevel is not None:
+            log.info(
+                f"Setting loglevel for {self.uid} to {self.loglevel}")
+            get_console_log(self.loglevel)
+
+        log.info(f"Started new TRIP process for {self.uid}")
+        _state._current_actor = self
+        await self._async_main(accept_addr, parent_addr=parent_addr)
         log.info(f"Actor {self.uid} terminated")
 
     async def _async_main(
@@ -584,6 +613,8 @@ class Actor:
             # blocks here as expected until the channel server is
             # killed (i.e. this actor is cancelled or signalled by the parent)
         except Exception as err:
+            # if self.name == 'arbiter':
+            #     import pdb; pdb.set_trace()
             if not registered_with_arbiter:
                 log.exception(
                     f"Actor errored and failed to register with arbiter "
@@ -598,12 +629,18 @@ class Actor:
                         f"Failed to ship error to parent "
                         f"{self._parent_chan.uid}, channel was closed")
                     log.exception("Actor errored:")
+
+            if isinstance(err, ModuleNotFoundError):
+                raise
             else:
                 # XXX wait, why?
                 # causes a hang if I always raise..
+                # A parent process does something weird here?
                 raise
 
         finally:
+            # if self.name == 'arbiter':
+            #     import pdb; pdb.set_trace()
             if registered_with_arbiter:
                 await self._do_unreg(arbiter_addr)
             # terminate actor once all it's peers (actors that connected

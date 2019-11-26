@@ -5,6 +5,8 @@ Mostly just wrapping around ``multiprocessing``.
 """
 import multiprocessing as mp
 
+import trio_run_in_process
+
 try:
     from multiprocessing import semaphore_tracker  # type: ignore
     resource_tracker = semaphore_tracker
@@ -55,54 +57,66 @@ def is_main_process() -> bool:
     return mp.current_process().name == 'MainProcess'
 
 
-def new_proc(
+async def new_proc(
     name: str,
     actor: Actor,
     # passed through to actor main
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
+    use_trip: bool = True,
 ) -> mp.Process:
     """Create a new ``multiprocessing.Process`` using the
     spawn method as configured using ``try_set_start_method()``.
     """
-    start_method = _ctx.get_start_method()
-    if start_method == 'forkserver':
-        # XXX do our hackery on the stdlib to avoid multiple
-        # forkservers (one at each subproc layer).
-        fs = forkserver._forkserver
-        curr_actor = current_actor()
-        if is_main_process() and not curr_actor._forkserver_info:
-            # if we're the "main" process start the forkserver only once
-            # and pass its ipc info to downstream children
-            # forkserver.set_forkserver_preload(rpc_module_paths)
-            forkserver.ensure_running()
-            fs_info = (
-                fs._forkserver_address,
-                fs._forkserver_alive_fd,
-                getattr(fs, '_forkserver_pid', None),
-                getattr(resource_tracker._resource_tracker, '_pid', None),
-                resource_tracker._resource_tracker._fd,
-            )
-        else:
-            assert curr_actor._forkserver_info
-            fs_info = (
-                fs._forkserver_address,
-                fs._forkserver_alive_fd,
-                fs._forkserver_pid,
-                resource_tracker._resource_tracker._pid,
-                resource_tracker._resource_tracker._fd,
-             ) = curr_actor._forkserver_info
-    else:
-        fs_info = (None, None, None, None, None)
-
-    return _ctx.Process(  # type: ignore
-        target=actor._fork_main,
-        args=(
+    if use_trip:  # trio_run_in_process
+        mng = trio_run_in_process.open_in_process(
+            actor._trip_main,
             bind_addr,
-            fs_info,
-            start_method,
             parent_addr
-        ),
-        # daemon=True,
-        name=name,
-    )
+        )
+        proc = await mng.__aenter__()
+        proc.mng = mng
+        return proc
+    else:
+        # use multiprocessing
+        start_method = _ctx.get_start_method()
+        if start_method == 'forkserver':
+            # XXX do our hackery on the stdlib to avoid multiple
+            # forkservers (one at each subproc layer).
+            fs = forkserver._forkserver
+            curr_actor = current_actor()
+            if is_main_process() and not curr_actor._forkserver_info:
+                # if we're the "main" process start the forkserver only once
+                # and pass its ipc info to downstream children
+                # forkserver.set_forkserver_preload(rpc_module_paths)
+                forkserver.ensure_running()
+                fs_info = (
+                    fs._forkserver_address,
+                    fs._forkserver_alive_fd,
+                    getattr(fs, '_forkserver_pid', None),
+                    getattr(resource_tracker._resource_tracker, '_pid', None),
+                    resource_tracker._resource_tracker._fd,
+                )
+            else:
+                assert curr_actor._forkserver_info
+                fs_info = (
+                    fs._forkserver_address,
+                    fs._forkserver_alive_fd,
+                    fs._forkserver_pid,
+                    resource_tracker._resource_tracker._pid,
+                    resource_tracker._resource_tracker._fd,
+                 ) = curr_actor._forkserver_info
+        else:
+            fs_info = (None, None, None, None, None)
+
+        return _ctx.Process(
+            target=actor._mp_main,
+            args=(
+                bind_addr,
+                fs_info,
+                start_method,
+                parent_addr
+            ),
+            # daemon=True,
+            name=name,
+        )

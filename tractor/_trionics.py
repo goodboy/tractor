@@ -9,6 +9,7 @@ import typing
 
 import trio
 from async_generator import asynccontextmanager, aclosing
+import trio_run_in_process
 
 from ._state import current_actor
 from .log import get_logger, get_loglevel
@@ -64,20 +65,23 @@ class ActorNursery:
             arbiter_addr=current_actor()._arb_addr,
         )
         parent_addr = self._actor.accept_addr
-        proc = _spawn.new_proc(
+        assert parent_addr
+        proc = await _spawn.new_proc(
             name,
             actor,
             bind_addr,
             parent_addr,
         )
+        # `multiprocessing` only (since no async interface):
         # register the process before start in case we get a cancel
         # request before the actor has fully spawned - then we can wait
         # for it to fully come up before sending a cancel request
         self._children[actor.uid] = (actor, proc, None)
 
-        proc.start()
-        if not proc.is_alive():
-            raise ActorFailure("Couldn't start sub-actor?")
+        if not isinstance(proc, trio_run_in_process.process.Process):
+            proc.start()
+            if not proc.is_alive():
+                raise ActorFailure("Couldn't start sub-actor?")
 
         log.info(f"Started {proc}")
         # wait for actor to spawn and connect back to us
@@ -193,12 +197,17 @@ class ActorNursery:
             actor: Actor,
             cancel_scope: Optional[trio.CancelScope] = None,
         ) -> None:
-            # TODO: timeout block here?
-            if proc.is_alive():
-                await proc_waiter(proc)
-
             # please god don't hang
-            proc.join()
+            if not isinstance(proc, trio_run_in_process.process.Process):
+                # TODO: timeout block here?
+                if proc.is_alive():
+                    await proc_waiter(proc)
+                proc.join()
+            else:
+                # trio_run_in_process blocking wait
+                await proc.mng.__aexit__(None, None, None)
+                # proc.nursery.cancel_scope.cancel()
+
             log.debug(f"Joined {proc}")
             # indicate we are no longer managing this subactor
             self._children.pop(actor.uid)
