@@ -7,6 +7,8 @@ import logging
 import colorlog  # type: ignore
 from typing import Optional
 
+from ._state import ActorContextInfo
+
 
 _proj_name = 'tractor'
 _default_loglevel = None
@@ -18,7 +20,7 @@ LOG_FORMAT = (
     # "{bold_white}{log_color}{asctime}{reset}"
     "{log_color}{asctime}{reset}"
     " {bold_white}{thin_white}({reset}"
-    "{thin_white}{processName}: {threadName}{reset}{bold_white}{thin_white})"
+    "{thin_white}{actor}, {process}, {task}){reset}{bold_white}{thin_white})"
     " {reset}{log_color}[{reset}{bold_log_color}{levelname}{reset}{log_color}]"
     " {log_color}{name}"
     " {thin_white}{filename}{log_color}:{reset}{thin_white}{lineno}{log_color}"
@@ -54,6 +56,10 @@ def get_logger(name: str = None) -> logging.Logger:
         log = rlog.getChild(name)
         log.level = rlog.level
 
+    # add our actor-task aware adapter which will dynamically look up
+    # the actor and task names at each log emit
+    log = logging.LoggerAdapter(log, ActorContextInfo())
+
     # additional levels
     for name, val in LEVELS.items():
         logging.addLevelName(val, name)
@@ -66,9 +72,10 @@ def get_logger(name: str = None) -> logging.Logger:
 def get_console_log(level: str = None, name: str = None) -> logging.Logger:
     '''Get the package logger and enable a handler which writes to stderr.
 
-    Yeah yeah, i know we can use ``DictConfig``. You do it...
+    Yeah yeah, i know we can use ``DictConfig``. You do it.
     '''
     log = get_logger(name)  # our root logger
+    logger = log.logger
 
     if not level:
         return log
@@ -77,7 +84,7 @@ def get_console_log(level: str = None, name: str = None) -> logging.Logger:
 
     if not any(
         handler.stream == sys.stderr  # type: ignore
-        for handler in log.handlers if getattr(handler, 'stream', None)
+        for handler in logger.handlers if getattr(handler, 'stream', None)
     ):
         handler = logging.StreamHandler()
         formatter = colorlog.ColoredFormatter(
@@ -88,7 +95,7 @@ def get_console_log(level: str = None, name: str = None) -> logging.Logger:
             style='{',
         )
         handler.setFormatter(formatter)
-        log.addHandler(handler)
+        logger.addHandler(handler)
 
     return log
 
