@@ -2,6 +2,7 @@
 Per process state
 """
 from typing import Optional
+from collections import Mapping
 
 import trio
 
@@ -16,21 +17,22 @@ def current_actor() -> 'Actor':  # type: ignore
     return _current_actor
 
 
-class ActorContextInfo:
+class ActorContextInfo(Mapping):
     "Dyanmic lookup for local actor and task names"
+    _context_keys = ('task', 'actor')
+
+    def __len__(self):
+        return len(self._context_keys)
+
     def __iter__(self):
-        return iter(('task', 'actor'))
+        return iter(self._context_keys)
 
     def __getitem__(self, key: str):
-        if key == 'task':
-            try:
-                return trio._core.current_task().name
-            except RuntimeError:
-                # not inside `trio.run()` yet
-                return 'no task context'
-        elif key == 'actor':
-            try:
-                return current_actor().name
-            except RuntimeError:
-                # no local actor initialize yet
-                return 'no actor context'
+        try:
+            return {
+                'task': trio.hazmat.current_task,
+                'actor': current_actor
+            }[key]().name
+        except RuntimeError:
+            # no local actor/task context initialized yet
+            return f'no {key} context'
