@@ -48,7 +48,9 @@ BOLD_PALETTE = {
 }
 
 
-def get_logger(name: str = None) -> logging.Logger:
+def get_logger(
+    name: str = None
+) -> logging.LoggerAdapter:
     '''Return the package log or a sub-log for `name` if provided.
     '''
     log = rlog = logging.getLogger(_proj_name)
@@ -58,18 +60,21 @@ def get_logger(name: str = None) -> logging.Logger:
 
     # add our actor-task aware adapter which will dynamically look up
     # the actor and task names at each log emit
-    log = logging.LoggerAdapter(log, ActorContextInfo())
+    logger = logging.LoggerAdapter(log, ActorContextInfo())
 
     # additional levels
     for name, val in LEVELS.items():
         logging.addLevelName(val, name)
-        # ex. create ``log.trace()``
-        setattr(log, name.lower(), partial(log.log, val))
+        # ex. create ``logger.trace()``
+        setattr(logger, name.lower(), partial(logger.log, val))
 
-    return log
+    return logger
 
 
-def get_console_log(level: str = None, name: str = None) -> logging.Logger:
+def get_console_log(
+    level: str = None,
+    name: str = None
+) -> logging.LoggerAdapter:
     '''Get the package logger and enable a handler which writes to stderr.
 
     Yeah yeah, i know we can use ``DictConfig``. You do it.
