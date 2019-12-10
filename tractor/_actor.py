@@ -11,6 +11,7 @@ import typing
 from typing import Dict, List, Tuple, Any, Optional
 
 import trio  # type: ignore
+from trio_typing import TaskStatus
 from async_generator import aclosing
 
 from ._ipc import Channel
@@ -155,7 +156,11 @@ class Actor:
     with other actors through "portals" which provide a native async API
     around "channels".
     """
-    is_arbiter = False
+    is_arbiter: bool = False
+
+    # placeholders filled in by `_async_main` after fork
+    _root_nursery: trio.Nursery
+    _server_nursery: trio.Nursery
 
     def __init__(
         self,
@@ -170,15 +175,13 @@ class Actor:
         self.uid = (name, uid or str(uuid.uuid4()))
         self.rpc_module_paths = rpc_module_paths
         self._mods: dict = {}
+
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
         self.statespace = statespace or {}
         self.loglevel = loglevel
         self._arb_addr = arbiter_addr
 
-        # filled in by `_async_main` after fork
-        self._root_nursery: trio._core._run.Nursery = None
-        self._server_nursery: trio._core._run.Nursery = None
         self._peers: defaultdict = defaultdict(list)
         self._peer_connected: dict = {}
         self._no_more_peers = trio.Event()
@@ -188,15 +191,20 @@ class Actor:
         # (chan, cid) -> (cancel_scope, func)
         self._rpc_tasks: Dict[
             Tuple[Channel, str],
-            Tuple[trio._core._run.CancelScope, typing.Callable, trio.Event]
+            Tuple[trio.CancelScope, typing.Callable, trio.Event]
         ] = {}
         # map {uids -> {callids -> waiter queues}}
         self._cids2qs: Dict[
             Tuple[Tuple[str, str], str],
-            trio.abc.SendChannel[Any]] = {}
+            Tuple[
+                trio.abc.SendChannel[Any],
+                trio.abc.ReceiveChannel[Any]
+            ]
+        ] = {}
         self._listeners: List[trio.abc.Listener] = []
         self._parent_chan: Optional[Channel] = None
-        self._forkserver_info: Optional[Tuple[Any, Any, Any, Any, Any]] = None
+        self._forkserver_info: Optional[
+            Tuple[Any, Any, Any, Any, Any]] = None
 
     async def wait_for_peer(
         self, uid: Tuple[str, str]
@@ -303,8 +311,8 @@ class Actor:
         actorid = chan.uid
         assert actorid, f"`actorid` can't be {actorid}"
         cid = msg['cid']
-        send_chan = self._cids2qs[(actorid, cid)]
-        assert send_chan.cid == cid
+        send_chan, recv_chan = self._cids2qs[(actorid, cid)]
+        assert send_chan.cid == cid  # type: ignore
         if 'stop' in msg:
             log.debug(f"{send_chan} was terminated at remote end")
             return await send_chan.aclose()
@@ -321,16 +329,17 @@ class Actor:
         self,
         actorid: Tuple[str, str],
         cid: str
-    ) -> trio.abc.ReceiveChannel:
+    ) -> Tuple[trio.abc.SendChannel, trio.abc.ReceiveChannel]:
         log.debug(f"Getting result queue for {actorid} cid {cid}")
         try:
-            recv_chan = self._cids2qs[(actorid, cid)]
+            send_chan, recv_chan = self._cids2qs[(actorid, cid)]
         except KeyError:
             send_chan, recv_chan = trio.open_memory_channel(1000)
-            send_chan.cid = cid
-            self._cids2qs[(actorid, cid)] = send_chan
+            send_chan.cid = cid  # type: ignore
+            recv_chan.cid = cid  # type: ignore
+            self._cids2qs[(actorid, cid)] = send_chan, recv_chan
 
-        return recv_chan
+        return send_chan, recv_chan
 
     async def send_cmd(
         self,
@@ -345,7 +354,7 @@ class Actor:
         """
         cid = str(uuid.uuid4())
         assert chan.uid
-        recv_chan = self.get_memchans(chan.uid, cid)
+        send_chan, recv_chan = self.get_memchans(chan.uid, cid)
         log.debug(f"Sending cmd to {chan.uid}: {ns}.{func}({kwargs})")
         await chan.send({'cmd': (ns, func, kwargs, self.uid, cid)})
         return cid, recv_chan
@@ -355,7 +364,7 @@ class Actor:
         chan: Channel,
         treat_as_gen: bool = False,
         shield: bool = False,
-        task_status=trio.TASK_STATUS_IGNORED,
+        task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED,
     ) -> None:
         """Process messages for the channel async-RPC style.
 
@@ -511,7 +520,7 @@ class Actor:
         accept_addr: Tuple[str, int],
         arbiter_addr: Optional[Tuple[str, int]] = None,
         parent_addr: Optional[Tuple[str, int]] = None,
-        task_status: trio._core._run._TaskStatus = trio.TASK_STATUS_IGNORED,
+        task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
     ) -> None:
         """Start the channel server, maybe connect back to the parent, and
         start the main task.
@@ -548,10 +557,12 @@ class Actor:
                             " closing server")
                         await self.cancel()
                         self._parent_chan = None
-
-                    # handle new connection back to parent
-                    nursery.start_soon(
-                        self._process_messages, self._parent_chan)
+                        raise
+                    else:
+                        # handle new connection back to parent
+                        assert self._parent_chan
+                        nursery.start_soon(
+                            self._process_messages, self._parent_chan)
 
                 # load exposed/allowed RPC modules
                 # XXX: do this **after** establishing connection to parent
@@ -560,6 +571,7 @@ class Actor:
 
                 # register with the arbiter if we're told its addr
                 log.debug(f"Registering {self} for role `{self.name}`")
+                assert isinstance(arbiter_addr, tuple)
                 async with get_arbiter(*arbiter_addr) as arb_portal:
                     await arb_portal.run(
                         'self', 'register_actor',
@@ -615,7 +627,7 @@ class Actor:
         # (host, port) to bind for channel server
         accept_host: Tuple[str, int] = None,
         accept_port: int = 0,
-        task_status: trio._core._run._TaskStatus = trio.TASK_STATUS_IGNORED,
+        task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
     ) -> None:
         """Start the channel server, begin listening for new connections.
 
@@ -720,13 +732,11 @@ class Actor:
         self._server_nursery.cancel_scope.cancel()
 
     @property
-    def accept_addr(self) -> Optional[Tuple[str, int]]:
+    def accept_addr(self) -> Tuple[str, int]:
         """Primary address to which the channel server is bound.
         """
-        try:
-            return self._listeners[0].socket.getsockname()
-        except OSError:
-            return None
+        # throws OSError on failure
+        return self._listeners[0].socket.getsockname()  # type: ignore
 
     def get_parent(self) -> Portal:
         """Return a portal to our parent actor."""
@@ -826,7 +836,7 @@ async def _start_actor(
     host: str,
     port: int,
     arbiter_addr: Tuple[str, int],
-    nursery: trio._core._run.Nursery = None
+    nursery: trio.Nursery = None
 ):
     """Spawn a local actor by starting a task to execute it's main async
     function.

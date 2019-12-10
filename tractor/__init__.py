@@ -4,7 +4,7 @@ tractor: An actor model micro-framework built on
 """
 import importlib
 from functools import partial
-from typing import Tuple, Any
+from typing import Tuple, Any, Optional
 import typing
 
 import trio  # type: ignore
@@ -47,8 +47,8 @@ async def _main(
     async_fn: typing.Callable[..., typing.Awaitable],
     args: Tuple,
     kwargs: typing.Dict[str, typing.Any],
-    name: str,
-    arbiter_addr: Tuple[str, int]
+    arbiter_addr: Tuple[str, int],
+    name: Optional[str] = None,
 ) -> typing.Any:
     """Async entry point for ``tractor``.
     """
@@ -89,26 +89,27 @@ async def _main(
     # for it to stay up indefinitely until a re-election process has
     # taken place - which is not implemented yet FYI).
     return await _start_actor(
-        actor, main, host, port, arbiter_addr=arbiter_addr)
+        actor, main, host, port, arbiter_addr=arbiter_addr
+    )
 
 
 def run(
     async_fn: typing.Callable[..., typing.Awaitable],
-    *args: Tuple,
-    name: str = None,
+    *args,
+    name: Optional[str] = None,
     arbiter_addr: Tuple[str, int] = (
         _default_arbiter_host, _default_arbiter_port),
     # the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
     start_method: str = 'forkserver',
-    **kwargs: typing.Dict[str, typing.Any],
+    **kwargs,
 ) -> Any:
     """Run a trio-actor async function in process.
 
     This is tractor's main entry and the start point for any async actor.
     """
     _spawn.try_set_start_method(start_method)
-    return trio.run(_main, async_fn, args, kwargs, name, arbiter_addr)
+    return trio.run(_main, async_fn, args, kwargs, arbiter_addr, name)
 
 
 def run_daemon(

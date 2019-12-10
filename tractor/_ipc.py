@@ -17,9 +17,16 @@ class MsgpackStream:
     """
     def __init__(self, stream: trio.SocketStream) -> None:
         self.stream = stream
+        assert self.stream.socket
+        # should both be IP sockets
+        lsockname = stream.socket.getsockname()
+        assert isinstance(lsockname, tuple)
+        self._laddr = lsockname[:2]
+        rsockname = stream.socket.getpeername()
+        assert isinstance(rsockname, tuple)
+        self._raddr = rsockname[:2]
+
         self._agen = self._iter_packets()
-        self._laddr = self.stream.socket.getsockname()[:2]
-        self._raddr = self.stream.socket.getpeername()[:2]
         self._send_lock = trio.StrictFIFOLock()
 
     async def _iter_packets(self) -> typing.AsyncGenerator[dict, None]:
@@ -43,14 +50,15 @@ class MsgpackStream:
                 yield packet
 
     @property
-    def laddr(self) -> Tuple[str, int]:
+    def laddr(self) -> Tuple[Any, ...]:
         return self._laddr
 
     @property
-    def raddr(self) -> Tuple[str, int]:
+    def raddr(self) -> Tuple[Any, ...]:
         return self._raddr
 
-    async def send(self, data: Any) -> int:
+    # XXX: should this instead be called `.sendall()`?
+    async def send(self, data: Any) -> None:
         async with self._send_lock:
             return await self.stream.send_all(
                 msgpack.dumps(data, use_bin_type=True))
@@ -95,24 +103,26 @@ class Channel:
     def __repr__(self) -> str:
         if self.msgstream:
             return repr(
-                self.msgstream.stream.socket._sock).replace(
+                self.msgstream.stream.socket._sock).replace(  # type: ignore
                         "socket.socket", "Channel")
         return object.__repr__(self)
 
     @property
-    def laddr(self) -> Optional[Tuple[str, int]]:
+    def laddr(self) -> Optional[Tuple[Any, ...]]:
         return self.msgstream.laddr if self.msgstream else None
 
     @property
-    def raddr(self) -> Optional[Tuple[str, int]]:
+    def raddr(self) -> Optional[Tuple[Any, ...]]:
         return self.msgstream.raddr if self.msgstream else None
 
     async def connect(
-        self, destaddr: Tuple[str, int] = None, **kwargs
+        self, destaddr: Tuple[Any, ...] = None,
+        **kwargs
     ) -> trio.SocketStream:
         if self.connected():
             raise RuntimeError("channel is already connected?")
         destaddr = destaddr or self._destaddr
+        assert isinstance(destaddr, tuple)
         stream = await trio.open_tcp_stream(*destaddr, **kwargs)
         self.msgstream = MsgpackStream(stream)
         return stream
