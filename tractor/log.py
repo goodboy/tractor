@@ -49,11 +49,12 @@ BOLD_PALETTE = {
 
 
 def get_logger(
-    name: str = None
+    name: str = None,
+    _root_name: str = _proj_name,
 ) -> logging.LoggerAdapter:
     '''Return the package log or a sub-log for `name` if provided.
     '''
-    log = rlog = logging.getLogger(_proj_name)
+    log = rlog = logging.getLogger(_root_name)
     if name and name != _proj_name:
         log = rlog.getChild(name)
         log.level = rlog.level
@@ -73,13 +74,13 @@ def get_logger(
 
 def get_console_log(
     level: str = None,
-    name: str = None
+    **kwargs,
 ) -> logging.LoggerAdapter:
     '''Get the package logger and enable a handler which writes to stderr.
 
     Yeah yeah, i know we can use ``DictConfig``. You do it.
     '''
-    log = get_logger(name)  # our root logger
+    log = get_logger(**kwargs)  # our root logger
     logger = log.logger
 
     if not level:
