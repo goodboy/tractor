@@ -5,6 +5,9 @@ Mostly just wrapping around ``multiprocessing``.
 """
 import multiprocessing as mp
 
+# from . import log
+
+import trio
 import trio_run_in_process
 
 try:
@@ -63,6 +66,7 @@ async def new_proc(
     # passed through to actor main
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
+    nursery: trio.Nursery = None,
     use_trip: bool = True,
 ) -> mp.Process:
     """Create a new ``multiprocessing.Process`` using the
@@ -72,8 +76,14 @@ async def new_proc(
         mng = trio_run_in_process.open_in_process(
             actor._trip_main,
             bind_addr,
-            parent_addr
+            parent_addr,
+            nursery=nursery,
         )
+        # XXX playing with trip logging
+        # l  = log.get_console_log(level='debug', name=None, _root_name='trio-run-in-process')
+        # import logging
+        # logger = logging.getLogger("trio-run-in-process")
+        # logger.setLevel('DEBUG')
         proc = await mng.__aenter__()
         proc.mng = mng
         return proc

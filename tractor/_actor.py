@@ -5,10 +5,14 @@ from collections import defaultdict
 from functools import partial
 from itertools import chain
 import importlib
+import importlib.util
 import inspect
 import uuid
 import typing
 from typing import Dict, List, Tuple, Any, Optional
+from types import ModuleType
+import sys
+import os
 
 import trio  # type: ignore
 from trio_typing import TaskStatus
@@ -165,7 +169,7 @@ class Actor:
     def __init__(
         self,
         name: str,
-        rpc_module_paths: List[str] = [],
+        rpc_module_paths: Dict[str, ModuleType] = {},
         statespace: Optional[Dict[str, Any]] = None,
         uid: str = None,
         loglevel: str = None,
@@ -226,9 +230,21 @@ class Actor:
         code (if it exists).
         """
         try:
-            for path in self.rpc_module_paths:
+            for path, absfilepath in self.rpc_module_paths.items():
                 log.debug(f"Attempting to import {path}")
-                self._mods[path] = importlib.import_module(path)
+                # spec = importlib.util.spec_from_file_location(
+                #     path, absfilepath)
+                # mod = importlib.util.module_from_spec(spec)
+
+                # XXX append the allowed module to the python path
+                # which should allow for relative (at least downward)
+                # imports. Seems to be the only that will work currently
+                # to get `trio-run-in-process` to import modules we "send
+                # it".
+                sys.path.append(os.path.dirname(absfilepath))
+                # spec.loader.exec_module(mod)
+                mod = importlib.import_module(path)
+                self._mods[path] = mod
 
             # if self.name != 'arbiter':
             #     importlib.import_module('doggy')
