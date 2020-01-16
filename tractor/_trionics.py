@@ -64,7 +64,6 @@ class ActorNursery:
             arbiter_addr=current_actor()._arb_addr,
         )
         parent_addr = self._actor.accept_addr
-        assert parent_addr
         proc = _spawn.new_proc(
             name,
             actor,
@@ -192,8 +191,7 @@ class ActorNursery:
         async def wait_for_proc(
             proc: mp.Process,
             actor: Actor,
-            portal: Portal,
-            cancel_scope: Optional[trio._core._run.CancelScope] = None,
+            cancel_scope: Optional[trio.CancelScope] = None,
         ) -> None:
             # TODO: timeout block here?
             if proc.is_alive():
@@ -207,7 +205,7 @@ class ActorNursery:
 
             # proc terminated, cancel result waiter that may have
             # been spawned in tandem if not done already
-            if cancel_scope: # and not portal._cancelled:
+            if cancel_scope:
                 log.warning(
                     f"Cancelling existing result waiter task for {actor.uid}")
                 cancel_scope.cancel()
@@ -223,11 +221,12 @@ class ActorNursery:
                 cs = None
                 # portal from ``run_in_actor()``
                 if portal in self._cancel_after_result_on_exit:
+                    assert portal
                     cs = await nursery.start(
                         cancel_on_completion, portal, subactor)
                     # TODO: how do we handle remote host spawned actors?
                     nursery.start_soon(
-                        wait_for_proc, proc, subactor, portal, cs)
+                        wait_for_proc, proc, subactor, cs)
 
         if errors:
             if not self.cancelled:
@@ -247,7 +246,8 @@ class ActorNursery:
         async with trio.open_nursery() as nursery:
             for subactor, proc, portal in children.values():
                 # TODO: how do we handle remote host spawned actors?
-                nursery.start_soon(wait_for_proc, proc, subactor, portal, cs)
+                assert portal
+                nursery.start_soon(wait_for_proc, proc, subactor, cs)
 
         log.debug(f"All subactors for {self} have terminated")
         if errors:

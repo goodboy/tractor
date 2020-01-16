@@ -21,7 +21,7 @@ from ._state import current_actor
 from ._actor import Actor
 
 
-_ctx: mp.context.BaseContext = mp.get_context("spawn")
+_ctx: mp.context.BaseContext = mp.get_context("spawn")  # type: ignore
 
 
 def try_set_start_method(name: str) -> mp.context.BaseContext:
@@ -95,7 +95,7 @@ def new_proc(
     else:
         fs_info = (None, None, None, None, None)
 
-    return _ctx.Process(
+    return _ctx.Process(  # type: ignore
         target=actor._fork_main,
         args=(
             bind_addr,

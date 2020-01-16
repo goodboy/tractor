@@ -2,3 +2,4 @@ pytest
 pytest-trio
 pdbpp
 mypy
+trio_typing

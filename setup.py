@@ -38,7 +38,8 @@ setup(
         'tractor.testing',
     ],
     install_requires=[
-        'msgpack', 'trio>0.8', 'async_generator', 'colorlog', 'wrapt'],
+        'msgpack', 'trio>0.8', 'async_generator', 'colorlog', 'wrapt',
+    ],
     tests_require=['pytest'],
     python_requires=">=3.7",
     keywords=[

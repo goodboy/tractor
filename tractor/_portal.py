@@ -21,7 +21,9 @@ log = get_logger('tractor')
 
 
 @asynccontextmanager
-async def maybe_open_nursery(nursery: trio._core._run.Nursery = None):
+async def maybe_open_nursery(
+    nursery: trio.Nursery = None
+) -> typing.AsyncGenerator[trio.Nursery, Any]:
     """Create a new nursery if None provided.
 
     Blocks on exit as expected if no input nursery is provided.
@@ -252,14 +254,14 @@ class Portal:
             for stream in self._streams.copy():
                 await stream.aclose()
 
-    async def aclose(self) -> None:
+    async def aclose(self):
         log.debug(f"Closing {self}")
         # TODO: once we move to implementing our own `ReceiveChannel`
         # (including remote task cancellation inside its `.aclose()`)
         # we'll need to .aclose all those channels here
         await self._cancel_streams()
 
-    async def cancel_actor(self) -> bool:
+    async def cancel_actor(self):
         """Cancel the actor on the other end of this portal.
         """
         if not self.channel.connected():
@@ -279,7 +281,9 @@ class Portal:
                 return True
             if cancel_scope.cancelled_caught:
                 log.warning(f"May have failed to cancel {self.channel.uid}")
-                return False
+
+            # if we get here some weird cancellation case happened
+            return False
         except trio.ClosedResourceError:
             log.warning(
                 f"{self.channel} for {self.channel.uid} was already closed?")
@@ -309,7 +313,7 @@ class LocalPortal:
 @asynccontextmanager
 async def open_portal(
     channel: Channel,
-    nursery: trio._core._run.Nursery = None
+    nursery: Optional[trio.Nursery] = None
 ) -> typing.AsyncGenerator[Portal, None]:
     """Open a ``Portal`` through the provided ``channel``.
 
@@ -320,7 +324,6 @@ async def open_portal(
     was_connected = False
 
     async with maybe_open_nursery(nursery) as nursery:
-
         if not channel.connected():
             await channel.connect()
             was_connected = True
@@ -328,7 +331,7 @@ async def open_portal(
         if channel.uid is None:
             await actor._do_handshake(channel)
 
-        msg_loop_cs = await nursery.start(
+        msg_loop_cs: trio.CancelScope = await nursery.start(
             partial(
                 actor._process_messages,
                 channel,
