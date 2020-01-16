@@ -331,7 +331,7 @@ async def open_portal(
         if channel.uid is None:
             await actor._do_handshake(channel)
 
-        msg_loop_cs = await nursery.start(
+        msg_loop_cs: trio.CancelScope = await nursery.start(
             partial(
                 actor._process_messages,
                 channel,

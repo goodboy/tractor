@@ -445,8 +445,8 @@ class Actor:
                     # spin up a task for the requested function
                     log.debug(f"Spawning task for {func}")
                     cs = await self._root_nursery.start(
-                        _invoke, self, cid, chan, func, kwargs,
-                        name=funcname
+                        partial(_invoke, self, cid, chan, func, kwargs),
+                        name=funcname,
                     )
                     # never allow cancelling cancel requests (results in
                     # deadlock and other weird behaviour)
@@ -639,7 +639,7 @@ class Actor:
             # TODO: might want to consider having a separate nursery
             # for the stream handler such that the server can be cancelled
             # whilst leaving existing channels up
-            listeners = await nursery.start(
+            listeners: List[trio.abc.Listener] = await nursery.start(
                 partial(
                     trio.serve_tcp,
                     self._stream_handler,
@@ -650,7 +650,7 @@ class Actor:
                 )
             )
             log.debug(
-                f"Started tcp server(s) on {[l.socket for l in listeners]}")
+                    f"Started tcp server(s) on {[l.socket for l in listeners]}")  # type: ignore
             self._listeners.extend(listeners)
             task_status.started()
 
