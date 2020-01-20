@@ -10,7 +10,6 @@ import inspect
 import uuid
 import typing
 from typing import Dict, List, Tuple, Any, Optional
-from types import ModuleType
 import sys
 import os
 
@@ -169,7 +168,7 @@ class Actor:
     def __init__(
         self,
         name: str,
-        rpc_module_paths: Dict[str, ModuleType] = {},
+        rpc_module_paths: List[str] = {},
         statespace: Optional[Dict[str, Any]] = None,
         uid: str = None,
         loglevel: str = None,
@@ -177,7 +176,13 @@ class Actor:
     ) -> None:
         self.name = name
         self.uid = (name, uid or str(uuid.uuid4()))
-        self.rpc_module_paths = rpc_module_paths
+
+        mods = {}
+        for path in rpc_module_paths or ():
+            mod = importlib.import_module(path)
+            mods[path] = mod.__file__
+
+        self.rpc_module_paths = mods
         self._mods: dict = {}
 
         # TODO: consider making this a dynamically defined
