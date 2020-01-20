@@ -107,7 +107,7 @@ class ActorNursery:
             nursery=self._ria_nursery,
         )
         # this marks the actor to be cancelled after its portal result
-        # is retreived, see ``wait()`` below.
+        # is retreived, see logic in `open_nursery()` below.
         self._cancel_after_result_on_exit.add(portal)
         await portal._submit_for_result(
             mod_path,
@@ -115,12 +115,6 @@ class ActorNursery:
             **kwargs
         )
         return portal
-
-    async def wait(self) -> None:
-        """Wait for all subactors to complete.
-        """
-        log.debug(f"Waiting on all subactors to complete")
-        self._join_procs.set()
 
     async def cancel(self, hard_kill: bool = False) -> None:
         """Cancel this nursery by instructing each subactor to cancel
@@ -177,7 +171,7 @@ class ActorNursery:
 
         # mark ourselves as having (tried to have) cancelled all subactors
         self.cancelled = True
-        await self.wait()
+        self._join_procs.set()
 
 
 @asynccontextmanager
@@ -192,8 +186,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
     # XXX we use these nurseries because TRIP is doing all its stuff with
     # an `@asynccontextmanager` which has an internal nursery *and* the
-    # task that opens a nursery must also close it - so we need a path
-    # in TRIP to make this all kinda work as well.
+    # task that opens a nursery must also close it.
     errors: Dict[str, Exception] = {}
     async with trio.open_nursery() as da_nursery:
         try:
@@ -209,8 +202,6 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                         f"Waiting on subactors {anursery._children}"
                         "to complete"
                     )
-                    # anursery.wait()
-                # except (trio.Cancelled, KeyboardInterrupt) as err:
                 except (BaseException, Exception) as err:
                     anursery._join_procs.set()
                     try:
@@ -234,7 +225,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                     else:
                         raise
 
-                # last bit before first nursery block end
+                # last bit before first nursery block ends
                 log.debug(f"Waiting on all subactors to complete")
                 anursery._join_procs.set()
             # ria_nursery scope
