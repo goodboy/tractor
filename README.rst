@@ -83,8 +83,6 @@ Its tenets non-comprehensively include:
     are greatly appreciated!
 
 .. _concept-in-progress: https://trio.discourse.group/t/structured-concurrency-kickoff/55
-.. _pulsar: http://quantmind.github.io/pulsar/design.html
-.. _execnet: https://codespeak.net/execnet/
 
 
 Install

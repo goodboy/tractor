@@ -39,6 +39,7 @@ setup(
     ],
     install_requires=[
         'msgpack', 'trio>0.8', 'async_generator', 'colorlog', 'wrapt',
+        'trio_typing', 'trio-run-in-process',
     ],
     tests_require=['pytest'],
     python_requires=">=3.7",
