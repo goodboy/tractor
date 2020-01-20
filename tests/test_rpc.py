@@ -60,7 +60,7 @@ def test_rpc_errors(arb_addr, to_call, testdir):
     if exposed_mods == ['tmp_mod']:
         # create an importable module with a bad import
         testdir.syspathinsert()
-        # module should cause raise a ModuleNotFoundError at import
+        # module should cause a raise of a ModuleNotFoundError at import
         testdir.makefile('.py', tmp_mod=funcname)
 
         # no need to exposed module to the subactor
@@ -69,7 +69,9 @@ def test_rpc_errors(arb_addr, to_call, testdir):
         func_defined = False
         # subactor should not try to invoke anything
         subactor_requests_to = None
-        remote_err = trio.MultiError
+        # the module will be attempted to be imported locally but will
+        # fail in the initial local instance of the actor
+        remote_err = inside_err
 
     async def main():
         actor = tractor.current_actor()
@@ -100,7 +102,7 @@ def test_rpc_errors(arb_addr, to_call, testdir):
     if exposed_mods and func_defined:
         run()
     else:
-        # underlying errors are propagated upwards (yet)
+        # underlying errors aren't propagated upwards (yet)
         with pytest.raises(remote_err) as err:
             run()
 
@@ -114,4 +116,5 @@ def test_rpc_errors(arb_addr, to_call, testdir):
                 value.exceptions
             ))
 
-        assert value.type is inside_err
+        if getattr(value, 'type', None):
+            assert value.type is inside_err
