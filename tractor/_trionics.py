@@ -26,7 +26,7 @@ class ActorNursery:
         actor: Actor,
         ria_nursery: trio.Nursery,
         da_nursery: trio.Nursery,
-        errors: Dict[str, Exception],
+        errors: Dict[Tuple[str, str], Exception],
     ) -> None:
         # self.supervisor = supervisor  # TODO
         self._actor: Actor = actor
@@ -57,7 +57,7 @@ class ActorNursery:
         subactor = Actor(
             name,
             # modules allowed to invoked funcs from
-            rpc_module_paths=rpc_module_paths,
+            rpc_module_paths=rpc_module_paths or [],
             statespace=statespace,  # global proc state vars
             loglevel=loglevel,
             arbiter_addr=current_actor()._arb_addr,
@@ -68,7 +68,9 @@ class ActorNursery:
         # start a task to spawn a process
         # blocks until process has been started and a portal setup
         nursery = nursery or self._da_nursery
-        return await nursery.start(
+
+        # XXX: the type ignore is actually due to a `mypy` bug
+        return await nursery.start(  # type: ignore
             _spawn.new_proc,
             name,
             self,
@@ -186,8 +188,8 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
     # XXX we use these nurseries because TRIP is doing all its stuff with
     # an `@asynccontextmanager` which has an internal nursery *and* the
-    # task that opens a nursery must also close it.
-    errors: Dict[str, Exception] = {}
+    # task that opens a nursery **must also close it**.
+    errors: Dict[Tuple[str, str], Exception] = {}
     async with trio.open_nursery() as da_nursery:
         try:
             async with trio.open_nursery() as ria_nursery:
@@ -241,7 +243,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                     with trio.CancelScope(shield=True):
                         await anursery.cancel()
                 if len(errors) > 1:
-                    raise trio.MultiError(errors.values())
+                    raise trio.MultiError(tuple(errors.values()))
                 else:
                     raise list(errors.values())[0]
     log.debug(f"Nursery teardown complete")

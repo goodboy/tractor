@@ -107,8 +107,8 @@ async def exhaust_portal(
 async def cancel_on_completion(
     portal: Portal,
     actor: Actor,
-    errors: List[Exception],
-    task_status=trio.TASK_STATUS_IGNORED,
+    errors: Dict[Tuple[str, str], Exception],
+    task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED,
 ) -> None:
     """Cancel actor gracefully once it's "main" portal's
     result arrives.
@@ -127,29 +127,26 @@ async def cancel_on_completion(
                 f"Cancelling {portal.channel.uid} after error {result}"
             )
         else:
-            log.info(f"Cancelling {portal.channel.uid} gracefully")
+            log.info(
+                f"Cancelling {portal.channel.uid} gracefully "
+                "after result {result}")
 
         # cancel the process now that we have a final result
         await portal.cancel_actor()
 
-    # XXX: lol, this will never get run without a shield above..
-    # if cs.cancelled_caught:
-    #     log.warning(
-    #         "Result waiter was cancelled, process may have died")
-
 
 async def new_proc(
     name: str,
-    actor_nursery: 'ActorNursery',
+    actor_nursery: 'ActorNursery',  # type: ignore
     subactor: Actor,
-    errors: Dict[str, Exception],
+    errors: Dict[Tuple[str, str], Exception],
     # passed through to actor main
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
     begin_wait_phase: trio.Event,
     use_trip: bool = True,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
-) -> mp.Process:
+) -> None:
     """Create a new ``multiprocessing.Process`` using the
     spawn method as configured using ``try_set_start_method()``.
     """
@@ -217,7 +214,7 @@ async def new_proc(
             else:
                 fs_info = (None, None, None, None, None)
 
-            proc = _ctx.Process(
+            proc = _ctx.Process(  # type: ignore
                 target=subactor._mp_main,
                 args=(
                     bind_addr,

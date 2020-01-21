@@ -168,7 +168,7 @@ class Actor:
     def __init__(
         self,
         name: str,
-        rpc_module_paths: List[str] = {},
+        rpc_module_paths: List[str] = [],
         statespace: Optional[Dict[str, Any]] = None,
         uid: str = None,
         loglevel: str = None,
