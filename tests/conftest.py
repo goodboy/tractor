@@ -2,6 +2,7 @@
 ``tractor`` testing!!
 """
 import random
+import platform
 
 import pytest
 import tractor
@@ -32,8 +33,13 @@ def arb_addr():
 
 def pytest_generate_tests(metafunc):
     if 'start_method' in metafunc.fixturenames:
+
         from multiprocessing import get_all_start_methods
         methods = get_all_start_methods()
+
+        if platform.system() != "Windows":
+            methods += ['trip']
+
         if 'fork' in methods:  # fork not available on windows, so check before removing
             # XXX: the fork method is in general incompatible with
             # trio's global scheduler state
