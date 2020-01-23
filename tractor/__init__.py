@@ -4,6 +4,7 @@ tractor: An actor model micro-framework built on
 """
 import importlib
 from functools import partial
+import platform
 from typing import Tuple, Any, Optional
 import typing
 
@@ -99,15 +100,18 @@ def run(
     name: Optional[str] = None,
     arbiter_addr: Tuple[str, int] = (
         _default_arbiter_host, _default_arbiter_port),
-    # the `multiprocessing` start method:
+    # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
-    start_method: str = 'forkserver',
+    # OR `trio-run-in-process` (the new default).
+    start_method: str = 'trip',
     **kwargs,
 ) -> Any:
     """Run a trio-actor async function in process.
 
     This is tractor's main entry and the start point for any async actor.
     """
+    if platform.system() == 'Windows':
+        start_method = 'spawn'  # only one supported for now
     _spawn.try_set_start_method(start_method)
     return trio.run(_main, async_fn, args, kwargs, arbiter_addr, name)
 

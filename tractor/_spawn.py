@@ -34,6 +34,7 @@ from ._actor import Actor, ActorFailure
 log = get_logger('tractor')
 
 _ctx: mp.context.BaseContext = mp.get_context("spawn")  # type: ignore
+_spawn_method: str = "spawn"
 
 
 if platform.system() == 'Windows':
@@ -51,21 +52,31 @@ def try_set_start_method(name: str) -> mp.context.BaseContext:
     method) is used.
     """
     global _ctx
+    global _spawn_method
 
     allowed = mp.get_all_start_methods()
 
+    # no Windows support for trip yet (afaik)
+    if platform.system() != 'Windows':
+        allowed += ['trip']
+
     if name not in allowed:
-        name = 'spawn'
+        raise ValueError(
+            f"Spawn method {name} is unsupported please choose one of {allowed}"
+        )
+
+    if name == 'trip':
+        _spawn_method = name
+        return name
+
     elif name == 'fork':
         raise ValueError(
             "`fork` is unsupported due to incompatibility with `trio`"
         )
     elif name == 'forkserver':
         _forkserver_override.override_stdlib()
+        _ctx = mp.get_context(name)
 
-    assert name in allowed
-
-    _ctx = mp.get_context(name)
     return _ctx
 
 
@@ -144,7 +155,7 @@ async def new_proc(
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
     begin_wait_phase: trio.Event,
-    use_trip: bool = True,
+    use_trip: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
     """Create a new ``multiprocessing.Process`` using the
@@ -153,7 +164,7 @@ async def new_proc(
     cancel_scope = None
 
     async with trio.open_nursery() as nursery:
-        if use_trip:
+        if use_trip or _spawn_method == 'trip':
             # trio_run_in_process
             async with trio_run_in_process.open_in_process(
                 subactor._trip_main,
