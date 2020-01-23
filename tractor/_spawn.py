@@ -66,10 +66,6 @@ def try_set_start_method(name: str) -> mp.context.BaseContext:
             f"Spawn method {name} is unsupported please choose one of {allowed}"
         )
 
-    if name == 'trip':
-        _spawn_method = name
-        return name
-
     elif name == 'fork':
         raise ValueError(
             "`fork` is unsupported due to incompatibility with `trio`"
@@ -78,6 +74,7 @@ def try_set_start_method(name: str) -> mp.context.BaseContext:
         _forkserver_override.override_stdlib()
         _ctx = mp.get_context(name)
 
+    _spawn_method = name
     return _ctx
 
 
