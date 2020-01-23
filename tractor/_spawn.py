@@ -9,7 +9,6 @@ import platform
 from typing import Any, List, Dict
 
 import trio
-import trio_run_in_process
 from trio_typing import TaskStatus
 from async_generator import aclosing
 
@@ -41,6 +40,8 @@ if platform.system() == 'Windows':
     async def proc_waiter(proc: mp.Process) -> None:
         await trio.hazmat.WaitForSingleObject(proc.sentinel)
 else:
+    import trio_run_in_process
+
     async def proc_waiter(proc: mp.Process) -> None:
         await trio.hazmat.wait_readable(proc.sentinel)
 
