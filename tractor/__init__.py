@@ -102,8 +102,8 @@ def run(
         _default_arbiter_host, _default_arbiter_port),
     # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
-    # OR `trio-run-in-process` (the new default).
-    start_method: str = 'trip',
+    # OR `trio_run_in_process` (the new default).
+    start_method: str = 'trio_run_in_process',
     **kwargs,
 ) -> Any:
     """Run a trio-actor async function in process.

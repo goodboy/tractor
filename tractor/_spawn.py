@@ -59,7 +59,7 @@ def try_set_start_method(name: str) -> mp.context.BaseContext:
 
     # no Windows support for trip yet (afaik)
     if platform.system() != 'Windows':
-        allowed += ['trip']
+        allowed += ['trio_run_in_process']
 
     if name not in allowed:
         raise ValueError(
@@ -153,7 +153,7 @@ async def new_proc(
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
     begin_wait_phase: trio.Event,
-    use_trip: bool = False,
+    use_trio_run_in_process: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
     """Create a new ``multiprocessing.Process`` using the
@@ -162,7 +162,7 @@ async def new_proc(
     cancel_scope = None
 
     async with trio.open_nursery() as nursery:
-        if use_trip or _spawn_method == 'trip':
+        if use_trio_run_in_process or _spawn_method == 'trio_run_in_process':
             # trio_run_in_process
             async with trio_run_in_process.open_in_process(
                 subactor._trip_main,
