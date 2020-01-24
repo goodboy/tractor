@@ -28,7 +28,7 @@ def tractor_test(fn):
         *args,
         loglevel=None,
         arb_addr=None,
-        start_method='forkserver',
+        start_method='trio_run_in_process',
         **kwargs
     ):
         # __tracebackhide__ = True

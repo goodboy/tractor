@@ -38,7 +38,7 @@ def pytest_generate_tests(metafunc):
         methods = get_all_start_methods()
 
         if platform.system() != "Windows":
-            methods += ['trip']
+            methods += ['trio_run_in_process']
 
         if 'fork' in methods:  # fork not available on windows, so check before removing
             # XXX: the fork method is in general incompatible with
