@@ -16,7 +16,7 @@ _arb_addr = '127.0.0.1', random.randint(1000, 9999)
 def pytest_addoption(parser):
     parser.addoption(
         "--ll", action="store", dest='loglevel',
-         default=None, help="logging level to set when testing"
+        default=None, help="logging level to set when testing"
     )
 
     parser.addoption(
@@ -29,7 +29,7 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     backend = config.option.spawn_backend
 
-    if plaform.system() == "Windows":
+    if platform.system() == "Windows":
         backend = 'mp'
 
     if backend == 'mp':
@@ -59,13 +59,15 @@ def pytest_generate_tests(metafunc):
         if spawn_backend == 'mp':
             from multiprocessing import get_all_start_methods
             methods = get_all_start_methods()
-            if 'fork' in methods:  # fork not available on windows, so check before removing
-                # XXX: the fork method is in general incompatible with
-                # trio's global scheduler state
+            if 'fork' in methods:
+                # fork not available on windows, so check before
+                # removing XXX: the fork method is in general
+                # incompatible with trio's global scheduler state
                 methods.remove('fork')
         elif spawn_backend == 'trio_run_in_process':
             if platform.system() == "Windows":
-                pytest.fail("Only `--spawn-backend=mp` is supported on Windows")
+                pytest.fail(
+                    "Only `--spawn-backend=mp` is supported on Windows")
 
             methods = ['trio_run_in_process']
 
