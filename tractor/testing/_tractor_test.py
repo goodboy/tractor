@@ -1,4 +1,5 @@
 import inspect
+import platform
 from functools import partial, wraps
 
 from .. import run
@@ -29,7 +30,7 @@ def tractor_test(fn):
         *args,
         loglevel=None,
         arb_addr=None,
-        start_method='trio_run_in_process',
+        start_method=None,
         **kwargs
     ):
         # __tracebackhide__ = True
@@ -41,6 +42,13 @@ def tractor_test(fn):
             # allows test suites to define a 'loglevel' fixture
             # that activates the internal logging
             kwargs['loglevel'] = loglevel
+
+        if start_method is None:
+            if platform.system() == "Windows":
+                start_method = 'spawn'
+            else:
+                start_method = 'trio_run_in_process'
+
         if 'start_method' in inspect.signature(fn).parameters:
             # set of subprocess spawning backends
             kwargs['start_method'] = start_method
