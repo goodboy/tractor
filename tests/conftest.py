@@ -28,6 +28,10 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     backend = config.option.spawn_backend
+
+    if plaform.system() == "Windows":
+        backend = 'mp'
+
     if backend == 'mp':
         tractor._spawn.try_set_start_method('spawn')
     elif backend == 'trio_run_in_process':
