@@ -72,11 +72,6 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
         raise ValueError(
             f"Spawn method `{name}` is invalid please choose one of {methods}"
         )
-
-    elif name == 'fork':
-        raise ValueError(
-            "`fork` is unsupported due to incompatibility with `trio`"
-        )
     elif name == 'forkserver':
         _forkserver_override.override_stdlib()
         _ctx = mp.get_context(name)

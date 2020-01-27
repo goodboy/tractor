@@ -52,7 +52,7 @@ def arb_addr():
 
 
 def pytest_generate_tests(metafunc):
-    spawn_backend = metafunc.config.getoption("spawn_backend")
+    spawn_backend = metafunc.config.option.spawn_backend
     assert spawn_backend in ('mp', 'trio_run_in_process')
 
     if 'start_method' in metafunc.fixturenames:
