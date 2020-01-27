@@ -297,6 +297,8 @@ async def test_nested_multierrors(loglevel, start_method):
         # process trees for whatever reason.
         # Any more process levels then this and we see bugs that cause
         # hangs and broken pipes all over the place...
+        if start_method == 'forkserver':
+            pytest.skip("Forksever sux hard at nested spawning...")
         depth = 2
         subactor_breadth = 2
 
