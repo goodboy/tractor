@@ -53,6 +53,9 @@ def arb_addr():
 
 def pytest_generate_tests(metafunc):
     spawn_backend = metafunc.config.option.spawn_backend
+    if not spawn_backend:
+        # XXX some weird windows bug with `pytest`?
+        spawn_backend = 'mp'
     assert spawn_backend in ('mp', 'trio_run_in_process')
 
     if 'start_method' in metafunc.fixturenames:
