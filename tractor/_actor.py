@@ -537,6 +537,7 @@ class Actor:
                 f"Setting loglevel for {self.uid} to {self.loglevel}")
             get_console_log(self.loglevel)
 
+        assert spawn_ctx
         log.info(
             f"Started new {spawn_ctx.current_process()} for {self.uid}")
 
@@ -555,6 +556,11 @@ class Actor:
         accept_addr: Tuple[str, int],
         parent_addr: Tuple[str, int] = None
     ) -> None:
+        """Entry point for a `trio_run_in_process` subactor.
+
+        Here we don't need to call `trio.run()` since trip does that as
+        part of its subprocess startup sequence.
+        """
         if self.loglevel is not None:
             log.info(
                 f"Setting loglevel for {self.uid} to {self.loglevel}")

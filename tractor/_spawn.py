@@ -6,7 +6,7 @@ Mostly just wrapping around ``multiprocessing``.
 import inspect
 import multiprocessing as mp
 import platform
-from typing import Any, List, Dict
+from typing import Any, Dict, Optional
 
 import trio
 from trio_typing import TaskStatus
@@ -32,8 +32,13 @@ from ._actor import Actor, ActorFailure
 
 log = get_logger('tractor')
 
-_ctx: mp.context.BaseContext = mp.get_context("spawn")  # type: ignore
-_spawn_method: str = "spawn"
+# use trip as our default for now
+if platform.system() != 'Windows':
+    _spawn_method: str = "trio_run_in_process"
+else:
+    _spawn_method = "spawn"
+
+_ctx: Optional[mp.context.BaseContext] = None
 
 
 if platform.system() == 'Windows':
@@ -46,7 +51,7 @@ else:
         await trio.hazmat.wait_readable(proc.sentinel)
 
 
-def try_set_start_method(name: str) -> mp.context.BaseContext:
+def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     """Attempt to set the start method for ``multiprocess.Process`` spawning.
 
     If the desired method is not supported the sub-interpreter (aka "spawn"
@@ -55,15 +60,16 @@ def try_set_start_method(name: str) -> mp.context.BaseContext:
     global _ctx
     global _spawn_method
 
-    allowed = mp.get_all_start_methods()
+    methods = mp.get_all_start_methods()
+    methods.remove('fork')
 
-    # no Windows support for trip yet (afaik)
+    # no Windows support for trip yet
     if platform.system() != 'Windows':
-        allowed += ['trio_run_in_process']
+        methods += ['trio_run_in_process']
 
-    if name not in allowed:
+    if name not in methods:
         raise ValueError(
-            f"Spawn method {name} is unsupported please choose one of {allowed}"
+            f"Spawn method `{name}` is invalid please choose one of {methods}"
         )
 
     elif name == 'fork':
@@ -72,6 +78,10 @@ def try_set_start_method(name: str) -> mp.context.BaseContext:
         )
     elif name == 'forkserver':
         _forkserver_override.override_stdlib()
+        _ctx = mp.get_context(name)
+    elif name == 'trio_run_in_process':
+        _ctx = None
+    else:
         _ctx = mp.get_context(name)
 
     _spawn_method = name
@@ -191,6 +201,7 @@ async def new_proc(
                 # TRIP blocks here until process is complete
         else:
             # `multiprocessing`
+            assert _ctx
             start_method = _ctx.get_start_method()
             if start_method == 'forkserver':
                 # XXX do our hackery on the stdlib to avoid multiple
