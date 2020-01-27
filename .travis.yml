@@ -22,8 +22,19 @@ matrix:
               - export PATH="/c/Python:/c/Python/Scripts:$PATH"
               - python -m pip install --upgrade pip wheel
 
-        - python: 3.7  # this works for Linux but is ignored on macOS or Windows
-        - python: 3.8
+        - name: "Python 3.7: multiprocessing"
+          python: 3.7  # this works for Linux but is ignored on macOS or Windows
+          env: SPAWN_BACKEND=mp
+        - name: "Python 3.7: trio-run-in-process"
+          python: 3.7  # this works for Linux but is ignored on macOS or Windows
+          env: SPAWN_BACKEND=trio_run_in_process
+
+        - name: "Pytron 3.8: multiprocessing"
+          python: 3.8  # this works for Linux but is ignored on macOS or Windows
+          env: SPAWN_BACKEND=mp
+        - name: "Python 3.8: trio-run-in-process"
+          python: 3.8  # this works for Linux but is ignored on macOS or Windows
+          env: SPAWN_BACKEND=trio_run_in_process
 
 install:
     - cd $TRAVIS_BUILD_DIR
@@ -32,4 +43,4 @@ install:
 
 script:
     - mypy tractor/ --ignore-missing-imports
-    - pytest tests/ --no-print-logs
+    - pytest tests/ --no-print-logs --spawn-backend=$SPAWN_BACKEND
