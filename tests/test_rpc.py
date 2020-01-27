@@ -60,7 +60,7 @@ def test_rpc_errors(arb_addr, to_call, testdir):
     if exposed_mods == ['tmp_mod']:
         # create an importable module with a bad import
         testdir.syspathinsert()
-        # module should cause a raise of a ModuleNotFoundError at import
+        # module should raise a ModuleNotFoundError at import
         testdir.makefile('.py', tmp_mod=funcname)
 
         # no need to exposed module to the subactor

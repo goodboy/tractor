@@ -284,21 +284,21 @@ async def spawn_and_error(breadth, depth) -> None:
 
 
 @tractor_test
-async def test_nested_multierrors(loglevel):
+async def test_nested_multierrors(loglevel, start_method):
     """Test that failed actor sets are wrapped in `trio.MultiError`s.
     This test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
     """
-    # if start_method == 'trio_run_in_process':
-    depth = 2
-    subactor_breadth = 3
-    # else:
-    #     # XXX: multiprocessing can't seem to handle any more then 2 depth
-    #     # process trees for whatever reason.
-    #     # Any more process levels then this and we see bugs that cause
-    #     # hangs and broken pipes all over the place...
-    #     depth = 1
-    #     subactor_breadth = 2
+    if start_method == 'trio_run_in_process':
+        depth = 3
+        subactor_breadth = 2
+    else:
+        # XXX: multiprocessing can't seem to handle any more then 2 depth
+        # process trees for whatever reason.
+        # Any more process levels then this and we see bugs that cause
+        # hangs and broken pipes all over the place...
+        depth = 2
+        subactor_breadth = 2
 
     with trio.fail_after(120):
         try:
