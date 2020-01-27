@@ -61,7 +61,8 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     global _spawn_method
 
     methods = mp.get_all_start_methods()
-    methods.remove('fork')
+    if 'fork' in methods:
+        methods.remove('fork')
 
     # no Windows support for trip yet
     if platform.system() != 'Windows':
