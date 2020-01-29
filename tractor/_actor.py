@@ -151,6 +151,10 @@ async def _invoke(
             actor._ongoing_rpc_tasks.set()
 
 
+def _get_mod_abspath(module):
+    return os.path.abspath(module.__file__)
+
+
 class Actor:
     """The fundamental concurrency primitive.
 
@@ -178,9 +182,13 @@ class Actor:
         self.uid = (name, uid or str(uuid.uuid4()))
 
         mods = {}
-        for path in rpc_module_paths or ():
-            mod = importlib.import_module(path)
-            mods[path] = mod.__file__
+        for name in rpc_module_paths or ():
+            mod = importlib.import_module(name)
+            suffix_index = mod.__file__.find('.py')
+            unique_modname = os.path.basename(mod.__file__[:suffix_index])
+            mods[unique_modname] = _get_mod_abspath(mod)
+            if mod.__name__ == '__main__' or mod.__name__ == '__mp_main__':
+                self._main_mod = unique_modname
 
         self.rpc_module_paths = mods
         self._mods: dict = {}
@@ -235,21 +243,20 @@ class Actor:
         code (if it exists).
         """
         try:
-            for path, absfilepath in self.rpc_module_paths.items():
-                log.debug(f"Attempting to import {path}")
-                # spec = importlib.util.spec_from_file_location(
-                #     path, absfilepath)
-                # mod = importlib.util.module_from_spec(spec)
+            for modname, absfilepath in self.rpc_module_paths.items():
+                sys.path.append(os.path.dirname(absfilepath))
+                log.debug(f"Attempting to import {modname}@{absfilepath}")
+                spec = importlib.util.spec_from_file_location(
+                    modname, absfilepath)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)  # type: ignore
+                self._mods[modname] = mod
 
                 # XXX append the allowed module to the python path
                 # which should allow for relative (at least downward)
                 # imports. Seems to be the only that will work currently
                 # to get `trio-run-in-process` to import modules we "send
                 # it".
-                sys.path.append(os.path.dirname(absfilepath))
-                # spec.loader.exec_module(mod)
-                mod = importlib.import_module(path)
-                self._mods[path] = mod
 
             # if self.name != 'arbiter':
             #     importlib.import_module('doggy')
@@ -257,10 +264,14 @@ class Actor:
         except ModuleNotFoundError:
             # it is expected the corresponding `ModuleNotExposed` error
             # will be raised later
-            log.error(f"Failed to import {path} in {self.name}")
+            log.error(f"Failed to import {modname} in {self.name}")
             raise
 
     def _get_rpc_func(self, ns, funcname):
+        if ns == '__main__' or ns == '__mp_main__':
+            # lookup the specific module in the child denoted
+            # as `__main__`/`__mp_main__` in the parent
+            ns = self._main_mod
         try:
             return getattr(self._mods[ns], funcname)
         except KeyError as err:
@@ -640,8 +651,6 @@ class Actor:
             # blocks here as expected until the channel server is
             # killed (i.e. this actor is cancelled or signalled by the parent)
         except Exception as err:
-            # if self.name == 'arbiter':
-            #     import pdb; pdb.set_trace()
             if not registered_with_arbiter:
                 log.exception(
                     f"Actor errored and failed to register with arbiter "
@@ -666,8 +675,6 @@ class Actor:
                 raise
 
         finally:
-            # if self.name == 'arbiter':
-            #     import pdb; pdb.set_trace()
             if registered_with_arbiter:
                 await self._do_unreg(arbiter_addr)
             # terminate actor once all it's peers (actors that connected
@@ -713,8 +720,8 @@ class Actor:
                     port=accept_port, host=accept_host,
                 )
             )
-            log.debug(
-                    f"Started tcp server(s) on {[l.socket for l in listeners]}")  # type: ignore
+            log.debug(f"Started tcp server(s) on"
+                      " {[l.socket for l in listeners]}")  # type: ignore
             self._listeners.extend(listeners)
             task_status.started()
 

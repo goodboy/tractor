@@ -78,7 +78,6 @@ class ActorNursery:
             self.errors,
             bind_addr,
             parent_addr,
-            nursery,
         )
 
     async def run_in_actor(
