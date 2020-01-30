@@ -28,6 +28,7 @@ from ._exceptions import (
 from ._discovery import get_arbiter
 from ._portal import Portal
 from . import _state
+from . import _mp_fixup_main
 
 
 log = get_logger('tractor')
@@ -169,6 +170,14 @@ class Actor:
     _root_nursery: trio.Nursery
     _server_nursery: trio.Nursery
 
+    # marked by the process spawning backend at startup
+    # will be None for the parent most process started manually
+    # by the user (currently called the "arbiter")
+    _spawn_method: Optional[str] = None
+
+    # Information about `__main__` from parent
+    _parent_main_data: Dict[str, str]
+
     def __init__(
         self,
         name: str,
@@ -178,17 +187,20 @@ class Actor:
         loglevel: str = None,
         arbiter_addr: Optional[Tuple[str, int]] = None,
     ) -> None:
+        """This constructor is called in the parent actor **before** the spawning
+        phase (aka before a new process is executed).
+        """
         self.name = name
         self.uid = (name, uid or str(uuid.uuid4()))
+
+        # retreive and store parent `__main__` data which
+        # will be passed to children
+        self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
 
         mods = {}
         for name in rpc_module_paths or ():
             mod = importlib.import_module(name)
-            suffix_index = mod.__file__.find('.py')
-            unique_modname = os.path.basename(mod.__file__[:suffix_index])
-            mods[unique_modname] = _get_mod_abspath(mod)
-            if mod.__name__ == '__main__' or mod.__name__ == '__mp_main__':
-                self._main_mod = unique_modname
+            mods[name] = _get_mod_abspath(mod)
 
         self.rpc_module_paths = mods
         self._mods: dict = {}
@@ -243,35 +255,40 @@ class Actor:
         code (if it exists).
         """
         try:
-            for modname, absfilepath in self.rpc_module_paths.items():
-                sys.path.append(os.path.dirname(absfilepath))
-                log.debug(f"Attempting to import {modname}@{absfilepath}")
-                spec = importlib.util.spec_from_file_location(
-                    modname, absfilepath)
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)  # type: ignore
-                self._mods[modname] = mod
+            if self._spawn_method == 'trio_run_in_process':
+                parent_data = self._parent_main_data
+                if 'init_main_from_name' in parent_data:
+                    _mp_fixup_main._fixup_main_from_name(
+                        parent_data['init_main_from_name'])
+                elif 'init_main_from_path' in parent_data:
+                    _mp_fixup_main._fixup_main_from_path(
+                        parent_data['init_main_from_path'])
 
-                # XXX append the allowed module to the python path
-                # which should allow for relative (at least downward)
-                # imports. Seems to be the only that will work currently
-                # to get `trio-run-in-process` to import modules we "send
-                # it".
-
-            # if self.name != 'arbiter':
-            #     importlib.import_module('doggy')
-            #     from celery.contrib import rdb; rdb.set_trace()
+            for modpath, filepath in self.rpc_module_paths.items():
+                # XXX append the allowed module to the python path which
+                # should allow for relative (at least downward) imports.
+                sys.path.append(os.path.dirname(filepath))
+                # XXX leaving this in for now incase we decide to swap
+                # it with the above path mutating solution:
+                # spec = importlib.util.spec_from_file_location(
+                #     modname, absfilepath)
+                # mod = importlib.util.module_from_spec(spec)
+                # spec.loader.exec_module(mod)  # type: ignore
+                log.debug(f"Attempting to import {modpath}@{filepath}")
+                mod = importlib.import_module(modpath)
+                self._mods[modpath] = mod
         except ModuleNotFoundError:
             # it is expected the corresponding `ModuleNotExposed` error
             # will be raised later
-            log.error(f"Failed to import {modname} in {self.name}")
+            log.error(f"Failed to import {modpath} in {self.name}")
             raise
 
     def _get_rpc_func(self, ns, funcname):
-        if ns == '__main__' or ns == '__mp_main__':
-            # lookup the specific module in the child denoted
-            # as `__main__`/`__mp_main__` in the parent
-            ns = self._main_mod
+        if ns == "__mp_main__":
+            # In subprocesses, `__main__` will actually map to
+            # `__mp_main__` which should be the same entry-point-module
+            # as the parent.
+            ns = "__main__"
         try:
             return getattr(self._mods[ns], funcname)
         except KeyError as err:

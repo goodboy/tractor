@@ -166,6 +166,9 @@ async def new_proc(
     """
     cancel_scope = None
 
+    # mark the new actor with the global spawn method
+    subactor._spawn_method = _spawn_method
+
     async with trio.open_nursery() as nursery:
         if use_trio_run_in_process or _spawn_method == 'trio_run_in_process':
             # trio_run_in_process
