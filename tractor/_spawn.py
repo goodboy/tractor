@@ -1,7 +1,5 @@
 """
-Process spawning.
-
-Mostly just wrapping around ``multiprocessing``.
+Machinery for actor process spawning using multiple backends.
 """
 import inspect
 import multiprocessing as mp
@@ -32,7 +30,7 @@ from ._actor import Actor, ActorFailure
 
 log = get_logger('tractor')
 
-# use trip as our default for now
+# use trip as our default on *nix systems for now
 if platform.system() != 'Windows':
     _spawn_method: str = "trio_run_in_process"
 else:
@@ -52,16 +50,19 @@ else:
 
 
 def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
-    """Attempt to set the start method for ``multiprocess.Process`` spawning.
+    """Attempt to set the start method for process starting, aka the "actor
+    spawning backend".
 
-    If the desired method is not supported the sub-interpreter (aka "spawn"
-    method) is used.
+    If the desired method is not supported this function will error. On Windows
+    the only supported option is the ``multiprocessing`` "spawn" method. The default
+    on *nix systems is ``trio_run_in_process``.
     """
     global _ctx
     global _spawn_method
 
     methods = mp.get_all_start_methods()
     if 'fork' in methods:
+        # forking is incompatible with ``trio``s global task tree
         methods.remove('fork')
 
     # no Windows support for trip yet
@@ -266,10 +267,15 @@ async def new_proc(
             # unblock parent task
             task_status.started(portal)
 
-            # wait for ActorNursery.wait() to be called
-            # this is required to ensure synchronization
-            # with startup and registration of this actor in
-            # ActorNursery.run_in_actor()
+            # wait for ``ActorNursery`` block to signal that
+            # subprocesses can be waited upon.
+            # This is required to ensure synchronization
+            # with user code that may want to manually await results
+            # from nursery spawned sub-actors. We don't want the
+            # containing nurseries here to collect results or error
+            # while user code is still doing it's thing. Only after the
+            # nursery block closes do we allow subactor results to be
+            # awaited and reported upwards to the supervisor.
             await actor_nursery._join_procs.wait()
 
             if portal in actor_nursery._cancel_after_result_on_exit:
