@@ -10,6 +10,7 @@ import inspect
 import uuid
 import typing
 from typing import Dict, List, Tuple, Any, Optional
+from types import ModuleType
 import sys
 import os
 
@@ -203,7 +204,7 @@ class Actor:
             mods[name] = _get_mod_abspath(mod)
 
         self.rpc_module_paths = mods
-        self._mods: dict = {}
+        self._mods: Dict[str, ModuleType] = {}
 
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
@@ -268,15 +269,8 @@ class Actor:
                 # XXX append the allowed module to the python path which
                 # should allow for relative (at least downward) imports.
                 sys.path.append(os.path.dirname(filepath))
-                # XXX leaving this in for now incase we decide to swap
-                # it with the above path mutating solution:
-                # spec = importlib.util.spec_from_file_location(
-                #     modname, absfilepath)
-                # mod = importlib.util.module_from_spec(spec)
-                # spec.loader.exec_module(mod)  # type: ignore
                 log.debug(f"Attempting to import {modpath}@{filepath}")
-                mod = importlib.import_module(modpath)
-                self._mods[modpath] = mod
+                self._mods[modpath] = importlib.import_module(modpath)
         except ModuleNotFoundError:
             # it is expected the corresponding `ModuleNotExposed` error
             # will be raised later
