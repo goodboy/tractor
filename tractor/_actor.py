@@ -5,10 +5,14 @@ from collections import defaultdict
 from functools import partial
 from itertools import chain
 import importlib
+import importlib.util
 import inspect
 import uuid
 import typing
 from typing import Dict, List, Tuple, Any, Optional
+from types import ModuleType
+import sys
+import os
 
 import trio  # type: ignore
 from trio_typing import TaskStatus
@@ -25,6 +29,7 @@ from ._exceptions import (
 from ._discovery import get_arbiter
 from ._portal import Portal
 from . import _state
+from . import _mp_fixup_main
 
 
 log = get_logger('tractor')
@@ -148,6 +153,10 @@ async def _invoke(
             actor._ongoing_rpc_tasks.set()
 
 
+def _get_mod_abspath(module):
+    return os.path.abspath(module.__file__)
+
+
 class Actor:
     """The fundamental concurrency primitive.
 
@@ -162,6 +171,14 @@ class Actor:
     _root_nursery: trio.Nursery
     _server_nursery: trio.Nursery
 
+    # marked by the process spawning backend at startup
+    # will be None for the parent most process started manually
+    # by the user (currently called the "arbiter")
+    _spawn_method: Optional[str] = None
+
+    # Information about `__main__` from parent
+    _parent_main_data: Dict[str, str]
+
     def __init__(
         self,
         name: str,
@@ -171,10 +188,23 @@ class Actor:
         loglevel: str = None,
         arbiter_addr: Optional[Tuple[str, int]] = None,
     ) -> None:
+        """This constructor is called in the parent actor **before** the spawning
+        phase (aka before a new process is executed).
+        """
         self.name = name
         self.uid = (name, uid or str(uuid.uuid4()))
-        self.rpc_module_paths = rpc_module_paths
-        self._mods: dict = {}
+
+        # retreive and store parent `__main__` data which
+        # will be passed to children
+        self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
+
+        mods = {}
+        for name in rpc_module_paths or ():
+            mod = importlib.import_module(name)
+            mods[name] = _get_mod_abspath(mod)
+
+        self.rpc_module_paths = mods
+        self._mods: Dict[str, ModuleType] = {}
 
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
@@ -225,11 +255,34 @@ class Actor:
         the original nursery we need to try and load the local module
         code (if it exists).
         """
-        for path in self.rpc_module_paths:
-            log.debug(f"Attempting to import {path}")
-            self._mods[path] = importlib.import_module(path)
+        try:
+            if self._spawn_method == 'trio_run_in_process':
+                parent_data = self._parent_main_data
+                if 'init_main_from_name' in parent_data:
+                    _mp_fixup_main._fixup_main_from_name(
+                        parent_data['init_main_from_name'])
+                elif 'init_main_from_path' in parent_data:
+                    _mp_fixup_main._fixup_main_from_path(
+                        parent_data['init_main_from_path'])
+
+            for modpath, filepath in self.rpc_module_paths.items():
+                # XXX append the allowed module to the python path which
+                # should allow for relative (at least downward) imports.
+                sys.path.append(os.path.dirname(filepath))
+                log.debug(f"Attempting to import {modpath}@{filepath}")
+                self._mods[modpath] = importlib.import_module(modpath)
+        except ModuleNotFoundError:
+            # it is expected the corresponding `ModuleNotExposed` error
+            # will be raised later
+            log.error(f"Failed to import {modpath} in {self.name}")
+            raise
 
     def _get_rpc_func(self, ns, funcname):
+        if ns == "__mp_main__":
+            # In subprocesses, `__main__` will actually map to
+            # `__mp_main__` which should be the same entry-point-module
+            # as the parent.
+            ns = "__main__"
         try:
             return getattr(self._mods[ns], funcname)
         except KeyError as err:
@@ -488,7 +541,7 @@ class Actor:
                 f"Exiting msg loop for {chan} from {chan.uid} "
                 f"with last msg:\n{msg}")
 
-    def _fork_main(
+    def _mp_main(
         self,
         accept_addr: Tuple[str, int],
         forkserver_info: Tuple[Any, Any, Any, Any, Any],
@@ -500,19 +553,44 @@ class Actor:
         self._forkserver_info = forkserver_info
         from ._spawn import try_set_start_method
         spawn_ctx = try_set_start_method(start_method)
+
         if self.loglevel is not None:
             log.info(
                 f"Setting loglevel for {self.uid} to {self.loglevel}")
             get_console_log(self.loglevel)
+
+        assert spawn_ctx
         log.info(
             f"Started new {spawn_ctx.current_process()} for {self.uid}")
+
         _state._current_actor = self
+
         log.debug(f"parent_addr is {parent_addr}")
         try:
             trio.run(partial(
                 self._async_main, accept_addr, parent_addr=parent_addr))
         except KeyboardInterrupt:
             pass  # handle it the same way trio does?
+        log.info(f"Actor {self.uid} terminated")
+
+    async def _trip_main(
+        self,
+        accept_addr: Tuple[str, int],
+        parent_addr: Tuple[str, int] = None
+    ) -> None:
+        """Entry point for a `trio_run_in_process` subactor.
+
+        Here we don't need to call `trio.run()` since trip does that as
+        part of its subprocess startup sequence.
+        """
+        if self.loglevel is not None:
+            log.info(
+                f"Setting loglevel for {self.uid} to {self.loglevel}")
+            get_console_log(self.loglevel)
+
+        log.info(f"Started new TRIP process for {self.uid}")
+        _state._current_actor = self
+        await self._async_main(accept_addr, parent_addr=parent_addr)
         log.info(f"Actor {self.uid} terminated")
 
     async def _async_main(
@@ -598,9 +676,13 @@ class Actor:
                         f"Failed to ship error to parent "
                         f"{self._parent_chan.uid}, channel was closed")
                     log.exception("Actor errored:")
+
+            if isinstance(err, ModuleNotFoundError):
+                raise
             else:
                 # XXX wait, why?
                 # causes a hang if I always raise..
+                # A parent process does something weird here?
                 raise
 
         finally:
@@ -649,8 +731,8 @@ class Actor:
                     port=accept_port, host=accept_host,
                 )
             )
-            log.debug(
-                    f"Started tcp server(s) on {[l.socket for l in listeners]}")  # type: ignore
+            log.debug(f"Started tcp server(s) on"
+                      " {[l.socket for l in listeners]}")  # type: ignore
             self._listeners.extend(listeners)
             task_status.started()
 

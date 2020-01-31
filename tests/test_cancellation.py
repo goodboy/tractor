@@ -289,11 +289,18 @@ async def test_nested_multierrors(loglevel, start_method):
     This test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
     """
-    # XXX: forkserver can't seem to handle any more then 2 depth
-    # process trees for whatever reason.
-    # Any more process levels then this and we start getting pretty slow anyway
-    depth = 3
-    subactor_breadth = 2
+    if start_method == 'trio_run_in_process':
+        depth = 3
+        subactor_breadth = 2
+    else:
+        # XXX: multiprocessing can't seem to handle any more then 2 depth
+        # process trees for whatever reason.
+        # Any more process levels then this and we see bugs that cause
+        # hangs and broken pipes all over the place...
+        if start_method == 'forkserver':
+            pytest.skip("Forksever sux hard at nested spawning...")
+        depth = 2
+        subactor_breadth = 2
 
     with trio.fail_after(120):
         try:

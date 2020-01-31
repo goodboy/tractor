@@ -99,16 +99,18 @@ def run(
     name: Optional[str] = None,
     arbiter_addr: Tuple[str, int] = (
         _default_arbiter_host, _default_arbiter_port),
-    # the `multiprocessing` start method:
+    # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
-    start_method: str = 'forkserver',
+    # OR `trio_run_in_process` (the new default).
+    start_method: Optional[str] = None,
     **kwargs,
 ) -> Any:
     """Run a trio-actor async function in process.
 
     This is tractor's main entry and the start point for any async actor.
     """
-    _spawn.try_set_start_method(start_method)
+    if start_method is not None:
+        _spawn.try_set_start_method(start_method)
     return trio.run(_main, async_fn, args, kwargs, arbiter_addr, name)
 
 

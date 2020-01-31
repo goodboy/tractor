@@ -83,8 +83,6 @@ Its tenets non-comprehensively include:
     are greatly appreciated!
 
 .. _concept-in-progress: https://trio.discourse.group/t/structured-concurrency-kickoff/55
-.. _pulsar: http://quantmind.github.io/pulsar/design.html
-.. _execnet: https://codespeak.net/execnet/
 
 
 Install
@@ -357,14 +355,15 @@ Depending on the function type ``Portal.run()`` tries to
 correctly interface exactly like a local version of the remote
 built-in Python *function type*. Currently async functions, generators,
 and regular functions are supported. Inspiration for this API comes
-from the way execnet_ does `remote function execution`_ but without
-the client code (necessarily) having to worry about the underlying
-channels_ system or shipping code over the network.
+`remote function execution`_ but without the client code being
+concerned about the underlying channels_ system or shipping code
+over the network.
 
 This *portal* approach turns out to be paricularly exciting with the
 introduction of `asynchronous generators`_ in Python 3.6! It means that
 actors can compose nicely in a data streaming pipeline.
 
+.. _exactly like trio: https://trio.readthedocs.io/en/latest/reference-core.html#cancellation-semantics
 
 Streaming
 *********
@@ -703,20 +702,54 @@ need to hop into a debugger. You just need to pass the existing
     tractor.run(main, arbiter_addr=('192.168.0.10', 1616))
 
 
-Choosing a ``multiprocessing`` *start method*
-*********************************************
-``tractor`` supports selection of the `multiprocessing start method`_ via
-a ``start_method`` kwarg to ``tractor.run()``. Note that on Windows
-*spawn* it the only supported method and on nix systems *forkserver* is
-selected by default for speed.
+Choosing a process spawning backend
+***********************************
+``tractor`` is architected to support multiple actor (sub-process)
+spawning backends. Specific defaults are chosen based on your system
+but you can also explicitly select a backend of choice at startup
+via a ``start_method`` kwarg to ``tractor.run()``.
 
-.. _multiprocessing start method: https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+Currently the options available are:
 
+- ``trio_run_in_process``: a ``trio``-native spawner from the `Ethereum community`_
+- ``spawn``: one of the stdlib's ``multiprocessing`` `start methods`_
+- ``forkserver``: a faster ``multiprocessing`` variant that is Unix only
+
+.. _start methods: https://docs.python.org/3.8/library/multiprocessing.html#contexts-and-start-methods
+.. _Ethereum community : https://github.com/ethereum/trio-run-in-process
+
+
+``trio-run-in-process``
++++++++++++++++++++++++
+`trio-run-in-process`_ is a young "pure ``trio``" process spawner
+which utilizes the native `trio subprocess APIs`_. It has shown great
+reliability under testing for predictable teardown when launching
+recursive pools of actors (multiple nurseries deep) and as such has been
+chosen as the default backend on \*nix systems.
+
+.. _trio-run-in-process: https://github.com/ethereum/trio-run-in-process
+.. _trio subprocess APIs : https://trio.readthedocs.io/en/stable/reference-io.html#spawning-subprocesses
+
+
+``multiprocessing``
++++++++++++++++++++
+There is support for the stdlib's ``multiprocessing`` `start methods`_.
+Note that on Windows *spawn* it the only supported method and on \*nix
+systems *forkserver* is the best method for speed but has the caveat
+that it will break easily (hangs due to broken pipes) if spawning actors
+using nested nurseries.
+
+In general, the ``multiprocessing`` backend **has not proven reliable**
+for handling errors from actors more then 2 nurseries *deep* (see `#89`_).
+If you for some reason need this consider sticking with alternative
+backends.
+
+.. _#89: https://github.com/goodboy/tractor/issues/89
 
 Windows "gotchas"
-*****************
-`tractor` internally uses the stdlib's `multiprocessing` package which
-*can* have some gotchas on Windows. Namely, the need for calling
+^^^^^^^^^^^^^^^^^
+On Windows (which requires the use of the stdlib's `multiprocessing`
+package) there are some gotchas. Namely, the need for calling
 `freeze_support()`_ inside the ``__main__`` context.  Additionally you
 may need place you `tractor` program entry point in a seperate
 `__main__.py` module in your package in order to avoid an error like the
