@@ -146,7 +146,8 @@ the hip new film we're shooting:
             print("CUTTTT CUUTT CUT!!! Donny!! You're supposed to say...")
 
 
-    tractor.run(main)
+    if __name__ == '__main__':
+        tractor.run(main)
 
 
 We spawn two *actors*, *donny* and *gretchen*.
@@ -192,7 +193,9 @@ and use the ``run_in_actor()`` method:
 
         print(await portal.result())
 
-    tractor.run(main)
+
+    if __name__ == '__main__':
+        tractor.run(main)
 
 
 What's going on?
