@@ -4,7 +4,7 @@ Portal api
 import importlib
 import inspect
 import typing
-from typing import Tuple, Any, Dict, Optional, Set
+from typing import Tuple, Any, Dict, Optional, Set, Callable
 from functools import partial
 from dataclasses import dataclass
 
@@ -175,16 +175,44 @@ class Portal:
                 "A pending main result has already been submitted"
         self._expect_result = await self._submit(ns, func, kwargs)
 
-    async def run(self, ns: str, func: str, **kwargs) -> Any:
-        """Submit a remote function to be scheduled and run by actor,
-        wrap and return its (stream of) result(s).
+    async def run(
+        self,
+        ns: str,
+        func: str,
+        **kwargs
+    ) -> Any:
+        """Run a remote function in another actor by providing its
+        explicit module path and function name.
 
-        This is a blocking call and returns either a value from the
-        remote rpc task or a local async generator instance.
+        Return its (stream of) result(s) as though the remote callable
+        was invoked locally. This is a blocking call and delivers either
+        the return value from the remotely scheduled RPC task or a local async
+        iterator instance if a stream is expected.
         """
         return await self._return_from_resptype(
             *(await self._submit(ns, func, kwargs))
         )
+
+    async def run_func(
+        self,
+        func: Callable,
+        **kwargs,
+    ) -> Any:
+        """Submit a local function by object reference to be scheduled
+        and run by another actor.
+
+        This is a convenience method and effectively the same as
+        ``.run()`` except the explicit function namespace path is looked
+        up by introspecting the local function object and submitting
+        that via a ``.run()`` call.
+
+        .. note::
+
+            No local objects are serialized and sent over the wire; the
+            function provided must also be importable in the target actor
+            memory space.
+        """
+        return await self.run(func.__module__, func.__name__, **kwargs)
 
     async def _return_from_resptype(
         self,
