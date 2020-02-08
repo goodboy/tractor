@@ -1,5 +1,5 @@
+import platform
 import tractor
-from functools import partial
 
 _this_module = __name__
 the_line = 'Hi my name is {}'
