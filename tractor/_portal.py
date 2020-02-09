@@ -298,6 +298,7 @@ class LocalPortal:
     using an in process actor instance.
     """
     actor: 'Actor'  # type: ignore
+    channel: Channel
 
     async def run(self, ns: str, func_name: str, **kwargs) -> Any:
         """Run a requested function locally and return it's result.
