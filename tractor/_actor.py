@@ -270,7 +270,10 @@ class Actor:
                 # should allow for relative (at least downward) imports.
                 sys.path.append(os.path.dirname(filepath))
                 log.debug(f"Attempting to import {modpath}@{filepath}")
-                self._mods[modpath] = importlib.import_module(modpath)
+                mod = importlib.import_module(modpath)
+                self._mods[modpath] = mod
+                if modpath == '__main__':
+                    self._mods['__mp_main__'] = mod
         except ModuleNotFoundError:
             # it is expected the corresponding `ModuleNotExposed` error
             # will be raised later
@@ -278,11 +281,6 @@ class Actor:
             raise
 
     def _get_rpc_func(self, ns, funcname):
-        if ns == "__mp_main__":
-            # In subprocesses, `__main__` will actually map to
-            # `__mp_main__` which should be the same entry-point-module
-            # as the parent.
-            ns = "__main__"
         try:
             return getattr(self._mods[ns], funcname)
         except KeyError as err:
