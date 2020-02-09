@@ -11,7 +11,9 @@ import shutil
 import pytest
 
 
-def confdir():
+def repodir():
+    """Return the abspath to the repo directory.
+    """
     dirname = os.path.dirname
     dirpath = os.path.abspath(
         dirname(dirname(os.path.realpath(__file__)))
@@ -20,7 +22,9 @@ def confdir():
 
 
 def examples_dir():
-    return os.path.join(confdir(), 'examples')
+    """Return the abspath to the examples directory.
+    """
+    return os.path.join(repodir(), 'examples')
 
 
 @pytest.fixture
@@ -32,20 +36,21 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
 
         if platform.system() == 'Windows':
             # on windows we need to create a special __main__.py which will
-            # be executed with ``python -m __main__.py`` on windows..
+            # be executed with ``python -m <modulename>`` on windows..
             shutil.copyfile(
                 os.path.join(examples_dir(), '__main__.py'),
                 os.path.join(str(testdir), '__main__.py')
             )
 
-            # drop the ``if __name__ == '__main__'`` guard
+            # drop the ``if __name__ == '__main__'`` guard from the *NIX
+            # version of each script
             script_code = '\n'.join(script_code.splitlines()[:-4])
             script_file = testdir.makefile('.py', script_code)
 
             # without this, tests hang on windows forever
             kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
 
-            # run the "libary module" as a script
+            # run the testdir "libary module" as a script
             cmdargs = [
                 sys.executable,
                 '-m',
@@ -78,6 +83,13 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
     [f for f in os.listdir(examples_dir()) if '__' not in f],
 )
 def test_example(run_example_in_subproc, example_script):
+    """Load and run scripts from this repo's ``examples/`` dir as a user
+    would copy and pasing them into their editor.
+
+    On windows a little more "finessing" is done to make ``multiprocessing`` play nice:
+    we copy the ``__main__.py`` into the test directory and invoke the script as a module
+    with ``python -m test_example``.
+    """
     ex_file = os.path.join(examples_dir(), example_script)
     with open(ex_file, 'r') as ex:
         code = ex.read()
