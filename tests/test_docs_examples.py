@@ -11,7 +11,6 @@ import shutil
 import pytest
 
 
-@pytest.fixture(scope='session')
 def confdir():
     dirname = os.path.dirname
     dirpath = os.path.abspath(
@@ -20,13 +19,12 @@ def confdir():
     return dirpath
 
 
-@pytest.fixture
-def examples_dir(confdir):
-    return os.path.join(confdir, 'examples')
+def examples_dir():
+    return os.path.join(confdir(), 'examples')
 
 
 @pytest.fixture
-def run_example_in_subproc(loglevel, testdir, arb_addr, examples_dir):
+def run_example_in_subproc(loglevel, testdir, arb_addr):
 
     @contextmanager
     def run(script_code):
@@ -36,7 +34,7 @@ def run_example_in_subproc(loglevel, testdir, arb_addr, examples_dir):
             # on windows we need to create a special __main__.py which will
             # be executed with ``python -m __main__.py`` on windows..
             shutil.copyfile(
-                os.path.join(examples_dir, '__main__.py'),
+                os.path.join(examples_dir(), '__main__.py'),
                 os.path.join(str(testdir), '__main__.py')
             )
 
@@ -75,8 +73,12 @@ def run_example_in_subproc(loglevel, testdir, arb_addr, examples_dir):
     yield run
 
 
-def test_example(examples_dir, run_example_in_subproc):
-    ex_file = os.path.join(examples_dir, 'a_trynamic_first_scene.py')
+@pytest.mark.parametrize(
+    'example_script',
+    [f for f in os.listdir(examples_dir()) if '__' not in f],
+)
+def test_example(run_example_in_subproc, example_script):
+    ex_file = os.path.join(examples_dir(), example_script)
     with open(ex_file, 'r') as ex:
         code = ex.read()
 
