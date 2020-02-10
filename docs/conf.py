@@ -17,6 +17,9 @@
 # Warn about all references to unknown targets
 nitpicky = True
 
+# The master toctree document.
+master_doc = 'index'
+
 # -- Project information -----------------------------------------------------
 
 project = 'tractor'
