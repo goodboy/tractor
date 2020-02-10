@@ -99,7 +99,9 @@ def test_example(run_example_in_subproc, example_script):
             err, _ = proc.stderr.read(), proc.stdout.read()
 
             # if we get some gnarly output let's aggregate and raise
-            if err and b'Error' in err:
-                raise Exception(err.decode())
+            errmsg = err.decode()
+            errlines = errmsg.splitlines()
+            if err and 'Error' in errlines[-1]:
+                raise Exception(errmsg)
 
             assert proc.returncode == 0
