@@ -4,10 +4,6 @@ A `structured concurrent`_, async-native "`actor model`_" built on trio_ and mul
 
 |travis| |docs|
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-
 .. _actor model: https://en.wikipedia.org/wiki/Actor_model
 .. _trio: https://github.com/python-trio/trio
 .. _multiprocessing: https://en.wikipedia.org/wiki/Multiprocessing
@@ -56,12 +52,10 @@ community). If you want to help, have suggestions or just want to
 say hi, please feel free to ping me on the `trio gitter channel`_!
 
 .. _trio gitter channel: https://gitter.im/python-trio/general
-A `structured concurrent`_, async-native "`actor model`_" built on trio_ and multiprocessing_.
 
 
 .. |travis| image:: https://img.shields.io/travis/goodboy/tractor/master.svg
     :target: https://travis-ci.org/goodboy/tractor
-
 .. |docs| image:: https://readthedocs.org/projects/tractor/badge/?version=latest
     :target: https://tractor.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
