@@ -108,8 +108,8 @@ reactive style for IPC.
 
 Examples
 --------
-Note, if you are on Windows please be sure to see the gotchas section
-before trying these.
+Note, if you are on Windows please be sure to see the :ref:`gotchas
+<windowsgotchas>` section before trying these.
 
 
 A trynamic first scene
@@ -495,6 +495,8 @@ backends.
 
 .. _#89: https://github.com/goodboy/tractor/issues/89
 
+.. _windowsgotchas:
+
 Windows "gotchas"
 ^^^^^^^^^^^^^^^^^
 On Windows (which requires the use of the stdlib's `multiprocessing`
@@ -528,6 +530,11 @@ And execute as::
 
     python -m application
 
+
+As an example we use the following code to test all documented examples
+in the test suite on windows:
+
+.. literalinclude:: ../examples/__main__.py
 
 See `#61`_ and `#79`_ for further details.
 
