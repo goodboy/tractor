@@ -70,7 +70,7 @@ html_theme_options = {
     'travis_button': 'true',
 }
 html_sidebars = {
-    "**": ["about.html", "localtoc.html", "relations.html", "searchbox.html"]
+    "**": ["about.html", "relations.html", "searchbox.html"]
 }
 
 # Add any paths that contain custom static files (such as style sheets) here,
