@@ -16,12 +16,6 @@ A `structured concurrent`_, async-native "`actor model`_" built on trio_ and mul
 .. _multiprocessing: https://en.wikipedia.org/wiki/Multiprocessing
 .. _trionic: https://trio.readthedocs.io/en/latest/design.html#high-level-design-principles
 .. _async sandwich: https://trio.readthedocs.io/en/latest/tutorial.html#async-sandwich
-.. _always propagate: https://trio.readthedocs.io/en/latest/design.html#exceptions-always-propagate
-.. _causality: https://vorpus.org/blog/some-thoughts-on-asynchronous-api-design-in-a-post-asyncawait-world/#c-c-c-c-causality-breaker
-.. _shared nothing architecture: https://en.wikipedia.org/wiki/Shared-nothing_architecture
-.. _cancellation: https://trio.readthedocs.io/en/latest/reference-core.html#cancellation-and-timeouts
-.. _channels: https://en.wikipedia.org/wiki/Channel_(programming)
-.. _chaos engineering: http://principlesofchaos.org/
 .. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
 
 
@@ -43,9 +37,6 @@ A great place to start is the `trio docs`_ and this `blog post`_.
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
 .. _structured concurrency: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
-.. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
-.. _async generators: https://www.python.org/dev/peps/pep-0525/
 
 
 Install
@@ -104,6 +95,15 @@ reactive style for IPC.
     are greatly appreciated!
 
 .. _concept-in-progress: https://trio.discourse.group/t/structured-concurrency-kickoff/55
+.. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
+.. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
+.. _async generators: https://www.python.org/dev/peps/pep-0525/
+.. _always propagate: https://trio.readthedocs.io/en/latest/design.html#exceptions-always-propagate
+.. _causality: https://vorpus.org/blog/some-thoughts-on-asynchronous-api-design-in-a-post-asyncawait-world/#c-c-c-c-causality-breaker
+.. _shared nothing architecture: https://en.wikipedia.org/wiki/Shared-nothing_architecture
+.. _cancellation: https://trio.readthedocs.io/en/latest/reference-core.html#cancellation-and-timeouts
+.. _channels: https://en.wikipedia.org/wiki/Channel_(programming)
+.. _chaos engineering: http://principlesofchaos.org/
 
 
 Examples
