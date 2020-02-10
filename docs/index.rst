@@ -180,35 +180,7 @@ method:
 
 Here is a similar example using the latter method:
 
-.. code:: python
-
-    def movie_theatre_question():
-        """A question asked in a dark theatre, in a tangent
-        (errr, I mean different) process.
-        """
-        return 'have you ever seen a portal?'
-
-
-    async def main():
-        """The main ``tractor`` routine.
-        """
-        async with tractor.open_nursery() as n:
-
-            portal = await n.start_actor(
-                'frank',
-                # enable the actor to run funcs from this current module
-                rpc_module_paths=[__name__],
-            )
-
-            print(await portal.run(__name__, 'movie_theatre_question'))
-            # call the subactor a 2nd time
-            print(await portal.run(__name__, 'movie_theatre_question'))
-
-            # the async with will block here indefinitely waiting
-            # for our actor "frank" to complete, but since it's an
-            # "outlive_main" actor it will never end until cancelled
-            await portal.cancel_actor()
-
+.. literalinclude:: ../examples/actor_spawning_and_causality_with_daemon.py
 
 The ``rpc_module_paths`` `kwarg` above is a list of module path
 strings that will be loaded and made accessible for execution in the
@@ -247,32 +219,7 @@ Any task invoked in a remote actor should ship any error(s) back to the calling
 actor where it is raised and expected to be dealt with. This way remote actors
 are never cancelled unless explicitly asked or there's a bug in ``tractor`` itself.
 
-.. code:: python
-
-    async def assert_err():
-        assert 0
-
-
-    async def main():
-        async with tractor.open_nursery() as n:
-            real_actors = []
-            for i in range(3):
-                real_actors.append(await n.start_actor(
-                    f'actor_{i}',
-                    rpc_module_paths=[__name__],
-                ))
-
-            # start one actor that will fail immediately
-            await n.run_in_actor('extra', assert_err)
-
-        # should error here with a ``RemoteActorError`` containing
-        # an ``AssertionError`` and all the other actors have been cancelled
-
-    try:
-        # also raises
-        tractor.run(main)
-    except tractor.RemoteActorError:
-        print("Look Maa that actor failed hard, hehhh!")
+.. literalinclude:: ../examples/remote_error_propagation.py
 
 
 You'll notice the nursery cancellation conducts a *one-cancels-all*
