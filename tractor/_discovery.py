@@ -5,7 +5,7 @@ import typing
 from typing import Tuple, Optional, Union
 from async_generator import asynccontextmanager
 
-from ._ipc import _connect_chan
+from ._ipc import _connect_chan, Channel
 from ._portal import (
     Portal,
     open_portal,
@@ -16,7 +16,8 @@ from ._state import current_actor
 
 @asynccontextmanager
 async def get_arbiter(
-    host: str, port: int
+    host: str,
+    port: int,
 ) -> typing.AsyncGenerator[Union[Portal, LocalPortal], None]:
     """Return a portal instance connected to a local or remote
     arbiter.
@@ -28,7 +29,7 @@ async def get_arbiter(
     if actor.is_arbiter:
         # we're already the arbiter
         # (likely a re-entrant call from the arbiter actor)
-        yield LocalPortal(actor)
+        yield LocalPortal(actor, Channel((host, port)))
     else:
         async with _connect_chan(host, port) as chan:
             async with open_portal(chan) as arb_portal:

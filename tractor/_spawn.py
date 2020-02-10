@@ -30,20 +30,21 @@ from ._actor import Actor, ActorFailure
 
 log = get_logger('tractor')
 
-# use trip as our default on *nix systems for now
-if platform.system() != 'Windows':
-    _spawn_method: str = "trio_run_in_process"
-else:
-    _spawn_method = "spawn"
-
+# placeholder for an mp start context if so using that backend
 _ctx: Optional[mp.context.BaseContext] = None
+_spawn_method: str = "spawn"
 
 
 if platform.system() == 'Windows':
+    _spawn_method = "spawn"
+    _ctx = mp.get_context("spawn")
+
     async def proc_waiter(proc: mp.Process) -> None:
         await trio.hazmat.WaitForSingleObject(proc.sentinel)
 else:
+    # *NIX systems use ``trio_run_in_process` as our default (for now)
     import trio_run_in_process
+    _spawn_method = "trio_run_in_process"
 
     async def proc_waiter(proc: mp.Process) -> None:
         await trio.hazmat.wait_readable(proc.sentinel)
@@ -53,9 +54,9 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     """Attempt to set the start method for process starting, aka the "actor
     spawning backend".
 
-    If the desired method is not supported this function will error. On Windows
-    the only supported option is the ``multiprocessing`` "spawn" method. The default
-    on *nix systems is ``trio_run_in_process``.
+    If the desired method is not supported this function will error. On
+    Windows the only supported option is the ``multiprocessing`` "spawn"
+    method. The default on *nix systems is ``trio_run_in_process``.
     """
     global _ctx
     global _spawn_method
