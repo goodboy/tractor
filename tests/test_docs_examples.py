@@ -2,6 +2,7 @@
 Let's make sure them docs work yah?
 """
 from contextlib import contextmanager
+import itertools
 import os
 import sys
 import subprocess
@@ -42,9 +43,13 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
                 os.path.join(str(testdir), '__main__.py')
             )
 
-            # drop the ``if __name__ == '__main__'`` guard from the *NIX
-            # version of each script
-            script_code = '\n'.join(script_code.splitlines()[:-4])
+            # drop the ``if __name__ == '__main__'`` guard onwards from
+            # the *NIX version of each script
+            windows_script_lines = itertools.takewhile(
+                lambda line: "if __name__ ==" not in line,
+                script_code.splitlines()
+            )
+            script_code = '\n'.join(windows_script_lines)
             script_file = testdir.makefile('.py', script_code)
 
             # without this, tests hang on windows forever
@@ -99,7 +104,9 @@ def test_example(run_example_in_subproc, example_script):
             err, _ = proc.stderr.read(), proc.stdout.read()
 
             # if we get some gnarly output let's aggregate and raise
-            if err and b'Error' in err:
-                raise Exception(err.decode())
+            errmsg = err.decode()
+            errlines = errmsg.splitlines()
+            if err and 'Error' in errlines[-1]:
+                raise Exception(errmsg)
 
             assert proc.returncode == 0

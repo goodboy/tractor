@@ -1,4 +1,3 @@
-import platform
 import tractor
 
 _this_module = __name__
