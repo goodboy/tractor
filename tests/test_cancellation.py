@@ -118,7 +118,8 @@ def do_nothing():
     pass
 
 
-def test_cancel_single_subactor(arb_addr):
+@pytest.mark.parametrize('mechanism', ['nursery_cancel', KeyboardInterrupt])
+def test_cancel_single_subactor(arb_addr, mechanism):
     """Ensure a ``ActorNursery.start_actor()`` spawned subactor
     cancels when the nursery is cancelled.
     """
@@ -132,10 +133,17 @@ def test_cancel_single_subactor(arb_addr):
             )
             assert (await portal.run(__name__, 'do_nothing')) is None
 
-            # would hang otherwise
-            await nursery.cancel()
+            if mechanism == 'nursery_cancel':
+                # would hang otherwise
+                await nursery.cancel()
+            else:
+                raise mechanism
 
-    tractor.run(spawn_actor, arbiter_addr=arb_addr)
+    if mechanism == 'nursery_cancel':
+        tractor.run(spawn_actor, arbiter_addr=arb_addr)
+    else:
+        with pytest.raises(mechanism):
+            tractor.run(spawn_actor, arbiter_addr=arb_addr)
 
 
 async def stream_forever():
