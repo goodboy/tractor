@@ -1,6 +1,7 @@
 """
 ``trio`` inspired apis and helpers
 """
+from functools import partial
 import multiprocessing as mp
 from typing import Tuple, List, Dict, Optional, Any
 import typing
@@ -10,7 +11,7 @@ from async_generator import asynccontextmanager
 
 from ._state import current_actor
 from .log import get_logger, get_loglevel
-from ._actor import Actor  # , ActorFailure
+from ._actor import Actor
 from ._portal import Portal
 from . import _spawn
 
@@ -51,6 +52,7 @@ class ActorNursery:
         rpc_module_paths: List[str] = None,
         loglevel: str = None,  # set log level per subactor
         nursery: trio.Nursery = None,
+        infect_asyncio: bool = False,
     ) -> Portal:
         loglevel = loglevel or self._actor.loglevel or get_loglevel()
 
@@ -71,13 +73,16 @@ class ActorNursery:
 
         # XXX: the type ignore is actually due to a `mypy` bug
         return await nursery.start(  # type: ignore
-            _spawn.new_proc,
-            name,
-            self,
-            subactor,
-            self.errors,
-            bind_addr,
-            parent_addr,
+            partial(
+                _spawn.new_proc,
+                name,
+                self,
+                subactor,
+                self.errors,
+                bind_addr,
+                parent_addr,
+                infect_asyncio=infect_asyncio,
+            )
         )
 
     async def run_in_actor(
@@ -88,6 +93,7 @@ class ActorNursery:
         rpc_module_paths: Optional[List[str]] = None,
         statespace: Dict[str, Any] = None,
         loglevel: str = None,  # set log level per subactor
+        infect_asyncio: bool = False,
         **kwargs,  # explicit args to ``fn``
     ) -> Portal:
         """Spawn a new actor, run a lone task, then terminate the actor and
@@ -106,6 +112,7 @@ class ActorNursery:
             loglevel=loglevel,
             # use the run_in_actor nursery
             nursery=self._ria_nursery,
+            infect_asyncio=infect_asyncio,
         )
         # this marks the actor to be cancelled after its portal result
         # is retreived, see logic in `open_nursery()` below.
@@ -131,7 +138,7 @@ class ActorNursery:
             # send KeyBoardInterrupt (trio abort signal) to sub-actors
             # os.kill(proc.pid, signal.SIGINT)
 
-        log.debug(f"Cancelling nursery")
+        log.debug("Cancelling nursery")
         with trio.move_on_after(3) as cs:
             async with trio.open_nursery() as nursery:
                 for subactor, proc, portal in self._children.values():
@@ -260,7 +267,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
                 # Last bit before first nursery block ends in the case
                 # where we didn't error in the caller's scope
-                log.debug(f"Waiting on all subactors to complete")
+                log.debug("Waiting on all subactors to complete")
                 anursery._join_procs.set()
 
                 # ria_nursery scope end
@@ -293,4 +300,4 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
         # ria_nursery scope end
 
-    log.debug(f"Nursery teardown complete")
+    log.debug("Nursery teardown complete")
