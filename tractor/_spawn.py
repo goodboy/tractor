@@ -26,6 +26,7 @@ from ._state import current_actor
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
+from ._entry import _mp_main, _trip_main
 
 
 log = get_logger('tractor')
@@ -161,6 +162,7 @@ async def new_proc(
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
     use_trio_run_in_process: bool = False,
+    infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
     """Create a new ``multiprocessing.Process`` using the
@@ -173,9 +175,12 @@ async def new_proc(
 
     async with trio.open_nursery() as nursery:
         if use_trio_run_in_process or _spawn_method == 'trio_run_in_process':
+            if infect_asyncio:
+                raise NotImplementedError("Asyncio is incompatible with trip")
             # trio_run_in_process
             async with trio_run_in_process.open_in_process(
-                subactor._trip_main,
+                _trip_main,
+                subactor,
                 bind_addr,
                 parent_addr,
             ) as proc:
@@ -235,12 +240,14 @@ async def new_proc(
                 fs_info = (None, None, None, None, None)
 
             proc = _ctx.Process(  # type: ignore
-                target=subactor._mp_main,
+                target=_mp_main,
                 args=(
+                    subactor,
                     bind_addr,
                     fs_info,
                     start_method,
-                    parent_addr
+                    parent_addr,
+                    infect_asyncio,
                 ),
                 # daemon=True,
                 name=name,
