@@ -12,9 +12,6 @@ from .log import get_console_log, get_logger
 from . import _state
 
 
-__all__ = ('run',)
-
-
 log = get_logger(__name__)
 
 
