@@ -21,7 +21,7 @@ def pytest_addoption(parser):
 
     parser.addoption(
         "--spawn-backend", action="store", dest='spawn_backend',
-        default='trio_run_in_process',
+        default='trio',
         help="Processing spawning backend to use for test run",
     )
 
@@ -34,7 +34,7 @@ def pytest_configure(config):
 
     if backend == 'mp':
         tractor._spawn.try_set_start_method('spawn')
-    elif backend == 'trio_run_in_process':
+    elif backend == 'trio':
         tractor._spawn.try_set_start_method(backend)
 
 
@@ -56,7 +56,7 @@ def pytest_generate_tests(metafunc):
     if not spawn_backend:
         # XXX some weird windows bug with `pytest`?
         spawn_backend = 'mp'
-    assert spawn_backend in ('mp', 'trio_run_in_process')
+    assert spawn_backend in ('mp', 'trio')
 
     if 'start_method' in metafunc.fixturenames:
         if spawn_backend == 'mp':
@@ -67,11 +67,11 @@ def pytest_generate_tests(metafunc):
                 # removing XXX: the fork method is in general
                 # incompatible with trio's global scheduler state
                 methods.remove('fork')
-        elif spawn_backend == 'trio_run_in_process':
+        elif spawn_backend == 'trio':
             if platform.system() == "Windows":
                 pytest.fail(
                     "Only `--spawn-backend=mp` is supported on Windows")
 
-            methods = ['trio_run_in_process']
+            methods = ['trio']
 
         metafunc.parametrize("start_method", methods, scope='module')

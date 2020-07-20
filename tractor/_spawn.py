@@ -1,14 +1,18 @@
 """
 Machinery for actor process spawning using multiple backends.
 """
+import sys
 import inspect
+import subprocess
 import multiprocessing as mp
 import platform
 from typing import Any, Dict, Optional
+from functools import partial
 
 import trio
+import cloudpickle
 from trio_typing import TaskStatus
-from async_generator import aclosing
+from async_generator import aclosing, asynccontextmanager
 
 try:
     from multiprocessing import semaphore_tracker  # type: ignore
@@ -21,12 +25,12 @@ except ImportError:
 from multiprocessing import forkserver  # type: ignore
 from typing import Tuple
 
-from . import _forkserver_override
+from . import _forkserver_override, _child
 from ._state import current_actor
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
-from ._entry import _mp_main, _trip_main
+from ._entry import _mp_main, _trio_main
 
 
 log = get_logger('tractor')
@@ -41,14 +45,13 @@ if platform.system() == 'Windows':
     _ctx = mp.get_context("spawn")
 
     async def proc_waiter(proc: mp.Process) -> None:
-        await trio.hazmat.WaitForSingleObject(proc.sentinel)
+        await trio.lowlevel.WaitForSingleObject(proc.sentinel)
 else:
-    # *NIX systems use ``trio_run_in_process` as our default (for now)
-    import trio_run_in_process
-    _spawn_method = "trio_run_in_process"
+    # *NIX systems use ``trio`` primitives as our default
+    _spawn_method = "trio"
 
     async def proc_waiter(proc: mp.Process) -> None:
-        await trio.hazmat.wait_readable(proc.sentinel)
+        await trio.lowlevel.wait_readable(proc.sentinel)
 
 
 def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
@@ -57,7 +60,7 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
 
     If the desired method is not supported this function will error. On
     Windows the only supported option is the ``multiprocessing`` "spawn"
-    method. The default on *nix systems is ``trio_run_in_process``.
+    method. The default on *nix systems is ``trio``.
     """
     global _ctx
     global _spawn_method
@@ -69,7 +72,7 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
 
     # no Windows support for trip yet
     if platform.system() != 'Windows':
-        methods += ['trio_run_in_process']
+        methods += ['trio']
 
     if name not in methods:
         raise ValueError(
@@ -78,7 +81,7 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     elif name == 'forkserver':
         _forkserver_override.override_stdlib()
         _ctx = mp.get_context(name)
-    elif name == 'trio_run_in_process':
+    elif name == 'trio':
         _ctx = None
     else:
         _ctx = mp.get_context(name)
@@ -153,6 +156,25 @@ async def cancel_on_completion(
         await portal.cancel_actor()
 
 
+@asynccontextmanager
+async def run_in_process(async_fn, *args, **kwargs):
+    encoded_job = cloudpickle.dumps(partial(async_fn, *args, **kwargs))
+    p = await trio.open_process(
+        [
+            sys.executable,
+            "-m",
+            _child.__name__
+        ],
+        stdin=subprocess.PIPE
+    )
+
+    await p.stdin.send_all(encoded_job)
+
+    yield p
+
+    #return cloudpickle.loads(p.stdout)
+
+
 async def new_proc(
     name: str,
     actor_nursery: 'ActorNursery',  # type: ignore
@@ -174,12 +196,9 @@ async def new_proc(
     subactor._spawn_method = _spawn_method
 
     async with trio.open_nursery() as nursery:
-        if use_trio_run_in_process or _spawn_method == 'trio_run_in_process':
-            if infect_asyncio:
-                raise NotImplementedError("Asyncio is incompatible with trip")
-            # trio_run_in_process
-            async with trio_run_in_process.open_in_process(
-                _trip_main,
+        if use_trio_run_in_process or _spawn_method == 'trio':
+            async with run_in_process(
+                _trio_main,
                 subactor,
                 bind_addr,
                 parent_addr,
@@ -203,7 +222,7 @@ async def new_proc(
                     cancel_scope = await nursery.start(
                         cancel_on_completion, portal, subactor, errors)
 
-                # TRIP blocks here until process is complete
+                # run_in_process blocks here until process is complete
         else:
             # `multiprocessing`
             assert _ctx
