@@ -20,7 +20,7 @@ from async_generator import aclosing
 
 from ._ipc import Channel
 from ._streaming import Context, _context
-from .log import get_console_log, get_logger
+from .log import get_logger
 from ._exceptions import (
     pack_error,
     unpack_error,
@@ -149,7 +149,7 @@ async def _invoke(
                 f"Task {func} was likely cancelled before it was started")
 
         if not actor._rpc_tasks:
-            log.info(f"All RPC tasks have completed")
+            log.info("All RPC tasks have completed")
             actor._ongoing_rpc_tasks.set()
 
 
@@ -339,7 +339,7 @@ class Actor:
 
             if not self._peers:  # no more channels connected
                 self._no_more_peers.set()
-                log.debug(f"Signalling no more peer channels")
+                log.debug("Signalling no more peer channels")
 
             # # XXX: is this necessary (GC should do it?)
             if chan.connected():
@@ -609,9 +609,18 @@ class Actor:
             # killed (i.e. this actor is cancelled or signalled by the parent)
         except Exception as err:
             if not registered_with_arbiter:
+                # TODO: I guess we could try to connect back
+                # to the parent through a channel and engage a debugger
+                # once we have that all working with std streams locking?
                 log.exception(
                     f"Actor errored and failed to register with arbiter "
-                    f"@ {arbiter_addr}")
+                    f"@ {arbiter_addr}?")
+                log.error(
+                    "\n\n\t^^^ THIS IS PROBABLY A TRACTOR BUGGGGG!!! ^^^\n"
+                    "\tCALMLY CALL THE AUTHORITIES AND HIDE YOUR CHILDREN.\n\n"
+                    "\tYOUR PARENT CODE IS GOING TO KEEP WORKING FINE!!!\n"
+                    "\tTHIS IS HOW RELIABlE SYSTEMS ARE SUPPOSED TO WORK!?!?\n"
+                )
 
             if self._parent_chan:
                 try:
@@ -629,6 +638,7 @@ class Actor:
                 # XXX wait, why?
                 # causes a hang if I always raise..
                 # A parent process does something weird here?
+                # i'm so lost now..
                 raise
 
         finally:
@@ -643,7 +653,7 @@ class Actor:
                     log.debug(
                         f"Waiting for remaining peers {self._peers} to clear")
                     await self._no_more_peers.wait()
-            log.debug(f"All peer channels are complete")
+            log.debug("All peer channels are complete")
 
             # tear down channel server no matter what since we errored
             # or completed
@@ -677,8 +687,8 @@ class Actor:
                     port=accept_port, host=accept_host,
                 )
             )
-            log.debug(f"Started tcp server(s) on"
-                      " {[l.socket for l in listeners]}")  # type: ignore
+            log.debug("Started tcp server(s) on"
+                      f" {[l.socket for l in listeners]}")  # type: ignore
             self._listeners.extend(listeners)
             task_status.started()
 
@@ -794,6 +804,7 @@ class Actor:
         log.info(f"Handshake with actor {uid}@{chan.raddr} complete")
         return uid
 
+
 class Arbiter(Actor):
     """A special actor who knows all the other actors and always has
     access to a top level nursery.
@@ -864,7 +875,7 @@ async def _start_actor(
     port: int,
     arbiter_addr: Tuple[str, int],
     nursery: trio.Nursery = None
-):
+) -> Any:
     """Spawn a local actor by starting a task to execute it's main async
     function.
 
