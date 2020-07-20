@@ -47,6 +47,7 @@ class ActorNursery:
     async def start_actor(
         self,
         name: str,
+        *,
         bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
         statespace: Optional[Dict[str, Any]] = None,
         rpc_module_paths: List[str] = None,
@@ -87,6 +88,7 @@ class ActorNursery:
         self,
         name: str,
         fn: typing.Callable,
+        *,
         bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
         rpc_module_paths: Optional[List[str]] = None,
         statespace: Dict[str, Any] = None,
