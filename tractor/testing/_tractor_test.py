@@ -47,7 +47,7 @@ def tractor_test(fn):
             if platform.system() == "Windows":
                 start_method = 'spawn'
             else:
-                start_method = 'trio_run_in_process'
+                start_method = 'trio'
 
         if 'start_method' in inspect.signature(fn).parameters:
             # set of subprocess spawning backends

@@ -30,7 +30,7 @@ class ActorContextInfo(Mapping):
     def __getitem__(self, key: str):
         try:
             return {
-                'task': trio.hazmat.current_task,
+                'task': trio.lowlevel.current_task,
                 'actor': current_actor
             }[key]().name
         except RuntimeError:

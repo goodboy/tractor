@@ -25,16 +25,16 @@ matrix:
         - name: "Python 3.7: multiprocessing"
           python: 3.7  # this works for Linux but is ignored on macOS or Windows
           env: SPAWN_BACKEND="mp"
-        - name: "Python 3.7: trio-run-in-process"
+        - name: "Python 3.7: trio"
           python: 3.7  # this works for Linux but is ignored on macOS or Windows
-          env: SPAWN_BACKEND="trio_run_in_process"
+          env: SPAWN_BACKEND="trio"
 
         - name: "Python 3.8: multiprocessing"
           python: 3.8  # this works for Linux but is ignored on macOS or Windows
           env: SPAWN_BACKEND="mp"
-        - name: "Python 3.8: trio-run-in-process"
+        - name: "Python 3.8: trio"
           python: 3.8  # this works for Linux but is ignored on macOS or Windows
-          env: SPAWN_BACKEND="trio_run_in_process"
+          env: SPAWN_BACKEND="trio"
 
 install:
     - cd $TRAVIS_BUILD_DIR
