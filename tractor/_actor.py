@@ -259,7 +259,7 @@ class Actor:
         code (if it exists).
         """
         try:
-            if self._spawn_method == 'trio_run_in_process':
+            if self._spawn_method == 'trio':
                 parent_data = self._parent_main_data
                 if 'init_main_from_name' in parent_data:
                     _mp_fixup_main._fixup_main_from_name(
