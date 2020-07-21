@@ -158,13 +158,24 @@ async def cancel_on_completion(
 
 @asynccontextmanager
 async def run_in_process(async_fn, *args, **kwargs):
+    # get arguments that are actors
+    actors_in_args = [
+        arg for arg in args if isinstance(arg, Actor)
+    ]
+    debug_args = []
+    # assume the first is the actor running the function
+    if len(actors_in_args) > 0:
+        subactor = actors_in_args[0]
+        debug_args.append(subactor.uid[0])
+        debug_args.append(subactor.uid[1])
+
     encoded_job = cloudpickle.dumps(partial(async_fn, *args, **kwargs))
     p = await trio.open_process(
         [
             sys.executable,
             "-m",
             _child.__name__
-        ],
+        ] + debug_args,
         stdin=subprocess.PIPE
     )
 
