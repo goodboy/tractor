@@ -168,11 +168,13 @@ async def run_in_process(async_fn, *args, **kwargs):
         stdin=subprocess.PIPE
     )
 
+    # send over func to call
     await p.stdin.send_all(encoded_job)
 
     yield p
 
-    #return cloudpickle.loads(p.stdout)
+    # wait for termination
+    await p.wait()
 
 
 async def new_proc(

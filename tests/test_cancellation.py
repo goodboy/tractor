@@ -197,7 +197,7 @@ async def test_cancel_infinite_streamer(start_method):
     ],
 )
 @tractor_test
-async def test_some_cancels_all(num_actors_and_errs, start_method):
+async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
     """Verify a subset of failed subactors causes all others in
     the nursery to be cancelled just like the strategy in trio.
 
