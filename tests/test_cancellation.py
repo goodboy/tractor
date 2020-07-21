@@ -1,6 +1,8 @@
 """
 Cancellation and error propagation
 """
+import os
+import signal
 import platform
 from itertools import repeat
 
@@ -17,7 +19,7 @@ async def assert_err(delay=0):
 
 
 async def sleep_forever():
-    await trio.sleep(float('inf'))
+    await trio.sleep_forever()
 
 
 async def do_nuthin():
@@ -161,7 +163,7 @@ async def test_cancel_infinite_streamer(start_method):
     with trio.move_on_after(1) as cancel_scope:
         async with tractor.open_nursery() as n:
             portal = await n.start_actor(
-                f'donny',
+                'donny',
                 rpc_module_paths=[__name__],
             )
 
@@ -335,3 +337,48 @@ async def test_nested_multierrors(loglevel, start_method):
                 else:
                     assert (subexc.type is tractor.RemoteActorError) or (
                         subexc.type is trio.Cancelled)
+
+
+def test_open_in_proc_cancel_via_SIGINT(loglevel, start_method):
+    """Ensure that a control-C (SIGINT) signal cancels both the parent and
+    child processes in trionic fashion
+    """
+    pid = os.getpid()
+
+    async def main():
+        with trio.fail_after(2):
+            async with tractor.open_nursery() as tn:
+                await tn.start_actor('sucka')
+                os.kill(pid, signal.SIGINT)
+                await trio.sleep_forever()
+
+    with pytest.raises(KeyboardInterrupt):
+        tractor.run(main)
+
+
+def test_open_in_proc_cancel_via_SIGINT_other_task(
+    loglevel,
+    start_method
+):
+    """Ensure that a control-C (SIGINT) signal cancels both the parent
+    and child processes in trionic fashion even a subprocess is started
+    from a seperate ``trio`` child  task.
+    """
+    pid = os.getpid()
+
+    async def spawn_and_sleep_forever(task_status=trio.TASK_STATUS_IGNORED):
+        async with tractor.open_nursery() as tn:
+            for i in range(3):
+                await tn.run_in_actor('sucka', sleep_forever)
+            task_status.started()
+            await trio.sleep_forever()
+
+    async def main():
+        # should never timeout since SIGINT should cancel the current program
+        with trio.fail_after(2):
+            async with trio.open_nursery() as n:
+                await n.start(spawn_and_sleep_forever)
+                os.kill(pid, signal.SIGINT)
+
+    with pytest.raises(KeyboardInterrupt):
+        tractor.run(main)
