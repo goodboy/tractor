@@ -157,24 +157,26 @@ async def cancel_on_completion(
 
 
 @asynccontextmanager
-async def run_in_process(async_fn, *args, **kwargs):
+async def run_in_process(subactor, async_fn, *args, **kwargs):
     encoded_job = cloudpickle.dumps(partial(async_fn, *args, **kwargs))
-    p = await trio.open_process(
+
+    async with await trio.open_process(
         [
             sys.executable,
             "-m",
-            _child.__name__
+            # Hardcode this (instead of using ``_child.__name__`` to avoid a
+            # double import warning: https://stackoverflow.com/a/45070583
+            "tractor._child",
+            # This is merely an identifier for debugging purposes when
+            # viewing the process tree from the OS
+            str(subactor.uid),
         ],
-        stdin=subprocess.PIPE
-    )
+        stdin=subprocess.PIPE,
+    ) as proc:
 
-    # send over func to call
-    await p.stdin.send_all(encoded_job)
-
-    yield p
-
-    # wait for termination
-    await p.wait()
+        # send func object to call in child
+        await proc.stdin.send_all(encoded_job)
+        yield proc
 
 
 async def new_proc(
@@ -200,6 +202,7 @@ async def new_proc(
     async with trio.open_nursery() as nursery:
         if use_trio_run_in_process or _spawn_method == 'trio':
             async with run_in_process(
+                subactor,
                 _trio_main,
                 subactor,
                 bind_addr,
