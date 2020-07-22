@@ -25,7 +25,7 @@ except ImportError:
 from multiprocessing import forkserver  # type: ignore
 from typing import Tuple
 
-from . import _forkserver_override, _child
+from . import _forkserver_override
 from ._state import current_actor
 from .log import get_logger
 from ._portal import Portal
@@ -122,6 +122,7 @@ async def exhaust_portal(
         # we reraise in the parent task via a ``trio.MultiError``
         return err
     else:
+        log.debug(f"Returning final result: {final}")
         return final
 
 
@@ -227,7 +228,10 @@ async def new_proc(
                     cancel_scope = await nursery.start(
                         cancel_on_completion, portal, subactor, errors)
 
-                # run_in_process blocks here until process is complete
+                # Wait for proc termination but **dont'** yet call
+                # ``trio.Process.__aexit__()`` (it tears down stdio
+                # which will kill any waiting remote pdb trace).
+                await proc.wait()
         else:
             # `multiprocessing`
             assert _ctx
