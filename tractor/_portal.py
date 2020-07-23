@@ -314,7 +314,8 @@ class LocalPortal:
 @asynccontextmanager
 async def open_portal(
     channel: Channel,
-    nursery: Optional[trio.Nursery] = None
+    nursery: Optional[trio.Nursery] = None,
+    start_msg_loop: bool = True,
 ) -> typing.AsyncGenerator[Portal, None]:
     """Open a ``Portal`` through the provided ``channel``.
 
@@ -332,15 +333,17 @@ async def open_portal(
         if channel.uid is None:
             await actor._do_handshake(channel)
 
-        msg_loop_cs: trio.CancelScope = await nursery.start(
-            partial(
-                actor._process_messages,
-                channel,
-                # if the local task is cancelled we want to keep
-                # the msg loop running until our block ends
-                shield=True,
+        msg_loop_cs = None
+        if start_msg_loop:
+            msg_loop_cs: trio.CancelScope = await nursery.start(
+                partial(
+                    actor._process_messages,
+                    channel,
+                    # if the local task is cancelled we want to keep
+                    # the msg loop running until our block ends
+                    shield=True,
+                )
             )
-        )
         portal = Portal(channel)
         try:
             yield portal
@@ -352,6 +355,7 @@ async def open_portal(
                 await channel.send(None)
 
             # cancel background msg loop task
-            msg_loop_cs.cancel()
+            if msg_loop_cs:
+                msg_loop_cs.cancel()
 
             nursery.cancel_scope.cancel()
