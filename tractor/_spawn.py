@@ -23,7 +23,7 @@ from multiprocessing import forkserver  # type: ignore
 from typing import Tuple
 
 from . import _forkserver_override
-from ._state import current_actor
+from ._state import current_actor, is_main_process
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
@@ -85,12 +85,6 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
 
     _spawn_method = name
     return _ctx
-
-
-def is_main_process() -> bool:
-    """Bool determining if this actor is running in the top-most process.
-    """
-    return mp.current_process().name == 'MainProcess'
 
 
 async def exhaust_portal(
@@ -206,6 +200,8 @@ async def new_proc(
     # passed through to actor main
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
+    _runtime_vars: Dict[str, Any],  # serialized and sent to _child
+    *,
     use_trio_run_in_process: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
@@ -241,8 +237,13 @@ async def new_proc(
                     "statespace": subactor.statespace,
                     "_arb_addr": subactor._arb_addr,
                     "bind_host": bind_addr[0],
-                    "bind_port": bind_addr[1]
+                    "bind_port": bind_addr[1],
+                    "_runtime_vars": _runtime_vars,
                 })
+
+                # track subactor in current nursery
+                curr_actor = current_actor()
+                curr_actor._actoruid2nursery[subactor.uid] = actor_nursery
 
                 # resume caller at next checkpoint now that child is up
                 task_status.started(portal)

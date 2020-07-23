@@ -57,6 +57,9 @@ def _trio_main(
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
     """
+    # TODO: make a global func to set this or is it too hacky?
+    # os.environ['PYTHONBREAKPOINT'] = 'tractor._debug.breakpoint'
+
     if actor.loglevel is not None:
         log.info(
             f"Setting loglevel for {actor.uid} to {actor.loglevel}")

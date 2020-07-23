@@ -13,10 +13,11 @@ from ._state import current_actor
 from .log import get_logger, get_loglevel
 from ._actor import Actor
 from ._portal import Portal
+from . import _state
 from . import _spawn
 
 
-log = get_logger('tractor')
+log = get_logger(__name__)
 
 _default_bind_addr: Tuple[str, int] = ('127.0.0.1', 0)
 
@@ -58,6 +59,10 @@ class ActorNursery:
     ) -> Portal:
         loglevel = loglevel or self._actor.loglevel or get_loglevel()
 
+        # configure and pass runtime state
+        _rtv = _state._runtime_vars.copy()
+        _rtv['_is_root'] = False
+
         subactor = Actor(
             name,
             # modules allowed to invoked funcs from
@@ -83,6 +88,7 @@ class ActorNursery:
                 self.errors,
                 bind_addr,
                 parent_addr,
+                _rtv,  # run time vars
             )
         )
 
