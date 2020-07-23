@@ -7,6 +7,7 @@ from itertools import chain
 import importlib
 import importlib.util
 import inspect
+import bdb
 import uuid
 import typing
 from typing import Dict, List, Tuple, Any, Optional
@@ -125,8 +126,15 @@ async def _invoke(
                         task_status.started(cs)
                         await chan.send({'return': await coro, 'cid': cid})
     except (Exception, trio.MultiError) as err:
-        # always ship errors back to caller
         log.exception("Actor errored:")
+
+        # NOTE: don't enter debug mode recursively after quitting pdb
+        if _state.debug_mode() and not isinstance(err, bdb.BdbQuit):
+            # Allow for pdb control in parent
+            from ._debug import post_mortem
+            await post_mortem()
+
+        # always ship errors back to caller
         err_msg = pack_error(err)
         err_msg['cid'] = cid
         try:
@@ -182,6 +190,7 @@ class Actor:
     def __init__(
         self,
         name: str,
+        *,
         rpc_module_paths: List[str] = [],
         statespace: Optional[Dict[str, Any]] = None,
         uid: str = None,
@@ -235,6 +244,7 @@ class Actor:
         self._parent_chan: Optional[Channel] = None
         self._forkserver_info: Optional[
             Tuple[Any, Any, Any, Any, Any]] = None
+        self._actoruid2nursery: Dict[str, 'ActorNursery'] = {}
 
     async def wait_for_peer(
         self, uid: Tuple[str, str]
@@ -709,11 +719,17 @@ class Actor:
             - cancelling all rpc tasks
             - cancelling the channel server
             - cancel the "root" nursery
+            - if root actor, cancel all nurseries under the root ``trio`` task
         """
         # cancel all ongoing rpc tasks
         await self.cancel_rpc_tasks()
         self.cancel_server()
         self._root_nursery.cancel_scope.cancel()
+        if self._parent_chan is None:  # TODO: more robust check
+            # we're the root actor or zombied
+            root = trio.lowlevel.current_root_task()
+            for n in root.child_nurseries:
+                n.cancel_scope.cancel()
 
     async def _cancel_task(self, cid, chan):
         """Cancel a local task by call-id / channel.

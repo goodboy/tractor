@@ -2,7 +2,8 @@
 Process entry points.
 """
 from functools import partial
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict
+import os
 
 import trio  # type: ignore
 
@@ -54,13 +55,17 @@ def _mp_main(
 async def _trio_main(
     actor: 'Actor',
     accept_addr: Tuple[str, int],
-    parent_addr: Tuple[str, int] = None
+    parent_addr: Tuple[str, int],
+    _runtime_vars: Dict[str, Any],  # serialized and sent to _child
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
 
     Here we don't need to call `trio.run()` since trip does that as
     part of its subprocess startup sequence.
     """
+    # TODO: make a global func to set this or is it too hacky?
+    # os.environ['PYTHONBREAKPOINT'] = 'tractor._debug.breakpoint'
+
     if actor.loglevel is not None:
         log.info(
             f"Setting loglevel for {actor.uid} to {actor.loglevel}")
@@ -69,6 +74,7 @@ async def _trio_main(
     log.info(f"Started new trio process for {actor.uid}")
 
     _state._current_actor = actor
+    _state._runtime_vars.update(_runtime_vars)
 
     await actor._async_main(accept_addr, parent_addr=parent_addr)
     log.info(f"Actor {actor.uid} terminated")

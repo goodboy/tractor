@@ -26,7 +26,7 @@ from multiprocessing import forkserver  # type: ignore
 from typing import Tuple
 
 from . import _forkserver_override
-from ._state import current_actor
+from ._state import current_actor, is_main_process
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
@@ -88,12 +88,6 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
 
     _spawn_method = name
     return _ctx
-
-
-def is_main_process() -> bool:
-    """Bool determining if this actor is running in the top-most process.
-    """
-    return mp.current_process().name == 'MainProcess'
 
 
 async def exhaust_portal(
@@ -188,6 +182,8 @@ async def new_proc(
     # passed through to actor main
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
+    _runtime_vars: Dict[str, Any],  # serialized and sent to _child
+    *,
     use_trio_run_in_process: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
@@ -207,6 +203,7 @@ async def new_proc(
                 subactor,
                 bind_addr,
                 parent_addr,
+                _runtime_vars=_runtime_vars,
             ) as proc:
                 log.info(f"Started {proc}")
 
@@ -218,6 +215,10 @@ async def new_proc(
                 portal = Portal(chan)
                 actor_nursery._children[subactor.uid] = (
                     subactor, proc, portal)
+
+                curr_actor = current_actor()
+                curr_actor._actoruid2nursery[subactor.uid] = actor_nursery
+
                 task_status.started(portal)
 
                 # wait for ActorNursery.wait() to be called
