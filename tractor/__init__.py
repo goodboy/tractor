@@ -18,6 +18,7 @@ from ._actor import Actor, _start_actor, Arbiter
 from ._trionics import open_nursery
 from ._state import current_actor
 from ._exceptions import RemoteActorError, ModuleNotExposed
+from ._debug import breakpoint, post_mortem
 from . import msg
 from . import _spawn
 
@@ -103,14 +104,26 @@ def run(
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
     # OR `trio_run_in_process` (the new default).
     start_method: Optional[str] = None,
+    debug_mode: bool = False,
     **kwargs,
 ) -> Any:
     """Run a trio-actor async function in process.
 
     This is tractor's main entry and the start point for any async actor.
     """
+    # mark top most level process as root actor
+    _state._runtime_vars['_is_root'] = True
+
     if start_method is not None:
         _spawn.try_set_start_method(start_method)
+
+    if debug_mode:
+        _state._runtime_vars['_debug_mode'] = True
+
+    # expose internal debug module to every actor allowing
+    # for use of ``await tractor.breakpoint()``
+    kwargs.setdefault('rpc_module_paths', []).append('tractor._debug')
+
     return trio.run(_main, async_fn, args, kwargs, arbiter_addr, name)
 
 
