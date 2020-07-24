@@ -97,6 +97,12 @@ def _breakpoint(debug_func) -> Awaitable[None]:
     in subactors.
     """
     actor = tractor.current_actor()
+    try:
+        import ipdb
+        db = ipdb
+    except ImportError:
+        import pdb
+        db = pdb
 
     async def wait_for_parent_stdin_hijack():
         log.debug('Breakpoint engaged!')
@@ -116,14 +122,14 @@ def _breakpoint(debug_func) -> Awaitable[None]:
 
         # block here one frame up where ``breakpoint()``
         # was awaited and begin handling stdin
-        debug_func(actor)
+        debug_func(actor, db)
 
     # this must be awaited by caller
     return wait_for_parent_stdin_hijack()
 
 
-def _set_trace(actor):
-    pdb.set_trace(
+def _set_trace(actor, dbmod):
+    dbmod.set_trace(
         header=f"\nAttaching pdb to actor: {actor.uid}\n",
         # start 2 levels up
         frame=sys._getframe().f_back.f_back,
@@ -136,9 +142,10 @@ breakpoint = partial(
 )
 
 
-def _post_mortem(actor):
-    log.error(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
-    pdb.post_mortem()
+def _post_mortem(actor, dbmod):
+    log.error(
+        f"\nAttaching to {dbmod} in crashed actor: {actor.uid}\n")
+    dbmod.post_mortem()
 
 
 post_mortem = partial(
