@@ -687,8 +687,8 @@ class Actor:
                     port=accept_port, host=accept_host,
                 )
             )
-            log.debug("Started tcp server(s) on"
-                      f" {[l.socket for l in listeners]}")  # type: ignore
+            log.debug("Started tcp server(s) on"  # type: ignore
+                      f" {[l.socket for l in listeners]}")
             self._listeners.extend(listeners)
             task_status.started()
 
