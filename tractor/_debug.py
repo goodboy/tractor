@@ -4,6 +4,7 @@ Multi-core debugging for da peeps!
 import pdb
 import sys
 import tty
+import termios
 from functools import partial
 from typing import Awaitable, Tuple
 
@@ -40,38 +41,50 @@ async def _hijack_stdin_relay_to_child(
     actor = tractor.current_actor()
     proc = subactoruid2proc(actor, subactor_uid)
 
-    # nlb = []
+    nlb = []
+    line = []
 
     async def hijack_stdin():
         log.info(f"Hijacking stdin from {actor.uid}")
-        # try:
-            # # disable cooked mode
-            # fd = sys.stdin.fileno()
-            # old = tty.tcgetattr(fd)
+        try:
+            # disable cooked mode
+            fd = sys.stdin.fileno()
+            old = tty.tcgetattr(fd)
             # tty.setcbreak(fd)
+            tty.setcbreak(fd)
 
-        # trap std in and relay to subproc
-        async_stdin = trio.wrap_file(sys.stdin)
+            # trap std in and relay to subproc
+            async_stdin = trio.wrap_file(sys.stdin)
 
-        async with aclosing(async_stdin):
-            # while True:
-            async for msg in async_stdin:
-                log.trace(f"Stdin input:\n{msg}")
-                # nlb.append(msg)
-                # encode to bytes
-                bmsg = str.encode(msg)
+            async with aclosing(async_stdin):
+                while True:
+                # async for msg in async_stdin:
+                    msg = await async_stdin.read(1)
+                    nlb.append(msg)
+                    # encode to bytes
+                    bmsg = str.encode(msg)
+                    log.trace(f"Stdin str input:\n{msg}")
+                    log.trace(f"Stdin bytes input:\n{bmsg}")
 
-                # relay bytes to subproc over pipe
-                await proc.stdin.send_all(bmsg)
+                    # relay bytes to subproc over pipe
+                    await proc.stdin.send_all(bmsg)
+                    # termios.tcflush(fd, termios.TCIFLUSH)
 
-                # line = str.encode(''.join(nlb))
-                # print(line)
+                    # don't write control chars to local stdout
+                    if bmsg not in (b'\t'):
+                        # mirror input to stdout
+                        sys.stdout.write(msg)
+                        sys.stdout.flush()
 
-                if bmsg in _pdb_exit_patterns:
-                    log.info("Closing stdin hijack")
-                    break
-        # finally:
-        #     tty.tcsetattr(fd, tty.TCSAFLUSH, old)
+                    if bmsg == b'\n':
+                        line = str.encode(''.join(nlb))
+                        # print(line.decode())
+                        if line in _pdb_exit_patterns:
+                            log.info("Closing stdin hijack")
+                            line = []
+                            break
+        finally:
+            tty.tcsetattr(fd, tty.TCSAFLUSH, old)
 
     # schedule hijacking in root scope
     actor._root_nursery.start_soon(hijack_stdin)
