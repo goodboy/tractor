@@ -20,7 +20,6 @@ from ._state import current_actor
 from ._exceptions import RemoteActorError, ModuleNotExposed
 from . import msg
 from . import _spawn
-from . import to_asyncio
 
 
 __all__ = [
@@ -36,7 +35,6 @@ __all__ = [
     'RemoteActorError',
     'ModuleNotExposed',
     'msg'
-    'to_asyncio'
 ]
 
 

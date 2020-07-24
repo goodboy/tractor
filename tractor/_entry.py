@@ -1,9 +1,8 @@
 """
 Process entry points.
 """
-import asyncio
 from functools import partial
-from typing import Tuple, Any, Awaitable
+from typing import Tuple, Any
 
 import trio  # type: ignore
 
@@ -12,50 +11,7 @@ from .log import get_console_log, get_logger
 from . import _state
 
 
-__all__ = ('run',)
-
-
 log = get_logger(__name__)
-
-
-def _asyncio_main(
-    trio_main: Awaitable,
-) -> None:
-    """Entry for an "infected ``asyncio`` actor".
-
-    Uh, oh. :o
-
-    It looks like your event loop has caught a case of the ``trio``s.
-
-    :()
-
-    Don't worry, we've heard you'll barely notice. You might hallucinate
-    a few more propagating errors and feel like your digestion has
-    slowed but if anything get's too bad your parents will know about
-    it.
-
-    :)
-    """
-    async def aio_main(trio_main):
-        loop = asyncio.get_running_loop()
-
-        trio_done_fut = asyncio.Future()
-
-        def trio_done_callback(main_outcome):
-            log.info(f"trio_main finished: {main_outcome!r}")
-            trio_done_fut.set_result(main_outcome)
-
-        # start the infection: run trio on the asyncio loop in "guest mode"
-        log.info(f"Infecting asyncio process with {trio_main}")
-        trio.lowlevel.start_guest_run(
-            trio_main,
-            run_sync_soon_threadsafe=loop.call_soon_threadsafe,
-            done_callback=trio_done_callback,
-        )
-
-        (await trio_done_fut).unwrap()
-
-    asyncio.run(aio_main(trio_main))
 
 
 def _mp_main(
@@ -90,11 +46,7 @@ def _mp_main(
         parent_addr=parent_addr
     )
     try:
-        if infect_asyncio:
-            actor._infected_aio = True
-            _asyncio_main(trio_main)
-        else:
-            trio.run(trio_main)
+        trio.run(trio_main)
     except KeyboardInterrupt:
         pass  # handle it the same way trio does?
     log.info(f"Actor {actor.uid} terminated")
