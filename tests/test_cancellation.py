@@ -299,7 +299,7 @@ async def test_nested_multierrors(loglevel, start_method):
     This test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
     """
-    if start_method == 'trio_run_in_process':
+    if start_method == 'trio':
         depth = 3
         subactor_breadth = 2
     else:
