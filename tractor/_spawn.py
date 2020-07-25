@@ -55,12 +55,13 @@ else:
 
 
 def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
-    """Attempt to set the start method for process starting, aka the "actor
+    """Attempt to set the method for process starting, aka the "actor
     spawning backend".
 
-    If the desired method is not supported this function will error. On
-    Windows the only supported option is the ``multiprocessing`` "spawn"
-    method. The default on *nix systems is ``trio``.
+    If the desired method is not supported this function will error.
+    On Windows only the ``multiprocessing`` "spawn" method is offered
+    besides the default ``trio`` which uses async wrapping around
+    ``subprocess.Popen``.
     """
     global _ctx
     global _spawn_method
@@ -70,9 +71,8 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
         # forking is incompatible with ``trio``s global task tree
         methods.remove('fork')
 
-    # no Windows support for trip yet
-    if platform.system() != 'Windows':
-        methods += ['trio']
+    # supported on all platforms
+    methods += ['trio']
 
     if name not in methods:
         raise ValueError(

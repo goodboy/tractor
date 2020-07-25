@@ -10,7 +10,7 @@ import pytest
 import trio
 import tractor
 
-from conftest import tractor_test
+from conftest import tractor_test, no_windows
 
 
 async def assert_err(delay=0):
@@ -339,6 +339,7 @@ async def test_nested_multierrors(loglevel, start_method):
                         subexc.type is trio.Cancelled)
 
 
+@no_windows
 def test_open_in_proc_cancel_via_SIGINT(loglevel, start_method):
     """Ensure that a control-C (SIGINT) signal cancels both the parent and
     child processes in trionic fashion
@@ -356,6 +357,7 @@ def test_open_in_proc_cancel_via_SIGINT(loglevel, start_method):
         tractor.run(main)
 
 
+@no_windows
 def test_open_in_proc_cancel_via_SIGINT_other_task(
     loglevel,
     start_method

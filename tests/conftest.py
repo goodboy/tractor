@@ -6,11 +6,19 @@ import platform
 
 import pytest
 import tractor
-from tractor.testing import tractor_test
+
+# export for tests
+from tractor.testing import tractor_test  # noqa
 
 
 pytest_plugins = ['pytester']
 _arb_addr = '127.0.0.1', random.randint(1000, 9999)
+
+
+no_windows = pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="Test is unsupported on windows",
+)
 
 
 def pytest_addoption(parser):
@@ -28,9 +36,6 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     backend = config.option.spawn_backend
-
-    if platform.system() == "Windows":
-        backend = 'mp'
 
     if backend == 'mp':
         tractor._spawn.try_set_start_method('spawn')
@@ -68,10 +73,6 @@ def pytest_generate_tests(metafunc):
                 # incompatible with trio's global scheduler state
                 methods.remove('fork')
         elif spawn_backend == 'trio':
-            if platform.system() == "Windows":
-                pytest.fail(
-                    "Only `--spawn-backend=mp` is supported on Windows")
-
             methods = ['trio']
 
         metafunc.parametrize("start_method", methods, scope='module')

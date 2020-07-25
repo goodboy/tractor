@@ -8,6 +8,17 @@ matrix:
           os: windows
           language: sh
           python: 3.x  # only works on linux
+          env: SPAWN_BACKEND="mp"
+          before_install:
+              - choco install python3 --params "/InstallDir:C:\\Python"
+              - export PATH="/c/Python:/c/Python/Scripts:$PATH"
+              - python -m pip install --upgrade pip wheel
+
+        - name: "Windows, Python Latest: trio"
+          os: windows
+          language: sh
+          python: 3.x  # only works on linux
+          env: SPAWN_BACKEND="trio"
           before_install:
               - choco install python3 --params "/InstallDir:C:\\Python"
               - export PATH="/c/Python:/c/Python/Scripts:$PATH"
@@ -16,6 +27,17 @@ matrix:
         - name: "Windows, Python 3.7: multiprocessing"
           os: windows
           python: 3.7  # only works on linux
+          env: SPAWN_BACKEND="mp"
+          language: sh
+          before_install:
+              - choco install python3 --version 3.7.4 --params "/InstallDir:C:\\Python"
+              - export PATH="/c/Python:/c/Python/Scripts:$PATH"
+              - python -m pip install --upgrade pip wheel
+
+        - name: "Windows, Python 3.7: trio"
+          os: windows
+          python: 3.7  # only works on linux
+          env: SPAWN_BACKEND="trio"
           language: sh
           before_install:
               - choco install python3 --version 3.7.4 --params "/InstallDir:C:\\Python"
