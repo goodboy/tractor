@@ -1,9 +1,7 @@
 """
 Multi-core debugging for da peeps!
 """
-import pdb
 import sys
-import tty
 from functools import partial
 from typing import Awaitable, Tuple
 
@@ -12,6 +10,16 @@ import tractor
 import trio
 
 from .log import get_logger
+
+try:
+    # wtf: only exported when installed in dev mode?
+    import pdbpp
+except ImportError:
+    # pdbpp is installed in regular mode...
+    import pdb
+    assert pdb.xpm, "pdbpp is not installed?"
+    pdbpp = pdb
+
 
 log = get_logger(__name__)
 
@@ -25,56 +33,96 @@ _pdb_exit_patterns = tuple(
 )
 
 
-def subactoruid2proc(
-    actor: 'Actor',  # noqa
-    uid: Tuple[str, str]
-) -> trio.Process:
-    n = actor._actoruid2nursery[uid]
-    _, proc, _ = n._children[uid]
-    return proc
+_pdb_release_hook = None
+
+
+class PdbwTeardown(pdbpp.Pdb):
+    """Add teardown hooks to the regular ``pdbpp.Pdb``.
+    """
+    # TODO: figure out how to dissallow recursive .set_trace() entry
+    # since that'll cause deadlock for us.
+    def set_continue(self):
+        super().set_continue()
+        self.config.teardown(self)
+
+    def set_quit(self):
+        super().set_quit()
+        self.config.teardown(self)
+
+
+class TractorConfig(pdbpp.DefaultConfig):
+    """Custom ``pdbpp`` goodness.
+    """
+    sticky_by_default = True
+
+    def teardown(self, _pdb):
+        _pdb_release_hook(_pdb)
+
+
+# override the pdbpp config with our coolio one
+pdbpp.Pdb.DefaultConfig = TractorConfig
+
+
+# TODO: will be needed whenever we get to true remote debugging.
+# XXX see https://github.com/goodboy/tractor/issues/130
+
+# def subactoruid2proc(
+#     actor: 'Actor',  # noqa
+#     uid: Tuple[str, str]
+# ) -> trio.Process:
+#     n = actor._actoruid2nursery[uid]
+#     _, proc, _ = n._children[uid]
+#     return proc
+
+# async def hijack_stdin():
+#     log.info(f"Hijacking stdin from {actor.uid}")
+
+#     trap std in and relay to subproc
+#     async_stdin = trio.wrap_file(sys.stdin)
+
+#     async with aclosing(async_stdin):
+#         async for msg in async_stdin:
+#             log.trace(f"Stdin input:\n{msg}")
+#             # encode to bytes
+#             bmsg = str.encode(msg)
+
+#             # relay bytes to subproc over pipe
+#             # await proc.stdin.send_all(bmsg)
+
+#             if bmsg in _pdb_exit_patterns:
+#                 log.info("Closing stdin hijack")
+#                 break
 
 
 async def _hijack_stdin_relay_to_child(
     subactor_uid: Tuple[str, str]
 ) -> None:
     actor = tractor.current_actor()
-    proc = subactoruid2proc(actor, subactor_uid)
+    debug_lock = actor.statespace.setdefault(
+        '_debug_lock', trio.StrictFIFOLock()
+    )
 
-    # nlb = []
+    log.debug(f"Actor {subactor_uid} is waiting on stdin hijack lock")
+    await debug_lock.acquire()
+    log.warning(f"Actor {subactor_uid} acquired stdin hijack lock")
 
-    async def hijack_stdin():
-        log.info(f"Hijacking stdin from {actor.uid}")
-        # try:
-            # # disable cooked mode
-            # fd = sys.stdin.fileno()
-            # old = tty.tcgetattr(fd)
-            # tty.setcbreak(fd)
+    # TODO: when we get to true remote debugging
+    # this will deliver stdin data
+    try:
+        # indicate to child that we've locked stdio
+        yield 'Locked'
 
-        # trap std in and relay to subproc
-        async_stdin = trio.wrap_file(sys.stdin)
+        # wait for cancellation of stream by child
+        await trio.sleep_forever()
 
-        async with aclosing(async_stdin):
-            # while True:
-            async for msg in async_stdin:
-                log.trace(f"Stdin input:\n{msg}")
-                # nlb.append(msg)
-                # encode to bytes
-                bmsg = str.encode(msg)
+        # TODO: for remote debugging schedule hijacking in root scope
+        # (see above)
+        # actor._root_nursery.start_soon(hijack_stdin)
 
-                # relay bytes to subproc over pipe
-                await proc.stdin.send_all(bmsg)
-
-                # line = str.encode(''.join(nlb))
-                # print(line)
-
-                if bmsg in _pdb_exit_patterns:
-                    log.info("Closing stdin hijack")
-                    break
-        # finally:
-        #     tty.tcsetattr(fd, tty.TCSAFLUSH, old)
-
-    # schedule hijacking in root scope
-    actor._root_nursery.start_soon(hijack_stdin)
+    finally:
+        if debug_lock.locked():
+            debug_lock.release()
+            log.debug(f"Actor {subactor_uid} released stdin hijack lock")
 
 
 # XXX: We only make this sync in case someone wants to
@@ -84,35 +132,61 @@ def _breakpoint(debug_func) -> Awaitable[None]:
     in subactors.
     """
     actor = tractor.current_actor()
+    do_unlock = trio.Event()
 
-    async def wait_for_parent_stdin_hijack():
-        log.debug('Breakpoint engaged!')
+    async def wait_for_parent_stdin_hijack(
+        task_status=trio.TASK_STATUS_IGNORED
+    ):
 
         # TODO: need a more robust check for the "root" actor
         if actor._parent_chan:
             async with tractor._portal.open_portal(
                 actor._parent_chan,
                 start_msg_loop=False,
+                shield=True,
             ) as portal:
                 # with trio.fail_after(1):
-                await portal.run(
+                agen = await portal.run(
                     'tractor._debug',
                     '_hijack_stdin_relay_to_child',
                     subactor_uid=actor.uid,
                 )
+                async with aclosing(agen):
+                    async for val in agen:
+                        assert val == 'Locked'
+                        task_status.started()
+                        with trio.CancelScope(shield=True):
+                            await do_unlock.wait()
+
+                            # trigger cancellation of remote stream
+                            break
+
+                log.debug(f"Child {actor} released parent stdio lock")
+
+    def unlock(_pdb):
+        do_unlock.set()
+
+    global _pdb_release_hook
+    _pdb_release_hook = unlock
+
+    async def _bp():
+        # this must be awaited by caller
+        await actor._root_nursery.start(
+            wait_for_parent_stdin_hijack
+        )
 
         # block here one frame up where ``breakpoint()``
         # was awaited and begin handling stdin
         debug_func(actor)
 
-    # this must be awaited by caller
-    return wait_for_parent_stdin_hijack()
+    # return wait_for_parent_stdin_hijack()
+    return _bp()
 
 
 def _set_trace(actor):
-    pdb.set_trace(
-        header=f"\nAttaching pdb to actor: {actor.uid}\n",
-        # start 2 levels up
+    log.critical(f"\nAttaching pdb to actor: {actor.uid}\n")
+    PdbwTeardown().set_trace(
+        # start 2 levels up in user code
         frame=sys._getframe().f_back.f_back,
     )
 
@@ -125,7 +199,7 @@ breakpoint = partial(
 
 def _post_mortem(actor):
     log.error(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
-    pdb.post_mortem()
+    pdbpp.xpm(Pdb=PdbwTeardown)
 
 
 post_mortem = partial(
