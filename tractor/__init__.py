@@ -22,6 +22,7 @@ from ._exceptions import RemoteActorError, ModuleNotExposed
 from ._debug import breakpoint, post_mortem
 from . import _spawn
 from . import msg
+from . import to_asyncio
 
 
 __all__ = [
@@ -38,7 +39,8 @@ __all__ = [
     'MultiError',
     'RemoteActorError',
     'ModuleNotExposed',
-    'msg'
+    'msg',
+    'to_asyncio',
 ]
 
 
