@@ -17,12 +17,14 @@ async def main():
     """
     async with tractor.open_nursery() as n:
 
-        # portal = await n.run_in_actor('future_self', bubble)
-        portal = await n.run_in_actor('future_self', bail)
+        portal1 = await n.run_in_actor('bubble', bubble)
+        portal = await n.run_in_actor('bail', bail)
+        # await portal.result()
+        # await portal1.result()
 
     # The ``async with`` will unblock here since the 'some_linguist'
     # actor has completed its main task ``cellar_door``.
 
 
 if __name__ == '__main__':
-    tractor.run(main, loglevel='info', debug_mode=True)
+    tractor.run(main, loglevel='critical', debug_mode=True)

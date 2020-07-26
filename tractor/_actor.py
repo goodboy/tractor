@@ -126,13 +126,14 @@ async def _invoke(
                         task_status.started(cs)
                         await chan.send({'return': await coro, 'cid': cid})
     except (Exception, trio.MultiError) as err:
-        log.exception("Actor errored:")
-
         # NOTE: don't enter debug mode recursively after quitting pdb
         if _state.debug_mode() and not isinstance(err, bdb.BdbQuit):
             # Allow for pdb control in parent
             from ._debug import post_mortem
+            log.exception("Actor crashed, entering debug mode:")
             await post_mortem()
+        else:
+            log.exception("Actor crashed:")
 
         # always ship errors back to caller
         err_msg = pack_error(err)
@@ -182,6 +183,7 @@ class Actor:
 
     # Information about `__main__` from parent
     _parent_main_data: Dict[str, str]
+    _parent_chan_cs: Optional[trio.CancelScope] = None
 
     def __init__(
         self,
@@ -839,6 +841,8 @@ class Actor:
     #         root = trio.lowlevel.current_root_task()
     #         for n in root.child_nurseries:
     #             n.cancel_scope.cancel()
+
+        self._parent_chan_cs.cancel()
 
     async def _cancel_task(self, cid, chan):
         """Cancel a local task by call-id / channel.
