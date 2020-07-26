@@ -1,6 +1,7 @@
 """
 ``tractor`` testing!!
 """
+import os
 import random
 import platform
 
@@ -49,6 +50,18 @@ def loglevel(request):
     level = tractor.log._default_loglevel = request.config.option.loglevel
     yield level
     tractor.log._default_loglevel = orig
+
+
+@pytest.fixture(scope='session')
+def spawn_backend(request):
+    return request.config.option.spawn_backend
+
+
+@pytest.fixture(scope='session')
+def travis():
+    """Bool determining whether running inside TravisCI.
+    """
+    return os.environ.get('TRAVIS', False)
 
 
 @pytest.fixture(scope='session')

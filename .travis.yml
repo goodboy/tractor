@@ -65,4 +65,4 @@ install:
 
 script:
     - mypy tractor/ --ignore-missing-imports
-    - pytest tests/ --no-print-logs --spawn-backend=${SPAWN_BACKEND}
+    - pytest tests/  --spawn-backend=${SPAWN_BACKEND}
