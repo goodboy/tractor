@@ -63,7 +63,7 @@ def test_rpc_errors(arb_addr, to_call, testdir):
         # module should raise a ModuleNotFoundError at import
         testdir.makefile('.py', tmp_mod=funcname)
 
-        # no need to exposed module to the subactor
+        # no need to expose module to the subactor
         subactor_exposed_mods = exposed_mods
         exposed_mods = []
         func_defined = False
@@ -95,7 +95,7 @@ def test_rpc_errors(arb_addr, to_call, testdir):
         tractor.run(
             main,
             arbiter_addr=arb_addr,
-            rpc_module_paths=exposed_mods,
+            rpc_module_paths=exposed_mods.copy(),
         )
 
     # handle both parameterized cases
