@@ -81,6 +81,7 @@ class ActorNursery:
         loglevel: str = None,  # set log level per subactor
         nursery: trio.Nursery = None,
         debug_mode: Optional[bool] = None,
+        infect_asyncio: bool = False,
     ) -> Portal:
         '''
         Start a (daemon) actor: an process that has no designated
@@ -134,6 +135,7 @@ class ActorNursery:
                 bind_addr,
                 parent_addr,
                 _rtv,  # run time vars
+                infect_asyncio=infect_asyncio,
             )
         )
 
@@ -146,6 +148,7 @@ class ActorNursery:
         rpc_module_paths: Optional[List[str]] = None,
         enable_modules: List[str] = None,
         loglevel: str = None,  # set log level per subactor
+        infect_asyncio: bool = False,
         **kwargs,  # explicit args to ``fn``
     ) -> Portal:
         """Spawn a new actor, run a lone task, then terminate the actor and
@@ -170,6 +173,7 @@ class ActorNursery:
             loglevel=loglevel,
             # use the run_in_actor nursery
             nursery=self._ria_nursery,
+            infect_asyncio=infect_asyncio,
         )
 
         # XXX: don't allow stream funcs
