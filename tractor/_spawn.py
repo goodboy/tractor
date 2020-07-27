@@ -189,7 +189,6 @@ async def new_proc(
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
     use_trio_run_in_process: bool = False,
-    infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
     """Create a new ``multiprocessing.Process`` using the
@@ -275,7 +274,6 @@ async def new_proc(
                     fs_info,
                     start_method,
                     parent_addr,
-                    infect_asyncio,
                 ),
                 # daemon=True,
                 name=name,

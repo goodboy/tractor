@@ -20,7 +20,6 @@ def _mp_main(
     forkserver_info: Tuple[Any, Any, Any, Any, Any],
     start_method: str,
     parent_addr: Tuple[str, int] = None,
-    infect_asyncio: bool = False,
 ) -> None:
     """The routine called *after fork* which invokes a fresh ``trio.run``
     """

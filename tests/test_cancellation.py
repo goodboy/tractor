@@ -359,7 +359,7 @@ async def test_nested_multierrors(loglevel, start_method):
 
 
 @no_windows
-def test_open_in_proc_cancel_via_SIGINT(loglevel, start_method):
+def test_cancel_via_SIGINT(loglevel, start_method):
     """Ensure that a control-C (SIGINT) signal cancels both the parent and
     child processes in trionic fashion
     """
@@ -377,7 +377,7 @@ def test_open_in_proc_cancel_via_SIGINT(loglevel, start_method):
 
 
 @no_windows
-def test_open_in_proc_cancel_via_SIGINT_other_task(
+def test_cancel_via_SIGINT_other_task(
     loglevel,
     start_method
 ):
