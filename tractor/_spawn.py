@@ -1,14 +1,18 @@
 """
 Machinery for actor process spawning using multiple backends.
 """
+import sys
 import inspect
+import subprocess
 import multiprocessing as mp
 import platform
 from typing import Any, Dict, Optional
+from functools import partial
 
 import trio
+import cloudpickle
 from trio_typing import TaskStatus
-from async_generator import aclosing
+from async_generator import aclosing, asynccontextmanager
 
 try:
     from multiprocessing import semaphore_tracker  # type: ignore
@@ -26,6 +30,7 @@ from ._state import current_actor
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
+from ._entry import _mp_main, _trio_main
 
 
 log = get_logger('tractor')
@@ -40,23 +45,23 @@ if platform.system() == 'Windows':
     _ctx = mp.get_context("spawn")
 
     async def proc_waiter(proc: mp.Process) -> None:
-        await trio.hazmat.WaitForSingleObject(proc.sentinel)
+        await trio.lowlevel.WaitForSingleObject(proc.sentinel)
 else:
-    # *NIX systems use ``trio_run_in_process` as our default (for now)
-    import trio_run_in_process
-    _spawn_method = "trio_run_in_process"
+    # *NIX systems use ``trio`` primitives as our default
+    _spawn_method = "trio"
 
     async def proc_waiter(proc: mp.Process) -> None:
-        await trio.hazmat.wait_readable(proc.sentinel)
+        await trio.lowlevel.wait_readable(proc.sentinel)
 
 
 def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
-    """Attempt to set the start method for process starting, aka the "actor
+    """Attempt to set the method for process starting, aka the "actor
     spawning backend".
 
-    If the desired method is not supported this function will error. On
-    Windows the only supported option is the ``multiprocessing`` "spawn"
-    method. The default on *nix systems is ``trio_run_in_process``.
+    If the desired method is not supported this function will error.
+    On Windows only the ``multiprocessing`` "spawn" method is offered
+    besides the default ``trio`` which uses async wrapping around
+    ``subprocess.Popen``.
     """
     global _ctx
     global _spawn_method
@@ -66,9 +71,8 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
         # forking is incompatible with ``trio``s global task tree
         methods.remove('fork')
 
-    # no Windows support for trip yet
-    if platform.system() != 'Windows':
-        methods += ['trio_run_in_process']
+    # supported on all platforms
+    methods += ['trio']
 
     if name not in methods:
         raise ValueError(
@@ -77,7 +81,7 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     elif name == 'forkserver':
         _forkserver_override.override_stdlib()
         _ctx = mp.get_context(name)
-    elif name == 'trio_run_in_process':
+    elif name == 'trio':
         _ctx = None
     else:
         _ctx = mp.get_context(name)
@@ -118,6 +122,7 @@ async def exhaust_portal(
         # we reraise in the parent task via a ``trio.MultiError``
         return err
     else:
+        log.debug(f"Returning final result: {final}")
         return final
 
 
@@ -152,6 +157,29 @@ async def cancel_on_completion(
         await portal.cancel_actor()
 
 
+@asynccontextmanager
+async def run_in_process(subactor, async_fn, *args, **kwargs):
+    encoded_job = cloudpickle.dumps(partial(async_fn, *args, **kwargs))
+
+    async with await trio.open_process(
+        [
+            sys.executable,
+            "-m",
+            # Hardcode this (instead of using ``_child.__name__`` to avoid a
+            # double import warning: https://stackoverflow.com/a/45070583
+            "tractor._child",
+            # This is merely an identifier for debugging purposes when
+            # viewing the process tree from the OS
+            str(subactor.uid),
+        ],
+        stdin=subprocess.PIPE,
+    ) as proc:
+
+        # send func object to call in child
+        await proc.stdin.send_all(encoded_job)
+        yield proc
+
+
 async def new_proc(
     name: str,
     actor_nursery: 'ActorNursery',  # type: ignore
@@ -172,10 +200,11 @@ async def new_proc(
     subactor._spawn_method = _spawn_method
 
     async with trio.open_nursery() as nursery:
-        if use_trio_run_in_process or _spawn_method == 'trio_run_in_process':
-            # trio_run_in_process
-            async with trio_run_in_process.open_in_process(
-                subactor._trip_main,
+        if use_trio_run_in_process or _spawn_method == 'trio':
+            async with run_in_process(
+                subactor,
+                _trio_main,
+                subactor,
                 bind_addr,
                 parent_addr,
             ) as proc:
@@ -198,7 +227,10 @@ async def new_proc(
                     cancel_scope = await nursery.start(
                         cancel_on_completion, portal, subactor, errors)
 
-                # TRIP blocks here until process is complete
+                # Wait for proc termination but **dont'** yet call
+                # ``trio.Process.__aexit__()`` (it tears down stdio
+                # which will kill any waiting remote pdb trace).
+                await proc.wait()
         else:
             # `multiprocessing`
             assert _ctx
@@ -235,12 +267,13 @@ async def new_proc(
                 fs_info = (None, None, None, None, None)
 
             proc = _ctx.Process(  # type: ignore
-                target=subactor._mp_main,
+                target=_mp_main,
                 args=(
+                    subactor,
                     bind_addr,
                     fs_info,
                     start_method,
-                    parent_addr
+                    parent_addr,
                 ),
                 # daemon=True,
                 name=name,

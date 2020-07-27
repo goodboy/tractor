@@ -1,6 +1,8 @@
 """
 Cancellation and error propagation
 """
+import os
+import signal
 import platform
 from itertools import repeat
 
@@ -8,7 +10,7 @@ import pytest
 import trio
 import tractor
 
-from conftest import tractor_test
+from conftest import tractor_test, no_windows
 
 
 async def assert_err(delay=0):
@@ -17,7 +19,7 @@ async def assert_err(delay=0):
 
 
 async def sleep_forever():
-    await trio.sleep(float('inf'))
+    await trio.sleep_forever()
 
 
 async def do_nuthin():
@@ -118,7 +120,8 @@ def do_nothing():
     pass
 
 
-def test_cancel_single_subactor(arb_addr):
+@pytest.mark.parametrize('mechanism', ['nursery_cancel', KeyboardInterrupt])
+def test_cancel_single_subactor(arb_addr, mechanism):
     """Ensure a ``ActorNursery.start_actor()`` spawned subactor
     cancels when the nursery is cancelled.
     """
@@ -132,10 +135,17 @@ def test_cancel_single_subactor(arb_addr):
             )
             assert (await portal.run(__name__, 'do_nothing')) is None
 
-            # would hang otherwise
-            await nursery.cancel()
+            if mechanism == 'nursery_cancel':
+                # would hang otherwise
+                await nursery.cancel()
+            else:
+                raise mechanism
 
-    tractor.run(spawn_actor, arbiter_addr=arb_addr)
+    if mechanism == 'nursery_cancel':
+        tractor.run(spawn_actor, arbiter_addr=arb_addr)
+    else:
+        with pytest.raises(mechanism):
+            tractor.run(spawn_actor, arbiter_addr=arb_addr)
 
 
 async def stream_forever():
@@ -153,7 +163,7 @@ async def test_cancel_infinite_streamer(start_method):
     with trio.move_on_after(1) as cancel_scope:
         async with tractor.open_nursery() as n:
             portal = await n.start_actor(
-                f'donny',
+                'donny',
                 rpc_module_paths=[__name__],
             )
 
@@ -197,7 +207,7 @@ async def test_cancel_infinite_streamer(start_method):
     ],
 )
 @tractor_test
-async def test_some_cancels_all(num_actors_and_errs, start_method):
+async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
     """Verify a subset of failed subactors causes all others in
     the nursery to be cancelled just like the strategy in trio.
 
@@ -289,7 +299,7 @@ async def test_nested_multierrors(loglevel, start_method):
     This test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
     """
-    if start_method == 'trio_run_in_process':
+    if start_method == 'trio':
         depth = 3
         subactor_breadth = 2
     else:
@@ -299,7 +309,7 @@ async def test_nested_multierrors(loglevel, start_method):
         # hangs and broken pipes all over the place...
         if start_method == 'forkserver':
             pytest.skip("Forksever sux hard at nested spawning...")
-        depth = 2
+        depth = 1  # means an additional actor tree of spawning (2 levels deep)
         subactor_breadth = 2
 
     with trio.fail_after(120):
@@ -315,10 +325,29 @@ async def test_nested_multierrors(loglevel, start_method):
         except trio.MultiError as err:
             assert len(err.exceptions) == subactor_breadth
             for subexc in err.exceptions:
-                assert isinstance(subexc, tractor.RemoteActorError)
-                if depth > 1 and subactor_breadth > 1:
 
+                # verify first level actor errors are wrapped as remote
+                if platform.system() == 'Windows':
+
+                    # windows is often too slow and cancellation seems
+                    # to happen before an actor is spawned
+                    if subexc is trio.Cancelled:
+                        continue
+
+                    # on windows it seems we can't exactly be sure wtf
+                    # will happen..
+                    assert subexc.type in (
+                        tractor.RemoteActorError,
+                        trio.Cancelled,
+                        trio.MultiError
+                    )
+                else:
+                    assert isinstance(subexc, tractor.RemoteActorError)
+
+                if depth > 0 and subactor_breadth > 1:
                     # XXX not sure what's up with this..
+                    # on windows sometimes spawning is just too slow and
+                    # we get back the (sent) cancel signal instead
                     if platform.system() == 'Windows':
                         assert (subexc.type is trio.MultiError) or (
                             subexc.type is tractor.RemoteActorError)
@@ -327,3 +356,50 @@ async def test_nested_multierrors(loglevel, start_method):
                 else:
                     assert (subexc.type is tractor.RemoteActorError) or (
                         subexc.type is trio.Cancelled)
+
+
+@no_windows
+def test_cancel_via_SIGINT(loglevel, start_method):
+    """Ensure that a control-C (SIGINT) signal cancels both the parent and
+    child processes in trionic fashion
+    """
+    pid = os.getpid()
+
+    async def main():
+        with trio.fail_after(2):
+            async with tractor.open_nursery() as tn:
+                await tn.start_actor('sucka')
+                os.kill(pid, signal.SIGINT)
+                await trio.sleep_forever()
+
+    with pytest.raises(KeyboardInterrupt):
+        tractor.run(main)
+
+
+@no_windows
+def test_cancel_via_SIGINT_other_task(
+    loglevel,
+    start_method
+):
+    """Ensure that a control-C (SIGINT) signal cancels both the parent
+    and child processes in trionic fashion even a subprocess is started
+    from a seperate ``trio`` child  task.
+    """
+    pid = os.getpid()
+
+    async def spawn_and_sleep_forever(task_status=trio.TASK_STATUS_IGNORED):
+        async with tractor.open_nursery() as tn:
+            for i in range(3):
+                await tn.run_in_actor('sucka', sleep_forever)
+            task_status.started()
+            await trio.sleep_forever()
+
+    async def main():
+        # should never timeout since SIGINT should cancel the current program
+        with trio.fail_after(2):
+            async with trio.open_nursery() as n:
+                await n.start(spawn_and_sleep_forever)
+                os.kill(pid, signal.SIGINT)
+
+    with pytest.raises(KeyboardInterrupt):
+        tractor.run(main)

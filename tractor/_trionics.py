@@ -1,6 +1,7 @@
 """
 ``trio`` inspired apis and helpers
 """
+from functools import partial
 import multiprocessing as mp
 from typing import Tuple, List, Dict, Optional, Any
 import typing
@@ -10,7 +11,7 @@ from async_generator import asynccontextmanager
 
 from ._state import current_actor
 from .log import get_logger, get_loglevel
-from ._actor import Actor  # , ActorFailure
+from ._actor import Actor
 from ._portal import Portal
 from . import _spawn
 
@@ -46,6 +47,7 @@ class ActorNursery:
     async def start_actor(
         self,
         name: str,
+        *,
         bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
         statespace: Optional[Dict[str, Any]] = None,
         rpc_module_paths: List[str] = None,
@@ -71,19 +73,22 @@ class ActorNursery:
 
         # XXX: the type ignore is actually due to a `mypy` bug
         return await nursery.start(  # type: ignore
-            _spawn.new_proc,
-            name,
-            self,
-            subactor,
-            self.errors,
-            bind_addr,
-            parent_addr,
+            partial(
+                _spawn.new_proc,
+                name,
+                self,
+                subactor,
+                self.errors,
+                bind_addr,
+                parent_addr,
+            )
         )
 
     async def run_in_actor(
         self,
         name: str,
         fn: typing.Callable,
+        *,
         bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
         rpc_module_paths: Optional[List[str]] = None,
         statespace: Dict[str, Any] = None,
@@ -131,7 +136,7 @@ class ActorNursery:
             # send KeyBoardInterrupt (trio abort signal) to sub-actors
             # os.kill(proc.pid, signal.SIGINT)
 
-        log.debug(f"Cancelling nursery")
+        log.debug("Cancelling nursery")
         with trio.move_on_after(3) as cs:
             async with trio.open_nursery() as nursery:
                 for subactor, proc, portal in self._children.values():
@@ -260,7 +265,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
                 # Last bit before first nursery block ends in the case
                 # where we didn't error in the caller's scope
-                log.debug(f"Waiting on all subactors to complete")
+                log.debug("Waiting on all subactors to complete")
                 anursery._join_procs.set()
 
                 # ria_nursery scope end
@@ -293,4 +298,4 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
         # ria_nursery scope end
 
-    log.debug(f"Nursery teardown complete")
+    log.debug("Nursery teardown complete")
