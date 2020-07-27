@@ -20,6 +20,7 @@ def _mp_main(
     forkserver_info: Tuple[Any, Any, Any, Any, Any],
     start_method: str,
     parent_addr: Tuple[str, int] = None,
+    infect_asyncio: bool = False,
 ) -> None:
     """The routine called *after fork* which invokes a fresh ``trio.run``
     """
@@ -61,10 +62,13 @@ def _trio_main(
     actor: 'Actor',  # type: ignore # noqa
     *,
     parent_addr: Tuple[str, int] = None,
+    infect_asyncio: bool = False,
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
 
     """
+    log.info(f"Started new trio process for {actor.uid}")
+
     log.info(f"Started new trio process for {actor.uid}")
 
     if actor.loglevel is not None:
@@ -84,7 +88,11 @@ def _trio_main(
     )
 
     try:
-        trio.run(trio_main)
+        if infect_asyncio:
+            actor._infected_aio = True
+            run_as_asyncio_guest(trio_main)
+        else:
+            trio.run(trio_main)
     except KeyboardInterrupt:
         log.warning(f"Actor {actor.uid} received KBI")
 

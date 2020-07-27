@@ -159,6 +159,7 @@ async def cancel_on_completion(
 async def spawn_subactor(
     subactor: 'Actor',
     parent_addr: Tuple[str, int],
+    infect_asyncio: bool,
 ):
     spawn_cmd = [
         sys.executable,
@@ -182,6 +183,10 @@ async def spawn_subactor(
             "--loglevel",
             subactor.loglevel
         ]
+
+    # Tell child to run in guest mode on top of ``asyncio`` loop
+    if infect_asyncio:
+        spawn_cmd.append("--asyncio")
 
     proc = await trio.open_process(spawn_cmd)
     try:
@@ -240,6 +245,7 @@ async def new_proc(
     parent_addr: Tuple[str, int],
     _runtime_vars: Dict[str, Any],  # serialized and sent to _child
     *,
+    infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
     """Create a new ``multiprocessing.Process`` using the
@@ -255,6 +261,7 @@ async def new_proc(
             async with spawn_subactor(
                 subactor,
                 parent_addr,
+                infect_asyncio=infect_asyncio
             ) as proc:
                 log.info(f"Started {proc}")
 
@@ -392,6 +399,7 @@ async def mp_new_proc(
                 fs_info,
                 start_method,
                 parent_addr,
+                infect_asyncio,
             ),
             # daemon=True,
             name=name,
