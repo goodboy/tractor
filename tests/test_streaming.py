@@ -213,7 +213,7 @@ def time_quad_ex(arb_addr):
 
 def test_a_quadruple_example(time_quad_ex, travis, spawn_backend):
     """This also serves as a kind of "we'd like to be this fast test"."""
-    if travis and spawn_backend == 'mp' and not platform.system() == 'Windows':
+    if travis and spawn_backend == 'mp' and (platform.system() != 'Windows'):
         # no idea, but the travis, mp, linux runs are flaking out here often
         pytest.skip("Test is too flaky on mp in CI")
 
@@ -233,7 +233,7 @@ def test_not_fast_enough_quad(
     """Verify we can cancel midway through the quad example and all actors
     cancel gracefully.
     """
-    if travis and spawn_backend == 'mp' and not platform.system() == 'Windows':
+    if travis and spawn_backend == 'mp' and (platform.system() != 'Windows'):
         # no idea, but the travis, mp, linux runs are flaking out here often
         pytest.skip("Test is too flaky on mp in CI")
 
