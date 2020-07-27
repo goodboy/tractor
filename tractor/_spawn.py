@@ -244,6 +244,7 @@ async def new_proc(
     _runtime_vars: Dict[str, Any],  # serialized and sent to _child
 
     *,
+    infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
@@ -260,7 +261,6 @@ async def new_proc(
     uid = subactor.uid
 
     if _spawn_method == 'trio':
-
         spawn_cmd = [
             sys.executable,
             "-m",
@@ -283,6 +283,9 @@ async def new_proc(
                 "--loglevel",
                 subactor.loglevel
             ]
+        # Tell child to run in guest mode on top of ``asyncio`` loop
+        if infect_asyncio:
+            spawn_cmd.append("--asyncio")
 
         cancelled_during_spawn: bool = False
         proc: Optional[trio.Process] = None
