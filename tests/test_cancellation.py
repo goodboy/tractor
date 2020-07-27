@@ -331,16 +331,16 @@ async def test_nested_multierrors(loglevel, start_method):
 
                     # windows is often too slow and cancellation seems
                     # to happen before an actor is spawned
-                    if subexc is trio.Cancelled:
+                    if isinstance(subexc, trio.Cancelled):
                         continue
-
-                    # on windows it seems we can't exactly be sure wtf
-                    # will happen..
-                    assert subexc.type in (
-                        tractor.RemoteActorError,
-                        trio.Cancelled,
-                        trio.MultiError
-                    )
+                    else:
+                        # on windows it seems we can't exactly be sure wtf
+                        # will happen..
+                        assert subexc.type in (
+                            tractor.RemoteActorError,
+                            trio.Cancelled,
+                            trio.MultiError
+                        )
                 else:
                     assert isinstance(subexc, tractor.RemoteActorError)
 
