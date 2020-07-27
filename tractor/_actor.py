@@ -575,6 +575,11 @@ class Actor:
                         await chan.connect()
                         # initial handshake, report who we are, who they are
                         await self._do_handshake(chan)
+
+                        self._parent_main_data = await chan.recv()
+                        self.rpc_module_paths = await chan.recv()
+                        self.statespace = await chan.recv()
+
                     except OSError:  # failed to connect
                         log.warning(
                             f"Failed to connect to parent @ {parent_addr},"

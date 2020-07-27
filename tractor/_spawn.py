@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from functools import partial
 
 import trio
-import cloudpickle
 from trio_typing import TaskStatus
 from async_generator import aclosing, asynccontextmanager
 
@@ -158,9 +157,11 @@ async def cancel_on_completion(
 
 
 @asynccontextmanager
-async def run_in_process(subactor, async_fn, *args, **kwargs):
-    encoded_job = cloudpickle.dumps(partial(async_fn, *args, **kwargs))
-
+async def spawn_subactor(
+    subactor: 'Actor',
+    accept_addr: Tuple[str, int],
+    parent_addr: Tuple[str, int] = None
+):
     async with await trio.open_process(
         [
             sys.executable,
@@ -168,15 +169,14 @@ async def run_in_process(subactor, async_fn, *args, **kwargs):
             # Hardcode this (instead of using ``_child.__name__`` to avoid a
             # double import warning: https://stackoverflow.com/a/45070583
             "tractor._child",
-            # This is merely an identifier for debugging purposes when
-            # viewing the process tree from the OS
-            str(subactor.uid),
-        ],
-        stdin=subprocess.PIPE,
+            subactor.name,
+            subactor.uid[1],
+            subactor.loglevel or "None",
+            f"{accept_addr[0]}:{accept_addr[1]}",
+            f"{parent_addr[0]}:{parent_addr[1]}",
+            f"{subactor._arb_addr[0]}:{subactor._arb_addr[1]}"
+        ]
     ) as proc:
-
-        # send func object to call in child
-        await proc.stdin.send_all(encoded_job)
         yield proc
 
 
@@ -201,9 +201,7 @@ async def new_proc(
 
     async with trio.open_nursery() as nursery:
         if use_trio_run_in_process or _spawn_method == 'trio':
-            async with run_in_process(
-                subactor,
-                _trio_main,
+            async with spawn_subactor(
                 subactor,
                 bind_addr,
                 parent_addr,
@@ -218,6 +216,12 @@ async def new_proc(
                 portal = Portal(chan)
                 actor_nursery._children[subactor.uid] = (
                     subactor, proc, portal)
+
+                # send additional init params
+                await chan.send(subactor._parent_main_data)
+                await chan.send(subactor.rpc_module_paths)
+                await chan.send(subactor.statespace)
+
                 task_status.started(portal)
 
                 # wait for ActorNursery.wait() to be called
