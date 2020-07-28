@@ -171,11 +171,6 @@ class Actor:
     _root_nursery: trio.Nursery
     _server_nursery: trio.Nursery
 
-    # marked by the process spawning backend at startup
-    # will be None for the parent most process started manually
-    # by the user (currently called the "arbiter")
-    _spawn_method: Optional[str] = None
-
     # Information about `__main__` from parent
     _parent_main_data: Dict[str, str]
 
@@ -187,6 +182,7 @@ class Actor:
         uid: str = None,
         loglevel: str = None,
         arbiter_addr: Optional[Tuple[str, int]] = None,
+        spawn_method: Optional[str] = None
     ) -> None:
         """This constructor is called in the parent actor **before** the spawning
         phase (aka before a new process is executed).
@@ -211,6 +207,11 @@ class Actor:
         self.statespace = statespace or {}
         self.loglevel = loglevel
         self._arb_addr = arbiter_addr
+
+        # marked by the process spawning backend at startup
+        # will be None for the parent most process started manually
+        # by the user (currently called the "arbiter")
+        self._spawn_method = spawn_method
 
         self._peers: defaultdict = defaultdict(list)
         self._peer_connected: dict = {}
@@ -552,8 +553,8 @@ class Actor:
         A "root-most" (or "top-level") nursery for this actor is opened here
         and when cancelled effectively cancels the actor.
         """
-        arbiter_addr = arbiter_addr or self._arb_addr
         registered_with_arbiter = False
+        arbiter_addr = arbiter_addr or self._arb_addr
         try:
             async with trio.open_nursery() as nursery:
                 self._root_nursery = nursery
@@ -578,9 +579,13 @@ class Actor:
 
                         if self._spawn_method == "trio":
                             # recieve additional init params
-                            self._parent_main_data = await chan.recv()
-                            self.rpc_module_paths = await chan.recv()
-                            self.statespace = await chan.recv()
+                            parent_data = await chan.recv()
+                            for attr, value in parent_data.items():
+                                setattr(self, attr, value)
+
+                            # update local arbiter_addr var
+                            if "_arb_addr" in parent_data:
+                                arbiter_addr = self._arb_addr
 
                     except OSError:  # failed to connect
                         log.warning(

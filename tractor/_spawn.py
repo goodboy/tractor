@@ -160,23 +160,28 @@ async def cancel_on_completion(
 async def spawn_subactor(
     subactor: 'Actor',
     accept_addr: Tuple[str, int],
-    parent_addr: Tuple[str, int] = None
+    parent_addr: Optional[Tuple[str, int]] = None
 ):
-    async with await trio.open_process(
-        [
-            sys.executable,
-            "-m",
-            # Hardcode this (instead of using ``_child.__name__`` to avoid a
-            # double import warning: https://stackoverflow.com/a/45070583
-            "tractor._child",
-            subactor.name,
-            subactor.uid[1],
-            subactor.loglevel or "None",
-            f"{accept_addr[0]}:{accept_addr[1]}",
-            f"{parent_addr[0]}:{parent_addr[1]}",
-            f"{subactor._arb_addr[0]}:{subactor._arb_addr[1]}"
+
+    spawn_cmd = [
+        sys.executable,
+        "-m",
+        # Hardcode this (instead of using ``_child.__name__`` to avoid a
+        # double import warning: https://stackoverflow.com/a/45070583
+        "tractor._child",
+        "--uid",
+        str(subactor.uid),
+        "--parent_addr",
+        str(parent_addr)
+    ]
+
+    if subactor.loglevel:
+        spawn_cmd += [
+            "--loglevel",
+            subactor.loglevel
         ]
-    ) as proc:
+
+    async with await trio.open_process(spawn_cmd) as proc:
         yield proc
 
 
@@ -218,9 +223,12 @@ async def new_proc(
                     subactor, proc, portal)
 
                 # send additional init params
-                await chan.send(subactor._parent_main_data)
-                await chan.send(subactor.rpc_module_paths)
-                await chan.send(subactor.statespace)
+                await chan.send({
+                    "_parent_main_data": subactor._parent_main_data,
+                    "rpc_module_paths": subactor.rpc_module_paths,
+                    "statespace": subactor.statespace,
+                    "_arb_addr": subactor._arb_addr
+                })
 
                 task_status.started(portal)
 
