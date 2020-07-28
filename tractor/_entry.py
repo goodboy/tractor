@@ -53,7 +53,6 @@ def _mp_main(
 
 def _trio_main(
     actor: 'Actor',
-    accept_addr: Tuple[str, int],
     parent_addr: Tuple[str, int] = None
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
@@ -71,7 +70,6 @@ def _trio_main(
     log.debug(f"parent_addr is {parent_addr}")
     trio_main = partial(
         actor._async_main,
-        accept_addr,
         parent_addr=parent_addr
     )
     try:
