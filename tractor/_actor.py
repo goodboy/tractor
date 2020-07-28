@@ -542,8 +542,7 @@ class Actor:
 
     async def _async_main(
         self,
-        accept_addr: Tuple[str, int],
-        arbiter_addr: Optional[Tuple[str, int]] = None,
+        accept_addr: Optional[Tuple[str, int]] = None,
         parent_addr: Optional[Tuple[str, int]] = None,
         task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
     ) -> None:
@@ -554,16 +553,9 @@ class Actor:
         and when cancelled effectively cancels the actor.
         """
         registered_with_arbiter = False
-        arbiter_addr = arbiter_addr or self._arb_addr
         try:
             async with trio.open_nursery() as nursery:
                 self._root_nursery = nursery
-
-                # Startup up channel server
-                host, port = accept_addr
-                await nursery.start(partial(
-                    self._serve_forever, accept_host=host, accept_port=port)
-                )
 
                 if parent_addr is not None:
                     try:
@@ -583,9 +575,7 @@ class Actor:
                             for attr, value in parent_data.items():
                                 setattr(self, attr, value)
 
-                            # update local arbiter_addr var
-                            if "_arb_addr" in parent_data:
-                                arbiter_addr = self._arb_addr
+                            accept_addr = self.bind_host, self.bind_port
 
                     except OSError:  # failed to connect
                         log.warning(
@@ -600,6 +590,12 @@ class Actor:
                         nursery.start_soon(
                             self._process_messages, self._parent_chan)
 
+                # Startup up channel server
+                host, port = accept_addr
+                await nursery.start(partial(
+                    self._serve_forever, accept_host=host, accept_port=port)
+                )
+
                 # load exposed/allowed RPC modules
                 # XXX: do this **after** establishing connection to parent
                 # so that import errors are properly propagated upwards
@@ -607,8 +603,8 @@ class Actor:
 
                 # register with the arbiter if we're told its addr
                 log.debug(f"Registering {self} for role `{self.name}`")
-                assert isinstance(arbiter_addr, tuple)
-                async with get_arbiter(*arbiter_addr) as arb_portal:
+                assert isinstance(self._arb_addr, tuple)
+                async with get_arbiter(*self._arb_addr) as arb_portal:
                     await arb_portal.run(
                         'self', 'register_actor',
                         uid=self.uid, sockaddr=self.accept_addr)
@@ -626,7 +622,7 @@ class Actor:
                 # once we have that all working with std streams locking?
                 log.exception(
                     f"Actor errored and failed to register with arbiter "
-                    f"@ {arbiter_addr}?")
+                    f"@ {self._arb_addr}?")
                 log.error(
                     "\n\n\t^^^ THIS IS PROBABLY A TRACTOR BUGGGGG!!! ^^^\n"
                     "\tCALMLY CALL THE AUTHORITIES AND HIDE YOUR CHILDREN.\n\n"
@@ -655,7 +651,7 @@ class Actor:
 
         finally:
             if registered_with_arbiter:
-                await self._do_unreg(arbiter_addr)
+                await self._do_unreg(self._arb_addr)
             # terminate actor once all it's peers (actors that connected
             # to it as clients) have disappeared
             if not self._no_more_peers.is_set():
@@ -906,8 +902,7 @@ async def _start_actor(
             partial(
                 actor._async_main,
                 accept_addr=(host, port),
-                parent_addr=None,
-                arbiter_addr=arbiter_addr,
+                parent_addr=None
             )
         )
         result = await main()

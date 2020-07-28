@@ -227,7 +227,9 @@ async def new_proc(
                     "_parent_main_data": subactor._parent_main_data,
                     "rpc_module_paths": subactor.rpc_module_paths,
                     "statespace": subactor.statespace,
-                    "_arb_addr": subactor._arb_addr
+                    "_arb_addr": subactor._arb_addr,
+                    "bind_host": bind_addr[0],
+                    "bind_port": bind_addr[1]
                 })
 
                 task_status.started(portal)
