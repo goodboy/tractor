@@ -1,3 +1,5 @@
+"""This is the "bootloader" for actors started using the native trio backend.
+"""
 import sys
 import trio
 import argparse
@@ -7,9 +9,6 @@ from ast import literal_eval
 from ._actor import Actor
 from ._entry import _trio_main
 
-
-"""This is the "bootloader" for actors started using the native trio backend.
-"""
 
 def parse_uid(arg):
     name, uuid = literal_eval(arg)  # ensure 2 elements
@@ -23,11 +22,9 @@ def parse_ipaddr(arg):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-
     parser.add_argument("--uid", type=parse_uid)
     parser.add_argument("--loglevel", type=str)
     parser.add_argument("--parent_addr", type=parse_ipaddr)
-
     args = parser.parse_args()
 
     subactor = Actor(
