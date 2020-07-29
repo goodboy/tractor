@@ -51,24 +51,29 @@ def _mp_main(
     log.info(f"Actor {actor.uid} terminated")
 
 
-async def _trio_main(
+def _trio_main(
     actor: 'Actor',
-    accept_addr: Tuple[str, int],
     parent_addr: Tuple[str, int] = None
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
-
-    Here we don't need to call `trio.run()` since trip does that as
-    part of its subprocess startup sequence.
     """
     if actor.loglevel is not None:
         log.info(
             f"Setting loglevel for {actor.uid} to {actor.loglevel}")
         get_console_log(actor.loglevel)
 
-    log.info(f"Started new trio process for {actor.uid}")
+    log.info(
+        f"Started {actor.uid}")
 
     _state._current_actor = actor
 
-    await actor._async_main(accept_addr, parent_addr=parent_addr)
+    log.debug(f"parent_addr is {parent_addr}")
+    trio_main = partial(
+        actor._async_main,
+        parent_addr=parent_addr
+    )
+    try:
+        trio.run(trio_main)
+    except KeyboardInterrupt:
+        pass  # handle it the same way trio does?
     log.info(f"Actor {actor.uid} terminated")

@@ -171,11 +171,6 @@ class Actor:
     _root_nursery: trio.Nursery
     _server_nursery: trio.Nursery
 
-    # marked by the process spawning backend at startup
-    # will be None for the parent most process started manually
-    # by the user (currently called the "arbiter")
-    _spawn_method: Optional[str] = None
-
     # Information about `__main__` from parent
     _parent_main_data: Dict[str, str]
 
@@ -187,6 +182,7 @@ class Actor:
         uid: str = None,
         loglevel: str = None,
         arbiter_addr: Optional[Tuple[str, int]] = None,
+        spawn_method: Optional[str] = None
     ) -> None:
         """This constructor is called in the parent actor **before** the spawning
         phase (aka before a new process is executed).
@@ -211,6 +207,11 @@ class Actor:
         self.statespace = statespace or {}
         self.loglevel = loglevel
         self._arb_addr = arbiter_addr
+
+        # marked by the process spawning backend at startup
+        # will be None for the parent most process started manually
+        # by the user (currently called the "arbiter")
+        self._spawn_method = spawn_method
 
         self._peers: defaultdict = defaultdict(list)
         self._peer_connected: dict = {}
@@ -541,8 +542,14 @@ class Actor:
 
     async def _async_main(
         self,
-        accept_addr: Tuple[str, int],
-        arbiter_addr: Optional[Tuple[str, int]] = None,
+        accept_addr: Optional[Tuple[str, int]] = None,
+        # XXX: currently ``parent_addr`` is only needed for the
+        # ``multiprocessing`` backend (which pickles state sent to
+        # the child instead of relaying it over the connect-back
+        # channel). Once that backend is removed we can likely just
+        # change this so a simple ``is_subactor: bool`` which will
+        # be False when running as root actor and True when as
+        # a subactor.
         parent_addr: Optional[Tuple[str, int]] = None,
         task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
     ) -> None:
@@ -552,29 +559,39 @@ class Actor:
         A "root-most" (or "top-level") nursery for this actor is opened here
         and when cancelled effectively cancels the actor.
         """
-        arbiter_addr = arbiter_addr or self._arb_addr
         registered_with_arbiter = False
         try:
             async with trio.open_nursery() as nursery:
                 self._root_nursery = nursery
 
-                # Startup up channel server
-                host, port = accept_addr
-                await nursery.start(partial(
-                    self._serve_forever, accept_host=host, accept_port=port)
-                )
-
+                # TODO: just make `parent_addr` a bool system (see above)?
                 if parent_addr is not None:
                     try:
                         # Connect back to the parent actor and conduct initial
-                        # handshake (From this point on if we error, ship the
-                        # exception back to the parent actor)
+                        # handshake. From this point on if we error, we
+                        # attempt to ship the exception back to the parent.
                         chan = self._parent_chan = Channel(
                             destaddr=parent_addr,
                         )
                         await chan.connect()
-                        # initial handshake, report who we are, who they are
+
+                        # Initial handshake: swap names.
                         await self._do_handshake(chan)
+
+                        if self._spawn_method == "trio":
+                            # Receive runtime state from our parent
+                            parent_data = await chan.recv()
+                            log.debug(
+                                "Recieved state from parent:\n"
+                                f"{parent_data}"
+                            )
+                            accept_addr = (
+                                parent_data.pop('bind_host'),
+                                parent_data.pop('bind_port'),
+                            )
+                            for attr, value in parent_data.items():
+                                setattr(self, attr, value)
+
                     except OSError:  # failed to connect
                         log.warning(
                             f"Failed to connect to parent @ {parent_addr},"
@@ -582,21 +599,39 @@ class Actor:
                         await self.cancel()
                         self._parent_chan = None
                         raise
-                    else:
-                        # handle new connection back to parent
-                        assert self._parent_chan
-                        nursery.start_soon(
-                            self._process_messages, self._parent_chan)
 
                 # load exposed/allowed RPC modules
-                # XXX: do this **after** establishing connection to parent
-                # so that import errors are properly propagated upwards
+                # XXX: do this **after** establishing a channel to the parent
+                # but **before** starting the message loop for that channel
+                # such that import errors are properly propagated upwards
                 self.load_modules()
 
-                # register with the arbiter if we're told its addr
+                # Startup up channel server with,
+                # - subactor: the bind address sent to us by our parent
+                #   over our established channel
+                # - root actor: the ``accept_addr`` passed to this method
+                assert accept_addr
+                host, port = accept_addr
+                await nursery.start(
+                    partial(
+                        self._serve_forever,
+                        accept_host=host,
+                        accept_port=port
+                    )
+                )
+
+                # Begin handling our new connection back to parent.
+                # This is done here since we don't want to start
+                # processing parent requests until our server is
+                # 100% up and running.
+                if self._parent_chan:
+                    nursery.start_soon(
+                        self._process_messages, self._parent_chan)
+
+                # Register with the arbiter if we're told its addr
                 log.debug(f"Registering {self} for role `{self.name}`")
-                assert isinstance(arbiter_addr, tuple)
-                async with get_arbiter(*arbiter_addr) as arb_portal:
+                assert isinstance(self._arb_addr, tuple)
+                async with get_arbiter(*self._arb_addr) as arb_portal:
                     await arb_portal.run(
                         'self', 'register_actor',
                         uid=self.uid, sockaddr=self.accept_addr)
@@ -605,7 +640,7 @@ class Actor:
                 task_status.started()
                 log.debug("Waiting on root nursery to complete")
 
-            # blocks here as expected until the channel server is
+            # Blocks here as expected until the channel server is
             # killed (i.e. this actor is cancelled or signalled by the parent)
         except Exception as err:
             if not registered_with_arbiter:
@@ -614,7 +649,7 @@ class Actor:
                 # once we have that all working with std streams locking?
                 log.exception(
                     f"Actor errored and failed to register with arbiter "
-                    f"@ {arbiter_addr}?")
+                    f"@ {self._arb_addr}?")
                 log.error(
                     "\n\n\t^^^ THIS IS PROBABLY A TRACTOR BUGGGGG!!! ^^^\n"
                     "\tCALMLY CALL THE AUTHORITIES AND HIDE YOUR CHILDREN.\n\n"
@@ -643,7 +678,7 @@ class Actor:
 
         finally:
             if registered_with_arbiter:
-                await self._do_unreg(arbiter_addr)
+                await self._do_unreg(self._arb_addr)
             # terminate actor once all it's peers (actors that connected
             # to it as clients) have disappeared
             if not self._no_more_peers.is_set():
@@ -894,8 +929,7 @@ async def _start_actor(
             partial(
                 actor._async_main,
                 accept_addr=(host, port),
-                parent_addr=None,
-                arbiter_addr=arbiter_addr,
+                parent_addr=None
             )
         )
         result = await main()

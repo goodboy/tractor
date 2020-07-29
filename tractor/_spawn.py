@@ -3,14 +3,11 @@ Machinery for actor process spawning using multiple backends.
 """
 import sys
 import inspect
-import subprocess
 import multiprocessing as mp
 import platform
 from typing import Any, Dict, Optional
-from functools import partial
 
 import trio
-import cloudpickle
 from trio_typing import TaskStatus
 from async_generator import aclosing, asynccontextmanager
 
@@ -30,7 +27,7 @@ from ._state import current_actor
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
-from ._entry import _mp_main, _trio_main
+from ._entry import _mp_main
 
 
 log = get_logger('tractor')
@@ -158,25 +155,31 @@ async def cancel_on_completion(
 
 
 @asynccontextmanager
-async def run_in_process(subactor, async_fn, *args, **kwargs):
-    encoded_job = cloudpickle.dumps(partial(async_fn, *args, **kwargs))
+async def spawn_subactor(
+    subactor: 'Actor',
+    accept_addr: Tuple[str, int],
+    parent_addr: Tuple[str, int],
+):
 
-    async with await trio.open_process(
-        [
-            sys.executable,
-            "-m",
-            # Hardcode this (instead of using ``_child.__name__`` to avoid a
-            # double import warning: https://stackoverflow.com/a/45070583
-            "tractor._child",
-            # This is merely an identifier for debugging purposes when
-            # viewing the process tree from the OS
-            str(subactor.uid),
-        ],
-        stdin=subprocess.PIPE,
-    ) as proc:
+    spawn_cmd = [
+        sys.executable,
+        "-m",
+        # Hardcode this (instead of using ``_child.__name__`` to avoid a
+        # double import warning: https://stackoverflow.com/a/45070583
+        "tractor._child",
+        "--uid",
+        str(subactor.uid),
+        "--parent_addr",
+        str(parent_addr)
+    ]
 
-        # send func object to call in child
-        await proc.stdin.send_all(encoded_job)
+    if subactor.loglevel:
+        spawn_cmd += [
+            "--loglevel",
+            subactor.loglevel
+        ]
+
+    async with await trio.open_process(spawn_cmd) as proc:
         yield proc
 
 
@@ -201,9 +204,7 @@ async def new_proc(
 
     async with trio.open_nursery() as nursery:
         if use_trio_run_in_process or _spawn_method == 'trio':
-            async with run_in_process(
-                subactor,
-                _trio_main,
+            async with spawn_subactor(
                 subactor,
                 bind_addr,
                 parent_addr,
@@ -218,6 +219,18 @@ async def new_proc(
                 portal = Portal(chan)
                 actor_nursery._children[subactor.uid] = (
                     subactor, proc, portal)
+
+                # send additional init params
+                await chan.send({
+                    "_parent_main_data": subactor._parent_main_data,
+                    "rpc_module_paths": subactor.rpc_module_paths,
+                    "statespace": subactor.statespace,
+                    "_arb_addr": subactor._arb_addr,
+                    "bind_host": bind_addr[0],
+                    "bind_port": bind_addr[1]
+                })
+
+                # resume caller at next checkpoint now that child is up
                 task_status.started(portal)
 
                 # wait for ActorNursery.wait() to be called
