@@ -3,11 +3,9 @@ Machinery for actor process spawning using multiple backends.
 """
 import sys
 import inspect
-import subprocess
 import multiprocessing as mp
 import platform
 from typing import Any, Dict, Optional
-from functools import partial
 
 import trio
 from trio_typing import TaskStatus
@@ -29,7 +27,7 @@ from ._state import current_actor
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
-from ._entry import _mp_main, _trio_main
+from ._entry import _mp_main
 
 
 log = get_logger('tractor')
@@ -160,7 +158,7 @@ async def cancel_on_completion(
 async def spawn_subactor(
     subactor: 'Actor',
     accept_addr: Tuple[str, int],
-    parent_addr: Optional[Tuple[str, int]] = None
+    parent_addr: Tuple[str, int],
 ):
 
     spawn_cmd = [
@@ -232,6 +230,7 @@ async def new_proc(
                     "bind_port": bind_addr[1]
                 })
 
+                # resume caller at next checkpoint now that child is up
                 task_status.started(portal)
 
                 # wait for ActorNursery.wait() to be called
