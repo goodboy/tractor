@@ -4,6 +4,7 @@ Cancellation and error propagation
 import os
 import signal
 import platform
+import time
 from itertools import repeat
 
 import pytest
@@ -359,7 +360,11 @@ async def test_nested_multierrors(loglevel, start_method):
 
 
 @no_windows
-def test_cancel_via_SIGINT(loglevel, start_method):
+def test_cancel_via_SIGINT(
+    loglevel,
+    start_method,
+    spawn_backend,
+):
     """Ensure that a control-C (SIGINT) signal cancels both the parent and
     child processes in trionic fashion
     """
@@ -369,6 +374,8 @@ def test_cancel_via_SIGINT(loglevel, start_method):
         with trio.fail_after(2):
             async with tractor.open_nursery() as tn:
                 await tn.start_actor('sucka')
+                if spawn_backend == 'mp':
+                    time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)
                 await trio.sleep_forever()
 
@@ -379,7 +386,8 @@ def test_cancel_via_SIGINT(loglevel, start_method):
 @no_windows
 def test_cancel_via_SIGINT_other_task(
     loglevel,
-    start_method
+    start_method,
+    spawn_backend,
 ):
     """Ensure that a control-C (SIGINT) signal cancels both the parent
     and child processes in trionic fashion even a subprocess is started
@@ -399,6 +407,8 @@ def test_cancel_via_SIGINT_other_task(
         with trio.fail_after(2):
             async with trio.open_nursery() as n:
                 await n.start(spawn_and_sleep_forever)
+                if spawn_backend == 'mp':
+                    time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)
 
     with pytest.raises(KeyboardInterrupt):
