@@ -3,7 +3,7 @@ Multi-core debugging for da peeps!
 """
 import sys
 from functools import partial
-from typing import Awaitable, Tuple
+from typing import Awaitable, Tuple, Optional, Callable
 
 from async_generator import aclosing
 import tractor
@@ -27,27 +27,8 @@ log = get_logger(__name__)
 __all__ = ['breakpoint', 'post_mortem']
 
 
-# TODO: is there some way to determine this programatically?
-_pdb_exit_patterns = tuple(
-    str.encode(patt + "\n") for patt in ('c', 'cont', 'continue', 'q', 'quit')
-)
-
-
-_pdb_release_hook = None
-
-
-class PdbwTeardown(pdbpp.Pdb):
-    """Add teardown hooks to the regular ``pdbpp.Pdb``.
-    """
-    # TODO: figure out how to dissallow recursive .set_trace() entry
-    # since that'll cause deadlock for us.
-    def set_continue(self):
-        super().set_continue()
-        self.config.teardown(self)
-
-    def set_quit(self):
-        super().set_quit()
-        self.config.teardown(self)
+# placeholder for function to set a ``trio.Event``
+_pdb_release_hook: Optional[Callable] = None
 
 
 class TractorConfig(pdbpp.DefaultConfig):
@@ -59,12 +40,31 @@ class TractorConfig(pdbpp.DefaultConfig):
         _pdb_release_hook(_pdb)
 
 
-# override the pdbpp config with our coolio one
-pdbpp.Pdb.DefaultConfig = TractorConfig
+class PdbwTeardown(pdbpp.Pdb):
+    """Add teardown hooks to the regular ``pdbpp.Pdb``.
+    """
+    # override the pdbpp config with our coolio one
+    DefaultConfig = TractorConfig
+
+    # TODO: figure out how to dissallow recursive .set_trace() entry
+    # since that'll cause deadlock for us.
+    def set_continue(self):
+        super().set_continue()
+        self.config.teardown(self)
+
+    def set_quit(self):
+        super().set_quit()
+        self.config.teardown(self)
 
 
 # TODO: will be needed whenever we get to true remote debugging.
 # XXX see https://github.com/goodboy/tractor/issues/130
+
+# # TODO: is there some way to determine this programatically?
+# _pdb_exit_patterns = tuple(
+#     str.encode(patt + "\n") for patt in (
+#         'c', 'cont', 'continue', 'q', 'quit')
+# )
 
 # def subactoruid2proc(
 #     actor: 'Actor',  # noqa
@@ -170,17 +170,16 @@ def _breakpoint(debug_func) -> Awaitable[None]:
     _pdb_release_hook = unlock
 
     async def _bp():
-        # this must be awaited by caller
-        await actor._root_nursery.start(
-            wait_for_parent_stdin_hijack
-        )
+        # this **must** be awaited by the caller and is done using the
+        # root nursery so that the debugger can continue to run without
+        # being restricted by the scope of a new task nursery.
+        await actor._root_nursery.start(wait_for_parent_stdin_hijack)
 
-        # block here one frame up where ``breakpoint()``
-        # was awaited and begin handling stdin
+        # block here one (at the appropriate frame *up* where
+        # ``breakpoint()`` was awaited and begin handling stdio
         debug_func(actor)
 
-    # return wait_for_parent_stdin_hijack()
-    return _bp()
+    return _bp()  # user code **must** await this!
 
 
 def _set_trace(actor):
