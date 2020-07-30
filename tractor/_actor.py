@@ -206,8 +206,11 @@ class Actor:
         # will be passed to children
         self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
 
+        # always include debugging tools module
+        rpc_module_paths.append('tractor._debug')
+
         mods = {}
-        for name in rpc_module_paths or ():
+        for name in rpc_module_paths:
             mod = importlib.import_module(name)
             mods[name] = _get_mod_abspath(mod)
 
