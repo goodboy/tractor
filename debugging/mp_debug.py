@@ -4,8 +4,9 @@ import trio
 
 async def bubble():
     print('IN BUBBLE')
-    await trio.sleep(.1)
-    await tractor.breakpoint()
+    while True:
+        await trio.sleep(.1)
+        await tractor.breakpoint()
 
 
 async def bail():
@@ -27,4 +28,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    tractor.run(main, loglevel='critical', debug_mode=True)
+    tractor.run(main, loglevel='error', debug_mode=True)
