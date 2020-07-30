@@ -842,8 +842,6 @@ class Actor:
     #         for n in root.child_nurseries:
     #             n.cancel_scope.cancel()
 
-        self._parent_chan_cs.cancel()
-
     async def _cancel_task(self, cid, chan):
         """Cancel a local task by call-id / channel.
 
