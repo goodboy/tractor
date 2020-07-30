@@ -112,7 +112,10 @@ async def _main(
     else:
         # start this local actor as the arbiter
         actor = Arbiter(
-            name or 'arbiter', arbiter_addr=arbiter_addr, **kwargs)
+            name or 'arbiter',
+            arbiter_addr=arbiter_addr,
+            **kwargs
+        )
 
     # ``Actor._async_main()`` creates an internal nursery if one is not
     # provided and thus blocks here until it's main task completes.
