@@ -36,8 +36,8 @@ class TractorConfig(pdbpp.DefaultConfig):
     """
     sticky_by_default = True
 
-    def teardown(self, _pdb):
-        _pdb_release_hook(_pdb)
+    def teardown(self):
+        _pdb_release_hook()
 
 
 class PdbwTeardown(pdbpp.Pdb):
@@ -50,11 +50,11 @@ class PdbwTeardown(pdbpp.Pdb):
     # since that'll cause deadlock for us.
     def set_continue(self):
         super().set_continue()
-        self.config.teardown(self)
+        self.config.teardown()
 
     def set_quit(self):
         super().set_quit()
-        self.config.teardown(self)
+        self.config.teardown()
 
 
 # TODO: will be needed whenever we get to true remote debugging.
@@ -140,36 +140,48 @@ def _breakpoint(debug_func) -> Awaitable[None]:
 
         # TODO: need a more robust check for the "root" actor
         if actor._parent_chan:
-            async with tractor._portal.open_portal(
-                actor._parent_chan,
-                start_msg_loop=False,
-                shield=True,
-            ) as portal:
-                # with trio.fail_after(1):
-                agen = await portal.run(
-                    'tractor._debug',
-                    '_hijack_stdin_relay_to_child',
-                    subactor_uid=actor.uid,
-                )
-                async with aclosing(agen):
-                    async for val in agen:
-                        assert val == 'Locked'
-                        task_status.started()
-                        with trio.CancelScope(shield=True):
-                            await do_unlock.wait()
+            try:
+                async with tractor._portal.open_portal(
+                    actor._parent_chan,
+                    start_msg_loop=False,
+                    shield=True,
+                ) as portal:
+                    # with trio.fail_after(1):
+                    agen = await portal.run(
+                        'tractor._debug',
+                        '_hijack_stdin_relay_to_child',
+                        subactor_uid=actor.uid,
+                    )
+                    async with aclosing(agen):
+                        async for val in agen:
+                            assert val == 'Locked'
+                            task_status.started()
+                            with trio.CancelScope(shield=True):
+                                await do_unlock.wait()
 
-                            # trigger cancellation of remote stream
-                            break
-
+                                # trigger cancellation of remote stream
+                                break
+            finally:
+                log.debug(f"Exiting debugger for actor {actor}")
+                actor.statespace['_in_debug'] = False
                 log.debug(f"Child {actor} released parent stdio lock")
 
-    def unlock(_pdb):
-        do_unlock.set()
-
-    global _pdb_release_hook
-    _pdb_release_hook = unlock
-
     async def _bp():
+        """Async breakpoint which schedules a parent stdio lock, and once complete
+        enters the ``pdbpp`` debugging console.
+        """
+        in_debug = actor.statespace.setdefault('_in_debug', False)
+
+        if in_debug:
+            log.warning(f"Actor {actor} already has a debug lock, skipping...")
+            return
+
+        # assign unlock callback for debugger teardown hooks
+        global _pdb_release_hook
+        _pdb_release_hook = do_unlock.set
+
+        actor.statespace['_in_debug'] = True
+
         # this **must** be awaited by the caller and is done using the
         # root nursery so that the debugger can continue to run without
         # being restricted by the scope of a new task nursery.
@@ -179,7 +191,8 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         # ``breakpoint()`` was awaited and begin handling stdio
         debug_func(actor)
 
-    return _bp()  # user code **must** await this!
+    # user code **must** await this!
+    return _bp()
 
 
 def _set_trace(actor):
