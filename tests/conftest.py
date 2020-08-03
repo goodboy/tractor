@@ -1,9 +1,13 @@
 """
 ``tractor`` testing!!
 """
+import sys
+import subprocess
 import os
 import random
+import signal
 import platform
+import time
 
 import pytest
 import tractor
@@ -14,6 +18,19 @@ from tractor.testing import tractor_test  # noqa
 
 pytest_plugins = ['pytester']
 _arb_addr = '127.0.0.1', random.randint(1000, 9999)
+
+
+# Sending signal.SIGINT on subprocess fails on windows. Use CTRL_* alternatives
+if platform.system() == 'Windows':
+    _KILL_SIGNAL = signal.CTRL_BREAK_EVENT
+    _INT_SIGNAL = signal.CTRL_C_EVENT
+    _INT_RETURN_CODE = 3221225786
+    _PROC_SPAWN_WAIT = 2
+else:
+    _KILL_SIGNAL = signal.SIGKILL
+    _INT_SIGNAL = signal.SIGINT
+    _INT_RETURN_CODE = 1 if sys.version_info < (3, 8) else -signal.SIGINT.value
+    _PROC_SPAWN_WAIT = 0.6 if sys.version_info < (3, 7) else 0.4
 
 
 no_windows = pytest.mark.skipif(
@@ -89,3 +106,43 @@ def pytest_generate_tests(metafunc):
             methods = ['trio']
 
         metafunc.parametrize("start_method", methods, scope='module')
+
+
+def sig_prog(proc, sig):
+    "Kill the actor-process with ``sig``."
+    proc.send_signal(sig)
+    time.sleep(0.1)
+    if not proc.poll():
+        # TODO: why sometimes does SIGINT not work on teardown?
+        # seems to happen only when trace logging enabled?
+        proc.send_signal(_KILL_SIGNAL)
+    ret = proc.wait()
+    assert ret
+
+
+@pytest.fixture
+def daemon(loglevel, testdir, arb_addr):
+    """Run a daemon actor as a "remote arbiter".
+    """
+    cmdargs = [
+        sys.executable, '-c',
+        "import tractor; tractor.run_daemon((), arbiter_addr={}, loglevel={})"
+        .format(
+            arb_addr,
+            "'{}'".format(loglevel) if loglevel else None)
+    ]
+    kwargs = dict()
+    if platform.system() == 'Windows':
+        # without this, tests hang on windows forever
+        kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    proc = testdir.popen(
+        cmdargs,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        **kwargs,
+    )
+    assert not proc.returncode
+    time.sleep(_PROC_SPAWN_WAIT)
+    yield proc
+    sig_prog(proc, _INT_SIGNAL)
