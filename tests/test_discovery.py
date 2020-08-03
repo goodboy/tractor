@@ -4,6 +4,7 @@ Actor "discovery" testing
 import os
 import signal
 import platform
+from functools import partial
 
 import pytest
 import tractor
@@ -86,17 +87,29 @@ async def test_trynamic_trio(func, start_method):
         print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")
 
 
-@pytest.mark.parametrize('use_signal', [False, True])
-def test_subactors_unregister_on_cancel(start_method, use_signal):
-    """Verify that cancelling a nursery results in all subactors
-    deregistering themselves with the arbiter.
-    """
-    async def main():
-        actor = tractor.current_actor()
-        assert actor.is_arbiter
-        registry = actor._registry
+async def spawn_and_check_registry(
+    arb_addr: tuple,
+    use_signal: bool,
+    remote_arbiter: bool = False,
+) -> None:
+    actor = tractor.current_actor()
 
-        # arbiter is registered
+    if remote_arbiter:
+        assert not actor.is_arbiter
+
+    async with tractor.get_arbiter(*arb_addr) as portal:
+        if actor.is_arbiter:
+            async def get_reg():
+                return actor._registry
+
+            extra = 1  # arbiter is local root actor
+
+        else:
+            get_reg = partial(portal.run, 'self', 'get_registry')
+            extra = 2  # local root actor + remote arbiter
+
+        # ensure current actor is registered
+        registry = await get_reg()
         assert actor.uid in registry
 
         try:
@@ -109,10 +122,11 @@ def test_subactors_unregister_on_cancel(start_method, use_signal):
 
                 # wait on last actor to come up
                 async with tractor.wait_for_actor(name):
+                    registry = await get_reg()
                     for uid in n._children:
                         assert uid in registry
 
-                assert len(portals) + 1 == len(registry)
+                assert len(portals) + extra == len(registry)
 
                 # trigger cancel
                 if use_signal:
@@ -124,8 +138,40 @@ def test_subactors_unregister_on_cancel(start_method, use_signal):
         finally:
             # all subactors should have de-registered
             await trio.sleep(0.5)
-            assert len(registry) == 1
+            registry = await get_reg()
+            assert len(registry) == extra
             assert actor.uid in registry
 
+
+@pytest.mark.parametrize('use_signal', [False, True])
+def test_subactors_unregister_on_cancel(
+    start_method,
+    use_signal,
+    arb_addr
+):
+    """Verify that cancelling a nursery results in all subactors
+    deregistering themselves with the arbiter.
+    """
     with pytest.raises(KeyboardInterrupt):
-        tractor.run(main)
+        tractor.run(spawn_and_check_registry, arb_addr, use_signal)
+
+
+@pytest.mark.parametrize('use_signal', [False, True])
+def test_subactors_unregister_on_cancel_remote_daemon(
+    daemon,
+    start_method,
+    use_signal,
+    arb_addr,
+):
+    """Verify that cancelling a nursery results in all subactors
+    deregistering themselves with the arbiter.
+    """
+    with pytest.raises(KeyboardInterrupt):
+        tractor.run(
+            spawn_and_check_registry,
+            arb_addr,
+            use_signal,
+            True,
+            # XXX: required to use remote daemon!
+            arbiter_addr=arb_addr
+        )
