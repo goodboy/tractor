@@ -678,7 +678,10 @@ class Actor:
 
         finally:
             if registered_with_arbiter:
+                # with trio.move_on_after(3) as cs:
+                #     cs.shield = True
                 await self._do_unreg(self._arb_addr)
+
             # terminate actor once all it's peers (actors that connected
             # to it as clients) have disappeared
             if not self._no_more_peers.is_set():
@@ -862,6 +865,13 @@ class Arbiter(Actor):
                 return sockaddr
 
         return None
+
+    async def get_registry(
+        self
+    ) -> Dict[str, Tuple[str, str]]:
+        """Return current name registry.
+        """
+        return list(self._registry)
 
     async def wait_for_actor(
         self, name: str
