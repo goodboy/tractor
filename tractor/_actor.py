@@ -440,7 +440,7 @@ class Actor:
                             f"Cancelling all tasks for {chan} from {chan.uid}")
                         for (channel, cid) in self._rpc_tasks:
                             if channel is chan:
-                                self._cancel_task(cid, channel)
+                                await self._cancel_task(cid, channel)
                         log.debug(
                                 f"Msg loop signalled to terminate for"
                                 f" {chan} from {chan.uid}")
@@ -871,7 +871,11 @@ class Arbiter(Actor):
     ) -> Dict[str, Tuple[str, str]]:
         """Return current name registry.
         """
-        return list(self._registry)
+        # NOTE: requires ``strict_map_key=False`` to the msgpack
+        # unpacker since we have tuples as keys (not this makes the
+        # arbiter suscetible to hashdos):
+        # https://github.com/msgpack/msgpack-python#major-breaking-changes-in-msgpack-10
+        return self._registry
 
     async def wait_for_actor(
         self, name: str
