@@ -80,3 +80,43 @@ async def test_trynamic_trio(func, start_method):
         print(await gretchen.result())
         print(await donny.result())
         print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")
+
+
+def test_subactors_unregister_on_cancel(start_method):
+    """Verify that cancelling a nursery results in all subactors
+    deregistering themselves with the arbiter.
+    """
+    async def main():
+        actor = tractor.current_actor()
+        assert actor.is_arbiter
+        registry = actor._registry
+
+        # arbiter is registered
+        assert actor.uid in registry
+
+        try:
+            async with tractor.open_nursery() as n:
+                portals = {}
+                for i in range(3):
+                    name = f'a{i}'
+                    portals[name] = await n.run_in_actor(
+                        name, trio.sleep_forever)
+
+                # wait on last actor to come up
+                async with tractor.wait_for_actor(name):
+                    for uid in n._children:
+                        assert uid in registry
+
+                assert len(portals) + 1 == len(registry)
+
+                # trigger cancel
+                raise KeyboardInterrupt
+
+        finally:
+            # all subactors should have de-registered
+            await trio.sleep(0.5)
+            assert len(registry) == 1
+            assert actor.uid in registry
+
+    with pytest.raises(KeyboardInterrupt):
+        tractor.run(main)
