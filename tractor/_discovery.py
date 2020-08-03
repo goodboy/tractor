@@ -23,6 +23,7 @@ async def get_arbiter(
     arbiter.
     """
     actor = current_actor()
+
     if not actor:
         raise RuntimeError("No actor instance has been defined yet?")
 
@@ -38,7 +39,8 @@ async def get_arbiter(
 
 @asynccontextmanager
 async def find_actor(
-    name: str, arbiter_sockaddr: Tuple[str, int] = None
+    name: str,
+    arbiter_sockaddr: Tuple[str, int] = None
 ) -> typing.AsyncGenerator[Optional[Portal], None]:
     """Ask the arbiter to find actor(s) by name.
 
