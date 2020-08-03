@@ -1,6 +1,10 @@
 """
 Actor "discovery" testing
 """
+import os
+import signal
+import platform
+
 import pytest
 import tractor
 import trio
@@ -82,7 +86,8 @@ async def test_trynamic_trio(func, start_method):
         print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")
 
 
-def test_subactors_unregister_on_cancel(start_method):
+@pytest.mark.parametrize('use_signal', [False, True])
+def test_subactors_unregister_on_cancel(start_method, use_signal):
     """Verify that cancelling a nursery results in all subactors
     deregistering themselves with the arbiter.
     """
@@ -110,8 +115,12 @@ def test_subactors_unregister_on_cancel(start_method):
                 assert len(portals) + 1 == len(registry)
 
                 # trigger cancel
-                raise KeyboardInterrupt
-
+                if use_signal:
+                    if platform.system() == 'Windows':
+                        pytest.skip("SIGINT not supported on windows")
+                    os.kill(os.getpid(), signal.SIGINT)
+                else:
+                    raise KeyboardInterrupt
         finally:
             # all subactors should have de-registered
             await trio.sleep(0.5)
