@@ -54,9 +54,14 @@ async def _main(
     """Async entry point for ``tractor``.
     """
     logger = log.get_logger('tractor')
+
     main = partial(async_fn, *args)
+
     arbiter_addr = (host, port) = arbiter_addr or (
-            _default_arbiter_host, _default_arbiter_port)
+        _default_arbiter_host,
+        _default_arbiter_port
+    )
+
     loglevel = kwargs.get('loglevel', log.get_loglevel())
     if loglevel is not None:
         log._default_loglevel = loglevel
@@ -99,7 +104,9 @@ def run(
     *args,
     name: Optional[str] = None,
     arbiter_addr: Tuple[str, int] = (
-        _default_arbiter_host, _default_arbiter_port),
+        _default_arbiter_host,
+        _default_arbiter_port,
+    ),
     # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
     # OR `trio_run_in_process` (the new default).
