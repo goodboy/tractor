@@ -230,7 +230,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                         f"Waiting on subactors {anursery._children}"
                         "to complete"
                     )
-                except (BaseException, Exception) as err:
+                except BaseException as err:
                     # if the caller's scope errored then we activate our
                     # one-cancels-all supervisor strategy (don't
                     # worry more are coming).
@@ -241,10 +241,11 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                         # the `else:` block here might not complete?
                         # For now, shield both.
                         with trio.CancelScope(shield=True):
-                            if err in (trio.Cancelled, KeyboardInterrupt):
+                            etype = type(err)
+                            if etype in (trio.Cancelled, KeyboardInterrupt):
                                 log.warning(
                                     f"Nursery for {current_actor().uid} was "
-                                    f"cancelled with {err}")
+                                    f"cancelled with {etype}")
                             else:
                                 log.exception(
                                     f"Nursery for {current_actor().uid} "

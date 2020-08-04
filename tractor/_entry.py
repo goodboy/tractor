@@ -72,8 +72,10 @@ def _trio_main(
         actor._async_main,
         parent_addr=parent_addr
     )
+
     try:
         trio.run(trio_main)
     except KeyboardInterrupt:
-        pass  # handle it the same way trio does?
+        log.warning(f"Actor {actor.uid} received KBI")
+
     log.info(f"Actor {actor.uid} terminated")

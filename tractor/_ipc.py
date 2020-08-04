@@ -3,6 +3,8 @@ Inter-process comms abstractions
 """
 import typing
 from typing import Any, Tuple, Optional
+from functools import partial
+import inspect
 
 import msgpack
 import trio
@@ -10,6 +12,14 @@ from async_generator import asynccontextmanager
 
 from .log import get_logger
 log = get_logger('ipc')
+
+# :eyeroll:
+try:
+    import msgpack_numpy
+    Unpacker = msgpack_numpy.Unpacker
+except ImportError:
+    # just plain ``msgpack`` requires tweaking key settings
+    Unpacker = partial(msgpack.Unpacker, strict_map_key=False)
 
 
 class MsgpackStream:
@@ -32,7 +42,10 @@ class MsgpackStream:
     async def _iter_packets(self) -> typing.AsyncGenerator[dict, None]:
         """Yield packets from the underlying stream.
         """
-        unpacker = msgpack.Unpacker(raw=False, use_list=False)
+        unpacker = Unpacker(
+            raw=False,
+            use_list=False,
+        )
         while True:
             try:
                 data = await self.stream.receive_some(2**10)
