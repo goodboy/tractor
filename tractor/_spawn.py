@@ -166,8 +166,10 @@ async def spawn_subactor(
         # Hardcode this (instead of using ``_child.__name__`` to avoid a
         # double import warning: https://stackoverflow.com/a/45070583
         "tractor._child",
-        # This is merely an identifier for debugging purposes when
-        # viewing the process tree from the OS
+        # We provide the child's unique identifier on this exec/spawn
+        # line for debugging purposes when viewing the process tree from
+        # the OS; it otherwise can be passed via the parent channel if
+        # we prefer in the future (for privacy).
         "--uid",
         str(subactor.uid),
         # Address the child must connect to on startup
