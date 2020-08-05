@@ -678,9 +678,9 @@ class Actor:
 
         finally:
             if registered_with_arbiter:
-                # with trio.move_on_after(3) as cs:
-                #     cs.shield = True
-                await self._do_unreg(self._arb_addr)
+                with trio.move_on_after(3) as cs:
+                    cs.shield = True
+                    await self._do_unreg(self._arb_addr)
 
             # terminate actor once all it's peers (actors that connected
             # to it as clients) have disappeared
