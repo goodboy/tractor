@@ -237,9 +237,9 @@ def test_close_channel_explicit(
     use_signal,
     arb_addr,
 ):
-    """Verify that closing a stream explicitly **before** the containing
-    nursery tears down also results in subactor(s) deregistering from the
-    arbiter.
+    """Verify that closing a stream explicitly and killing the actor's
+    "root nursery" **before** the containing nursery tears down also
+    results in subactor(s) deregistering from the arbiter.
     """
     async def streamer(agen):
         async for item in agen:
@@ -264,7 +264,14 @@ def test_close_channel_explicit(
                         finally:
                             # XXX: THIS IS THE KEY THING that happens
                             # **before** exiting the actor nursery block
-                            # (i think?).
+
+                            # Kill the root nursery thus resulting in
+                            # normal arbiter channel ops to fail during
+                            # teardown. It doesn't seem like this is
+                            # reliably triggered by an external SIGINT.
+                            tractor.current_actor()._root_nursery.cancel_scope.cancel()
+
+                            # also kill off channels cuz why not
                             await agen1.aclose()
                             await agen2.aclose()
             finally:
