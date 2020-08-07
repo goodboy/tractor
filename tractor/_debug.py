@@ -34,7 +34,7 @@ _pdb_release_hook: Optional[Callable] = None
 class TractorConfig(pdbpp.DefaultConfig):
     """Custom ``pdbpp`` goodness.
     """
-    sticky_by_default = True
+    # sticky_by_default = True
 
     def teardown(self):
         _pdb_release_hook()
