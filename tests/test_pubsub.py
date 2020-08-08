@@ -204,18 +204,18 @@ def test_multi_actor_subs_arbiter_pub(
 
             await trio.sleep(0.5)
             await even_portal.cancel_actor()
-            await trio.sleep(0.5)
+            await trio.sleep(1)
 
             if pub_actor == 'arbiter':
                 assert 'even' not in get_topics()
 
             await odd_portal.cancel_actor()
-            await trio.sleep(1)
+            await trio.sleep(2)
 
             if pub_actor == 'arbiter':
                 while get_topics():
                     await trio.sleep(0.1)
-                    if time.time() - start > 1:
+                    if time.time() - start > 2:
                         pytest.fail("odds subscription never dropped?")
             else:
                 await master_portal.cancel_actor()
