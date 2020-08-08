@@ -22,7 +22,8 @@ log = get_logger('tractor')
 
 @asynccontextmanager
 async def maybe_open_nursery(
-    nursery: trio.Nursery = None
+    nursery: trio.Nursery = None,
+    shield: bool = False,
 ) -> typing.AsyncGenerator[trio.Nursery, Any]:
     """Create a new nursery if None provided.
 
@@ -32,6 +33,7 @@ async def maybe_open_nursery(
         yield nursery
     else:
         async with trio.open_nursery() as nursery:
+            nursery.cancel_scope.shield = shield
             yield nursery
 
 
@@ -275,6 +277,8 @@ class Portal:
             f"{self.channel}")
         try:
             # send cancel cmd - might not get response
+            # XXX: sure would be nice to make this work with a proper shield
+            # with trio.CancelScope(shield=True):
             with trio.move_on_after(0.5) as cancel_scope:
                 cancel_scope.shield = True
                 await self.run('self', 'cancel')
@@ -316,6 +320,7 @@ async def open_portal(
     channel: Channel,
     nursery: Optional[trio.Nursery] = None,
     start_msg_loop: bool = True,
+    shield: bool = False,
 ) -> typing.AsyncGenerator[Portal, None]:
     """Open a ``Portal`` through the provided ``channel``.
 
@@ -325,7 +330,7 @@ async def open_portal(
     assert actor
     was_connected = False
 
-    async with maybe_open_nursery(nursery) as nursery:
+    async with maybe_open_nursery(nursery, shield=shield) as nursery:
         if not channel.connected():
             await channel.connect()
             was_connected = True
