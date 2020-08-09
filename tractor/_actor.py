@@ -578,6 +578,9 @@ class Actor:
                 for attr, value in parent_data.items():
                     setattr(self, attr, value)
 
+            else:  # mp
+                accept_addr = None
+
             return chan, accept_addr
 
         except OSError:  # failed to connect
@@ -613,8 +616,13 @@ class Actor:
             # establish primary connection with immediate parent
             self._parent_chan = None
             if parent_addr is not None:
-                self._parent_chan, accept_addr = await self._chan_to_parent(
+                self._parent_chan, accept_addr_from_rent = await self._chan_to_parent(
                     parent_addr)
+
+                # either it's passed in because we're not a child
+                # or because we're running in mp mode
+                if accept_addr_from_rent is not None:
+                    accept_addr = accept_addr_from_rent
 
             # load exposed/allowed RPC modules
             # XXX: do this **after** establishing a channel to the parent
