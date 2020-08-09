@@ -185,7 +185,7 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         # this **must** be awaited by the caller and is done using the
         # root nursery so that the debugger can continue to run without
         # being restricted by the scope of a new task nursery.
-        await actor._root_nursery.start(wait_for_parent_stdin_hijack)
+        await actor._service_n.start(wait_for_parent_stdin_hijack)
 
         # block here one (at the appropriate frame *up* where
         # ``breakpoint()`` was awaited and begin handling stdio
