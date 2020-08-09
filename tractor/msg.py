@@ -143,7 +143,7 @@ def pub(
     - packetizer: ``Callable[[str, Any], Any]`` a callback who receives
       the topic and value from the publisher function each ``yield`` such that
       whatever is returned is sent as the published value to subscribers of
-      that topic.  By default this is a dict ``{topic: value}``.
+      that topic.  By default this is a dict ``{topic: str: value: Any}``.
 
     As an example, to make a subscriber call the above function:
 
@@ -161,7 +161,7 @@ def pub(
                     task_name='source1',
                 )
             )
-            async for value in portal.result():
+            async for value in await portal.result():
                 print(f"Subscriber received {value}")
 
 
@@ -264,4 +264,5 @@ def pub(
     # ``wrapt.decorator`` doesn't seem to want to play nice with its
     # whole "adapter" thing...
     wrapped._tractor_stream_function = True  # type: ignore
+
     return wrapper(wrapped)
