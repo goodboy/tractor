@@ -196,11 +196,13 @@ def test_subactors_unregister_on_cancel(
     """
     with pytest.raises(KeyboardInterrupt):
         tractor.run(
-            spawn_and_check_registry,
-            arb_addr,
-            use_signal,
-            False,  # remote arbiter
-            with_streaming,
+            partial(
+                spawn_and_check_registry,
+                arb_addr,
+                use_signal,
+                remote_arbiter=False,
+                with_streaming=with_streaming,
+            ),
             arbiter_addr=arb_addr
         )
 
@@ -220,11 +222,13 @@ def test_subactors_unregister_on_cancel_remote_daemon(
     """
     with pytest.raises(KeyboardInterrupt):
         tractor.run(
-            spawn_and_check_registry,
-            arb_addr,
-            use_signal,
-            True,  # remote arbiter
-            with_streaming,
+            partial(
+                spawn_and_check_registry,
+                arb_addr,
+                use_signal,
+                remote_arbiter=True,
+                with_streaming=with_streaming,
+            ),
             # XXX: required to use remote daemon!
             arbiter_addr=arb_addr
         )
@@ -300,10 +304,12 @@ def test_close_channel_explicit(
     """
     with pytest.raises(KeyboardInterrupt):
         tractor.run(
-            close_chans_before_nursery,
-            arb_addr,
-            use_signal,
-            False,
+            partial(
+                close_chans_before_nursery,
+                arb_addr,
+                use_signal,
+                remote_arbiter=False,
+            ),
             # XXX: required to use remote daemon!
             arbiter_addr=arb_addr
         )
@@ -322,10 +328,12 @@ def test_close_channel_explicit_remote_arbiter(
     """
     with pytest.raises(KeyboardInterrupt):
         tractor.run(
-            close_chans_before_nursery,
-            arb_addr,
-            use_signal,
-            True,
+            partial(
+                close_chans_before_nursery,
+                arb_addr,
+                use_signal,
+                remote_arbiter=True,
+            ),
             # XXX: required to use remote daemon!
             arbiter_addr=arb_addr
         )
