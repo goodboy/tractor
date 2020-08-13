@@ -31,7 +31,7 @@ def test_no_main():
 
 
 @tractor_test
-async def test_self_is_registered():
+async def test_self_is_registered(arb_addr):
     "Verify waiting on the arbiter to register itself using the standard api."
     actor = tractor.current_actor()
     assert actor.is_arbiter
