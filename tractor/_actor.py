@@ -588,7 +588,6 @@ class Actor:
                 f"Failed to connect to parent @ {parent_addr},"
                 " closing server")
             await self.cancel()
-            # self._parent_chan = None
             raise
 
     async def _async_main(
@@ -631,8 +630,8 @@ class Actor:
             self.load_modules()
 
             # The "root" nursery ensures the channel with the immediate
-            # parent is kept alive as a reslient service until
-            # cancellation steps have (mostly) ocurred in
+            # parent is kept alive as a resilient service until
+            # cancellation steps have (mostly) occurred in
             # a deterministic way.
             async with trio.open_nursery() as root_nursery:
                 self._root_n = root_nursery
@@ -647,7 +646,7 @@ class Actor:
                     assert self._service_n
 
                     # Startup up the channel server with,
-                    # - subactor: the bind address sent to us by our parent
+                    # - subactor: the bind address is sent by our parent
                     #   over our established channel
                     # - root actor: the ``accept_addr`` passed to this method
                     assert accept_addr
@@ -721,15 +720,15 @@ class Actor:
                         log.error(
                             f"Failed to ship error to parent "
                             f"{self._parent_chan.uid}, channel was closed")
-                        log.exception("Actor errored:")
 
             # always!
+            log.exception("Actor errored:")
             raise
 
         finally:
             log.info("Root nursery complete")
 
-            # UNregister actor from the arbiter
+            # Unregister actor from the arbiter
             if registered_with_arbiter and (
                     self._arb_addr is not None
             ):
