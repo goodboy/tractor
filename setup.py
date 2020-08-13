@@ -2,7 +2,7 @@
 #
 # tractor: a trionic actor model built on `multiprocessing` and `trio`
 #
-# Copyright (C) 2018  Tyler Goodlet
+# Copyright (C) 2018-2020  Tyler Goodlet
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
