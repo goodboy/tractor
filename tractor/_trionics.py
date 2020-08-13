@@ -18,6 +18,8 @@ from . import _spawn
 
 log = get_logger('tractor')
 
+_default_bind_addr: Tuple[str, int] = ('127.0.0.1', 0)
+
 
 class ActorNursery:
     """Spawn scoped subprocess actors.
@@ -48,7 +50,7 @@ class ActorNursery:
         self,
         name: str,
         *,
-        bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
+        bind_addr: Tuple[str, int] = _default_bind_addr,
         statespace: Optional[Dict[str, Any]] = None,
         rpc_module_paths: List[str] = None,
         loglevel: str = None,  # set log level per subactor
@@ -89,7 +91,7 @@ class ActorNursery:
         name: str,
         fn: typing.Callable,
         *,
-        bind_addr: Tuple[str, int] = ('127.0.0.1', 0),
+        bind_addr: Tuple[str, int] = _default_bind_addr,
         rpc_module_paths: Optional[List[str]] = None,
         statespace: Dict[str, Any] = None,
         loglevel: str = None,  # set log level per subactor

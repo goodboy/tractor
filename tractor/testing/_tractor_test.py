@@ -2,7 +2,7 @@ import inspect
 import platform
 from functools import partial, wraps
 
-from .. import run
+from tractor import run
 
 
 __all__ = ['tractor_test']
@@ -38,6 +38,7 @@ def tractor_test(fn):
             # injects test suite fixture value to test as well
             # as `run()`
             kwargs['arb_addr'] = arb_addr
+
         if 'loglevel' in inspect.signature(fn).parameters:
             # allows test suites to define a 'loglevel' fixture
             # that activates the internal logging
@@ -52,6 +53,7 @@ def tractor_test(fn):
         if 'start_method' in inspect.signature(fn).parameters:
             # set of subprocess spawning backends
             kwargs['start_method'] = start_method
+
         return run(
             partial(fn, *args, **kwargs),
             arbiter_addr=arb_addr,

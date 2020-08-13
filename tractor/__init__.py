@@ -4,7 +4,7 @@ tractor: An actor model micro-framework built on
 """
 import importlib
 from functools import partial
-from typing import Tuple, Any, Optional
+from typing import Tuple, Any, Optional, List
 import typing
 
 import trio  # type: ignore
@@ -115,7 +115,7 @@ def run(
 
 
 def run_daemon(
-    rpc_module_paths: Tuple[str],
+    rpc_module_paths: List[str],
     **kwargs
 ) -> None:
     """Spawn daemon actor which will respond to RPC.
@@ -124,7 +124,7 @@ def run_daemon(
     ``tractor.run(trio.sleep(float('inf')))`` such that the first actor spawned
     is meant to run forever responding to RPC requests.
     """
-    kwargs['rpc_module_paths'] = rpc_module_paths
+    kwargs['rpc_module_paths'] = list(rpc_module_paths)
 
     for path in rpc_module_paths:
         importlib.import_module(path)

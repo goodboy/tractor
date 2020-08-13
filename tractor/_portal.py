@@ -22,7 +22,8 @@ log = get_logger('tractor')
 
 @asynccontextmanager
 async def maybe_open_nursery(
-    nursery: trio.Nursery = None
+    nursery: trio.Nursery = None,
+    shield: bool = False,
 ) -> typing.AsyncGenerator[trio.Nursery, Any]:
     """Create a new nursery if None provided.
 
@@ -32,6 +33,7 @@ async def maybe_open_nursery(
         yield nursery
     else:
         async with trio.open_nursery() as nursery:
+            nursery.cancel_scope.shield = shield
             yield nursery
 
 
@@ -275,6 +277,8 @@ class Portal:
             f"{self.channel}")
         try:
             # send cancel cmd - might not get response
+            # XXX: sure would be nice to make this work with a proper shield
+            # with trio.CancelScope(shield=True):
             with trio.move_on_after(0.5) as cancel_scope:
                 cancel_scope.shield = True
                 await self.run('self', 'cancel')
@@ -314,7 +318,9 @@ class LocalPortal:
 @asynccontextmanager
 async def open_portal(
     channel: Channel,
-    nursery: Optional[trio.Nursery] = None
+    nursery: Optional[trio.Nursery] = None,
+    start_msg_loop: bool = True,
+    shield: bool = False,
 ) -> typing.AsyncGenerator[Portal, None]:
     """Open a ``Portal`` through the provided ``channel``.
 
@@ -324,7 +330,7 @@ async def open_portal(
     assert actor
     was_connected = False
 
-    async with maybe_open_nursery(nursery) as nursery:
+    async with maybe_open_nursery(nursery, shield=shield) as nursery:
         if not channel.connected():
             await channel.connect()
             was_connected = True
@@ -332,15 +338,17 @@ async def open_portal(
         if channel.uid is None:
             await actor._do_handshake(channel)
 
-        msg_loop_cs: trio.CancelScope = await nursery.start(
-            partial(
-                actor._process_messages,
-                channel,
-                # if the local task is cancelled we want to keep
-                # the msg loop running until our block ends
-                shield=True,
+        msg_loop_cs: Optional[trio.CancelScope] = None
+        if start_msg_loop:
+            msg_loop_cs = await nursery.start(
+                partial(
+                    actor._process_messages,
+                    channel,
+                    # if the local task is cancelled we want to keep
+                    # the msg loop running until our block ends
+                    shield=True,
+                )
             )
-        )
         portal = Portal(channel)
         try:
             yield portal
@@ -352,6 +360,7 @@ async def open_portal(
                 await channel.send(None)
 
             # cancel background msg loop task
-            msg_loop_cs.cancel()
+            if msg_loop_cs:
+                msg_loop_cs.cancel()
 
             nursery.cancel_scope.cancel()
