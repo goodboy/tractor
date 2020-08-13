@@ -130,7 +130,7 @@ def daemon(loglevel, testdir, arb_addr):
 
     cmdargs = [
         sys.executable, '-c',
-        "import tractor; tractor.run_daemon((), arbiter_addr={}, loglevel={})"
+        "import tractor; tractor.run_daemon([], arbiter_addr={}, loglevel={})"
         .format(
             arb_addr,
             "'{}'".format(loglevel) if loglevel else None)
