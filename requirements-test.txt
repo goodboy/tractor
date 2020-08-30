@@ -3,4 +3,5 @@ pytest-trio
 pdbpp
 mypy
 trio_typing
+docker
 git+git://github.com/guilledk/pytest-vnet.git
