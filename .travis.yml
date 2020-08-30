@@ -1,8 +1,6 @@
 language: python
 dist: xenial
 sudo: required
-services:
-    - docker
 
 matrix:
     include:
@@ -60,6 +58,15 @@ matrix:
           python: 3.8  # this works for Linux but is ignored on macOS or Windows
           env: SPAWN_BACKEND="trio"
 
+        - name: "Multi Host: multiprocessing"
+          services: docker
+          python: 3.8  # this works for Linux but is ignored on macOS or Windows
+          script: pytest tests/  --spawn-backend=mp -m run_in_netvm
+        - name: "Multi Host: trio"
+          services: docker
+          python: 3.8  # this works for Linux but is ignored on macOS or Windows
+          script: pytest tests/  --spawn-backend=trio -m run_in_netvm
+
 install:
     - cd $TRAVIS_BUILD_DIR
     - pip install -U pip
@@ -67,4 +74,4 @@ install:
 
 script:
     - mypy tractor/ --ignore-missing-imports
-    - pytest tests/  --spawn-backend=${SPAWN_BACKEND}
+    - pytest tests/  --spawn-backend=${SPAWN_BACKEND} --disable-vnet
