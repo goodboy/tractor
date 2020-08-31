@@ -4,46 +4,6 @@ sudo: required
 
 matrix:
     include:
-        - name: "Windows, Python Latest: multiprocessing"
-          os: windows
-          language: sh
-          python: 3.x  # only works on linux
-          env: SPAWN_BACKEND="mp"
-          before_install:
-              - choco install python3 --params "/InstallDir:C:\\Python"
-              - export PATH="/c/Python:/c/Python/Scripts:$PATH"
-              - python -m pip install --upgrade pip wheel
-
-        - name: "Windows, Python Latest: trio"
-          os: windows
-          language: sh
-          python: 3.x  # only works on linux
-          env: SPAWN_BACKEND="trio"
-          before_install:
-              - choco install python3 --params "/InstallDir:C:\\Python"
-              - export PATH="/c/Python:/c/Python/Scripts:$PATH"
-              - python -m pip install --upgrade pip wheel
-
-        - name: "Windows, Python 3.7: multiprocessing"
-          os: windows
-          python: 3.7  # only works on linux
-          env: SPAWN_BACKEND="mp"
-          language: sh
-          before_install:
-              - choco install python3 --version 3.7.4 --params "/InstallDir:C:\\Python"
-              - export PATH="/c/Python:/c/Python/Scripts:$PATH"
-              - python -m pip install --upgrade pip wheel
-
-        - name: "Windows, Python 3.7: trio"
-          os: windows
-          python: 3.7  # only works on linux
-          env: SPAWN_BACKEND="trio"
-          language: sh
-          before_install:
-              - choco install python3 --version 3.7.4 --params "/InstallDir:C:\\Python"
-              - export PATH="/c/Python:/c/Python/Scripts:$PATH"
-              - python -m pip install --upgrade pip wheel
-
         - name: "Python 3.7: multiprocessing"
           python: 3.7  # this works for Linux but is ignored on macOS or Windows
           env: SPAWN_BACKEND="mp"
@@ -58,13 +18,22 @@ matrix:
           python: 3.8  # this works for Linux but is ignored on macOS or Windows
           env: SPAWN_BACKEND="trio"
 
-        - name: "Multi Host: multiprocessing"
+        - name: "Multi Host Python 3.8: multiprocessing"
           services: docker
           python: 3.8  # this works for Linux but is ignored on macOS or Windows
           script: pytest tests/  --spawn-backend=mp -m run_in_netvm
-        - name: "Multi Host: trio"
+        - name: "Multi Host Python 3.8: trio"
           services: docker
           python: 3.8  # this works for Linux but is ignored on macOS or Windows
+          script: pytest tests/  --spawn-backend=trio -m run_in_netvm
+
+        - name: "Multi Host Python 3.7: multiprocessing"
+          services: docker
+          python: 3.7  # this works for Linux but is ignored on macOS or Windows
+          script: pytest tests/  --spawn-backend=mp -m run_in_netvm
+        - name: "Multi Host Python 3.7: trio"
+          services: docker
+          python: 3.7  # this works for Linux but is ignored on macOS or Windows
           script: pytest tests/  --spawn-backend=trio -m run_in_netvm
 
 install:
