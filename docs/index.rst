@@ -469,7 +469,7 @@ Currently the options available are:
 
 ``trio``
 ++++++++
-The ``trio`` backend offers a lightweight async wrapper around the standard libraries ``subprocess`` and takes advantage of the ``trio.`` `open_process`_ API.
+The ``trio`` backend offers a lightweight async wrapper around ``subprocess`` from the standard library and takes advantage of the ``trio.`` `open_process`_ API.
 
 .. _open_process: https://trio.readthedocs.io/en/stable/reference-io.html#spawning-subprocesses
 
