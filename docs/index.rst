@@ -460,7 +460,7 @@ via a ``start_method`` kwarg to ``tractor.run()``.
 
 Currently the options available are:
 
-- ``trio``: a ``trio``-native spawner basically an async wrapper on ``subprocess``
+- ``trio``: a ``trio``-native spawner which is an async wrapper around ``subprocess``
 - ``spawn``: one of the stdlib's ``multiprocessing`` `start methods`_
 - ``forkserver``: a faster ``multiprocessing`` variant that is Unix only
 
@@ -469,7 +469,7 @@ Currently the options available are:
 
 ``trio``
 ++++++++
-The ``trio`` backend ofers a lightweight async wrapper to ``subprocess``, takes advantage of the ``trio.`` `open_process`_ API.
+The ``trio`` backend offers a lightweight async wrapper around the standard libraries ``subprocess`` and takes advantage of the ``trio.`` `open_process`_ API.
 
 .. _open_process: https://trio.readthedocs.io/en/stable/reference-io.html#spawning-subprocesses
 
