@@ -460,24 +460,18 @@ via a ``start_method`` kwarg to ``tractor.run()``.
 
 Currently the options available are:
 
-- ``trio_run_in_process``: a ``trio``-native spawner from the `Ethereum community`_
+- ``trio``: a ``trio``-native spawner which is an async wrapper around ``subprocess``
 - ``spawn``: one of the stdlib's ``multiprocessing`` `start methods`_
 - ``forkserver``: a faster ``multiprocessing`` variant that is Unix only
 
 .. _start methods: https://docs.python.org/3.8/library/multiprocessing.html#contexts-and-start-methods
-.. _Ethereum community : https://github.com/ethereum/trio-run-in-process
 
 
-``trio-run-in-process``
-+++++++++++++++++++++++
-`trio-run-in-process`_ is a young "pure ``trio``" process spawner
-which utilizes the native `trio subprocess APIs`_. It has shown great
-reliability under testing for predictable teardown when launching
-recursive pools of actors (multiple nurseries deep) and as such has been
-chosen as the default backend on \*nix systems.
+``trio``
+++++++++
+The ``trio`` backend offers a lightweight async wrapper around ``subprocess`` from the standard library and takes advantage of the ``trio.`` `open_process`_ API.
 
-.. _trio-run-in-process: https://github.com/ethereum/trio-run-in-process
-.. _trio subprocess APIs : https://trio.readthedocs.io/en/stable/reference-io.html#spawning-subprocesses
+.. _open_process: https://trio.readthedocs.io/en/stable/reference-io.html#spawning-subprocesses
 
 
 ``multiprocessing``

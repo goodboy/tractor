@@ -54,7 +54,7 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'alabaster'
+html_theme = 'sphinx_typlog_theme'
 
 pygments_style = 'sphinx'
 
@@ -62,18 +62,18 @@ pygments_style = 'sphinx'
 # further.  For a list of options available for each theme, see the
 # documentation.
 html_theme_options = {
-    'description': 'A trionic "actor model"',
+    'logo': 'tractor_logo_side.svg',
+    'description': 'Structured concurrent "actors"',
     'github_user': 'goodboy',
     'github_repo': 'tractor',
-    'github_button': 'true',
-    'github_banner': 'true',
-    'page_width': '1080px',
-    'fixed_sidebar': 'false',
-    # 'sidebar_width': '200px',
-    'travis_button': 'true',
 }
 html_sidebars = {
-    "**": ["about.html", "relations.html", "searchbox.html"]
+    "**": [
+        'logo.html',
+        'github.html',
+        'relations.html',
+        'searchbox.html'
+    ]
 }
 
 # Add any paths that contain custom static files (such as style sheets) here,
