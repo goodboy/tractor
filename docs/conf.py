@@ -62,19 +62,19 @@ pygments_style = 'sphinx'
 # further.  For a list of options available for each theme, see the
 # documentation.
 html_theme_options = {
-    'description': 'A trionic "actor model"',
+    'logo': 'tractor_logo_side.svg',
+    'description': 'Structured concurrent "actors"',
     'github_user': 'goodboy',
     'github_repo': 'tractor',
-    # 'github_button': 'true',
-    # 'github_banner': 'true',
-    # 'page_width': '1080px',
-    # 'fixed_sidebar': 'false',
-    # 'sidebar_width': '200px',
-    # 'travis_button': 'true',
 }
-# html_sidebars = {
-#     "**": ["about.html", "relations.html", "searchbox.html"]
-# }
+html_sidebars = {
+    "**": [
+        'logo.html',
+        'github.html',
+        'relations.html',
+        'searchbox.html'
+    ]
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
