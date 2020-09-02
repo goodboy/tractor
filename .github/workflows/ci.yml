@@ -39,4 +39,4 @@ jobs:
       - name: Install dependencies
         run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
       - name: Run tests
-        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} --disable-vnet
+        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }}
