@@ -5,7 +5,6 @@ on: push
 jobs:
   mypy:
     name: 'MyPy'
-    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -20,8 +19,8 @@ jobs:
         run: mypy tractor/ --ignore-missing-imports
 
   testing:
-    name: '${{ matrix.os }} Python ${{ matrix.python }}'
-    timeout-minutes: 20
+    name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
+    timeout-minutes: 10
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
