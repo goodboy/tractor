@@ -1,0 +1,42 @@
+name: CI
+
+on: push
+
+jobs:
+  mypy:
+    name: 'MyPy'
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setup python
+        uses: actions/setup-python@v2
+        with:
+          python: '3.8'
+      - name: Install dependencies
+        run: pip install -U . --upgrade-strategy eager
+      - name: Run MyPy check
+        run: mypy tractor/ --ignore-missing-imports
+
+  testing:
+    name: '${{ matrix.os }} Python ${{ matrix.python }}'
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.7', '3.8']
+        spawn_backend: ['trio', 'mp']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Setup python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '${{ matrix.python }}'
+      - name: Install dependencies
+        run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
+      - name: Run tests
+        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} --disable-vnet
