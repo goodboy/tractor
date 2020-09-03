@@ -241,7 +241,7 @@ def test_not_fast_enough_quad(
     results = tractor.run(cancel_after, delay, arbiter_addr=arb_addr)
     system = platform.system()
     if system in ('Windows', 'Darwin') and results is not None:
-        # In Windows CI it seems later runs are quicker then the first
+        # In CI envoirments it seems later runs are quicker then the first
         # so just ignore these
         print(f"Woa there {system} caught your breath eh?")
     else:
