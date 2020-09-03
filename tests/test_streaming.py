@@ -9,8 +9,6 @@ import trio
 import tractor
 import pytest
 
-from conftest import CIEnvoirment
-
 
 def test_must_define_ctx():
 
@@ -205,12 +203,11 @@ async def cancel_after(wait):
 
 @pytest.fixture(scope='module')
 def time_quad_ex(arb_addr, ci_env, spawn_backend):
-    if ci_env in (CIEnvoirment.Github, CIEnvoirment.Travis):
-        if spawn_backend == 'mp' and (platform.system() != 'Windows'):
-            """no idea, but the travis and github actions, mp *nix runs are
-            flaking out here often
-            """
-            pytest.skip("Test is too flaky on mp in CI")
+    if ci_env and spawn_backend == 'mp' and (platform.system() != 'Windows'):
+        """no idea, but the travis and github actions, mp *nix runs are
+        flaking out here often
+        """
+        pytest.skip("Test is too flaky on mp in CI")
 
     timeout = 7 if platform.system() in ('Windows', 'Darwin') else 4
     start = time.time()
