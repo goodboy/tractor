@@ -8,9 +8,6 @@ import random
 import signal
 import platform
 import time
-import enum
-
-from typing import Optional
 
 import pytest
 import tractor
@@ -77,21 +74,11 @@ def spawn_backend(request):
     return request.config.option.spawn_backend
 
 
-class CIEnvoirment(enum.Enum):
-    Travis = 'TRAVIS'
-    Github = 'GITHUB'
-
-
 @pytest.fixture(scope='session')
-def ci_env() -> Optional[CIEnvoirment]:
+def ci_env() -> bool:
     """Detect CI envoirment.
     """
-    if os.environ.get('TRAVIS'):
-        return CIEnvoirment.Travis
-    elif os.environ.get('CI'):
-        return CIEnvoirment.Github
-    else:
-        return None
+    return os.environ.get('TRAVIS', False) or os.environ.get('CI', False)
 
 
 @pytest.fixture(scope='session')
