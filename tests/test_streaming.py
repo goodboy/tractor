@@ -202,12 +202,14 @@ async def cancel_after(wait):
 
 
 @pytest.fixture(scope='module')
-def time_quad_ex(arb_addr, travis, spawn_backend):
-    if travis and spawn_backend == 'mp' and (platform.system() != 'Windows'):
-        # no idea, but the travis, mp, linux runs are flaking out here often
+def time_quad_ex(arb_addr, ci_env, spawn_backend):
+    if ci_env and spawn_backend == 'mp' and (platform.system() != 'Windows'):
+        """no idea, but the travis and github actions, mp *nix runs are
+        flaking out here often
+        """
         pytest.skip("Test is too flaky on mp in CI")
 
-    timeout = 7 if platform.system() == 'Windows' else 4
+    timeout = 7 if platform.system() in ('Windows', 'Darwin') else 4
     start = time.time()
     results = tractor.run(cancel_after, timeout, arbiter_addr=arb_addr)
     diff = time.time() - start
@@ -215,12 +217,12 @@ def time_quad_ex(arb_addr, travis, spawn_backend):
     return results, diff
 
 
-def test_a_quadruple_example(time_quad_ex, travis, spawn_backend):
+def test_a_quadruple_example(time_quad_ex, ci_env, spawn_backend):
     """This also serves as a kind of "we'd like to be this fast test"."""
 
     results, diff = time_quad_ex
     assert results
-    this_fast = 6 if platform.system() == 'Windows' else 2.5
+    this_fast = 6 if platform.system() in ('Windows', 'Darwin') else 2.5
     assert diff < this_fast
 
 
@@ -229,7 +231,7 @@ def test_a_quadruple_example(time_quad_ex, travis, spawn_backend):
     list(map(lambda i: i/10, range(3, 9)))
 )
 def test_not_fast_enough_quad(
-    arb_addr, time_quad_ex, cancel_delay, travis, spawn_backend
+    arb_addr, time_quad_ex, cancel_delay, ci_env, spawn_backend
 ):
     """Verify we can cancel midway through the quad example and all actors
     cancel gracefully.
@@ -237,10 +239,11 @@ def test_not_fast_enough_quad(
     results, diff = time_quad_ex
     delay = max(diff - cancel_delay, 0)
     results = tractor.run(cancel_after, delay, arbiter_addr=arb_addr)
-    if platform.system() == 'Windows' and results is not None:
-        # In Windows CI it seems later runs are quicker then the first
+    system = platform.system()
+    if system in ('Windows', 'Darwin') and results is not None:
+        # In CI envoirments it seems later runs are quicker then the first
         # so just ignore these
-        print("Woa there windows caught your breath eh?")
+        print(f"Woa there {system} caught your breath eh?")
     else:
         # should be cancelled mid-streaming
         assert results is None

@@ -75,10 +75,10 @@ def spawn_backend(request):
 
 
 @pytest.fixture(scope='session')
-def travis():
-    """Bool determining whether running inside TravisCI.
+def ci_env() -> bool:
+    """Detect CI envoirment.
     """
-    return os.environ.get('TRAVIS', False)
+    return os.environ.get('TRAVIS', False) or os.environ.get('CI', False)
 
 
 @pytest.fixture(scope='session')
