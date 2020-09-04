@@ -1,6 +1,5 @@
-from pytest_vnet import run_in_netvm
+from pytest_vnet import as_host
 
-@run_in_netvm
 def test_remote_actor_simple():
 
     switch = vnet.addSwitch('s0')
@@ -31,13 +30,17 @@ def test_remote_actor_simple():
                 pass
 
         tractor.run(main)
+        print('done')
 
     vnet.start()
     daemon.start_host()
     client.start_host()
     client.proc.wait(timeout=3)
+    client_out = client.proc.stdout.read().decode('utf-8').rstrip()
+    print(client_out)
+    assert 'done' in client_out
 
-@run_in_netvm
+
 def test_internet_hello():
     """
        'internet'
@@ -105,6 +108,7 @@ def test_internet_hello():
                     assert await portal.get_motd() == "Hello intranet friends!"
 
             tractor.run(main)
+            print('done')
 
         clients.append(motd_client)
 
@@ -114,4 +118,7 @@ def test_internet_hello():
         client.start_host()
 
     for client in clients:
-        client.proc.wait(timeout=5)
+        client.proc.wait(timeout=3)
+        client_out = client.proc.stdout.read().decode('utf-8').rstrip()
+        print(client_out)
+        assert 'done' in client_out

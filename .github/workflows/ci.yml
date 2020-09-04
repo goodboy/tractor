@@ -38,4 +38,36 @@ jobs:
       - name: Install dependencies
         run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
       - name: Run tests
-        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }}
+        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} --ignore=tests/multihost
+
+  multihost_testing:
+    name: 'multihost Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.7', '3.8']
+        spawn_backend: ['trio', 'mp']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Checkout Mininet
+        uses: actions/checkout@v2
+        with:
+          repository: 'mininet/mininet'
+          path: mininet
+      - name: Setup python
+        run: sudo apt-get install python${{ matrix.python }} python3-setuptools
+      - name: Update pip
+        run: sudo python${{ matrix.python }} -m pip install -U pip
+      - name: Install Mininet
+        run: sudo bash $GITHUB_WORKSPACE/mininet/util/install.sh -nfv
+      - name: Install pytest-vnet
+        run: sudo python${{ matrix.python }} -m pip install git+git://github.com/guilledk/pytest-vnet.git
+      - name: Install dependencies
+        run: sudo python${{ matrix.python }} -m pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
+      - name: Start Mininet backend
+        run: sudo service openvswitch-switch start && sudo ovs-vsctl set-manager ptcp:6640
+      - name: Run tests
+        run: sudo python${{ matrix.python }} -m pytest tests/multihost --spawn-backend=${{ matrix.spawn_backend }}
