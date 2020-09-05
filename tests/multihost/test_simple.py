@@ -1,6 +1,10 @@
-from pytest_vnet import as_host
+import time
 
-def test_remote_actor_simple():
+import tractor
+
+from pytest_vnet import vnet, as_host
+
+def test_remote_actor_simple(vnet):
 
     switch = vnet.addSwitch('s0')
 
@@ -8,40 +12,40 @@ def test_remote_actor_simple():
     def daemon():
         import tractor
         tractor.run_daemon(
-            (), arbiter_addr=daemon_addr
+            (), arbiter_addr=('10.0.0.1', 1616)
         )
 
-    @as_host(vnet, 'h2', switch, ip='10.0.0.1')
+    @as_host(vnet, 'h2', switch, ip='10.0.0.2')
     def client():
         import time
         import tractor
 
         async def main():
-            async with tractor.get_arbiter(daemon_addr) as portal:
+            async with tractor.get_arbiter('10.0.0.1', 1616) as portal:
                 await portal.cancel_actor()
 
             time.sleep(0.1)
 
             # no arbiter socket should exist
             try:
-                async with tractor.get_arbiter(daemon_addr) as portal:
+                async with tractor.get_arbiter('10.0.0.1', 1616) as portal:
                     assert False  # this shouldn't run
             except OSError:
                 pass
 
         tractor.run(main)
-        print('done')
 
     vnet.start()
     daemon.start_host()
+    time.sleep(0.2)
     client.start_host()
-    client.proc.wait(timeout=3)
-    client_out = client.proc.stdout.read().decode('utf-8').rstrip()
-    print(client_out)
-    assert 'done' in client_out
+    client.wait()
+
+    daemon.proc.kill()
+    daemon.wait()
 
 
-def test_internet_hello():
+def test_internet_hello(vnet):
     """
        'internet'
        server (h0)
@@ -71,7 +75,7 @@ def test_internet_hello():
             return "Hello intranet friends!"
 
         tractor.run_daemon(
-            (__file__), arbiter_addr=daemon_addr
+            (__name__), arbiter_addr=('10.0.0.1', 1616)
         )
 
     clients = []
@@ -104,11 +108,11 @@ def test_internet_hello():
             import tractor
 
             async def main():
-                async with tractor.get_arbiter('10.0.0.1') as portal:
+                async with tractor.get_arbiter('10.0.0.1', 1616) as portal:
+                    assert not isinstance(portal, tractor._portal.LocalPortal)
                     assert await portal.get_motd() == "Hello intranet friends!"
 
             tractor.run(main)
-            print('done')
 
         clients.append(motd_client)
 
@@ -118,7 +122,7 @@ def test_internet_hello():
         client.start_host()
 
     for client in clients:
-        client.proc.wait(timeout=3)
-        client_out = client.proc.stdout.read().decode('utf-8').rstrip()
-        print(client_out)
-        assert 'done' in client_out
+        client.wait(timeout=3)
+
+    motd_server.proc.kill()
+    motd_server.wait()
