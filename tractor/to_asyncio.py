@@ -94,6 +94,8 @@ async def run_task(
         """
         nonlocal err
         err = task.exception()
+        if err:
+            log.exception(f"asyncio task errorred:\n{err}")
         cancel_scope.cancel()
 
     task.add_done_callback(cancel_trio)
@@ -114,11 +116,13 @@ async def run_task(
 
     # simple async func
     elif inspect.iscoroutine(coro):
+
         with cancel_scope:
             # return single value
             return await from_aio.receive()
         if cancel_scope.cancelled_caught and err:
             raise err
+
 
 
 def run_as_asyncio_guest(
