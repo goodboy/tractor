@@ -47,13 +47,24 @@ _default_arbiter_port = 1616
 async def _main(
     async_fn: typing.Callable[..., typing.Awaitable],
     args: Tuple,
-    kwargs: typing.Dict[str, typing.Any],
     arbiter_addr: Tuple[str, int],
     name: Optional[str] = None,
+    start_method: Optional[str] = None,
+    debug_mode: bool = False,
+    **kwargs: typing.Dict[str, typing.Any],
 ) -> typing.Any:
     """Async entry point for ``tractor``.
     """
     logger = log.get_logger('tractor')
+
+    if start_method is not None:
+        _spawn.try_set_start_method(start_method)
+
+    if debug_mode:
+        _state._runtime_vars['_debug_mode'] = True
+        # expose internal debug module to every actor allowing
+        # for use of ``await tractor.breakpoint()``
+        kwargs.setdefault('rpc_module_paths', []).append('tractor._debug')
 
     main = partial(async_fn, *args)
 
@@ -109,7 +120,7 @@ def run(
     ),
     # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
-    # OR `trio_run_in_process` (the new default).
+    # OR `trio` (the new default).
     start_method: Optional[str] = None,
     debug_mode: bool = False,
     **kwargs,
@@ -121,17 +132,23 @@ def run(
     # mark top most level process as root actor
     _state._runtime_vars['_is_root'] = True
 
-    if start_method is not None:
-        _spawn.try_set_start_method(start_method)
+    return trio.run(
+        partial(
+            # our entry
+            _main,
 
-    if debug_mode:
-        _state._runtime_vars['_debug_mode'] = True
+            # user entry point
+            async_fn,
+            args,
 
-    # expose internal debug module to every actor allowing
-    # for use of ``await tractor.breakpoint()``
-    kwargs.setdefault('rpc_module_paths', []).append('tractor._debug')
-
-    return trio.run(_main, async_fn, args, kwargs, arbiter_addr, name)
+            # global kwargs
+            arbiter_addr=arbiter_addr,
+            name=name,
+            start_method=start_method,
+            debug_mode=debug_mode,
+            **kwargs,
+        )
+    )
 
 
 def run_daemon(
