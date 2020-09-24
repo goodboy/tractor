@@ -193,7 +193,7 @@ def pub(
             topics: Set[str],
             *args,
             # *,
-            task_name: str = None,
+            task_name: str = None,  # default: only one task allocated
             packetizer: Callable = None,
             **kwargs,
         ):
@@ -202,6 +202,7 @@ def pub(
                     f"{agen} must be called with a `task_name` named "
                     f"argument with a falue from {tasks}")
 
+            topics = set(topics)
             ss = current_actor().statespace
             lockmap = ss.setdefault('_pubtask2lock', task2lock)
             lock = lockmap[task_name]
