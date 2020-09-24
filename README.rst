@@ -47,11 +47,14 @@ No PyPi release yet!
 Feel like saying hi?
 --------------------
 This project is very much coupled to the ongoing development of
-``trio`` (i.e. ``tractor`` gets all its ideas from that brilliant
+``trio`` (i.e. ``tractor`` gets most of its ideas from that brilliant
 community). If you want to help, have suggestions or just want to
-say hi, please feel free to ping me on the `trio gitter channel`_!
+say hi, please feel free to reach us on in our `matrix channel`_.  If
+matrix seems too hip, we're also mostly all in the the `trio gitter
+channel`_!
 
 .. _trio gitter channel: https://gitter.im/python-trio/general
+.. _matrix channel: https://matrix.to/#/!tractor:matrix.org
 
 
 .. |travis| image:: https://img.shields.io/travis/goodboy/tractor/master.svg
