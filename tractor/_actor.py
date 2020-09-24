@@ -13,6 +13,7 @@ from typing import Dict, List, Tuple, Any, Optional
 from types import ModuleType
 import sys
 import os
+from contextlib import ExitStack
 
 import trio  # type: ignore
 from trio_typing import TaskStatus
@@ -150,7 +151,7 @@ async def _invoke(
             # If we're cancelled before the task returns then the
             # cancel scope will not have been inserted yet
             log.warn(
-                f"Task {func} was likely cancelled before it was started")
+                f"Task {func} likely errored or cancelled before it started")
 
         if not actor._rpc_tasks:
             log.info("All RPC tasks have completed")
@@ -175,6 +176,7 @@ class Actor:
     _root_n: Optional[trio.Nursery] = None
     _service_n: Optional[trio.Nursery] = None
     _server_n: Optional[trio.Nursery] = None
+    _lifetime_stack: ExitStack = ExitStack()
 
     # Information about `__main__` from parent
     _parent_main_data: Dict[str, str]
@@ -426,7 +428,6 @@ class Actor:
     async def _process_messages(
         self,
         chan: Channel,
-        treat_as_gen: bool = False,
         shield: bool = False,
         task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED,
     ) -> None:
@@ -742,6 +743,11 @@ class Actor:
 
         finally:
             log.info("Root nursery complete")
+
+            # tear down all lifetime contexts
+            # api idea: ``tractor.open_context()``
+            log.warn("Closing all actor lifetime contexts")
+            self._lifetime_stack.close()
 
             # Unregister actor from the arbiter
             if registered_with_arbiter and (
