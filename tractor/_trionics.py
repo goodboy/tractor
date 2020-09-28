@@ -137,19 +137,14 @@ class ActorNursery:
         If ``hard_killl`` is set to ``True`` then kill the processes
         directly without any far end graceful ``trio`` cancellation.
         """
-        def do_hard_kill(proc):
-            log.warning(f"Hard killing subactors {self._children}")
-            proc.terminate()
-            # XXX: below doesn't seem to work?
-            # send KeyBoardInterrupt (trio abort signal) to sub-actors
-            # os.kill(proc.pid, signal.SIGINT)
+        self.cancelled = True
 
-        log.debug("Cancelling nursery")
+        log.critical("Cancelling nursery")
         with trio.move_on_after(3) as cs:
             async with trio.open_nursery() as nursery:
                 for subactor, proc, portal in self._children.values():
                     if hard_kill:
-                        do_hard_kill(proc)
+                        proc.terminate()
                     else:
                         if portal is None:  # actor hasn't fully spawned yet
                             event = self._actor._peer_connected[subactor.uid]
@@ -169,7 +164,7 @@ class ActorNursery:
                                 if chan:
                                     portal = Portal(chan)
                                 else:  # there's no other choice left
-                                    do_hard_kill(proc)
+                                    proc.terminate()
 
                         # spawn cancel tasks for each sub-actor
                         assert portal
@@ -178,13 +173,13 @@ class ActorNursery:
         # if we cancelled the cancel (we hung cancelling remote actors)
         # then hard kill all sub-processes
         if cs.cancelled_caught:
-            log.error(f"Failed to gracefully cancel {self}, hard killing!")
-            async with trio.open_nursery():
-                for subactor, proc, portal in self._children.values():
-                    nursery.start_soon(do_hard_kill, proc)
+            log.error(
+                f"Failed to cancel {self}\nHard killing process tree!")
+            for subactor, proc, portal in self._children.values():
+                log.warning(f"Hard killing process {proc}")
+                proc.terminate()
 
         # mark ourselves as having (tried to have) cancelled all subactors
-        self.cancelled = True
         self._join_procs.set()
 
 
