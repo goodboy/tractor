@@ -9,7 +9,7 @@ async def bubble():
         await tractor.breakpoint()
 
 
-async def bail():
+async def name_error():
     getattr(doggy)
 
 
@@ -19,13 +19,21 @@ async def main():
     async with tractor.open_nursery() as n:
 
         portal1 = await n.run_in_actor('bubble', bubble)
-        portal = await n.run_in_actor('bail', bail)
-        # await portal.result()
-        # await portal1.result()
+        portal = await n.run_in_actor('name_error', name_error)
+        await portal1.result()
+        await portal.result()
 
     # The ``async with`` will unblock here since the 'some_linguist'
     # actor has completed its main task ``cellar_door``.
 
 
+# TODO:
+# - recurrent entry from single actor
+# - recurrent entry to breakpoint() from single actor *after* and an
+#   error
+# - root error alongside child errors
+# - recurrent root errors
+
+
 if __name__ == '__main__':
-    tractor.run(main, loglevel='error', debug_mode=True)
+    tractor.run(main, loglevel='info', debug_mode=True)
