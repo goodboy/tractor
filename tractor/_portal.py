@@ -278,7 +278,8 @@ class Portal:
         try:
             # send cancel cmd - might not get response
             # XXX: sure would be nice to make this work with a proper shield
-            # with trio.CancelScope(shield=True):
+            # with trio.CancelScope() as cancel_scope:
+            # with trio.CancelScope(shield=True) as cancel_scope:
             with trio.move_on_after(0.5) as cancel_scope:
                 cancel_scope.shield = True
                 await self.run('self', 'cancel')

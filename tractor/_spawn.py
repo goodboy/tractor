@@ -188,8 +188,17 @@ async def spawn_subactor(
         # the outer scope since no actor zombies are
         # ever allowed. This ``__aexit__()`` also shields
         # internally.
-        async with proc:
-            log.debug(f"Terminating {proc}")
+        log.debug(f"Attempting to kill {proc}")
+
+        # NOTE: this timeout effectively does nothing right now since
+        # we are shielding the ``.wait()`` inside ``new_proc()`` which
+        # will pretty much never release until the process exits.
+        with trio.move_on_after(3) as cs:
+            async with proc:
+                log.debug(f"Terminating {proc}")
+        if cs.cancelled_caught:
+            log.critical(f"HARD KILLING {proc}")
+            proc.kill()
 
 
 async def new_proc(
@@ -353,6 +362,8 @@ async def new_proc(
             if proc.is_alive():
                 await proc_waiter(proc)
             proc.join()
+
+        # This is again common logic for all backends:
 
         log.debug(f"Joined {proc}")
         # pop child entry to indicate we are no longer managing this subactor
