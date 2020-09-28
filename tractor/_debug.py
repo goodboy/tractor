@@ -11,6 +11,7 @@ import signal
 from async_generator import aclosing
 import tractor
 import trio
+# from trio.testing import wait_all_tasks_blocked
 
 from .log import get_logger
 from . import _state
@@ -38,6 +39,11 @@ _in_debug = False
 
 # lock in root actor preventing multi-access to local tty
 _debug_lock = trio.StrictFIFOLock()
+
+# XXX: set by the current task waiting on the root tty lock
+# and must be cancelled if this actor is cancelled via message
+# otherwise deadlocks with the parent actor may ensure
+_debugger_request_cs: trio.CancelScope = None
 
 
 class TractorConfig(pdbpp.DefaultConfig):
@@ -119,8 +125,7 @@ async def _acquire_debug_lock():
         log.error("TTY lock acquired")
         yield
     finally:
-        if _debug_lock.locked():
-            _debug_lock.release()
+        _debug_lock.release()
         log.error("TTY lock released")
 
 
@@ -151,16 +156,6 @@ def _disable_sigint():
 async def _hijack_stdin_relay_to_child(
     subactor_uid: Tuple[str, str]
 ) -> None:
-    actor = tractor.current_actor()
-    nursery = actor._actoruid2nursery[subactor_uid]
-    print(f'NURSERY: {nursery}')
-    print(f'nursery is cancelled {nursery.cancelled}')
-    if actor._is_cancelled or nursery.cancelled:
-        raise RuntimeError(
-            "Can not engage debugger actor is already cancelled")
-
-    await trio.sleep(0)
-
     # TODO: when we get to true remote debugging
     # this will deliver stdin data
     log.warning(f"Actor {subactor_uid} is WAITING on stdin hijack lock")
@@ -172,6 +167,7 @@ async def _hijack_stdin_relay_to_child(
             yield 'Locked'
 
             # wait for cancellation of stream by child
+            # indicating debugger is dis-engaged
             await trio.sleep_forever()
 
     log.debug(f"Actor {subactor_uid} RELEASED stdin hijack lock")
@@ -190,37 +186,40 @@ def _breakpoint(debug_func) -> Awaitable[None]:
     async def wait_for_parent_stdin_hijack(
         task_status=trio.TASK_STATUS_IGNORED
     ):
-        try:
-            async with tractor._portal.open_portal(
-                actor._parent_chan,
-                start_msg_loop=False,
-                # shield=True,
-            ) as portal:
-                with trio.fail_after(1):
-                    agen = await portal.run(
-                        'tractor._debug',
-                        '_hijack_stdin_relay_to_child',
-                        subactor_uid=actor.uid,
-                    )
-                async with aclosing(agen):
+        global _debugger_request_cs
+        with trio.CancelScope() as cs:
+            _debugger_request_cs = cs
+            try:
+                async with tractor._portal.open_portal(
+                    actor._parent_chan,
+                    start_msg_loop=False,
+                    # shield=True,
+                ) as portal:
+                    with trio.fail_after(1):
+                        agen = await portal.run(
+                            'tractor._debug',
+                            '_hijack_stdin_relay_to_child',
+                            subactor_uid=actor.uid,
+                        )
+                    async with aclosing(agen):
 
-                    # block until first yield above
-                    async for val in agen:
+                        # block until first yield above
+                        async for val in agen:
 
-                        assert val == 'Locked'
-                        task_status.started()
+                            assert val == 'Locked'
+                            task_status.started()
 
-                        # with trio.CancelScope(shield=True):
-                        await do_unlock.wait()
+                            # with trio.CancelScope(shield=True):
+                            await do_unlock.wait()
 
-                        # trigger cancellation of remote stream
-                        break
-        finally:
-            log.debug(f"Exiting debugger for actor {actor}")
-            global _in_debug
-            _in_debug = False
-            # actor.statespace['_in_debug'] = False
-            log.debug(f"Child {actor} released parent stdio lock")
+                            # trigger cancellation of remote stream
+                            break
+            finally:
+                log.debug(f"Exiting debugger for actor {actor}")
+                global _in_debug
+                _in_debug = False
+                # actor.statespace['_in_debug'] = False
+                log.debug(f"Child {actor} released parent stdio lock")
 
     async def _bp():
         """Async breakpoint which schedules a parent stdio lock, and once complete
@@ -237,7 +236,6 @@ def _breakpoint(debug_func) -> Awaitable[None]:
                 f"Actor {actor.uid} already has a debug lock, waiting...")
             await do_unlock.wait()
             await trio.sleep(0.1)
-            # return
 
         # assign unlock callback for debugger teardown hooks
         global _pdb_release_hook
@@ -253,9 +251,6 @@ def _breakpoint(debug_func) -> Awaitable[None]:
             # being restricted by the scope of a new task nursery.
             await actor._service_n.start(wait_for_parent_stdin_hijack)
 
-            # block here one (at the appropriate frame *up* where
-            # ``breakpoint()`` was awaited and begin handling stdio
-            # debug_func(actor)
         else:
             # we also wait in the root-parent for any child that
             # may have the tty locked prior
@@ -270,6 +265,7 @@ def _breakpoint(debug_func) -> Awaitable[None]:
 
         # block here one (at the appropriate frame *up* where
         # ``breakpoint()`` was awaited and begin handling stdio
+        log.debug("Entering the synchronous world of the debugger")
         debug_func(actor)
 
     # user code **must** await this!

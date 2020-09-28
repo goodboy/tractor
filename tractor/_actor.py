@@ -27,7 +27,7 @@ from ._exceptions import (
     unpack_error,
     ModuleNotExposed
 )
-from ._debug import _maybe_enter_pm
+from . import _debug
 from ._discovery import get_arbiter
 from ._portal import Portal
 from . import _state
@@ -129,7 +129,7 @@ async def _invoke(
     except (Exception, trio.MultiError) as err:
         # NOTE: don't enter debug mode recursively after quitting pdb
         log.exception("Actor crashed:")
-        await _maybe_enter_pm(err)
+        await _debug._maybe_enter_pm(err)
 
         # always ship errors back to caller
         err_msg = pack_error(err)
@@ -832,6 +832,14 @@ class Actor:
 
         # cancel all ongoing rpc tasks
         with trio.CancelScope(shield=True):
+
+            # kill any debugger request task to avoid deadlock
+            # with the root actor in this tree
+            dbcs = _debug._debugger_request_cs
+            if dbcs is not None:
+                log.debug("Cancelling active debugger request")
+                dbcs.cancel()
+
             # kill all ongoing tasks
             await self.cancel_rpc_tasks()
 
@@ -1051,7 +1059,7 @@ async def _start_actor(
             result = await main()
         except (Exception, trio.MultiError) as err:
             log.exception("Actor crashed:")
-            await _maybe_enter_pm(err)
+            await _debug._maybe_enter_pm(err)
             raise
 
         # XXX: the actor is cancelled when this context is complete
