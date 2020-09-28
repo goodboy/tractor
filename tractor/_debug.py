@@ -142,15 +142,15 @@ def handler(signum, frame):
 pdbpp.pdb.Pdb.sigint_handler = handler
 
 
-@contextmanager
-def _disable_sigint():
-    try:
-        # disable sigint handling while in debug
-        prior_handler = signal.signal(signal.SIGINT, handler)
-        yield
-    finally:
-        # restore SIGINT handling
-        signal.signal(signal.SIGINT, prior_handler)
+# @contextmanager
+# def _disable_sigint():
+#     try:
+#         # disable sigint handling while in debug
+#         prior_handler = signal.signal(signal.SIGINT, handler)
+#         yield
+#     finally:
+#         # restore SIGINT handling
+#         signal.signal(signal.SIGINT, prior_handler)
 
 
 async def _hijack_stdin_relay_to_child(
@@ -162,13 +162,14 @@ async def _hijack_stdin_relay_to_child(
     async with _acquire_debug_lock():
         log.warning(f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
 
-        with _disable_sigint():
-            # indicate to child that we've locked stdio
-            yield 'Locked'
+        # with _disable_sigint():
 
-            # wait for cancellation of stream by child
-            # indicating debugger is dis-engaged
-            await trio.sleep_forever()
+        # indicate to child that we've locked stdio
+        yield 'Locked'
+
+        # wait for cancellation of stream by child
+        # indicating debugger is dis-engaged
+        await trio.sleep_forever()
 
     log.debug(f"Actor {subactor_uid} RELEASED stdin hijack lock")
 
@@ -218,7 +219,6 @@ def _breakpoint(debug_func) -> Awaitable[None]:
                 log.debug(f"Exiting debugger for actor {actor}")
                 global _in_debug
                 _in_debug = False
-                # actor.statespace['_in_debug'] = False
                 log.debug(f"Child {actor} released parent stdio lock")
 
     async def _bp():
@@ -226,7 +226,6 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         enters the ``pdbpp`` debugging console.
         """
         global _in_debug
-        # in_debug = actor.statespace.setdefault('_in_debug', False)
 
         if _in_debug:
             # if **this** actor is already in debug mode block here
@@ -241,7 +240,8 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         global _pdb_release_hook
         _pdb_release_hook = do_unlock.set
 
-        # actor.statespace['_in_debug'] = True
+        # mark local actor as "in debug mode" to avoid recurrent
+        # entries/requests to the root process
         _in_debug = True
 
         # TODO: need a more robust check for the "root" actor
