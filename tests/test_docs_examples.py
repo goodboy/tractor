@@ -85,15 +85,22 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
 
 @pytest.mark.parametrize(
     'example_script',
-    [f for f in os.listdir(examples_dir()) if '__' not in f],
+    [
+        f for f in os.listdir(examples_dir())
+        if (
+            ('__' not in f) and
+            ('debugging' not in f)
+        )
+    ],
 )
 def test_example(run_example_in_subproc, example_script):
     """Load and run scripts from this repo's ``examples/`` dir as a user
     would copy and pasing them into their editor.
 
-    On windows a little more "finessing" is done to make ``multiprocessing`` play nice:
-    we copy the ``__main__.py`` into the test directory and invoke the script as a module
-    with ``python -m test_example``.
+    On windows a little more "finessing" is done to make
+    ``multiprocessing`` play nice: we copy the ``__main__.py`` into the
+    test directory and invoke the script as a module with ``python -m
+    test_example``.
     """
     ex_file = os.path.join(examples_dir(), example_script)
     with open(ex_file, 'r') as ex:
