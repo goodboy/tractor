@@ -754,7 +754,7 @@ class Actor:
                     self._arb_addr is not None
             ):
                 failed = False
-                with trio.move_on_after(5) as cs:
+                with trio.move_on_after(0.5) as cs:
                     cs.shield = True
                     try:
                         async with get_arbiter(*self._arb_addr) as arb_portal:
