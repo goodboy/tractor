@@ -11,7 +11,7 @@ from ._portal import (
     open_portal,
     LocalPortal,
 )
-from ._state import current_actor
+from ._state import current_actor, _runtime_vars
 
 
 @asynccontextmanager
@@ -35,6 +35,16 @@ async def get_arbiter(
         async with _connect_chan(host, port) as chan:
             async with open_portal(chan) as arb_portal:
                 yield arb_portal
+
+
+@asynccontextmanager
+async def get_root(
+**kwargs,
+) -> typing.AsyncGenerator[Union[Portal, LocalPortal], None]:
+    host, port = _runtime_vars['_root_mailbox']
+    async with _connect_chan(host, port) as chan:
+        async with open_portal(chan, **kwargs) as portal:
+            yield portal
 
 
 @asynccontextmanager

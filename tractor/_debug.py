@@ -15,6 +15,7 @@ import trio
 
 from .log import get_logger
 from . import _state
+from ._discovery import get_root
 
 try:
     # wtf: only exported when installed in dev mode?
@@ -190,11 +191,7 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         with trio.CancelScope() as cs:
             _debugger_request_cs = cs
             try:
-                async with tractor._portal.open_portal(
-                    actor._parent_chan,
-                    start_msg_loop=False,
-                    # shield=True,
-                ) as portal:
+                async with get_root() as portal:
                     with trio.fail_after(.5):
                         agen = await portal.run(
                             'tractor._debug',
@@ -262,9 +259,14 @@ def _breakpoint(debug_func) -> Awaitable[None]:
             async def _lock(
                 task_status=trio.TASK_STATUS_IGNORED
             ):
-                async with _acquire_debug_lock():
-                    task_status.started()
-                    await do_unlock.wait()
+                try:
+                    async with _acquire_debug_lock():
+                        task_status.started()
+                        await do_unlock.wait()
+                finally:
+                    global _in_debug
+                    _in_debug = False
+                    log.debug(f"{actor} released tty lock")
 
             await actor._service_n.start(_lock)
 
