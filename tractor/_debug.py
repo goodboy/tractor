@@ -180,7 +180,6 @@ def _breakpoint(debug_func) -> Awaitable[None]:
     """``tractor`` breakpoint entry for engaging pdb machinery
     in subactors.
     """
-    global _in_debug
     actor = tractor.current_actor()
     do_unlock = trio.Event()
 
@@ -196,7 +195,7 @@ def _breakpoint(debug_func) -> Awaitable[None]:
                     start_msg_loop=False,
                     # shield=True,
                 ) as portal:
-                    with trio.fail_after(1):
+                    with trio.fail_after(.5):
                         agen = await portal.run(
                             'tractor._debug',
                             '_hijack_stdin_relay_to_child',
@@ -225,9 +224,15 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         """Async breakpoint which schedules a parent stdio lock, and once complete
         enters the ``pdbpp`` debugging console.
         """
-        global _in_debug
+        task_name = trio.lowlevel.current_task()
 
-        if _in_debug:
+        global _in_debug
+        if _in_debug :
+            if _in_debug == task_name:
+                # this task already has the lock and is
+                # likely recurrently entering a breakpoint
+                return
+
             # if **this** actor is already in debug mode block here
             # waiting for the control to be released - this allows
             # support for recursive entries to `tractor.breakpoint()`
@@ -242,7 +247,7 @@ def _breakpoint(debug_func) -> Awaitable[None]:
 
         # mark local actor as "in debug mode" to avoid recurrent
         # entries/requests to the root process
-        _in_debug = True
+        _in_debug = task_name
 
         # TODO: need a more robust check for the "root" actor
         if actor._parent_chan:
