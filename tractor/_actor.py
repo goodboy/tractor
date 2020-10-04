@@ -539,7 +539,9 @@ class Actor:
                         f"Waiting on next msg for {chan} from {chan.uid}")
                 else:
                     # channel disconnect
-                    log.debug(f"{chan} from {chan.uid} disconnected")
+                    log.debug(
+                        f"{chan} from {chan.uid} disconnected, cancelling all rpc tasks")
+                    self.cancel_rpc_tasks(chan)
 
         except trio.ClosedResourceError:
             log.error(f"{chan} form {chan.uid} broke")
@@ -676,6 +678,9 @@ class Actor:
                             accept_port=port
                         )
                     )
+                    accept_addr = self.accept_addr
+                    if _state._runtime_vars['_is_root']:
+                        _state._runtime_vars['_root_mailbox'] = accept_addr
 
                     # Register with the arbiter if we're told its addr
                     log.debug(f"Registering {self} for role `{self.name}`")
@@ -686,7 +691,7 @@ class Actor:
                             'self',
                             'register_actor',
                             uid=self.uid,
-                            sockaddr=self.accept_addr,
+                            sockaddr=accept_addr,
                         )
 
                     registered_with_arbiter = True
@@ -895,15 +900,23 @@ class Actor:
             f"Sucessfully cancelled task:\ncid: {cid}\nfunc: {func}\n"
             f"peer: {chan.uid}\n")
 
-    async def cancel_rpc_tasks(self) -> None:
+    async def cancel_rpc_tasks(
+        self,
+        only_chan: Optional[Channel] = None,
+    ) -> None:
         """Cancel all existing RPC responder tasks using the cancel scope
         registered for each.
         """
         tasks = self._rpc_tasks
         log.info(f"Cancelling all {len(tasks)} rpc tasks:\n{tasks} ")
         for (chan, cid) in tasks.copy():
+            if only_chan is not None:
+                if only_chan != chan:
+                    continue
+
             # TODO: this should really done in a nursery batch
             await self._cancel_task(cid, chan)
+
         log.info(
             f"Waiting for remaining rpc tasks to complete {tasks}")
         await self._ongoing_rpc_tasks.wait()
@@ -1058,9 +1071,15 @@ async def _start_actor(
         try:
             result = await main()
         except (Exception, trio.MultiError) as err:
-            log.exception("Actor crashed:")
-            await _debug._maybe_enter_pm(err)
-            raise
+            try:
+                log.exception("Actor crashed:")
+                await _debug._maybe_enter_pm(err)
+
+                raise
+
+            finally:
+                actor._service_n.cancel_scope.cancel()
+                await actor.cancel()
 
         # XXX: the actor is cancelled when this context is complete
         # given that there are no more active peer channels connected

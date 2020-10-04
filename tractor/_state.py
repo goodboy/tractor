@@ -11,6 +11,7 @@ _current_actor: Optional['Actor'] = None  # type: ignore
 _runtime_vars = {
     '_debug_mode': False,
     '_is_root': False,
+    '_root_mailbox': (None, None)
 }
 
 
