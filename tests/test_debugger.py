@@ -114,6 +114,28 @@ def test_root_actor_bp(spawn, user_in_out):
         assert expect_err_str in str(child.before)
 
 
+def test_root_actor_bp_forever(spawn):
+    "Re-enter a breakpoint from the root actor-task."
+    child = spawn('root_actor_breakpoint_forever')
+
+    # do some "next" commands to demonstrate recurrent breakpoint
+    # entries
+    for _ in range(10):
+        child.sendline('next')
+        child.expect(r"\(Pdb\+\+\)")
+
+    # do one continue which should trigger a new task to lock the tty
+    child.sendline('continue')
+    child.expect(r"\(Pdb\+\+\)")
+
+    # XXX: this previously caused a bug!
+    child.sendline('n')
+    child.expect(r"\(Pdb\+\+\)")
+
+    child.sendline('n')
+    child.expect(r"\(Pdb\+\+\)")
+
+
 def test_subactor_error(spawn):
     "Single subactor raising an error"
 
@@ -128,7 +150,6 @@ def test_subactor_error(spawn):
     # send user command
     # (in this case it's the same for 'continue' vs. 'quit')
     child.sendline('continue')
-    child.expect('\r\n')
 
     # the debugger should enter a second time in the nursery
     # creating actor
