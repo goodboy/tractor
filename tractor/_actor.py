@@ -1078,7 +1078,6 @@ async def _start_actor(
                 raise
 
             finally:
-                actor._service_n.cancel_scope.cancel()
                 await actor.cancel()
 
         # XXX: the actor is cancelled when this context is complete

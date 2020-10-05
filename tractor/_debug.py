@@ -4,9 +4,9 @@ Multi-core debugging for da peeps!
 import bdb
 import sys
 from functools import partial
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from typing import Awaitable, Tuple, Optional, Callable
-import signal
+# import signal
 
 from async_generator import aclosing
 import tractor
@@ -16,6 +16,7 @@ import trio
 from .log import get_logger
 from . import _state
 from ._discovery import get_root
+from ._state import is_root_process
 
 try:
     # wtf: only exported when installed in dev mode?
@@ -35,7 +36,7 @@ __all__ = ['breakpoint', 'post_mortem']
 # placeholder for function to set a ``trio.Event`` on debugger exit
 _pdb_release_hook: Optional[Callable] = None
 
-# actor-wide flag
+# actor-wide variable pointing to current task name using debugger
 _in_debug = False
 
 # lock in root actor preventing multi-access to local tty
@@ -120,14 +121,15 @@ async def _acquire_debug_lock():
     """Acquire a actor local FIFO lock meant to mutex entry to a local
     debugger entry point to avoid tty clobbering by multiple processes.
     """
+    task_name = trio.lowlevel.current_task()
     try:
-        log.error("TTY BEING ACQUIRED")
+        log.error(f"TTY BEING ACQUIRED by {task_name}")
         await _debug_lock.acquire()
-        log.error("TTY lock acquired")
+        log.error(f"TTY lock acquired by {task_name}")
         yield
     finally:
         _debug_lock.release()
-        log.error("TTY lock released")
+        log.error(f"TTY lock released by {task_name}")
 
 
 def handler(signum, frame):
@@ -221,54 +223,46 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         """Async breakpoint which schedules a parent stdio lock, and once complete
         enters the ``pdbpp`` debugging console.
         """
-        task_name = trio.lowlevel.current_task()
+        task_name = trio.lowlevel.current_task().name
 
         global _in_debug
-        if _in_debug :
-            if _in_debug == task_name:
-                # this task already has the lock and is
-                # likely recurrently entering a breakpoint
-                return
-
-            # if **this** actor is already in debug mode block here
-            # waiting for the control to be released - this allows
-            # support for recursive entries to `tractor.breakpoint()`
-            log.warning(
-                f"Actor {actor.uid} already has a debug lock, waiting...")
-            await do_unlock.wait()
-            await trio.sleep(0.1)
-
-        # assign unlock callback for debugger teardown hooks
-        global _pdb_release_hook
-        _pdb_release_hook = do_unlock.set
-
-        # mark local actor as "in debug mode" to avoid recurrent
-        # entries/requests to the root process
-        _in_debug = task_name
 
         # TODO: need a more robust check for the "root" actor
-        if actor._parent_chan:
+        if actor._parent_chan and not is_root_process():
+            if _in_debug:
+                if _in_debug == task_name:
+                    # this task already has the lock and is
+                    # likely recurrently entering a breakpoint
+                    return
+
+                # if **this** actor is already in debug mode block here
+                # waiting for the control to be released - this allows
+                # support for recursive entries to `tractor.breakpoint()`
+                log.warning(
+                    f"Actor {actor.uid} already has a debug lock, waiting...")
+                await do_unlock.wait()
+                await trio.sleep(0.1)
+
+            # assign unlock callback for debugger teardown hooks
+            global _pdb_release_hook
+            _pdb_release_hook = do_unlock.set
+
+            # mark local actor as "in debug mode" to avoid recurrent
+            # entries/requests to the root process
+            _in_debug = task_name
+
             # this **must** be awaited by the caller and is done using the
             # root nursery so that the debugger can continue to run without
             # being restricted by the scope of a new task nursery.
             await actor._service_n.start(wait_for_parent_stdin_hijack)
 
-        else:
+        elif is_root_process():
             # we also wait in the root-parent for any child that
             # may have the tty locked prior
-            async def _lock(
-                task_status=trio.TASK_STATUS_IGNORED
-            ):
-                try:
-                    async with _acquire_debug_lock():
-                        task_status.started()
-                        await do_unlock.wait()
-                finally:
-                    global _in_debug
-                    _in_debug = False
-                    log.debug(f"{actor} released tty lock")
-
-            await actor._service_n.start(_lock)
+            if _debug_lock.locked():  # root process already has it; ignore
+                return
+            await _debug_lock.acquire()
+            _pdb_release_hook = _debug_lock.release
 
         # block here one (at the appropriate frame *up* where
         # ``breakpoint()`` was awaited and begin handling stdio
