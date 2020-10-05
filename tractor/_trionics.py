@@ -139,7 +139,7 @@ class ActorNursery:
         """
         self.cancelled = True
 
-        log.critical("Cancelling nursery")
+        log.warning(f"Cancelling nursery in {self._actor.uid}")
         with trio.move_on_after(3) as cs:
             async with trio.open_nursery() as nursery:
                 for subactor, proc, portal in self._children.values():
