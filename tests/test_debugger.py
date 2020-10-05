@@ -1,5 +1,8 @@
 """
 That native debug better work!
+
+All these tests can be understood (somewhat) by running the equivalent
+`examples/debugging/` scripts manually.
 """
 from os import path
 
@@ -10,9 +13,8 @@ from .test_docs_examples import repodir
 
 
 # TODO:
-# - recurrent entry from single actor
 # - recurrent entry to breakpoint() from single actor *after* and an
-#   error
+#   error in another task?
 # - root error before child errors
 # - root error after child errors
 # - root error before child breakpoint
@@ -68,14 +70,14 @@ def test_root_actor_error(spawn, user_in_out):
     # scan for the pdbpp prompt
     child.expect(r"\(Pdb\+\+\)")
 
+    before = str(child.before.decode())
+
     # make sure expected logging and error arrives
-    assert 'TTY lock acquired' in str(child.before)
-    assert 'AssertionError' in str(child.before)
+    assert "Attaching to pdb in crashed actor: ('arbiter'" in before
+    assert 'AssertionError' in before
 
     # send user command
     child.sendline(user_input)
-    child.expect('\r\n')
-    child.expect('TTY lock released')
 
     # process should exit
     child.expect(pexpect.EOF)
@@ -276,3 +278,35 @@ def test_multi_subactors(spawn):
     before = str(child.before.decode())
     assert "RemoteActorError: ('bp_forever'" in before
     assert 'bdb.BdbQuit' in before
+
+
+def test_multi_subactors_root_errors(spawn):
+    """Multiple subactors, both erroring and breakpointing as well as
+    a nested subactor erroring.
+    """
+    child = spawn('multi_subactor_root_errors')
+
+    # scan for the pdbpp prompt
+    child.expect(r"\(Pdb\+\+\)")
+
+    # at most one subactor should attach before the root is cancelled
+    before = str(child.before.decode())
+    assert "NameError: name 'doggypants' is not defined" in before
+
+    # continue again
+    child.sendline('c')
+    child.expect(r"\(Pdb\+\+\)")
+
+    # should now get attached in root with assert error
+    before = str(child.before.decode())
+    # should have come just after priot prompt
+    assert "Cancelling nursery in ('spawn_error'," in before
+    assert "Attaching to pdb in crashed actor: ('arbiter'" in before
+    assert "AssertionError" in before
+
+    # continue again
+    child.sendline('c')
+    child.expect(pexpect.EOF)
+
+    before = str(child.before.decode())
+    assert "AssertionError" in before

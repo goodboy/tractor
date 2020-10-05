@@ -1,12 +1,4 @@
 import tractor
-import trio
-
-
-async def breakpoint_forever():
-    "Indefinitely re-enter debugger in child actor."
-    while True:
-        await trio.sleep(0.1)
-        await tractor.breakpoint()
 
 
 async def name_error():
@@ -29,18 +21,22 @@ async def main():
 
     -python examples/debugging/multi_subactors.py
     |-python -m tractor._child --uid ('name_error', 'a7caf490 ...)
-    |-python -m tractor._child --uid ('bp_forever', '1f787a7e ...)
     `-python -m tractor._child --uid ('spawn_error', '52ee14a5 ...)
        `-python -m tractor._child --uid ('name_error', '3391222c ...)
     """
     async with tractor.open_nursery() as n:
 
-        # Spawn both actors, don't bother with collecting results
-        # (would result in a different debugger outcome due to parent's
-        # cancellation).
-        await n.run_in_actor('bp_forever', breakpoint_forever)
-        await n.run_in_actor('name_error', name_error)
-        await n.run_in_actor('spawn_error', spawn_error)
+        # spawn both actors
+        portal = await n.run_in_actor('name_error', name_error)
+        portal1 = await n.run_in_actor('spawn_error', spawn_error)
+
+        # trigger a root actor error
+        assert 0
+
+        # attempt to collect results (which raises error in parent)
+        # still has some issues where the parent seems to get stuck
+        await portal.result()
+        await portal1.result()
 
 
 if __name__ == '__main__':
