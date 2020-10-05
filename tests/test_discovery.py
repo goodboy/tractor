@@ -11,7 +11,7 @@ import pytest
 import tractor
 import trio
 
-from conftest import tractor_test
+from .conftest import tractor_test
 
 
 @tractor_test

@@ -11,7 +11,7 @@ import pytest
 import trio
 import tractor
 
-from conftest import tractor_test, no_windows
+from .conftest import tractor_test, no_windows
 
 
 async def assert_err(delay=0):
