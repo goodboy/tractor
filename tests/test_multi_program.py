@@ -6,7 +6,7 @@ import time
 
 import pytest
 import tractor
-from conftest import (
+from .conftest import (
     tractor_test,
     sig_prog,
     _INT_SIGNAL,
