@@ -19,8 +19,8 @@ async def main():
 
     The process tree should look as approximately as follows:
 
-    -python examples/debugging/multi_subactors.py
-    |-python -m tractor._child --uid ('name_error', 'a7caf490 ...)
+    python examples/debugging/multi_subactors.py
+    ├─ python -m tractor._child --uid ('name_error', 'a7caf490 ...)
     `-python -m tractor._child --uid ('spawn_error', '52ee14a5 ...)
        `-python -m tractor._child --uid ('name_error', '3391222c ...)
     """
