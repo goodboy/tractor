@@ -310,3 +310,24 @@ def test_multi_subactors_root_errors(spawn):
 
     before = str(child.before.decode())
     assert "AssertionError" in before
+
+
+def test_multi_nested_subactors_error_through_nurseries(spawn):
+    """Verify deeply nested actors that error trigger debugger entries
+    at each level up the tree.
+    """
+
+    # TODO: inside this script there's still a bug where if the parent
+    # errors before a 2 levels lower actor has released the lock, the
+    # parent tries to cancel it but it's stuck in the debugger?
+
+    child = spawn('multi_nested_subactors_error_up_through_nurseries')
+
+    for _ in range(12):
+        child.expect(r"\(Pdb\+\+\)")
+        child.sendline('c')
+
+    child.expect(pexpect.EOF)
+
+    before = str(child.before.decode())
+    assert "NameError" in before
