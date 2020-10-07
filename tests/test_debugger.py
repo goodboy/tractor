@@ -331,3 +331,16 @@ def test_multi_nested_subactors_error_through_nurseries(spawn):
 
     before = str(child.before.decode())
     assert "NameError" in before
+
+
+def test_root_nursery_cancels_before_child_releases_tty_lock(spawn):
+    """Exemplifies a bug where the root sends a cancel message before a nested child
+    which has the tty lock (and is in pdb) doesn't cancel after exiting the debugger.
+    """
+    child = spawn('root_cancelled_but_child_is_in_tty_lock')
+
+    for _ in range(5):
+        child.expect(r"\(Pdb\+\+\)")
+        child.sendline('c')
+
+    # child.expect(pexpect.EOF)
