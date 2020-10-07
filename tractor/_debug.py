@@ -11,7 +11,7 @@ from typing import Awaitable, Tuple, Optional, Callable
 from async_generator import aclosing
 import tractor
 import trio
-# from trio.testing import wait_all_tasks_blocked
+from trio.testing import wait_all_tasks_blocked
 
 from .log import get_logger
 from . import _state
@@ -117,19 +117,19 @@ class PdbwTeardown(pdbpp.Pdb):
 
 
 @asynccontextmanager
-async def _acquire_debug_lock():
+async def _acquire_debug_lock(uid: Tuple[str, str]) -> None:
     """Acquire a actor local FIFO lock meant to mutex entry to a local
     debugger entry point to avoid tty clobbering by multiple processes.
     """
     task_name = trio.lowlevel.current_task()
     try:
-        log.error(f"TTY BEING ACQUIRED by {task_name}")
+        log.error(f"TTY BEING ACQUIRED by {task_name}:{uid}")
         await _debug_lock.acquire()
-        log.error(f"TTY lock acquired by {task_name}")
+        log.error(f"TTY lock acquired by {task_name}:{uid}")
         yield
     finally:
         _debug_lock.release()
-        log.error(f"TTY lock released by {task_name}")
+        log.error(f"TTY lock released by {task_name}:{uid}")
 
 
 def handler(signum, frame):
@@ -162,7 +162,7 @@ async def _hijack_stdin_relay_to_child(
     # TODO: when we get to true remote debugging
     # this will deliver stdin data
     log.warning(f"Actor {subactor_uid} is WAITING on stdin hijack lock")
-    async with _acquire_debug_lock():
+    async with _acquire_debug_lock(subactor_uid):
         log.warning(f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
 
         # with _disable_sigint():
@@ -266,8 +266,9 @@ def _breakpoint(debug_func) -> Awaitable[None]:
 
         # block here one (at the appropriate frame *up* where
         # ``breakpoint()`` was awaited and begin handling stdio
-        log.debug("Entering the synchronous world of the debugger")
+        log.debug("Entering the synchronous world of pdb")
         debug_func(actor)
+
 
     # user code **must** await this!
     return _bp()
@@ -288,7 +289,7 @@ breakpoint = partial(
 
 
 def _post_mortem(actor):
-    log.error(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
+    log.critical(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
     # custom Pdb post-mortem entry
     pdbpp.xpm(Pdb=PdbwTeardown)
 
