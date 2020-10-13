@@ -41,7 +41,7 @@ def mk_cmd(ex_name: str) -> str:
 def spawn(
     testdir,
     arb_addr,
-) -> pexpect.spawn:
+) -> 'pexpect.spawn':
 
     def _spawn(cmd):
         return testdir.spawn(
@@ -354,7 +354,6 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(spawn):
         assert "NameError: name 'doggypants' is not defined" in before
 
         child.sendline('c')
-
 
     child.expect(pexpect.EOF)
     before = str(child.before.decode())
