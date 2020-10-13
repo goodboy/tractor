@@ -5,7 +5,7 @@ import pytest
 import trio
 import tractor
 
-from .conftest import tractor_test
+from conftest import tractor_test
 
 statespace = {'doggy': 10, 'kitty': 4}
 
