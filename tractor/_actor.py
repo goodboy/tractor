@@ -541,7 +541,7 @@ class Actor:
                     # channel disconnect
                     log.debug(
                         f"{chan} from {chan.uid} disconnected, cancelling all rpc tasks")
-                    self.cancel_rpc_tasks(chan)
+                    await self.cancel_rpc_tasks(chan)
 
         except trio.ClosedResourceError:
             log.error(f"{chan} form {chan.uid} broke")
