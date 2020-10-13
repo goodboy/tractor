@@ -230,7 +230,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                     # after we yield upwards
                     yield anursery
                     log.debug(
-                        f"Waiting on subactors {anursery._children}"
+                        f"Waiting on subactors {anursery._children} "
                         "to complete"
                     )
                 except BaseException as err:
@@ -274,6 +274,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
                 # ria_nursery scope end
 
+        # XXX: do we need a `trio.Cancelled` catch here as well?
         except (Exception, trio.MultiError) as err:
             # If actor-local error was raised while waiting on
             # ".run_in_actor()" actors then we also want to cancel all
@@ -295,6 +296,8 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                 if anursery._children:
                     with trio.CancelScope(shield=True):
                         await anursery.cancel()
+
+                # use `MultiError` as needed
                 if len(errors) > 1:
                     raise trio.MultiError(tuple(errors.values()))
                 else:
