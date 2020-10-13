@@ -203,7 +203,7 @@ async def cancel_after(wait):
 
 @pytest.fixture(scope='module')
 def time_quad_ex(arb_addr, ci_env, spawn_backend):
-    if spawn_backend == 'mp' and (platform.system() != 'Windows'):
+    if spawn_backend == 'mp':
         """no idea but the  mp *nix runs are flaking out here often...
         """
         pytest.skip("Test is too flaky on mp in CI")
