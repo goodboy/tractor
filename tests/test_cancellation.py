@@ -426,6 +426,7 @@ async def spawn():
         portal = await tn.run_in_actor('sleeper', spin_for)
 
 
+@no_windows
 def test_cancel_while_childs_child_in_sync_sleep(
     loglevel,
     start_method,
