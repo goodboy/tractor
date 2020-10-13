@@ -17,6 +17,7 @@ from ._discovery import get_arbiter, find_actor, wait_for_actor
 from ._actor import Actor, _start_actor, Arbiter
 from ._trionics import open_nursery
 from ._state import current_actor
+from . import _state
 from ._exceptions import RemoteActorError, ModuleNotExposed
 from ._debug import breakpoint, post_mortem
 from . import msg
@@ -24,6 +25,8 @@ from . import _spawn
 
 
 __all__ = [
+    'breakpoint',
+    'post_mortem',
     'current_actor',
     'find_actor',
     'get_arbiter',
@@ -51,7 +54,7 @@ async def _main(
     name: Optional[str] = None,
     start_method: Optional[str] = None,
     debug_mode: bool = False,
-    **kwargs: typing.Dict[str, typing.Any],
+    **kwargs,
 ) -> typing.Any:
     """Async entry point for ``tractor``.
     """
