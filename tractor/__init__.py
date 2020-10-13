@@ -63,11 +63,13 @@ async def _main(
     if start_method is not None:
         _spawn.try_set_start_method(start_method)
 
-    if debug_mode:
+    if debug_mode and _spawn._spawn_method == 'trio':
         _state._runtime_vars['_debug_mode'] = True
         # expose internal debug module to every actor allowing
         # for use of ``await tractor.breakpoint()``
         kwargs.setdefault('rpc_module_paths', []).append('tractor._debug')
+    elif debug_mode:
+        raise RuntimeError("Debug mode is only supported for the `trio` backend!")
 
     main = partial(async_fn, *args)
 
