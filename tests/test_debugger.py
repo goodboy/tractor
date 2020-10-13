@@ -9,7 +9,7 @@ from os import path
 import pytest
 import pexpect
 
-from .test_docs_examples import repodir
+from conftest import repodir
 
 
 # TODO:
