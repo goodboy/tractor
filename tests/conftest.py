@@ -39,6 +39,16 @@ no_windows = pytest.mark.skipif(
 )
 
 
+def repodir():
+    """Return the abspath to the repo directory.
+    """
+    dirname = os.path.dirname
+    dirpath = os.path.abspath(
+        dirname(dirname(os.path.realpath(__file__)))
+        )
+    return dirpath
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--ll", action="store", dest='loglevel',

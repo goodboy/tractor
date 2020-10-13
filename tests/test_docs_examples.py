@@ -11,15 +11,7 @@ import shutil
 
 import pytest
 
-
-def repodir():
-    """Return the abspath to the repo directory.
-    """
-    dirname = os.path.dirname
-    dirpath = os.path.abspath(
-        dirname(dirname(os.path.realpath(__file__)))
-        )
-    return dirpath
+from conftest import repodir
 
 
 def examples_dir():
