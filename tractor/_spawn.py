@@ -112,6 +112,11 @@ async def exhaust_portal(
     except (Exception, trio.MultiError) as err:
         # we reraise in the parent task via a ``trio.MultiError``
         return err
+    except trio.Cancelled as err:
+        # lol, of course we need this too ;P
+        # TODO: merge with above?
+        log.warning(f"Cancelled result waiter for {portal.actor.uid}")
+        return err
     else:
         log.debug(f"Returning final result: {final}")
         return final
