@@ -435,6 +435,9 @@ def test_cancel_while_childs_child_in_sync_sleep(
     down even when that cancellation is triggered by the parent
     2 nurseries "up".
     """
+    if start_method == 'forkserver':
+        pytest.skip("Forksever sux hard at resuming from sync sleep...")
+
     async def main():
         with trio.fail_after(2):
             async with tractor.open_nursery() as tn:
