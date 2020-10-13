@@ -5,7 +5,7 @@ import bdb
 import sys
 from functools import partial
 from contextlib import asynccontextmanager
-from typing import Awaitable, Tuple, Optional, Callable
+from typing import Awaitable, Tuple, Optional, Callable, AsyncIterator
 # import signal
 
 from async_generator import aclosing
@@ -22,9 +22,9 @@ try:
     # wtf: only exported when installed in dev mode?
     import pdbpp
 except ImportError:
-    # pdbpp is installed in regular mode...
+    # pdbpp is installed in regular mode...it monkey patches stuff
     import pdb
-    assert pdb.xpm, "pdbpp is not installed?"
+    assert pdb.xpm, "pdbpp is not installed?"  # type: ignore
     pdbpp = pdb
 
 log = get_logger(__name__)
@@ -45,7 +45,7 @@ _debug_lock = trio.StrictFIFOLock()
 # XXX: set by the current task waiting on the root tty lock
 # and must be cancelled if this actor is cancelled via message
 # otherwise deadlocks with the parent actor may ensure
-_debugger_request_cs: trio.CancelScope = None
+_debugger_request_cs: Optional[trio.CancelScope] = None
 
 
 class TractorConfig(pdbpp.DefaultConfig):
@@ -117,7 +117,7 @@ class PdbwTeardown(pdbpp.Pdb):
 
 
 @asynccontextmanager
-async def _acquire_debug_lock(uid: Tuple[str, str]) -> None:
+async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
     """Acquire a actor local FIFO lock meant to mutex entry to a local
     debugger entry point to avoid tty clobbering by multiple processes.
     """
@@ -158,7 +158,7 @@ pdbpp.pdb.Pdb.sigint_handler = handler
 
 async def _hijack_stdin_relay_to_child(
     subactor_uid: Tuple[str, str]
-) -> None:
+) -> AsyncIterator[str]:
     # TODO: when we get to true remote debugging
     # this will deliver stdin data
     log.warning(f"Actor {subactor_uid} is WAITING on stdin hijack lock")
