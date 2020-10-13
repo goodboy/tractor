@@ -334,13 +334,30 @@ def test_multi_nested_subactors_error_through_nurseries(spawn):
 
 
 def test_root_nursery_cancels_before_child_releases_tty_lock(spawn):
-    """Exemplifies a bug where the root sends a cancel message before a nested child
-    which has the tty lock (and is in pdb) doesn't cancel after exiting the debugger.
+    """Test that when the root sends a cancel message before a nested
+    child has unblocked (which can happen when it has the tty lock and
+    is engaged in pdb) it is indeed cancelled after exiting the debugger.
     """
     child = spawn('root_cancelled_but_child_is_in_tty_lock')
 
-    for _ in range(5):
+    child.expect(r"\(Pdb\+\+\)")
+
+    before = str(child.before.decode())
+    assert "NameError: name 'doggypants' is not defined" in before
+    assert "tractor._exceptions.RemoteActorError: ('name_error'" not in before
+    child.sendline('c')
+
+    for _ in range(4):
         child.expect(r"\(Pdb\+\+\)")
+
+        before = str(child.before.decode())
+        assert "NameError: name 'doggypants' is not defined" in before
+
         child.sendline('c')
 
-    # child.expect(pexpect.EOF)
+
+    child.expect(pexpect.EOF)
+    before = str(child.before.decode())
+    assert "tractor._exceptions.RemoteActorError: ('spawner0'" in before
+    assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
+    assert "NameError: name 'doggypants' is not defined" in before
