@@ -5,9 +5,11 @@ All these tests can be understood (somewhat) by running the equivalent
 `examples/debugging/` scripts manually.
 """
 from os import path
+import platform
 
 import pytest
 import pexpect
+from pexpect import popen_spawn
 
 from conftest import repodir
 
@@ -43,11 +45,19 @@ def spawn(
     arb_addr,
 ) -> 'pexpect.spawn':
 
-    def _spawn(cmd):
-        return testdir.spawn(
-            cmd=mk_cmd(cmd),
-            expect_timeout=3,
-        )
+    if platform.system() == "Windows":
+        def _spawn(cmd):
+            return popen_spawn.PopenSpawn(
+                cmd=mk_cmd(cmd),
+                timeout=3,
+            )
+    else:  # posix
+
+        def _spawn(cmd):
+            return testdir.spawn(
+                cmd=mk_cmd(cmd),
+                expect_timeout=3,
+            )
 
     return _spawn
 
