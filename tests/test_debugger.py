@@ -3,6 +3,8 @@ That native debug better work!
 
 All these tests can be understood (somewhat) by running the equivalent
 `examples/debugging/` scripts manually.
+
+TODO: None of these tests have been run successfully on windows yet.
 """
 from os import path
 
@@ -12,7 +14,7 @@ import pexpect
 from conftest import repodir
 
 
-# TODO:
+# TODO: The next great debugger audit could be done by you!
 # - recurrent entry to breakpoint() from single actor *after* and an
 #   error in another task?
 # - root error before child errors
@@ -314,12 +316,14 @@ def test_multi_subactors_root_errors(spawn):
 
 def test_multi_nested_subactors_error_through_nurseries(spawn):
     """Verify deeply nested actors that error trigger debugger entries
-    at each level up the tree.
+    at each actor nurserly (level) all the way up the tree.
     """
 
-    # TODO: inside this script there's still a bug where if the parent
-    # errors before a 2 levels lower actor has released the lock, the
-    # parent tries to cancel it but it's stuck in the debugger?
+    # NOTE: previously, inside this script was a a bug where if the
+    # parent errors before a 2-levels-lower actor has released the lock,
+    # the parent tries to cancel it but it's stuck in the debugger?
+    # A test (below) has now been added to explicitly verify this is
+    # fixed.
 
     child = spawn('multi_nested_subactors_error_up_through_nurseries')
 
