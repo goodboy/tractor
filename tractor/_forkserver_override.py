@@ -234,8 +234,8 @@ def main(listener_fd, alive_r, preload, main_path=None, sys_path=None):
                             os.close(child_w)
                         else:
                             # This shouldn't happen really
-                            warnings.warn('forkserver: waitpid returned '
-                                          'unexpected pid %d' % pid)
+                            warnings.warning('forkserver: waitpid returned '
+                                             'unexpected pid %d' % pid)
 
                 if listener in rfds:
                     # Incoming fork request
