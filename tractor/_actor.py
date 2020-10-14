@@ -150,7 +150,7 @@ async def _invoke(
         except KeyError:
             # If we're cancelled before the task returns then the
             # cancel scope will not have been inserted yet
-            log.warn(
+            log.warning(
                 f"Task {func} likely errored or cancelled before it started")
         finally:
             if not actor._rpc_tasks:
@@ -520,7 +520,7 @@ class Actor:
                     # deadlock and other weird behaviour)
                     if func != self.cancel:
                         if isinstance(cs, Exception):
-                            log.warn(f"Task for RPC func {func} failed with"
+                            log.warning(f"Task for RPC func {func} failed with"
                                      f"{cs}")
                         else:
                             # mark that we have ongoing rpc tasks
@@ -547,7 +547,7 @@ class Actor:
                     log.debug(
                         f"{chan} for {chan.uid} disconnected, cancelling tasks"
                     )
-                    self.cancel_rpc_tasks(chan)
+                    await self.cancel_rpc_tasks(chan)
 
         except trio.ClosedResourceError:
             log.error(f"{chan} form {chan.uid} broke")
@@ -757,7 +757,7 @@ class Actor:
 
             # tear down all lifetime contexts
             # api idea: ``tractor.open_context()``
-            log.warn("Closing all actor lifetime contexts")
+            log.warning("Closing all actor lifetime contexts")
             self._lifetime_stack.close()
 
             # Unregister actor from the arbiter
@@ -855,13 +855,13 @@ class Actor:
             # kill all ongoing tasks
             await self.cancel_rpc_tasks()
 
-            # cancel all rpc tasks permanently
-            if self._service_n:
-                self._service_n.cancel_scope.cancel()
-
             # stop channel server
             self.cancel_server()
             await self._server_down.wait()
+
+            # cancel all rpc tasks permanently
+            if self._service_n:
+                self._service_n.cancel_scope.cancel()
 
         log.warning(f"{self.uid} was sucessfullly cancelled")
         self._cancel_complete.set()
@@ -1095,6 +1095,7 @@ async def _start_actor(
         # XXX: the actor is cancelled when this context is complete
         # given that there are no more active peer channels connected
         actor.cancel_server()
+        actor._service_n.cancel_scope.cancel()
 
     # unset module state
     _state._current_actor = None
