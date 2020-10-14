@@ -2,7 +2,8 @@ tractor
 =======
 A `structured concurrent`_, async-native "`actor model`_" built on trio_ and multiprocessing_.
 
-|travis| |docs|
+|gh_actions|
+|docs|
 
 .. _actor model: https://en.wikipedia.org/wiki/Actor_model
 .. _trio: https://github.com/python-trio/trio
@@ -57,8 +58,8 @@ channel`_!
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
 
 
-.. |travis| image:: https://img.shields.io/travis/goodboy/tractor/master.svg
-    :target: https://travis-ci.org/goodboy/tractor
+.. |gh_actions| image:: https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fgoodboy%2Ftractor%2Fbadge&style=popout-square
+    :target: https://actions-badge.atrox.dev/goodboy/tractor/goto
 .. |docs| image:: https://readthedocs.org/projects/tractor/badge/?version=latest
     :target: https://tractor.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
