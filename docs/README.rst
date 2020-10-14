@@ -1,6 +1,7 @@
 tractor
 =======
-A `structured concurrent`_, async-native "`actor model`_" built on trio_ and multiprocessing_.
+The Python async-native multi-core system *you always wanted*.
+
 
 |gh_actions|
 |docs|
@@ -13,16 +14,22 @@ A `structured concurrent`_, async-native "`actor model`_" built on trio_ and mul
 .. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
 
 
-``tractor`` is an attempt to bring trionic_ `structured concurrency`_ to
-distributed multi-core Python; it aims to be the Python multi-processing
-framework *you always wanted*.
+``tractor`` is a `structured concurrent`_ "`actor model`_" built on trio_ and multiprocessing_.
 
-``tractor`` lets you spawn ``trio`` *"actors"*: processes which each run
-a ``trio`` scheduled task tree (also known as an `async sandwich`_).
-*Actors* communicate by exchanging asynchronous messages_ and avoid
-sharing any state. This model allows for highly distributed software
-architecture which works just as well on multiple cores as it does over
-many hosts.
+It is an attempt to pair trionic_ `structured concurrency`_ with
+distributed Python. You can think of it as a ``trio`` *-across-processes*
+or simply as a replacement for the stdlib's `multiprocessing` but built
+on async primitives for IPC.
+
+``tractor``'s nurseries lets you spawn ``trio`` *"actors"*: new Python
+processes which each run a ``trio`` scheduled task tree (also known as
+an `async sandwich`_). That is, each "*Actor*" is a new process plus
+a `trio` runtime.
+
+Processes communicate by exchanging asynchronous messages_ and avoid
+sharing state. The intention of this model is to allow for highly
+distributed software that, through the adherence to *structured
+concurrency*, results in systems which fail in predicatable ways.
 
 The first step to grok ``tractor`` is to get the basics of ``trio`` down.
 A great place to start is the `trio docs`_ and this `blog post`_.
@@ -45,17 +52,28 @@ No PyPi release yet!
     pip install git+git://github.com/goodboy/tractor.git
 
 
+Alluring Features
+-----------------
+- Infinitely nesteable process trees
+- A built-in API for inter-process streaming
+- A (first ever?) "native" multi-core debugger for Python using `pdb++`_
+- (Soon to land) `asyncio` support allowing for "infected" actors where
+  `trio` drives the `asyncio` scheduler via the astounding "`guest mode`_"
+
+
 Feel like saying hi?
 --------------------
 This project is very much coupled to the ongoing development of
 ``trio`` (i.e. ``tractor`` gets most of its ideas from that brilliant
 community). If you want to help, have suggestions or just want to
-say hi, please feel free to reach us on in our `matrix channel`_.  If
+say hi, please feel free to reach us in our `matrix channel`_.  If
 matrix seems too hip, we're also mostly all in the the `trio gitter
 channel`_!
 
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
+.. _pdb++: https://github.com/pdbpp/pdbpp
+.. _guest mode: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
 
 
 .. |gh_actions| image:: https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fgoodboy%2Ftractor%2Fbadge&style=popout-square
