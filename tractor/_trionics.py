@@ -275,7 +275,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                 # ria_nursery scope end
 
         # XXX: do we need a `trio.Cancelled` catch here as well?
-        except (Exception, trio.MultiError) as err:
+        except (Exception, trio.MultiError, trio.Cancelled) as err:
             # If actor-local error was raised while waiting on
             # ".run_in_actor()" actors then we also want to cancel all
             # remaining sub-actors (due to our lone strategy:
