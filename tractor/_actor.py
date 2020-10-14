@@ -1083,19 +1083,12 @@ async def _start_actor(
         try:
             result = await main()
         except (Exception, trio.MultiError) as err:
-            try:
-                log.exception("Actor crashed:")
-                await _debug._maybe_enter_pm(err)
+            log.exception("Actor crashed:")
+            await _debug._maybe_enter_pm(err)
 
-                raise
-
-            finally:
-                await actor.cancel()
-
-        # XXX: the actor is cancelled when this context is complete
-        # given that there are no more active peer channels connected
-        actor.cancel_server()
-        actor._service_n.cancel_scope.cancel()
+            raise
+        finally:
+            await actor.cancel()
 
     # unset module state
     _state._current_actor = None
