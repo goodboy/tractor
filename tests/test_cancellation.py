@@ -413,3 +413,38 @@ def test_cancel_via_SIGINT_other_task(
 
     with pytest.raises(KeyboardInterrupt):
         tractor.run(main)
+
+
+
+async def spin_for(period=3):
+    "Sync sleep."
+    time.sleep(period)
+
+
+async def spawn():
+    async with tractor.open_nursery() as tn:
+        portal = await tn.run_in_actor('sleeper', spin_for)
+
+
+@no_windows
+def test_cancel_while_childs_child_in_sync_sleep(
+    loglevel,
+    start_method,
+    spawn_backend,
+):
+    """Verify that a child cancelled while executing sync code is torn
+    down even when that cancellation is triggered by the parent
+    2 nurseries "up".
+    """
+    if start_method == 'forkserver':
+        pytest.skip("Forksever sux hard at resuming from sync sleep...")
+
+    async def main():
+        with trio.fail_after(2):
+            async with tractor.open_nursery() as tn:
+                portal = await tn.run_in_actor('spawn', spawn)
+                await trio.sleep(1)
+                assert 0
+
+    with pytest.raises(AssertionError):
+        tractor.run(main)

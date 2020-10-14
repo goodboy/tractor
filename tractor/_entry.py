@@ -3,6 +3,7 @@ Process entry points.
 """
 from functools import partial
 from typing import Tuple, Any
+import signal
 
 import trio  # type: ignore
 
@@ -57,6 +58,13 @@ def _trio_main(
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
     """
+    # Disable sigint handling in children;
+    # we don't need it thanks to our cancellation machinery.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    # TODO: make a global func to set this or is it too hacky?
+    # os.environ['PYTHONBREAKPOINT'] = 'tractor._debug.breakpoint'
+
     if actor.loglevel is not None:
         log.info(
             f"Setting loglevel for {actor.uid} to {actor.loglevel}")

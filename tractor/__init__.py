@@ -17,12 +17,16 @@ from ._discovery import get_arbiter, find_actor, wait_for_actor
 from ._actor import Actor, _start_actor, Arbiter
 from ._trionics import open_nursery
 from ._state import current_actor
+from . import _state
 from ._exceptions import RemoteActorError, ModuleNotExposed
+from ._debug import breakpoint, post_mortem
 from . import msg
 from . import _spawn
 
 
 __all__ = [
+    'breakpoint',
+    'post_mortem',
     'current_actor',
     'find_actor',
     'get_arbiter',
@@ -46,16 +50,34 @@ _default_arbiter_port = 1616
 async def _main(
     async_fn: typing.Callable[..., typing.Awaitable],
     args: Tuple,
-    kwargs: typing.Dict[str, typing.Any],
     arbiter_addr: Tuple[str, int],
     name: Optional[str] = None,
+    start_method: Optional[str] = None,
+    debug_mode: bool = False,
+    **kwargs,
 ) -> typing.Any:
     """Async entry point for ``tractor``.
     """
     logger = log.get_logger('tractor')
+
+    if start_method is not None:
+        _spawn.try_set_start_method(start_method)
+
+    if debug_mode and _spawn._spawn_method == 'trio':
+        _state._runtime_vars['_debug_mode'] = True
+        # expose internal debug module to every actor allowing
+        # for use of ``await tractor.breakpoint()``
+        kwargs.setdefault('rpc_module_paths', []).append('tractor._debug')
+    elif debug_mode:
+        raise RuntimeError("Debug mode is only supported for the `trio` backend!")
+
     main = partial(async_fn, *args)
+
     arbiter_addr = (host, port) = arbiter_addr or (
-            _default_arbiter_host, _default_arbiter_port)
+        _default_arbiter_host,
+        _default_arbiter_port
+    )
+
     loglevel = kwargs.get('loglevel', log.get_loglevel())
     if loglevel is not None:
         log._default_loglevel = loglevel
@@ -98,20 +120,40 @@ def run(
     *args,
     name: Optional[str] = None,
     arbiter_addr: Tuple[str, int] = (
-        _default_arbiter_host, _default_arbiter_port),
+        _default_arbiter_host,
+        _default_arbiter_port,
+    ),
     # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
-    # OR `trio_run_in_process` (the new default).
+    # OR `trio` (the new default).
     start_method: Optional[str] = None,
+    debug_mode: bool = False,
     **kwargs,
 ) -> Any:
     """Run a trio-actor async function in process.
 
     This is tractor's main entry and the start point for any async actor.
     """
-    if start_method is not None:
-        _spawn.try_set_start_method(start_method)
-    return trio.run(_main, async_fn, args, kwargs, arbiter_addr, name)
+    # mark top most level process as root actor
+    _state._runtime_vars['_is_root'] = True
+
+    return trio.run(
+        partial(
+            # our entry
+            _main,
+
+            # user entry point
+            async_fn,
+            args,
+
+            # global kwargs
+            arbiter_addr=arbiter_addr,
+            name=name,
+            start_method=start_method,
+            debug_mode=debug_mode,
+            **kwargs,
+        )
+    )
 
 
 def run_daemon(

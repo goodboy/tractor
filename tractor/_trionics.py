@@ -13,10 +13,11 @@ from ._state import current_actor
 from .log import get_logger, get_loglevel
 from ._actor import Actor
 from ._portal import Portal
+from . import _state
 from . import _spawn
 
 
-log = get_logger('tractor')
+log = get_logger(__name__)
 
 _default_bind_addr: Tuple[str, int] = ('127.0.0.1', 0)
 
@@ -58,6 +59,10 @@ class ActorNursery:
     ) -> Portal:
         loglevel = loglevel or self._actor.loglevel or get_loglevel()
 
+        # configure and pass runtime state
+        _rtv = _state._runtime_vars.copy()
+        _rtv['_is_root'] = False
+
         subactor = Actor(
             name,
             # modules allowed to invoked funcs from
@@ -83,6 +88,7 @@ class ActorNursery:
                 self.errors,
                 bind_addr,
                 parent_addr,
+                _rtv,  # run time vars
             )
         )
 
@@ -131,19 +137,14 @@ class ActorNursery:
         If ``hard_killl`` is set to ``True`` then kill the processes
         directly without any far end graceful ``trio`` cancellation.
         """
-        def do_hard_kill(proc):
-            log.warning(f"Hard killing subactors {self._children}")
-            proc.terminate()
-            # XXX: below doesn't seem to work?
-            # send KeyBoardInterrupt (trio abort signal) to sub-actors
-            # os.kill(proc.pid, signal.SIGINT)
+        self.cancelled = True
 
-        log.debug("Cancelling nursery")
+        log.warning(f"Cancelling nursery in {self._actor.uid}")
         with trio.move_on_after(3) as cs:
             async with trio.open_nursery() as nursery:
                 for subactor, proc, portal in self._children.values():
                     if hard_kill:
-                        do_hard_kill(proc)
+                        proc.terminate()
                     else:
                         if portal is None:  # actor hasn't fully spawned yet
                             event = self._actor._peer_connected[subactor.uid]
@@ -163,7 +164,7 @@ class ActorNursery:
                                 if chan:
                                     portal = Portal(chan)
                                 else:  # there's no other choice left
-                                    do_hard_kill(proc)
+                                    proc.terminate()
 
                         # spawn cancel tasks for each sub-actor
                         assert portal
@@ -172,13 +173,13 @@ class ActorNursery:
         # if we cancelled the cancel (we hung cancelling remote actors)
         # then hard kill all sub-processes
         if cs.cancelled_caught:
-            log.error(f"Failed to gracefully cancel {self}, hard killing!")
-            async with trio.open_nursery():
-                for subactor, proc, portal in self._children.values():
-                    nursery.start_soon(do_hard_kill, proc)
+            log.error(
+                f"Failed to cancel {self}\nHard killing process tree!")
+            for subactor, proc, portal in self._children.values():
+                log.warning(f"Hard killing process {proc}")
+                proc.terminate()
 
         # mark ourselves as having (tried to have) cancelled all subactors
-        self.cancelled = True
         self._join_procs.set()
 
 
@@ -229,7 +230,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                     # after we yield upwards
                     yield anursery
                     log.debug(
-                        f"Waiting on subactors {anursery._children}"
+                        f"Waiting on subactors {anursery._children} "
                         "to complete"
                     )
                 except BaseException as err:
@@ -273,6 +274,7 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
 
                 # ria_nursery scope end
 
+        # XXX: do we need a `trio.Cancelled` catch here as well?
         except (Exception, trio.MultiError) as err:
             # If actor-local error was raised while waiting on
             # ".run_in_actor()" actors then we also want to cancel all
@@ -294,6 +296,8 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                 if anursery._children:
                     with trio.CancelScope(shield=True):
                         await anursery.cancel()
+
+                # use `MultiError` as needed
                 if len(errors) > 1:
                     raise trio.MultiError(tuple(errors.values()))
                 else:

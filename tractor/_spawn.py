@@ -23,7 +23,7 @@ from multiprocessing import forkserver  # type: ignore
 from typing import Tuple
 
 from . import _forkserver_override
-from ._state import current_actor
+from ._state import current_actor, is_main_process
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
@@ -87,12 +87,6 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     return _ctx
 
 
-def is_main_process() -> bool:
-    """Bool determining if this actor is running in the top-most process.
-    """
-    return mp.current_process().name == 'MainProcess'
-
-
 async def exhaust_portal(
     portal: Portal,
     actor: Actor
@@ -117,6 +111,11 @@ async def exhaust_portal(
                         final.append(item)
     except (Exception, trio.MultiError) as err:
         # we reraise in the parent task via a ``trio.MultiError``
+        return err
+    except trio.Cancelled as err:
+        # lol, of course we need this too ;P
+        # TODO: merge with above?
+        log.warning(f"Cancelled result waiter for {portal.actor.uid}")
         return err
     else:
         log.debug(f"Returning final result: {final}")
@@ -194,8 +193,17 @@ async def spawn_subactor(
         # the outer scope since no actor zombies are
         # ever allowed. This ``__aexit__()`` also shields
         # internally.
-        async with proc:
-            log.debug(f"Terminating {proc}")
+        log.debug(f"Attempting to kill {proc}")
+
+        # NOTE: this timeout effectively does nothing right now since
+        # we are shielding the ``.wait()`` inside ``new_proc()`` which
+        # will pretty much never release until the process exits.
+        with trio.move_on_after(3) as cs:
+            async with proc:
+                log.debug(f"Terminating {proc}")
+        if cs.cancelled_caught:
+            log.critical(f"HARD KILLING {proc}")
+            proc.kill()
 
 
 async def new_proc(
@@ -206,6 +214,8 @@ async def new_proc(
     # passed through to actor main
     bind_addr: Tuple[str, int],
     parent_addr: Tuple[str, int],
+    _runtime_vars: Dict[str, Any],  # serialized and sent to _child
+    *,
     use_trio_run_in_process: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
@@ -241,8 +251,13 @@ async def new_proc(
                     "statespace": subactor.statespace,
                     "_arb_addr": subactor._arb_addr,
                     "bind_host": bind_addr[0],
-                    "bind_port": bind_addr[1]
+                    "bind_port": bind_addr[1],
+                    "_runtime_vars": _runtime_vars,
                 })
+
+                # track subactor in current nursery
+                curr_actor = current_actor()
+                curr_actor._actoruid2nursery[subactor.uid] = actor_nursery
 
                 # resume caller at next checkpoint now that child is up
                 task_status.started(portal)
@@ -352,6 +367,8 @@ async def new_proc(
             if proc.is_alive():
                 await proc_waiter(proc)
             proc.join()
+
+        # This is again common logic for all backends:
 
         log.debug(f"Joined {proc}")
         # pop child entry to indicate we are no longer managing this subactor
