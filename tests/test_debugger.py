@@ -282,6 +282,34 @@ def test_multi_subactors(spawn):
     assert 'bdb.BdbQuit' in before
 
 
+def test_multi_daemon_subactors(spawn):
+    """Multiple daemon subactors, both erroring and breakpointing within a
+    stream.
+    """
+    child = spawn('multi_daemon_subactors')
+
+    child.expect(r"\(Pdb\+\+\)")
+
+    before = str(child.before.decode())
+    assert "Attaching pdb to actor: ('bp_forever'" in before
+
+    child.sendline('c')
+
+    # first name_error failure
+    child.expect(r"\(Pdb\+\+\)")
+    before = str(child.before.decode())
+    assert "NameError" in before
+
+    child.sendline('c')
+
+    child.expect(r"\(Pdb\+\+\)")
+    before = str(child.before.decode())
+    assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
+
+    child.sendline('c')
+    child.expect(pexpect.EOF)
+
+
 def test_multi_subactors_root_errors(spawn):
     """Multiple subactors, both erroring and breakpointing as well as
     a nested subactor erroring.

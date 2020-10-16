@@ -301,7 +301,18 @@ class Actor:
         try:
             return getattr(self._mods[ns], funcname)
         except KeyError as err:
-            raise ModuleNotExposed(*err.args)
+            mne = ModuleNotExposed(*err.args)
+
+            if ns == '__main__':
+                msg = (
+                    "\n\nMake sure you exposed the current module using:\n\n"
+                    "ActorNursery.start_actor(<name>, rpc_module_paths="
+                    "[__name__])"
+                )
+
+                mne.msg += msg
+
+            raise mne
 
     async def _stream_handler(
         self,
@@ -591,7 +602,7 @@ class Actor:
                 # Receive runtime state from our parent
                 parent_data = await chan.recv()
                 log.debug(
-                    "Recieved state from parent:\n"
+                    "Received state from parent:\n"
                     f"{parent_data}"
                 )
                 accept_addr = (
@@ -599,6 +610,7 @@ class Actor:
                     parent_data.pop('bind_port'),
                 )
                 rvs = parent_data.pop('_runtime_vars')
+                log.debug(f"Runtime vars are: {rvs}")
                 rvs['_is_root'] = False
                 _state._runtime_vars.update(rvs)
 

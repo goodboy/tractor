@@ -42,6 +42,7 @@ async def get_root(
 **kwargs,
 ) -> typing.AsyncGenerator[Union[Portal, LocalPortal], None]:
     host, port = _runtime_vars['_root_mailbox']
+    assert host is not None
     async with _connect_chan(host, port) as chan:
         async with open_portal(chan, **kwargs) as portal:
             yield portal
