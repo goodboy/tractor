@@ -20,8 +20,8 @@ from ._state import current_actor
 from . import _state
 from ._exceptions import RemoteActorError, ModuleNotExposed
 from ._debug import breakpoint, post_mortem
-from . import msg
 from . import _spawn
+from . import msg
 
 
 __all__ = [
@@ -60,16 +60,23 @@ async def _main(
     """
     logger = log.get_logger('tractor')
 
+    # mark top most level process as root actor
+    _state._runtime_vars['_is_root'] = True
+
     if start_method is not None:
         _spawn.try_set_start_method(start_method)
 
     if debug_mode and _spawn._spawn_method == 'trio':
         _state._runtime_vars['_debug_mode'] = True
+
         # expose internal debug module to every actor allowing
         # for use of ``await tractor.breakpoint()``
         kwargs.setdefault('rpc_module_paths', []).append('tractor._debug')
+
     elif debug_mode:
-        raise RuntimeError("Debug mode is only supported for the `trio` backend!")
+        raise RuntimeError(
+            "Debug mode is only supported for the `trio` backend!"
+        )
 
     main = partial(async_fn, *args)
 
@@ -134,9 +141,6 @@ def run(
 
     This is tractor's main entry and the start point for any async actor.
     """
-    # mark top most level process as root actor
-    _state._runtime_vars['_is_root'] = True
-
     return trio.run(
         partial(
             # our entry
