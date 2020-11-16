@@ -196,6 +196,22 @@ async def _acquire_debug_lock(
         log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
 
 
+def handler(signum, frame, *args):
+    """Specialized debugger compatible SIGINT handler.
+
+    In childred we always ignore to avoid deadlocks since cancellation
+    should always be managed by the parent supervising actor. The root
+    is always cancelled on ctrl-c.
+    """
+    if is_root_process():
+        tractor.current_actor().cancel_soon()
+    else:
+        print(
+            "tractor ignores SIGINT while in debug mode\n"
+            "If you have a special need for it please open an issue.\n"
+        )
+
+
 @tractor.context
 async def _hijack_stdin_for_child(
 
