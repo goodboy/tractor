@@ -60,7 +60,7 @@ def _trio_main(
     """
     # Disable sigint handling in children;
     # we don't need it thanks to our cancellation machinery.
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    # signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     # TODO: make a global func to set this or is it too hacky?
     # os.environ['PYTHONBREAKPOINT'] = 'tractor._debug.breakpoint'
