@@ -11,7 +11,6 @@ from typing import Awaitable, Tuple, Optional, Callable, AsyncIterator
 from async_generator import aclosing
 import tractor
 import trio
-from trio.testing import wait_all_tasks_blocked
 
 from .log import get_logger
 from . import _state
@@ -132,13 +131,20 @@ async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
         log.error(f"TTY lock released by {task_name}:{uid}")
 
 
-def handler(signum, frame):
-    """Block SIGINT while in debug to avoid deadlocks with cancellation.
+def handler(signum, frame, *args):
+    """Specialized debugger compatible SIGINT handler.
+
+    In childred we always ignore to avoid deadlocks since cancellation
+    should always be managed by the parent supervising actor. The root
+    is always cancelled on ctrl-c.
     """
-    print(
-        "tractor ignores SIGINT while in debug mode\n"
-        "If you have a special need for it please open an issue.\n"
-    )
+    if is_root_process():
+        tractor.current_actor().cancel_soon()
+    else:
+        print(
+            "tractor ignores SIGINT while in debug mode\n"
+            "If you have a special need for it please open an issue.\n"
+        )
 
 
 # don't allow those stdlib mofos to mess with sigint handler
@@ -261,6 +267,7 @@ def _breakpoint(debug_func) -> Awaitable[None]:
             # may have the tty locked prior
             if _debug_lock.locked():  # root process already has it; ignore
                 return
+
             await _debug_lock.acquire()
             _pdb_release_hook = _debug_lock.release
 
@@ -268,7 +275,6 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         # ``breakpoint()`` was awaited and begin handling stdio
         log.debug("Entering the synchronous world of pdb")
         debug_func(actor)
-
 
     # user code **must** await this!
     return _bp()
