@@ -162,6 +162,10 @@ def _get_mod_abspath(module):
     return os.path.abspath(module.__file__)
 
 
+# process-global stack closed at end on actor runtime teardown
+_lifetime_stack: ExitStack = ExitStack()
+
+
 class Actor:
     """The fundamental concurrency primitive.
 
@@ -176,7 +180,6 @@ class Actor:
     _root_n: Optional[trio.Nursery] = None
     _service_n: Optional[trio.Nursery] = None
     _server_n: Optional[trio.Nursery] = None
-    _lifetime_stack: ExitStack = ExitStack()
 
     # Information about `__main__` from parent
     _parent_main_data: Dict[str, str]
@@ -531,8 +534,9 @@ class Actor:
                     # deadlock and other weird behaviour)
                     if func != self.cancel:
                         if isinstance(cs, Exception):
-                            log.warning(f"Task for RPC func {func} failed with"
-                                     f"{cs}")
+                            log.warning(
+                                f"Task for RPC func {func} failed with"
+                                f"{cs}")
                         else:
                             # mark that we have ongoing rpc tasks
                             self._ongoing_rpc_tasks = trio.Event()
@@ -770,7 +774,7 @@ class Actor:
             # tear down all lifetime contexts
             # api idea: ``tractor.open_context()``
             log.warning("Closing all actor lifetime contexts")
-            self._lifetime_stack.close()
+            _lifetime_stack.close()
 
             # Unregister actor from the arbiter
             if registered_with_arbiter and (
@@ -839,6 +843,14 @@ class Actor:
         finally:
             # signal the server is down since nursery above terminated
             self._server_down.set()
+
+    def cancel_soon(self) -> None:
+        """Cancel this actor asap; can be called from a sync context.
+
+        Schedules `.cancel()` to be run immediately just like when
+        cancelled by the parent.
+        """
+        self._service_n.start_soon(self.cancel)
 
     async def cancel(self) -> bool:
         """Cancel this actor.
