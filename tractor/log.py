@@ -55,7 +55,15 @@ def get_logger(
     '''Return the package log or a sub-log for `name` if provided.
     '''
     log = rlog = logging.getLogger(_root_name)
+
     if name and name != _proj_name:
+
+        # handling for modules that use ``get_logger(__name__)`` to
+        # avoid duplicate project-package token in msg output
+        rname, _, tail = name.partition('.')
+        if rname == _root_name:
+            name = tail
+
         log = rlog.getChild(name)
         log.level = rlog.level
 
