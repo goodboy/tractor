@@ -8,28 +8,35 @@ The Python async-native multi-core system *you always wanted*.
 
 .. _actor model: https://en.wikipedia.org/wiki/Actor_model
 .. _trio: https://github.com/python-trio/trio
-.. _multiprocessing: https://en.wikipedia.org/wiki/Multiprocessing
+.. _multi-processing: https://en.wikipedia.org/wiki/Multiprocessing
 .. _trionic: https://trio.readthedocs.io/en/latest/design.html#high-level-design-principles
 .. _async sandwich: https://trio.readthedocs.io/en/latest/tutorial.html#async-sandwich
 .. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
 
 
-``tractor`` is a `structured concurrent`_ "`actor model`_" built on trio_ and multiprocessing_.
+``tractor`` is a `structured concurrent`_ "`actor model`_" built on trio_ and multi-processing_.
 
 It is an attempt to pair trionic_ `structured concurrency`_ with
-distributed Python. You can think of it as a ``trio`` *-across-processes*
-or simply as a replacement for the stdlib's `multiprocessing` but built
-on async primitives for IPC.
+distributed Python. You can think of it as a ``trio``
+*-across-processes* or simply as an opinionated replacement for the
+stdlib's ``multiprocessing`` but built on async programming primitives
+from the ground up.
 
-``tractor``'s nurseries lets you spawn ``trio`` *"actors"*: new Python
+Don't be scared off by this description. ``tractor`` **is just ``trio``**
+but with nurseries for process management and cancel-able IPC.
+If you understand how to work with ``trio``, ``tractor`` will give you
+the parallelism you've been missing.
+
+``tractor``'s nurseries let you spawn ``trio`` *"actors"*: new Python
 processes which each run a ``trio`` scheduled task tree (also known as
-an `async sandwich`_). That is, each "*Actor*" is a new process plus
-a `trio` runtime.
+an `async sandwich`_ - a call to ``trio.run()``). That is, each
+"*Actor*" is a new process plus a ``trio`` runtime.
 
-Processes communicate by exchanging asynchronous messages_ and avoid
+"Actors" communicate by exchanging asynchronous messages_ and avoid
 sharing state. The intention of this model is to allow for highly
 distributed software that, through the adherence to *structured
-concurrency*, results in systems which fail in predicatable ways.
+concurrency*, results in systems which fail in predictable and
+recoverable ways.
 
 The first step to grok ``tractor`` is to get the basics of ``trio`` down.
 A great place to start is the `trio docs`_ and this `blog post`_.
@@ -54,11 +61,24 @@ No PyPi release yet!
 
 Alluring Features
 -----------------
+- **It's just** ``trio``, but with SC applied to processes (aka "actors")
 - Infinitely nesteable process trees
-- A built-in API for inter-process streaming
+- Built-in API for inter-process streaming
 - A (first ever?) "native" multi-core debugger for Python using `pdb++`_
-- (Soon to land) `asyncio` support allowing for "infected" actors where
+- (Soon to land) ``asyncio`` support allowing for "infected" actors where
   `trio` drives the `asyncio` scheduler via the astounding "`guest mode`_"
+
+
+The example you're probably after...
+------------------------------------
+It seems the initial query from most new users is "how do I make a worker
+pool thing?".
+
+``tractor`` is built to handle any SC process tree you can
+imagine; the "worker pool" pattern is a trivial special case:
+
+
+# TODO: workerpool example
 
 
 Feel like saying hi?
