@@ -15,7 +15,7 @@ log = get_logger(__name__)
 
 
 def _mp_main(
-    actor: 'Actor',  # noqa
+    actor: 'Actor',  # type: ignore
     accept_addr: Tuple[str, int],
     forkserver_info: Tuple[Any, Any, Any, Any, Any],
     start_method: str,
@@ -54,8 +54,9 @@ def _mp_main(
 
 
 def _trio_main(
-    actor: 'Actor',  # noqa
-    parent_addr: Tuple[str, int] = None
+    actor: 'Actor',  # type: ignore
+    *,
+    parent_addr: Tuple[str, int] = None,
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
     """

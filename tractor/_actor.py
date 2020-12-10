@@ -821,7 +821,7 @@ class Actor:
         self._server_down = trio.Event()
         try:
             async with trio.open_nursery() as server_n:
-                listeners: List[trio.abc.Listener] = await server_n.start(
+                l: List[trio.abc.Listener] = await server_n.start(
                     partial(
                         trio.serve_tcp,
                         self._stream_handler,
@@ -832,9 +832,10 @@ class Actor:
                         host=accept_host,
                     )
                 )
-                log.debug("Started tcp server(s) on"  # type: ignore
-                          f" {[l.socket for l in listeners]}")
-                self._listeners.extend(listeners)
+                log.debug(
+                    "Started tcp server(s) on"
+                    f" {[getattr(l, 'socket', 'unknown socket') for l in l]}")
+                self._listeners.extend(l)
                 task_status.started(server_n)
         finally:
             # signal the server is down since nursery above terminated
