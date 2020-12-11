@@ -767,8 +767,8 @@ class Actor:
         finally:
             log.info("Root nursery complete")
 
-            # tear down all lifetime contexts
-            # api idea: ``tractor.open_context()``
+            # tear down all lifetime contexts if not in guest mode
+            # XXX: should this just be in the entrypoint?
             log.warning("Closing all actor lifetime contexts")
             self._lifetime_stack.close()
 
