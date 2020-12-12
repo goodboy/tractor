@@ -39,7 +39,8 @@ async def main():
         portal = await n.run_in_actor('spawner0', spawn_until, depth=0)
         portal1 = await n.run_in_actor('spawner1', spawn_until, depth=1)
 
-        # nursery cancellation should be triggered due to propagated error
+        # nursery cancellation should be triggered due to propagated
+        # error from child.
         await portal.result()
         await portal1.result()
 

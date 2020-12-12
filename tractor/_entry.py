@@ -7,7 +7,6 @@ import signal
 
 import trio  # type: ignore
 
-from ._actor import Actor
 from .log import get_console_log, get_logger
 from . import _state
 
@@ -16,7 +15,7 @@ log = get_logger(__name__)
 
 
 def _mp_main(
-    actor: 'Actor',
+    actor: 'Actor',  # type: ignore
     accept_addr: Tuple[str, int],
     forkserver_info: Tuple[Any, Any, Any, Any, Any],
     start_method: str,
@@ -49,12 +48,15 @@ def _mp_main(
         trio.run(trio_main)
     except KeyboardInterrupt:
         pass  # handle it the same way trio does?
-    log.info(f"Actor {actor.uid} terminated")
+
+    finally:
+        log.info(f"Actor {actor.uid} terminated")
 
 
 def _trio_main(
-    actor: 'Actor',
-    parent_addr: Tuple[str, int] = None
+    actor: 'Actor',  # type: ignore
+    *,
+    parent_addr: Tuple[str, int] = None,
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
     """
@@ -86,4 +88,5 @@ def _trio_main(
     except KeyboardInterrupt:
         log.warning(f"Actor {actor.uid} received KBI")
 
-    log.info(f"Actor {actor.uid} terminated")
+    finally:
+        log.info(f"Actor {actor.uid} terminated")

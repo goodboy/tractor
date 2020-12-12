@@ -117,9 +117,13 @@ async def _main(
     # Note that if the current actor is the arbiter it is desirable
     # for it to stay up indefinitely until a re-election process has
     # taken place - which is not implemented yet FYI).
-    return await _start_actor(
-        actor, main, host, port, arbiter_addr=arbiter_addr
-    )
+
+    try:
+        return await _start_actor(
+            actor, main, host, port, arbiter_addr=arbiter_addr
+        )
+    finally:
+        logger.info("Root actor terminated")
 
 
 def run(

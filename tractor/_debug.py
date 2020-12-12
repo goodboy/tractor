@@ -6,12 +6,10 @@ import sys
 from functools import partial
 from contextlib import asynccontextmanager
 from typing import Awaitable, Tuple, Optional, Callable, AsyncIterator
-# import signal
 
 from async_generator import aclosing
 import tractor
 import trio
-from trio.testing import wait_all_tasks_blocked
 
 from .log import get_logger
 from . import _state
@@ -130,19 +128,6 @@ async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
     finally:
         _debug_lock.release()
         log.error(f"TTY lock released by {task_name}:{uid}")
-
-
-def handler(signum, frame):
-    """Block SIGINT while in debug to avoid deadlocks with cancellation.
-    """
-    print(
-        "tractor ignores SIGINT while in debug mode\n"
-        "If you have a special need for it please open an issue.\n"
-    )
-
-
-# don't allow those stdlib mofos to mess with sigint handler
-pdbpp.pdb.Pdb.sigint_handler = handler
 
 
 # @contextmanager
@@ -269,14 +254,29 @@ def _breakpoint(debug_func) -> Awaitable[None]:
         log.debug("Entering the synchronous world of pdb")
         debug_func(actor)
 
-
     # user code **must** await this!
     return _bp()
 
 
+def _mk_pdb():
+    # XXX: setting these flags on the pdb instance are absolutely
+    # critical to having ctrl-c work in the ``trio`` standard way!
+    # The stdlib's pdb supports entering the current sync frame
+    # on a SIGINT, with ``trio`` we pretty much never want this
+    # and we did we can handle it in the ``tractor`` task runtime.
+
+    pdb = PdbwTeardown()
+    pdb.allow_kbdint = True
+    pdb.nosigint = True
+
+    return pdb
+
+
 def _set_trace(actor):
     log.critical(f"\nAttaching pdb to actor: {actor.uid}\n")
-    PdbwTeardown().set_trace(
+
+    pdb = _mk_pdb()
+    pdb.set_trace(
         # start 2 levels up in user code
         frame=sys._getframe().f_back.f_back,
     )
@@ -290,8 +290,10 @@ breakpoint = partial(
 
 def _post_mortem(actor):
     log.critical(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
+    pdb = _mk_pdb()
+
     # custom Pdb post-mortem entry
-    pdbpp.xpm(Pdb=PdbwTeardown)
+    pdbpp.xpm(Pdb=lambda: pdb)
 
 
 post_mortem = partial(
