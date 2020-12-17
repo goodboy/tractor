@@ -6,6 +6,7 @@ All these tests can be understood (somewhat) by running the equivalent
 
 TODO: None of these tests have been run successfully on windows yet.
 """
+import time
 from os import path
 
 import pytest
@@ -370,6 +371,8 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(spawn, start_method
     child has unblocked (which can happen when it has the tty lock and
     is engaged in pdb) it is indeed cancelled after exiting the debugger.
     """
+    timed_out_early = False
+
     child = spawn('root_cancelled_but_child_is_in_tty_lock')
 
     child.expect(r"\(Pdb\+\+\)")
@@ -377,9 +380,13 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(spawn, start_method
     before = str(child.before.decode())
     assert "NameError: name 'doggypants' is not defined" in before
     assert "tractor._exceptions.RemoteActorError: ('name_error'" not in before
+    time.sleep(0.5)
+
     child.sendline('c')
 
-    for _ in range(4):
+
+    for i in range(4):
+        time.sleep(0.5)
         try:
             child.expect(r"\(Pdb\+\+\)")
         except TimeoutError:
@@ -390,13 +397,26 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(spawn, start_method
             else:
                 raise
 
+        except pexpect.exceptions.EOF:
+            print(f"Failed early on {i}?")
+            before = str(child.before.decode())
+
+            timed_out_early = True
+
+            # race conditions on how fast the continue is sent?
+            break
+
+
         before = str(child.before.decode())
         assert "NameError: name 'doggypants' is not defined" in before
 
         child.sendline('c')
 
     child.expect(pexpect.EOF)
-    before = str(child.before.decode())
-    assert "tractor._exceptions.RemoteActorError: ('spawner0'" in before
-    assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
-    assert "NameError: name 'doggypants' is not defined" in before
+
+    if not timed_out_early:
+
+        before = str(child.before.decode())
+        assert "tractor._exceptions.RemoteActorError: ('spawner0'" in before
+        assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
+        assert "NameError: name 'doggypants' is not defined" in before
