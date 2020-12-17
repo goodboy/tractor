@@ -42,9 +42,15 @@ def mk_cmd(ex_name: str) -> str:
 
 @pytest.fixture
 def spawn(
+    start_method,
     testdir,
     arb_addr,
 ) -> 'pexpect.spawn':
+
+    if start_method != 'trio':
+        pytest.skip(
+            "Debugger tests are only supported on the trio backend"
+        )
 
     def _spawn(cmd):
         return testdir.spawn(
