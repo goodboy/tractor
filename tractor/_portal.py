@@ -7,6 +7,7 @@ import typing
 from typing import Tuple, Any, Dict, Optional, Set
 from functools import partial
 from dataclasses import dataclass
+from contextlib import contextmanager
 
 import trio
 from async_generator import asynccontextmanager
@@ -59,6 +60,7 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
         self._cid = cid
         self._rx_chan = rx_chan
         self._portal = portal
+        self._shielded = False
 
     # delegate directly to underlying mem channel
     def receive_nowait(self):
@@ -83,6 +85,18 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
                 "Received internal error at portal?")
             raise unpack_error(msg, self._portal.channel)
 
+    @contextmanager
+    def shield_channel(
+        self
+    ) -> typing.AsyncGenerator['StreamReceiveChannel', None]:
+        """Shield this stream's underlying channel such that a local consumer task
+        can be cancelled (and possibly restarted) using ``trio.Cancelled``.
+
+        """
+        self._shielded = True
+        yield self
+        self._shielded = False
+
     async def aclose(self):
         """Cancel associated remote actor task and local memory channel
         on close.
@@ -90,12 +104,18 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
         if self._rx_chan._closed:
             log.warning(f"{self} is already closed")
             return
+
+        if self._shielded:
+            log.warning(f"{self} is shielded, portal channel being kept alive")
+            return
+
         cid = self._cid
         with trio.move_on_after(0.5) as cs:
             cs.shield = True
             log.warning(
                 f"Cancelling stream {cid} to "
                 f"{self._portal.channel.uid}")
+
             # NOTE: we're telling the far end actor to cancel a task
             # corresponding to *this actor*. The far end local channel
             # instance is passed to `Actor._cancel_task()` implicitly.
