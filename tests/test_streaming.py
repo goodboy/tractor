@@ -262,7 +262,7 @@ async def test_respawn_consumer_task(
     spawn_backend,
     loglevel,
 ):
-    """Verify that ``._portal.StreamReceiveChannel.shield_channel()``
+    """Verify that ``._portal.ReceiveStream.shield()``
     sucessfully protects the underlying IPC channel from being closed
     when cancelling and respawning a consumer task.
 
@@ -292,7 +292,7 @@ async def test_respawn_consumer_task(
                 task_status.started(cs)
 
                 # shield stream's underlying channel from cancellation
-                with stream.shield_channel():
+                with stream.shield():
 
                     async for v in stream:
                         print(f'from stream: {v}')
