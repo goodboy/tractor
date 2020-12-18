@@ -2,7 +2,7 @@
 Per process state
 """
 from typing import Optional, Dict, Any
-from collections import Mapping
+from collections.abc import Mapping
 import multiprocessing as mp
 
 import trio
