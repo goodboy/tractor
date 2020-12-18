@@ -395,15 +395,13 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(spawn, start_method
         time.sleep(0.5)
         try:
             child.expect(r"\(Pdb\+\+\)")
-        except TimeoutError:
-            if start_method == 'mp':
-                # appears to be some little races that might result in the
-                # last couple acts tearing down early
-                break
-            else:
-                raise
 
-        except pexpect.exceptions.EOF:
+        except (
+            pexpect.exceptions.EOF,
+            pexpect.exceptions.TIMEOUT,
+        ):
+            # races all over..
+
             print(f"Failed early on {i}?")
             before = str(child.before.decode())
 
