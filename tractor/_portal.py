@@ -4,9 +4,10 @@ Portal api
 import importlib
 import inspect
 import typing
-from typing import Tuple, Any, Dict, Optional, Set
+from typing import Tuple, Any, Dict, Optional, Set, Iterator
 from functools import partial
 from dataclasses import dataclass
+from contextlib import contextmanager
 
 import trio
 from async_generator import asynccontextmanager
@@ -37,7 +38,7 @@ async def maybe_open_nursery(
             yield nursery
 
 
-class StreamReceiveChannel(trio.abc.ReceiveChannel):
+class ReceiveStream(trio.abc.ReceiveChannel):
     """A wrapper around a ``trio._channel.MemoryReceiveChannel`` with
     special behaviour for signalling stream termination across an
     inter-actor ``Channel``. This is the type returned to a local task
@@ -59,6 +60,7 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
         self._cid = cid
         self._rx_chan = rx_chan
         self._portal = portal
+        self._shielded = False
 
     # delegate directly to underlying mem channel
     def receive_nowait(self):
@@ -83,6 +85,18 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
                 "Received internal error at portal?")
             raise unpack_error(msg, self._portal.channel)
 
+    @contextmanager
+    def shield(
+        self
+    ) -> Iterator['ReceiveStream']:  # noqa
+        """Shield this stream's underlying channel such that a local consumer task
+        can be cancelled (and possibly restarted) using ``trio.Cancelled``.
+
+        """
+        self._shielded = True
+        yield self
+        self._shielded = False
+
     async def aclose(self):
         """Cancel associated remote actor task and local memory channel
         on close.
@@ -90,12 +104,18 @@ class StreamReceiveChannel(trio.abc.ReceiveChannel):
         if self._rx_chan._closed:
             log.warning(f"{self} is already closed")
             return
+
+        if self._shielded:
+            log.warning(f"{self} is shielded, portal channel being kept alive")
+            return
+
         cid = self._cid
         with trio.move_on_after(0.5) as cs:
             cs.shield = True
             log.warning(
                 f"Cancelling stream {cid} to "
                 f"{self._portal.channel.uid}")
+
             # NOTE: we're telling the far end actor to cancel a task
             # corresponding to *this actor*. The far end local channel
             # instance is passed to `Actor._cancel_task()` implicitly.
@@ -136,7 +156,7 @@ class Portal:
         self._expect_result: Optional[
             Tuple[str, Any, str, Dict[str, Any]]
         ] = None
-        self._streams: Set[StreamReceiveChannel] = set()
+        self._streams: Set[ReceiveStream] = set()
         self.actor = current_actor()
 
     async def _submit(
@@ -199,7 +219,7 @@ class Portal:
         # to make async-generators the fundamental IPC API over channels!
         # (think `yield from`, `gen.send()`, and functional reactive stuff)
         if resptype == 'yield':  # stream response
-            rchan = StreamReceiveChannel(cid, recv_chan, self)
+            rchan = ReceiveStream(cid, recv_chan, self)
             self._streams.add(rchan)
             return rchan
 
@@ -302,7 +322,7 @@ class LocalPortal:
     A compatibility shim for normal portals but for invoking functions
     using an in process actor instance.
     """
-    actor: 'Actor'  # type: ignore
+    actor: 'Actor'  # type: ignore # noqa
     channel: Channel
 
     async def run(self, ns: str, func_name: str, **kwargs) -> Any:

@@ -214,9 +214,12 @@ class Channel:
                     #     # time is pointless
                     #     await self.msgstream.send(sent)
             except trio.BrokenResourceError:
+
                 if not self._autorecon:
                     raise
+
             await self.aclose()
+
             if self._autorecon:  # attempt reconnect
                 await self._reconnect()
                 continue

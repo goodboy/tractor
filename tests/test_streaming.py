@@ -7,6 +7,7 @@ import platform
 
 import trio
 import tractor
+from tractor.testing import tractor_test
 import pytest
 
 
@@ -53,6 +54,7 @@ async def stream_from_single_subactor(stream_func_name):
     """Verify we can spawn a daemon actor and retrieve streamed data.
     """
     async with tractor.find_actor('streamerd') as portals:
+
         if not portals:
             # only one per host address, spawns an actor if None
             async with tractor.open_nursery() as nursery:
@@ -73,8 +75,10 @@ async def stream_from_single_subactor(stream_func_name):
                 # it'd sure be nice to have an asyncitertools here...
                 iseq = iter(seq)
                 ival = next(iseq)
+
                 async for val in stream:
                     assert val == ival
+
                     try:
                         ival = next(iseq)
                     except StopIteration:
@@ -83,6 +87,7 @@ async def stream_from_single_subactor(stream_func_name):
                         await stream.aclose()
 
                 await trio.sleep(0.3)
+
                 try:
                     await stream.__anext__()
                 except StopAsyncIteration:
@@ -109,8 +114,11 @@ def test_stream_from_single_subactor(arb_addr, start_method, stream_func):
 
 # this is the first 2 actors, streamer_1 and streamer_2
 async def stream_data(seed):
+
     for i in range(seed):
+
         yield i
+
         # trigger scheduler to simulate practical usage
         await trio.sleep(0)
 
@@ -246,3 +254,68 @@ def test_not_fast_enough_quad(
     else:
         # should be cancelled mid-streaming
         assert results is None
+
+
+@tractor_test
+async def test_respawn_consumer_task(
+    arb_addr,
+    spawn_backend,
+    loglevel,
+):
+    """Verify that ``._portal.ReceiveStream.shield()``
+    sucessfully protects the underlying IPC channel from being closed
+    when cancelling and respawning a consumer task.
+
+    This also serves to verify that all values from the stream can be
+    received despite the respawns.
+
+    """
+    stream = None
+
+    async with tractor.open_nursery() as n:
+
+        stream = await(await n.run_in_actor(
+            'streamer',
+            stream_data,
+            seed=11,
+        )).result()
+
+        expect = set(range(11))
+        received = []
+
+        # this is the re-spawn task routine
+        async def consume(task_status=trio.TASK_STATUS_IGNORED):
+            print('starting consume task..')
+            nonlocal stream
+
+            with trio.CancelScope() as cs:
+                task_status.started(cs)
+
+                # shield stream's underlying channel from cancellation
+                with stream.shield():
+
+                    async for v in stream:
+                        print(f'from stream: {v}')
+                        expect.remove(v)
+                        received.append(v)
+
+                print('exited consume')
+
+        async with trio.open_nursery() as ln:
+            cs = await ln.start(consume)
+
+            while True:
+
+                await trio.sleep(0.1)
+
+                if received[-1] % 2 == 0:
+
+                    print('cancelling consume task..')
+                    cs.cancel()
+
+                    # respawn
+                    cs = await ln.start(consume)
+
+                if not expect:
+                    print("all values streamed, BREAKING")
+                    break
