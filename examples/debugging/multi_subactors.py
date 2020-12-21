@@ -18,7 +18,10 @@ async def spawn_error():
     """"A nested nursery that triggers another ``NameError``.
     """
     async with tractor.open_nursery() as n:
-        portal = await n.run_in_actor('name_error_1', name_error)
+        portal = await n.run_in_actor(
+            name_error,
+            name='name_error_1',
+        )
         return await portal.result()
 
 
@@ -38,9 +41,9 @@ async def main():
         # Spawn both actors, don't bother with collecting results
         # (would result in a different debugger outcome due to parent's
         # cancellation).
-        await n.run_in_actor('bp_forever', breakpoint_forever)
-        await n.run_in_actor('name_error', name_error)
-        await n.run_in_actor('spawn_error', spawn_error)
+        await n.run_in_actor(breakpoint_forever)
+        await n.run_in_actor(name_error)
+        await n.run_in_actor(spawn_error)
 
 
 if __name__ == '__main__':

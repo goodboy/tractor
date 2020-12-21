@@ -237,7 +237,7 @@ def test_multi_subactors(spawn):
     child.expect(r"\(Pdb\+\+\)")
 
     before = str(child.before.decode())
-    assert "Attaching pdb to actor: ('bp_forever'" in before
+    assert "Attaching pdb to actor: ('breakpoint_forever'" in before
 
     # do some "next" commands to demonstrate recurrent breakpoint
     # entries
@@ -265,7 +265,7 @@ def test_multi_subactors(spawn):
     child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
-    assert "Attaching pdb to actor: ('bp_forever'" in before
+    assert "Attaching pdb to actor: ('breakpoint_forever'" in before
 
     # now run some "continues" to show re-entries
     for _ in range(5):
@@ -277,7 +277,7 @@ def test_multi_subactors(spawn):
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
     assert "Attaching to pdb in crashed actor: ('arbiter'" in before
-    assert "RemoteActorError: ('bp_forever'" in before
+    assert "RemoteActorError: ('breakpoint_forever'" in before
     assert 'bdb.BdbQuit' in before
 
     # process should exit
@@ -285,7 +285,7 @@ def test_multi_subactors(spawn):
     child.expect(pexpect.EOF)
 
     before = str(child.before.decode())
-    assert "RemoteActorError: ('bp_forever'" in before
+    assert "RemoteActorError: ('breakpoint_forever'" in before
     assert 'bdb.BdbQuit' in before
 
 
@@ -391,8 +391,9 @@ def test_multi_nested_subactors_error_through_nurseries(spawn):
 
     child.expect(pexpect.EOF)
 
-    before = str(child.before.decode())
-    assert "NameError" in before
+    if not timed_out_early:
+        before = str(child.before.decode())
+        assert "NameError" in before
 
 
 def test_root_nursery_cancels_before_child_releases_tty_lock(spawn, start_method):

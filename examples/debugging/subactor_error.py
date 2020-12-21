@@ -8,7 +8,7 @@ async def name_error():
 async def main():
     async with tractor.open_nursery() as n:
 
-        portal = await n.run_in_actor('name_error', name_error)
+        portal = await n.run_in_actor(name_error)
         await portal.result()
 
 

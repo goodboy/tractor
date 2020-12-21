@@ -80,9 +80,11 @@ def test_rpc_errors(arb_addr, to_call, testdir):
         # spawn a subactor which calls us back
         async with tractor.open_nursery() as n:
             await n.run_in_actor(
-                'subactor',
                 sleep_back_actor,
                 actor_name=subactor_requests_to,
+
+                name='subactor',
+
                 # function from the local exposed module space
                 # the subactor will invoke when it RPCs back to this actor
                 func_name=funcname,

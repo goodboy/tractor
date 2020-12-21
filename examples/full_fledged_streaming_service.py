@@ -30,9 +30,7 @@ async def aggregate(seed):
 
         async def push_to_chan(portal, send_chan):
             async with send_chan:
-                async for value in await portal.run(
-                    __name__, 'stream_data', seed=seed
-                ):
+                async for value in await portal.run(stream_data, seed=seed):
                     # leverage trio's built-in backpressure
                     await send_chan.send(value)
 
@@ -74,8 +72,8 @@ async def main():
         pre_start = time.time()
 
         portal = await nursery.run_in_actor(
-            'aggregator',
             aggregate,
+            name='aggregator',
             seed=seed,
         )
 
