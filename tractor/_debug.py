@@ -305,6 +305,10 @@ post_mortem = partial(
 async def _maybe_enter_pm(err):
     if (
         _state.debug_mode()
+
+        # NOTE: don't enter debug mode recursively after quitting pdb
+        # Iow, don't re-enter the repl if the `quit` command was issued
+        # by the user.
         and not isinstance(err, bdb.BdbQuit)
 
         # XXX: if the error is the likely result of runtime-wide

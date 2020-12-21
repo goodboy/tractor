@@ -12,10 +12,14 @@ async def spawn_until(depth=0):
     async with tractor.open_nursery() as n:
         if depth < 1:
             # await n.run_in_actor('breakpoint_forever', breakpoint_forever)
-            await n.run_in_actor('name_error', name_error)
+            await n.run_in_actor(name_error)
         else:
             depth -= 1
-            await n.run_in_actor(f'spawn_until_{depth}', spawn_until, depth=depth)
+            await n.run_in_actor(
+                spawn_until,
+                depth=depth,
+                name=f'spawn_until_{depth}',
+            )
 
 
 async def main():
@@ -36,8 +40,16 @@ async def main():
     async with tractor.open_nursery() as n:
 
         # spawn both actors
-        portal = await n.run_in_actor('spawner0', spawn_until, depth=0)
-        portal1 = await n.run_in_actor('spawner1', spawn_until, depth=1)
+        portal = await n.run_in_actor(
+            spawn_until,
+            depth=0,
+            name='spawner0',
+        )
+        portal1 = await n.run_in_actor(
+            spawn_until,
+            depth=1,
+            name='spawner1',
+        )
 
         # nursery cancellation should be triggered due to propagated
         # error from child.

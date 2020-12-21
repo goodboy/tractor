@@ -62,7 +62,6 @@ async def stream_from_single_subactor(stream_func_name):
                 portal = await nursery.start_actor(
                     'streamerd',
                     rpc_module_paths=[__name__],
-                    statespace={'global_dict': {}},
                 )
 
                 seq = range(10)
@@ -186,9 +185,9 @@ async def a_quadruple_example():
         pre_start = time.time()
 
         portal = await nursery.run_in_actor(
-            'aggregator',
             aggregate,
             seed=seed,
+            name='aggregator',
         )
 
         start = time.time()
@@ -275,9 +274,9 @@ async def test_respawn_consumer_task(
     async with tractor.open_nursery() as n:
 
         stream = await(await n.run_in_actor(
-            'streamer',
             stream_data,
             seed=11,
+            name='streamer',
         )).result()
 
         expect = set(range(11))

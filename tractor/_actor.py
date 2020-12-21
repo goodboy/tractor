@@ -126,10 +126,17 @@ async def _invoke(
                     with cancel_scope as cs:
                         task_status.started(cs)
                         await chan.send({'return': await coro, 'cid': cid})
+
     except (Exception, trio.MultiError) as err:
-        # NOTE: don't enter debug mode recursively after quitting pdb
-        log.exception("Actor crashed:")
-        await _debug._maybe_enter_pm(err)
+
+        if not isinstance(err, trio.ClosedResourceError):
+            log.exception("Actor crashed:")
+            # XXX: is there any case where we'll want to debug IPC
+            # disconnects? I can't think of a reason that inspecting
+            # this type of failure will be useful for respawns or
+            # recovery logic - the only case is some kind of strange bug
+            # in `trio` itself?
+            await _debug._maybe_enter_pm(err)
 
         # always ship errors back to caller
         err_msg = pack_error(err)

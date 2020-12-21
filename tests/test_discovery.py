@@ -74,14 +74,14 @@ async def test_trynamic_trio(func, start_method):
         print("Alright... Action!")
 
         donny = await n.run_in_actor(
-            'donny',
             func,
             other_actor='gretchen',
+            name='donny',
         )
         gretchen = await n.run_in_actor(
-            'gretchen',
             func,
             other_actor='donny',
+            name='gretchen',
         )
         print(await gretchen.result())
         print(await donny.result())
@@ -147,7 +147,7 @@ async def spawn_and_check_registry(
                     portals = {}
                     for i in range(3):
                         name = f'a{i}'
-                        portals[name] = await n.run_in_actor(name, to_run)
+                        portals[name] = await n.run_in_actor(to_run, name=name)
 
                     # wait on last actor to come up
                     async with tractor.wait_for_actor(name):
@@ -257,7 +257,10 @@ async def close_chans_before_nursery(
             get_reg = partial(aportal.run, 'self', 'get_registry')
 
             async with tractor.open_nursery() as tn:
-                portal1 = await tn.run_in_actor('consumer1', stream_forever)
+                portal1 = await tn.run_in_actor(
+                    stream_forever,
+                    name='consumer1',
+                )
                 agen1 = await portal1.result()
 
                 portal2 = await tn.start_actor('consumer2', rpc_module_paths=[__name__])

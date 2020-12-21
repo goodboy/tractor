@@ -126,7 +126,10 @@ async def test_required_args(callwith_expecterror):
         async with tractor.open_nursery() as n:
             # await func(**kwargs)
             portal = await n.run_in_actor(
-                'pubber', multilock_pubber, **kwargs)
+                multilock_pubber,
+                name='pubber',
+                **kwargs
+            )
 
             async with tractor.wait_for_actor('pubber'):
                 pass
@@ -163,9 +166,17 @@ def test_multi_actor_subs_arbiter_pub(
                 )
 
             even_portal = await n.run_in_actor(
-                'evens', subs, which=['even'], pub_actor_name=name)
+                subs,
+                which=['even'],
+                name='evens',
+                pub_actor_name=name
+            )
             odd_portal = await n.run_in_actor(
-                'odds', subs, which=['odd'], pub_actor_name=name)
+                subs,
+                which=['odd'],
+                name='odds',
+                pub_actor_name=name
+            )
 
             async with tractor.wait_for_actor('evens'):
                 # block until 2nd actor is initialized

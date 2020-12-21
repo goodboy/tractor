@@ -385,37 +385,61 @@ as ``multiprocessing`` calls it) which is running ``main()``.
 .. _remote function execution: https://codespeak.net/execnet/example/test_info.html#remote-exec-a-function-avoiding-inlined-source-part-i
 
 
-Actor local variables
-*********************
-Although ``tractor`` uses a *shared-nothing* architecture between processes
-you can of course share state between tasks running *within* an actor.
-``trio`` tasks spawned via multiple RPC calls to an actor can access global
-state using the per actor ``statespace`` dictionary:
+Actor local (aka *process global*) variables
+********************************************
+Although ``tractor`` uses a *shared-nothing* architecture between
+processes you can of course share state between tasks running *within*
+an actor (since a `trio.run()` runtime is single threaded). ``trio``
+tasks spawned via multiple RPC calls to an actor can modify
+*process-global-state* defined using Python module attributes:
 
 .. code:: python
 
 
-        statespace = {'doggy': 10}
+        # a per process cache
+        _actor_cache: Dict[str, bool] = {}
 
 
-        def check_statespace():
-            # Remember this runs in a new process so no changes
-            # will propagate back to the parent actor
-            assert tractor.current_actor().statespace == statespace
+        def ping_endpoints(endpoints: List[str]):
+            """Start a polling process which runs completely separate
+            from our root actor/process.
+
+            """
+
+            # This runs in a new process so no changes # will propagate
+            # back to the parent actor
+            while True:
+
+                for ep in endpoints:
+                    status = await check_endpoint_is_up(ep)
+                    _actor_cache[ep] = status
+
+                await trio.sleep(0.5)
+
+
+        async def get_alive_endpoints():
+
+            nonlocal _actor_cache
+
+            return {key for key, value in _actor_cache.items() if value}
 
 
         async def main():
+
             async with tractor.open_nursery() as n:
-                await n.run_in_actor(
-                    'checker',
-                    check_statespace,
-                    statespace=statespace
-                )
+
+                portal = await n.run_in_actor(ping_endpoints)
+
+                # print the alive endpoints after 3 seconds
+                await trio.sleep(3)
+
+                # this is submitted to be run in our "ping_endpoints" actor
+                print(await portal.run(get_alive_endpoints))
 
 
-Of course you don't have to use the ``statespace`` variable (it's mostly
-a convenience for passing simple data to newly spawned actors); building
-out a state sharing system per-actor is totally up to you.
+You can pass any kind of (`msgpack`) serializable data between actors using
+function call semantics but building out a state sharing system per-actor
+is totally up to you.
 
 
 Service Discovery

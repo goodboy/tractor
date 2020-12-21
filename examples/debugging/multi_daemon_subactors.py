@@ -23,8 +23,8 @@ async def main():
         p1 = await n.start_actor('name_error', rpc_module_paths=[__name__])
 
         # retreive results
-        stream = await p0.run(__name__, 'breakpoint_forever')
-        await p1.run(__name__, 'name_error')
+        stream = await p0.run(breakpoint_forever)
+        await p1.run(name_error)
 
 
 if __name__ == '__main__':

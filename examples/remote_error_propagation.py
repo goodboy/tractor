@@ -15,7 +15,7 @@ async def main():
             ))
 
         # start one actor that will fail immediately
-        await n.run_in_actor('extra', assert_err)
+        await n.run_in_actor(assert_err)
 
     # should error here with a ``RemoteActorError`` containing
     # an ``AssertionError`` and all the other actors have been cancelled

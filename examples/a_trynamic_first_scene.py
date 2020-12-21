@@ -13,7 +13,7 @@ async def hi():
 
 async def say_hello(other_actor):
     async with tractor.wait_for_actor(other_actor) as portal:
-        return await portal.run(_this_module, 'hi')
+        return await portal.run(hi)
 
 
 async def main():
@@ -24,14 +24,14 @@ async def main():
         print("Alright... Action!")
 
         donny = await n.run_in_actor(
-            'donny',
             say_hello,
+            name='donny',
             # arguments are always named
             other_actor='gretchen',
         )
         gretchen = await n.run_in_actor(
-            'gretchen',
             say_hello,
+            name='gretchen',
             other_actor='donny',
         )
         print(await gretchen.result())
