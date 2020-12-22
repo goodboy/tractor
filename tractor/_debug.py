@@ -180,15 +180,14 @@ def _breakpoint(debug_func) -> Awaitable[None]:
             try:
                 async with get_root() as portal:
                     with trio.fail_after(.5):
-                        agen = await portal.run(
-                            'tractor._debug',
-                            '_hijack_stdin_relay_to_child',
+                        stream = await portal.run(
+                            tractor._debug._hijack_stdin_relay_to_child,
                             subactor_uid=actor.uid,
                         )
-                    async with aclosing(agen):
+                    async with aclosing(stream):
 
                         # block until first yield above
-                        async for val in agen:
+                        async for val in stream:
 
                             assert val == 'Locked'
                             task_status.started()
