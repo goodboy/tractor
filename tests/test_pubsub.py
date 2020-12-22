@@ -58,7 +58,7 @@ async def subs(
 
     async with tractor.find_actor(pub_actor_name) as portal:
         stream = await portal.run(
-            __name__, 'pubber',
+            pubber,
             topics=which,
             seed=seed,
         )
@@ -76,7 +76,7 @@ async def subs(
         await stream.aclose()
 
         stream = await portal.run(
-            __name__, 'pubber',
+            pubber,
             topics=['odd'],
             seed=seed,
         )
