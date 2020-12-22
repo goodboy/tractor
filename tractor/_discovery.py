@@ -60,7 +60,7 @@ async def find_actor(
     """
     actor = current_actor()
     async with get_arbiter(*arbiter_sockaddr or actor._arb_addr) as arb_portal:
-        sockaddr = await arb_portal.run('self', 'find_actor', name=name)
+        sockaddr = await arb_portal.run_from_ns('self', 'find_actor', name=name)
         # TODO: return portals to all available actors - for now just
         # the last one that registered
         if name == 'arbiter' and actor.is_arbiter:
@@ -84,7 +84,7 @@ async def wait_for_actor(
     """
     actor = current_actor()
     async with get_arbiter(*arbiter_sockaddr or actor._arb_addr) as arb_portal:
-        sockaddrs = await arb_portal.run('self', 'wait_for_actor', name=name)
+        sockaddrs = await arb_portal.run_from_ns('self', 'wait_for_actor', name=name)
         sockaddr = sockaddrs[-1]
         async with _connect_chan(*sockaddr) as chan:
             async with open_portal(chan) as portal:

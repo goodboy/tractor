@@ -712,7 +712,7 @@ class Actor:
                     assert isinstance(self._arb_addr, tuple)
 
                     async with get_arbiter(*self._arb_addr) as arb_portal:
-                        await arb_portal.run(
+                        await arb_portal.run_from_ns(
                             'self',
                             'register_actor',
                             uid=self.uid,
@@ -788,8 +788,11 @@ class Actor:
                     cs.shield = True
                     try:
                         async with get_arbiter(*self._arb_addr) as arb_portal:
-                            await arb_portal.run(
-                                'self', 'unregister_actor', uid=self.uid)
+                            await arb_portal.run_from_ns(
+                                'self',
+                                'unregister_actor',
+                                uid=self.uid
+                            )
                     except OSError:
                         failed = True
                 if cs.cancelled_caught:
