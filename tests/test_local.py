@@ -46,7 +46,7 @@ async def test_self_is_registered_localportal(arb_addr):
     assert actor.is_arbiter
     async with tractor.get_arbiter(*arb_addr) as portal:
         assert isinstance(portal, tractor._portal.LocalPortal)
-        sockaddr = await portal.run('self', 'wait_for_actor', name='arbiter')
+        sockaddr = await portal.run_from_ns('self', 'wait_for_actor', name='arbiter')
         assert sockaddr[0] == arb_addr
 
 
