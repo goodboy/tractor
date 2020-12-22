@@ -137,7 +137,7 @@ def test_cancel_single_subactor(arb_addr, mechanism):
             portal = await nursery.start_actor(
                 'nothin', rpc_module_paths=[__name__],
             )
-            assert (await portal.run(__name__, 'do_nothing')) is None
+            assert (await portal.run(do_nothing)) is None
 
             if mechanism == 'nursery_cancel':
                 # would hang otherwise
@@ -173,7 +173,7 @@ async def test_cancel_infinite_streamer(start_method):
 
             # this async for loop streams values from the above
             # async generator running in a separate process
-            async for letter in await portal.run(__name__, 'stream_forever'):
+            async for letter in await portal.run(stream_forever):
                 print(letter)
 
     # we support trio's cancellation system
@@ -247,7 +247,8 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
                     # if this function fails then we should error here
                     # and the nursery should teardown all other actors
                     try:
-                        await portal.run(__name__, func.__name__, **kwargs)
+                        await portal.run(func, **kwargs)
+
                     except tractor.RemoteActorError as err:
                         assert err.type == err_type
                         # we only expect this first error to propogate

@@ -50,7 +50,7 @@ async def context_stream(ctx, sequence):
     assert cs.cancelled_caught
 
 
-async def stream_from_single_subactor(stream_func_name):
+async def stream_from_single_subactor(stream_func):
     """Verify we can spawn a daemon actor and retrieve streamed data.
     """
     async with tractor.find_actor('streamerd') as portals:
@@ -67,8 +67,7 @@ async def stream_from_single_subactor(stream_func_name):
                 seq = range(10)
 
                 stream = await portal.run(
-                    __name__,
-                    stream_func_name,  # one of the funcs above
+                    stream_func,  # one of the funcs above
                     sequence=list(seq),  # has to be msgpack serializable
                 )
                 # it'd sure be nice to have an asyncitertools here...
@@ -96,7 +95,7 @@ async def stream_from_single_subactor(stream_func_name):
 
 
 @pytest.mark.parametrize(
-    'stream_func', ['async_gen_stream', 'context_stream']
+    'stream_func', [async_gen_stream, context_stream]
 )
 def test_stream_from_single_subactor(arb_addr, start_method, stream_func):
     """Verify streaming from a spawned async generator.
@@ -104,7 +103,7 @@ def test_stream_from_single_subactor(arb_addr, start_method, stream_func):
     tractor.run(
         partial(
             stream_from_single_subactor,
-            stream_func_name=stream_func,
+            stream_func=stream_func,
         ),
         arbiter_addr=arb_addr,
         start_method=start_method,

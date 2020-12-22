@@ -70,9 +70,9 @@ async def test_movie_theatre_convo(start_method):
             rpc_module_paths=[__name__],
         )
 
-        print(await portal.run(__name__, 'movie_theatre_question'))
+        print(await portal.run(movie_theatre_question))
         # call the subactor a 2nd time
-        print(await portal.run(__name__, 'movie_theatre_question'))
+        print(await portal.run(movie_theatre_question))
 
         # the async with will block here indefinitely waiting
         # for our actor "frank" to complete, we cancel 'frank'
