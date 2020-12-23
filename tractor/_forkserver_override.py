@@ -120,7 +120,8 @@ class PatchedForkServer(ForkServer):
             with socket.socket(socket.AF_UNIX) as listener:
                 address = connection.arbitrary_address('AF_UNIX')
                 listener.bind(address)
-                os.chmod(address, 0o600)
+                if not util.is_abstract_socket_namespace(address):
+                    os.chmod(address, 0o600)
                 listener.listen()
 
                 # all client processes own the write end of the "alive" pipe;
