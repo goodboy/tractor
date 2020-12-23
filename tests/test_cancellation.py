@@ -49,7 +49,7 @@ def test_remote_error(arb_addr, args_err):
     async def main():
         async with tractor.open_nursery() as nursery:
 
-            portal = await nursery.run_in_actor('errorer', assert_err, **args)
+            portal = await nursery.run_in_actor(assert_err, name='errorer', **args)
 
             # get result(s) from main task
             try:
@@ -73,8 +73,8 @@ def test_multierror(arb_addr):
     async def main():
         async with tractor.open_nursery() as nursery:
 
-            await nursery.run_in_actor('errorer1', assert_err)
-            portal2 = await nursery.run_in_actor('errorer2', assert_err)
+            await nursery.run_in_actor(assert_err, name='errorer1')
+            portal2 = await nursery.run_in_actor(assert_err, name='errorer2')
 
             # get result(s) from main task
             try:
@@ -104,7 +104,10 @@ def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
         async with tractor.open_nursery() as nursery:
             for i in range(num_subactors):
                 await nursery.run_in_actor(
-                    f'errorer{i}', assert_err, delay=delay)
+                    assert_err,
+                    name=f'errorer{i}',
+                    delay=delay
+                )
 
     with pytest.raises(trio.MultiError) as exc_info:
         tractor.run(main, arbiter_addr=arb_addr)
@@ -134,7 +137,7 @@ def test_cancel_single_subactor(arb_addr, mechanism):
             portal = await nursery.start_actor(
                 'nothin', rpc_module_paths=[__name__],
             )
-            assert (await portal.run(__name__, 'do_nothing')) is None
+            assert (await portal.run(do_nothing)) is None
 
             if mechanism == 'nursery_cancel':
                 # would hang otherwise
@@ -170,7 +173,7 @@ async def test_cancel_infinite_streamer(start_method):
 
             # this async for loop streams values from the above
             # async generator running in a separate process
-            async for letter in await portal.run(__name__, 'stream_forever'):
+            async for letter in await portal.run(stream_forever):
                 print(letter)
 
     # we support trio's cancellation system
@@ -231,7 +234,12 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
             for i in range(num_actors):
                 # start actor(s) that will fail immediately
                 riactor_portals.append(
-                    await n.run_in_actor(f'actor_{i}', func, **kwargs))
+                    await n.run_in_actor(
+                        func,
+                        name=f'actor_{i}',
+                        **kwargs
+                    )
+                )
 
             if da_func:
                 func, kwargs, expect_error = da_func
@@ -239,7 +247,8 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
                     # if this function fails then we should error here
                     # and the nursery should teardown all other actors
                     try:
-                        await portal.run(__name__, func.__name__, **kwargs)
+                        await portal.run(func, **kwargs)
+
                     except tractor.RemoteActorError as err:
                         assert err.type == err_type
                         # we only expect this first error to propogate
@@ -276,21 +285,24 @@ async def spawn_and_error(breadth, depth) -> None:
     name = tractor.current_actor().name
     async with tractor.open_nursery() as nursery:
         for i in range(breadth):
+
             if depth > 0:
+
                 args = (
-                    f'spawner_{i}_depth_{depth}',
                     spawn_and_error,
                 )
                 kwargs = {
+                    'name': f'spawner_{i}_depth_{depth}',
                     'breadth': breadth,
                     'depth': depth - 1,
                 }
             else:
                 args = (
-                    f'{name}_errorer_{i}',
                     assert_err,
                 )
-                kwargs = {}
+                kwargs = {
+                    'name': f'{name}_errorer_{i}',
+                }
             await nursery.run_in_actor(*args, **kwargs)
 
 
@@ -318,8 +330,8 @@ async def test_nested_multierrors(loglevel, start_method):
             async with tractor.open_nursery() as nursery:
                 for i in range(subactor_breadth):
                     await nursery.run_in_actor(
-                        f'spawner_{i}',
                         spawn_and_error,
+                        name=f'spawner_{i}',
                         breadth=subactor_breadth,
                         depth=depth,
                     )
@@ -398,7 +410,10 @@ def test_cancel_via_SIGINT_other_task(
     async def spawn_and_sleep_forever(task_status=trio.TASK_STATUS_IGNORED):
         async with tractor.open_nursery() as tn:
             for i in range(3):
-                await tn.run_in_actor('sucka', sleep_forever)
+                await tn.run_in_actor(
+                    sleep_forever,
+                    name='namesucka',
+                )
             task_status.started()
             await trio.sleep_forever()
 
@@ -423,7 +438,10 @@ async def spin_for(period=3):
 
 async def spawn():
     async with tractor.open_nursery() as tn:
-        portal = await tn.run_in_actor('sleeper', spin_for)
+        portal = await tn.run_in_actor(
+            spin_for,
+            name='sleeper',
+        )
 
 
 @no_windows
@@ -442,7 +460,10 @@ def test_cancel_while_childs_child_in_sync_sleep(
     async def main():
         with trio.fail_after(2):
             async with tractor.open_nursery() as tn:
-                portal = await tn.run_in_actor('spawn', spawn)
+                portal = await tn.run_in_actor(
+                    spawn,
+                    name='spawn',
+                )
                 await trio.sleep(1)
                 assert 0
 

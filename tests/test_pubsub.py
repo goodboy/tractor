@@ -28,14 +28,18 @@ def is_even(i):
     return i % 2 == 0
 
 
+# placeholder for topics getter
+_get_topics = None
+
+
 @tractor.msg.pub
 async def pubber(get_topics, seed=10):
-    ss = tractor.current_actor().statespace
+
+    # ensure topic subscriptions are as expected
+    global _get_topics
+    _get_topics = get_topics
 
     for i in cycle(range(seed)):
-
-        # ensure topic subscriptions are as expected
-        ss['get_topics'] = get_topics
 
         yield {'even' if is_even(i) else 'odd': i}
         await trio.sleep(0.1)
@@ -58,7 +62,7 @@ async def subs(
 
     async with tractor.find_actor(pub_actor_name) as portal:
         stream = await portal.run(
-            __name__, 'pubber',
+            pubber,
             topics=which,
             seed=seed,
         )
@@ -76,7 +80,7 @@ async def subs(
         await stream.aclose()
 
         stream = await portal.run(
-            __name__, 'pubber',
+            pubber,
             topics=['odd'],
             seed=seed,
         )
@@ -126,7 +130,10 @@ async def test_required_args(callwith_expecterror):
         async with tractor.open_nursery() as n:
             # await func(**kwargs)
             portal = await n.run_in_actor(
-                'pubber', multilock_pubber, **kwargs)
+                multilock_pubber,
+                name='pubber',
+                **kwargs
+            )
 
             async with tractor.wait_for_actor('pubber'):
                 pass
@@ -148,8 +155,9 @@ def test_multi_actor_subs_arbiter_pub(
 ):
     """Try out the neato @pub decorator system.
     """
+    global _get_topics
+
     async def main():
-        ss = tractor.current_actor().statespace
 
         async with tractor.open_nursery() as n:
 
@@ -163,20 +171,29 @@ def test_multi_actor_subs_arbiter_pub(
                 )
 
             even_portal = await n.run_in_actor(
-                'evens', subs, which=['even'], pub_actor_name=name)
+                subs,
+                which=['even'],
+                name='evens',
+                pub_actor_name=name
+            )
             odd_portal = await n.run_in_actor(
-                'odds', subs, which=['odd'], pub_actor_name=name)
+                subs,
+                which=['odd'],
+                name='odds',
+                pub_actor_name=name
+            )
 
             async with tractor.wait_for_actor('evens'):
                 # block until 2nd actor is initialized
                 pass
 
             if pub_actor == 'arbiter':
+
                 # wait for publisher task to be spawned in a local RPC task
-                while not ss.get('get_topics'):
+                while _get_topics is None:
                     await trio.sleep(0.1)
 
-                get_topics = ss.get('get_topics')
+                get_topics = _get_topics
 
                 assert 'even' in get_topics()
 

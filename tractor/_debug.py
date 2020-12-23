@@ -180,15 +180,14 @@ def _breakpoint(debug_func) -> Awaitable[None]:
             try:
                 async with get_root() as portal:
                     with trio.fail_after(.5):
-                        agen = await portal.run(
-                            'tractor._debug',
-                            '_hijack_stdin_relay_to_child',
+                        stream = await portal.run(
+                            tractor._debug._hijack_stdin_relay_to_child,
                             subactor_uid=actor.uid,
                         )
-                    async with aclosing(agen):
+                    async with aclosing(stream):
 
                         # block until first yield above
-                        async for val in agen:
+                        async for val in stream:
 
                             assert val == 'Locked'
                             task_status.started()
@@ -305,6 +304,10 @@ post_mortem = partial(
 async def _maybe_enter_pm(err):
     if (
         _state.debug_mode()
+
+        # NOTE: don't enter debug mode recursively after quitting pdb
+        # Iow, don't re-enter the repl if the `quit` command was issued
+        # by the user.
         and not isinstance(err, bdb.BdbQuit)
 
         # XXX: if the error is the likely result of runtime-wide

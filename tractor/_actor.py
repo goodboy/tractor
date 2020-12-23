@@ -126,10 +126,17 @@ async def _invoke(
                     with cancel_scope as cs:
                         task_status.started(cs)
                         await chan.send({'return': await coro, 'cid': cid})
+
     except (Exception, trio.MultiError) as err:
-        # NOTE: don't enter debug mode recursively after quitting pdb
-        log.exception("Actor crashed:")
-        await _debug._maybe_enter_pm(err)
+
+        if not isinstance(err, trio.ClosedResourceError):
+            log.exception("Actor crashed:")
+            # XXX: is there any case where we'll want to debug IPC
+            # disconnects? I can't think of a reason that inspecting
+            # this type of failure will be useful for respawns or
+            # recovery logic - the only case is some kind of strange bug
+            # in `trio` itself?
+            await _debug._maybe_enter_pm(err)
 
         # always ship errors back to caller
         err_msg = pack_error(err)
@@ -187,7 +194,6 @@ class Actor:
         name: str,
         *,
         rpc_module_paths: List[str] = [],
-        statespace: Optional[Dict[str, Any]] = None,
         uid: str = None,
         loglevel: str = None,
         arbiter_addr: Optional[Tuple[str, int]] = None,
@@ -219,7 +225,6 @@ class Actor:
 
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
-        self.statespace = statespace or {}
         self.loglevel = loglevel
         self._arb_addr = arbiter_addr
 
@@ -705,7 +710,7 @@ class Actor:
                     assert isinstance(self._arb_addr, tuple)
 
                     async with get_arbiter(*self._arb_addr) as arb_portal:
-                        await arb_portal.run(
+                        await arb_portal.run_from_ns(
                             'self',
                             'register_actor',
                             uid=self.uid,
@@ -781,8 +786,11 @@ class Actor:
                     cs.shield = True
                     try:
                         async with get_arbiter(*self._arb_addr) as arb_portal:
-                            await arb_portal.run(
-                                'self', 'unregister_actor', uid=self.uid)
+                            await arb_portal.run_from_ns(
+                                'self',
+                                'unregister_actor',
+                                uid=self.uid
+                            )
                     except OSError:
                         failed = True
                 if cs.cancelled_caught:

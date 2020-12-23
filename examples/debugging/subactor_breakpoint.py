@@ -15,7 +15,6 @@ async def main():
     async with tractor.open_nursery() as n:
 
         portal = await n.run_in_actor(
-            'breakpoint_forever',
             breakpoint_forever,
         )
         await portal.result()

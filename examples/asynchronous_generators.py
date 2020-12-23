@@ -24,7 +24,7 @@ async def main():
 
             # this async for loop streams values from the above
             # async generator running in a separate process
-            async for letter in await portal.run(__name__, 'stream_forever'):
+            async for letter in await portal.run(stream_forever):
                 print(letter)
 
     # we support trio's cancellation system
@@ -33,4 +33,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    tractor.run(main, start_method='forkserver')
+    tractor.run(main)

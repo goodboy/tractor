@@ -1,31 +1,33 @@
 """
 Spawning basics
 """
+from functools import partial
+
 import pytest
 import trio
 import tractor
 
 from conftest import tractor_test
 
-statespace = {'doggy': 10, 'kitty': 4}
+data_to_pass_down = {'doggy': 10, 'kitty': 4}
 
 
-async def spawn(is_arbiter):
+async def spawn(is_arbiter, data):
     namespaces = [__name__]
 
     await trio.sleep(0.1)
     actor = tractor.current_actor()
     assert actor.is_arbiter == is_arbiter
-    assert actor.statespace == statespace
+    data == data_to_pass_down
 
     if actor.is_arbiter:
         async with tractor.open_nursery() as nursery:
             # forks here
             portal = await nursery.run_in_actor(
-                'sub-actor',
                 spawn,
                 is_arbiter=False,
-                statespace=statespace,
+                name='sub-actor',
+                data=data,
                 rpc_module_paths=namespaces,
             )
 
@@ -41,10 +43,9 @@ async def spawn(is_arbiter):
 
 def test_local_arbiter_subactor_global_state(arb_addr):
     result = tractor.run(
-        spawn,
+        partial(spawn, data=data_to_pass_down),
         True,
         name='arbiter',
-        statespace=statespace,
         arbiter_addr=arb_addr,
     )
     assert result == 10
@@ -69,9 +70,9 @@ async def test_movie_theatre_convo(start_method):
             rpc_module_paths=[__name__],
         )
 
-        print(await portal.run(__name__, 'movie_theatre_question'))
+        print(await portal.run(movie_theatre_question))
         # call the subactor a 2nd time
-        print(await portal.run(__name__, 'movie_theatre_question'))
+        print(await portal.run(movie_theatre_question))
 
         # the async with will block here indefinitely waiting
         # for our actor "frank" to complete, we cancel 'frank'
@@ -89,7 +90,10 @@ async def test_most_beautiful_word(start_method):
     """
     async with tractor.open_nursery() as n:
 
-        portal = await n.run_in_actor('some_linguist', cellar_door)
+        portal = await n.run_in_actor(
+            cellar_door,
+            name='some_linguist',
+        )
 
     # The ``async with`` will unblock here since the 'some_linguist'
     # actor has completed its main task ``cellar_door``.
@@ -119,7 +123,6 @@ def test_loglevel_propagated_to_subactor(
     async def main():
         async with tractor.open_nursery() as tn:
             await tn.run_in_actor(
-                'log_checker',
                 check_loglevel,
                 level=level,
             )

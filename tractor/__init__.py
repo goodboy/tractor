@@ -16,7 +16,7 @@ from ._streaming import Context, stream
 from ._discovery import get_arbiter, find_actor, wait_for_actor
 from ._actor import Actor, _start_actor, Arbiter
 from ._trionics import open_nursery
-from ._state import current_actor
+from ._state import current_actor, is_root_process
 from . import _state
 from ._exceptions import RemoteActorError, ModuleNotExposed
 from ._debug import breakpoint, post_mortem
