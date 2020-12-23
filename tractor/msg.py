@@ -90,6 +90,9 @@ def modify_subs(topics2ctxs, topics, ctx):
             topics2ctxs.pop(topic)
 
 
+_pub_state: Dict[str, dict] = {}
+
+
 def pub(
     wrapped: typing.Callable = None,
     *,
@@ -175,12 +178,15 @@ def pub(
     subscribers. If you are ok to have a new task running for every call
     to ``pub_service()`` then probably don't need this.
     """
+    global _pub_state
+
     # handle the decorator not called with () case
     if wrapped is None:
         return partial(pub, tasks=tasks)
 
     task2lock: Dict[Union[str, None], trio.StrictFIFOLock] = {
         None: trio.StrictFIFOLock()}
+
     for name in tasks:
         task2lock[name] = trio.StrictFIFOLock()
 
@@ -203,11 +209,10 @@ def pub(
                     f"argument with a falue from {tasks}")
 
             topics = set(topics)
-            ss = current_actor().statespace
-            lockmap = ss.setdefault('_pubtask2lock', task2lock)
+            lockmap = _pub_state.setdefault('_pubtask2lock', task2lock)
             lock = lockmap[task_name]
 
-            all_subs = ss.setdefault('_subs', {})
+            all_subs = _pub_state.setdefault('_subs', {})
             topics2ctxs = all_subs.setdefault(task_name, {})
 
             try:

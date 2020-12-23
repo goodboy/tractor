@@ -194,7 +194,6 @@ class Actor:
         name: str,
         *,
         rpc_module_paths: List[str] = [],
-        statespace: Optional[Dict[str, Any]] = None,
         uid: str = None,
         loglevel: str = None,
         arbiter_addr: Optional[Tuple[str, int]] = None,
@@ -226,7 +225,6 @@ class Actor:
 
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
-        self.statespace = statespace or {}
         self.loglevel = loglevel
         self._arb_addr = arbiter_addr
 

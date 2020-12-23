@@ -52,7 +52,6 @@ class ActorNursery:
         name: str,
         *,
         bind_addr: Tuple[str, int] = _default_bind_addr,
-        # statespace: Optional[Dict[str, Any]] = None,
         rpc_module_paths: List[str] = None,
         loglevel: str = None,  # set log level per subactor
         nursery: trio.Nursery = None,
@@ -67,7 +66,6 @@ class ActorNursery:
             name,
             # modules allowed to invoked funcs from
             rpc_module_paths=rpc_module_paths or [],
-            # statespace=statespace,  # global proc state vars
             loglevel=loglevel,
             arbiter_addr=current_actor()._arb_addr,
         )
@@ -99,7 +97,6 @@ class ActorNursery:
         name: Optional[str] = None,
         bind_addr: Tuple[str, int] = _default_bind_addr,
         rpc_module_paths: Optional[List[str]] = None,
-        # statespace: Dict[str, Any] = None,
         loglevel: str = None,  # set log level per subactor
         **kwargs,  # explicit args to ``fn``
     ) -> Portal:
@@ -120,7 +117,6 @@ class ActorNursery:
             name,
             rpc_module_paths=[mod_path] + (rpc_module_paths or []),
             bind_addr=bind_addr,
-            # statespace=statespace,
             loglevel=loglevel,
             # use the run_in_actor nursery
             nursery=self._ria_nursery,
