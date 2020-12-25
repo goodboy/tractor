@@ -144,7 +144,7 @@ async def _invoke(
         try:
             await chan.send(err_msg)
         except trio.ClosedResourceError:
-            log.exception(
+            log.warning(
                 f"Failed to ship error to caller @ {chan.uid}")
         if cs is None:
             # error is from above code not from rpc invocation
