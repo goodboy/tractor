@@ -11,7 +11,7 @@ from ._state import ActorContextInfo
 
 
 _proj_name = 'tractor'
-_default_loglevel = None
+_default_loglevel = 'ERROR'
 
 # Super sexy formatting thanks to ``colorlog``.
 # (NOTE: we use the '{' format style)
