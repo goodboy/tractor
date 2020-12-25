@@ -1,6 +1,7 @@
 """
 Our classy exception set.
 """
+from typing import Dict, Any
 import importlib
 import builtins
 import traceback
@@ -14,7 +15,7 @@ _this_mod = importlib.import_module(__name__)
 class RemoteActorError(Exception):
     # TODO: local recontruction of remote exception deats
     "Remote actor exception bundled locally"
-    def __init__(self, message, type_str, **msgdata):
+    def __init__(self, message, type_str, **msgdata) -> None:
         super().__init__(message)
         for ns in [builtins, _this_mod, trio]:
             try:
@@ -45,7 +46,7 @@ class ModuleNotExposed(ModuleNotFoundError):
     "The requested module is not exposed for RPC"
 
 
-def pack_error(exc):
+def pack_error(exc: BaseException) -> Dict[str, Any]:
     """Create an "error message" for tranmission over
     a channel (aka the wire).
     """
@@ -57,7 +58,11 @@ def pack_error(exc):
     }
 
 
-def unpack_error(msg, chan=None, err_type=RemoteActorError):
+def unpack_error(
+    msg: Dict[str, Any],
+    chan=None,
+    err_type=RemoteActorError
+) -> Exception:
     """Unpack an 'error' message from the wire
     into a local ``RemoteActorError``.
     """
@@ -65,4 +70,16 @@ def unpack_error(msg, chan=None, err_type=RemoteActorError):
     return err_type(
         f"{chan.uid}\n" + tb_str,
         **msg['error'],
+    )
+
+
+def is_multi_cancelled(exc: BaseException) -> bool:
+    """Predicate to determine if a ``trio.MultiError`` contains only
+    ``trio.Cancelled`` sub-exceptions (and is likely the result of
+    cancelling a collection of subtasks.
+
+    """
+    return not trio.MultiError.filter(
+        lambda exc: exc if not isinstance(exc, trio.Cancelled) else None,
+        exc,
     )
