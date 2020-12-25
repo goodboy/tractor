@@ -15,6 +15,7 @@ from .log import get_logger
 from . import _state
 from ._discovery import get_root
 from ._state import is_root_process
+from ._exceptions import is_multi_cancelled
 
 try:
     # wtf: only exported when installed in dev mode?
@@ -318,10 +319,7 @@ async def _maybe_enter_pm(err):
 
         # Really we just want to mostly avoid catching KBIs here so there
         # might be a simpler check we can do?
-        and trio.MultiError.filter(
-            lambda exc: exc if not isinstance(exc, trio.Cancelled) else None,
-            err,
-        )
+        and not is_multi_cancelled(err)
     ):
         log.warning("Actor crashed, entering debug mode")
         await post_mortem()

@@ -51,7 +51,7 @@ class MsgpackStream:
                 data = await self.stream.receive_some(2**10)
                 log.trace(f"received {data}")  # type: ignore
             except trio.BrokenResourceError:
-                log.error(f"Stream connection {self.raddr} broke")
+                log.warning(f"Stream connection {self.raddr} broke")
                 return
 
             if data == b'':

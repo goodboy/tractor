@@ -13,6 +13,7 @@ from ._state import current_actor
 from .log import get_logger, get_loglevel
 from ._actor import Actor
 from ._portal import Portal
+from ._exceptions import is_multi_cancelled
 from . import _state
 from . import _spawn
 
@@ -246,7 +247,9 @@ async def open_nursery() -> typing.AsyncGenerator[ActorNursery, None]:
                         # For now, shield both.
                         with trio.CancelScope(shield=True):
                             etype = type(err)
-                            if etype in (trio.Cancelled, KeyboardInterrupt):
+                            if etype in (trio.Cancelled, KeyboardInterrupt) or (
+                                is_multi_cancelled(err)
+                            ):
                                 log.warning(
                                     f"Nursery for {current_actor().uid} was "
                                     f"cancelled with {etype}")
