@@ -25,7 +25,8 @@ from .log import get_logger
 from ._exceptions import (
     pack_error,
     unpack_error,
-    ModuleNotExposed
+    ModuleNotExposed,
+    is_multi_cancelled,
 )
 from . import _debug
 from ._discovery import get_arbiter
@@ -129,7 +130,11 @@ async def _invoke(
 
     except (Exception, trio.MultiError) as err:
 
-        if not isinstance(err, trio.ClosedResourceError):
+        # TODO: maybe we'll want differnet "levels" of debugging
+        # eventualy such as ('app', 'supervisory', 'runtime') ?
+        if not isinstance(err, trio.ClosedResourceError) and (
+            not is_multi_cancelled(err)
+        ):
             log.exception("Actor crashed:")
             # XXX: is there any case where we'll want to debug IPC
             # disconnects? I can't think of a reason that inspecting
