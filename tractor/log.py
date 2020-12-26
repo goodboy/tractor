@@ -31,11 +31,13 @@ LEVELS = {
     'GARBAGE': 1,
     'TRACE': 5,
     'PROFILE': 15,
+    'RUNTIME': 500,
     'QUIET': 1000,
 }
 STD_PALETTE = {
     'CRITICAL': 'red',
     'ERROR': 'red',
+    'RUNTIME': 'white',
     'WARNING': 'yellow',
     'INFO': 'green',
     'DEBUG': 'white',

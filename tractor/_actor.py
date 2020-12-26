@@ -135,13 +135,14 @@ async def _invoke(
         if not isinstance(err, trio.ClosedResourceError) and (
             not is_multi_cancelled(err)
         ):
-            log.exception("Actor crashed:")
             # XXX: is there any case where we'll want to debug IPC
             # disconnects? I can't think of a reason that inspecting
             # this type of failure will be useful for respawns or
             # recovery logic - the only case is some kind of strange bug
             # in `trio` itself?
-            await _debug._maybe_enter_pm(err)
+            entered = await _debug._maybe_enter_pm(err)
+            if not entered:
+                log.exception("Actor crashed:")
 
         # always ship errors back to caller
         err_msg = pack_error(err)
