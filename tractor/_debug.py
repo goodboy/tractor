@@ -122,13 +122,16 @@ async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
     """
     task_name = trio.lowlevel.current_task()
     try:
-        log.error(f"TTY BEING ACQUIRED by {task_name}:{uid}")
+        log.debug(
+            f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}")
         await _debug_lock.acquire()
-        log.error(f"TTY lock acquired by {task_name}:{uid}")
+
+        log.debug(f"TTY lock acquired, remote task: {task_name}:{uid}")
         yield
+
     finally:
         _debug_lock.release()
-        log.error(f"TTY lock released by {task_name}:{uid}")
+        log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
 
 
 # @contextmanager
@@ -289,7 +292,7 @@ breakpoint = partial(
 
 
 def _post_mortem(actor):
-    log.critical(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
+    log.runtime(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
     pdb = _mk_pdb()
 
     # custom Pdb post-mortem entry
@@ -321,5 +324,9 @@ async def _maybe_enter_pm(err):
         # might be a simpler check we can do?
         and not is_multi_cancelled(err)
     ):
-        log.warning("Actor crashed, entering debug mode")
+        log.debug("Actor crashed, entering debug mode")
         await post_mortem()
+        return True
+
+    else:
+        return False
