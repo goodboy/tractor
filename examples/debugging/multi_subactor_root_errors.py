@@ -26,6 +26,11 @@ async def main():
     ├─ python -m tractor._child --uid ('name_error', 'a7caf490 ...)
     `-python -m tractor._child --uid ('spawn_error', '52ee14a5 ...)
        `-python -m tractor._child --uid ('name_error', '3391222c ...)
+
+    Order of failure:
+        - nested name_error sub-sub-actor
+        - root actor should then fail on assert
+        - program termination
     """
     async with tractor.open_nursery() as n:
 
