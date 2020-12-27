@@ -25,7 +25,8 @@ from .log import get_logger
 from ._exceptions import (
     pack_error,
     unpack_error,
-    ModuleNotExposed
+    ModuleNotExposed,
+    is_multi_cancelled,
 )
 from . import _debug
 from ._discovery import get_arbiter
@@ -129,14 +130,19 @@ async def _invoke(
 
     except (Exception, trio.MultiError) as err:
 
-        if not isinstance(err, trio.ClosedResourceError):
-            log.exception("Actor crashed:")
+        # TODO: maybe we'll want differnet "levels" of debugging
+        # eventualy such as ('app', 'supervisory', 'runtime') ?
+        if not isinstance(err, trio.ClosedResourceError) and (
+            not is_multi_cancelled(err)
+        ):
             # XXX: is there any case where we'll want to debug IPC
             # disconnects? I can't think of a reason that inspecting
             # this type of failure will be useful for respawns or
             # recovery logic - the only case is some kind of strange bug
             # in `trio` itself?
-            await _debug._maybe_enter_pm(err)
+            entered = await _debug._maybe_enter_pm(err)
+            if not entered:
+                log.exception("Actor crashed:")
 
         # always ship errors back to caller
         err_msg = pack_error(err)
@@ -144,7 +150,7 @@ async def _invoke(
         try:
             await chan.send(err_msg)
         except trio.ClosedResourceError:
-            log.exception(
+            log.warning(
                 f"Failed to ship error to caller @ {chan.uid}")
         if cs is None:
             # error is from above code not from rpc invocation

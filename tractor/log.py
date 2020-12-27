@@ -11,7 +11,7 @@ from ._state import ActorContextInfo
 
 
 _proj_name = 'tractor'
-_default_loglevel = None
+_default_loglevel = 'ERROR'
 
 # Super sexy formatting thanks to ``colorlog``.
 # (NOTE: we use the '{' format style)
@@ -31,11 +31,13 @@ LEVELS = {
     'GARBAGE': 1,
     'TRACE': 5,
     'PROFILE': 15,
+    'RUNTIME': 500,
     'QUIET': 1000,
 }
 STD_PALETTE = {
     'CRITICAL': 'red',
     'ERROR': 'red',
+    'RUNTIME': 'white',
     'WARNING': 'yellow',
     'INFO': 'green',
     'DEBUG': 'white',

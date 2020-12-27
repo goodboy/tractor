@@ -15,6 +15,7 @@ from .log import get_logger
 from . import _state
 from ._discovery import get_root
 from ._state import is_root_process
+from ._exceptions import is_multi_cancelled
 
 try:
     # wtf: only exported when installed in dev mode?
@@ -121,13 +122,16 @@ async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
     """
     task_name = trio.lowlevel.current_task()
     try:
-        log.error(f"TTY BEING ACQUIRED by {task_name}:{uid}")
+        log.debug(
+            f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}")
         await _debug_lock.acquire()
-        log.error(f"TTY lock acquired by {task_name}:{uid}")
+
+        log.debug(f"TTY lock acquired, remote task: {task_name}:{uid}")
         yield
+
     finally:
         _debug_lock.release()
-        log.error(f"TTY lock released by {task_name}:{uid}")
+        log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
 
 
 # @contextmanager
@@ -288,7 +292,7 @@ breakpoint = partial(
 
 
 def _post_mortem(actor):
-    log.critical(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
+    log.runtime(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
     pdb = _mk_pdb()
 
     # custom Pdb post-mortem entry
@@ -318,10 +322,11 @@ async def _maybe_enter_pm(err):
 
         # Really we just want to mostly avoid catching KBIs here so there
         # might be a simpler check we can do?
-        and trio.MultiError.filter(
-            lambda exc: exc if not isinstance(exc, trio.Cancelled) else None,
-            err,
-        )
+        and not is_multi_cancelled(err)
     ):
-        log.warning("Actor crashed, entering debug mode")
+        log.debug("Actor crashed, entering debug mode")
         await post_mortem()
+        return True
+
+    else:
+        return False
