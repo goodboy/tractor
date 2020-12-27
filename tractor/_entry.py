@@ -1,5 +1,5 @@
 """
-Process entry points.
+Sub-process entry points.
 """
 from functools import partial
 from typing import Tuple, Any
