@@ -6,6 +6,7 @@ from functools import partial
 import importlib
 from typing import Tuple, Optional, List, Any
 import typing
+import warnings
 
 import trio
 
@@ -27,10 +28,20 @@ logger = log.get_logger('tractor')
 
 @asynccontextmanager
 async def open_root_actor(
+
+    # defaults are above
     arbiter_addr: Tuple[str, int],
-    name: Optional[str] = None,
+
+    name: Optional[str] = 'root',
+
+    # either the `multiprocessing` start method:
+    # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+    # OR `trio` (the new default).
     start_method: Optional[str] = None,
+
+    # enables the multi-process debugger support
     debug_mode: bool = False,
+
     **kwargs,
 ) -> typing.Any:
     """Async entry point for ``tractor``.
@@ -75,7 +86,9 @@ async def open_root_actor(
         logger.warning(f"No actor could be found @ {host}:{port}")
 
     # create a local actor and start up its main routine/task
-    if arbiter_found:  # we were able to connect to an arbiter
+    if arbiter_found:
+
+        # we were able to connect to an arbiter
         logger.info(f"Arbiter seems to exist @ {host}:{port}")
 
         actor = Actor(
@@ -149,9 +162,6 @@ def run(
         _default_arbiter_port,
     ),
 
-    # either the `multiprocessing` start method:
-    # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
-    # OR `trio` (the new default).
     start_method: Optional[str] = None,
     debug_mode: bool = False,
     **kwargs,
@@ -173,6 +183,14 @@ def run(
 
             return await async_fn(*args)
 
+    warnings.warn(
+        "`tractor.run()` is now deprecated. `tractor` now"
+        " implicitly starts the root actor on first actor nursery"
+        " use. If you want to start the root actor manually, use"
+        " `tractor.open_root_actor()`.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return trio.run(_main)
 
 
