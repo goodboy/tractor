@@ -276,7 +276,7 @@ def _mk_pdb():
 
 
 def _set_trace(actor):
-    log.critical(f"\nAttaching pdb to actor: {actor.uid}\n")
+    log.runtime(f"\nAttaching pdb to actor: {actor.uid}\n")
 
     pdb = _mk_pdb()
     pdb.set_trace(
