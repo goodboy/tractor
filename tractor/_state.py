@@ -15,11 +15,12 @@ _runtime_vars: Dict[str, Any] = {
 }
 
 
-def current_actor() -> 'Actor':  # type: ignore
+def current_actor(err_on_no_runtime: bool = True) -> 'Actor':  # type: ignore
     """Get the process-local actor instance.
     """
-    if _current_actor is None:
+    if _current_actor is None and err_on_no_runtime:
         raise RuntimeError("No local actor has been initialized yet")
+
     return _current_actor
 
 
