@@ -3,14 +3,15 @@
 """
 from functools import partial
 import multiprocessing as mp
-from typing import Tuple, List, Dict, Optional, Any
+from typing import Tuple, List, Dict, Optional
 import typing
 from contextlib import AsyncExitStack
+import warnings
 
 import trio
 from async_generator import asynccontextmanager
 
-from ._state import current_actor, is_root_process, is_main_process
+from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
 from ._actor import Actor
 from ._portal import Portal
@@ -56,6 +57,7 @@ class ActorNursery:
         *,
         bind_addr: Tuple[str, int] = _default_bind_addr,
         rpc_module_paths: List[str] = None,
+        enable_modules: List[str] = None,
         loglevel: str = None,  # set log level per subactor
         nursery: trio.Nursery = None,
     ) -> Portal:
@@ -65,10 +67,21 @@ class ActorNursery:
         _rtv = _state._runtime_vars.copy()
         _rtv['_is_root'] = False
 
+        enable_modules = enable_modules or []
+
+        if rpc_module_paths:
+            warnings.warn(
+                "`rpc_module_paths` is now deprecated, use "
+                " `enable_modules` instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            enable_modules.extend(rpc_module_paths)
+
         subactor = Actor(
             name,
             # modules allowed to invoked funcs from
-            rpc_module_paths=rpc_module_paths or [],
+            enable_modules=enable_modules,
             loglevel=loglevel,
             arbiter_addr=current_actor()._arb_addr,
         )
@@ -221,7 +234,6 @@ async def open_nursery(
         # mark us for teardown on exit
         implicit_runtime = True
 
-
     # the collection of errors retreived from spawned sub-actors
     errors: Dict[Tuple[str, str], Exception] = {}
 
@@ -263,18 +275,22 @@ async def open_nursery(
                         # worry more are coming).
                         anursery._join_procs.set()
                         try:
-                            # XXX: hypothetically an error could be raised and then
-                            # a cancel signal shows up slightly after in which case
-                            # the `else:` block here might not complete?
-                            # For now, shield both.
+                            # XXX: hypothetically an error could be
+                            # raised and then a cancel signal shows up
+                            # slightly after in which case the `else:`
+                            # block here might not complete?  For now,
+                            # shield both.
                             with trio.CancelScope(shield=True):
                                 etype = type(err)
-                                if etype in (trio.Cancelled, KeyboardInterrupt) or (
+                                if etype in (
+                                    trio.Cancelled,
+                                    KeyboardInterrupt
+                                ) or (
                                     is_multi_cancelled(err)
                                 ):
                                     log.warning(
-                                        f"Nursery for {current_actor().uid} was "
-                                        f"cancelled with {etype}")
+                                        f"Nursery for {current_actor().uid} "
+                                        f"was cancelled with {etype}")
                                 else:
                                     log.exception(
                                         f"Nursery for {current_actor().uid} "
