@@ -48,7 +48,7 @@ async def _invoke(
     chan: Channel,
     func: typing.Callable,
     kwargs: Dict[str, Any],
-    task_status=trio.TASK_STATUS_IGNORED
+    task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED,
 ):
     """Invoke local func and deliver result(s) over provided channel.
     """
@@ -199,7 +199,7 @@ class Actor:
         self,
         name: str,
         *,
-        rpc_module_paths: List[str] = [],
+        enable_modules: List[str] = [],
         uid: str = None,
         loglevel: str = None,
         arbiter_addr: Optional[Tuple[str, int]] = None,
@@ -219,14 +219,14 @@ class Actor:
         self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
 
         # always include debugging tools module
-        rpc_module_paths.append('tractor._debug')
+        enable_modules.append('tractor._debug')
 
         mods = {}
-        for name in rpc_module_paths:
+        for name in enable_modules:
             mod = importlib.import_module(name)
             mods[name] = _get_mod_abspath(mod)
 
-        self.rpc_module_paths = mods
+        self.enable_modules = mods
         self._mods: Dict[str, ModuleType] = {}
 
         # TODO: consider making this a dynamically defined
@@ -293,7 +293,7 @@ class Actor:
                     _mp_fixup_main._fixup_main_from_path(
                         parent_data['init_main_from_path'])
 
-            for modpath, filepath in self.rpc_module_paths.items():
+            for modpath, filepath in self.enable_modules.items():
                 # XXX append the allowed module to the python path which
                 # should allow for relative (at least downward) imports.
                 sys.path.append(os.path.dirname(filepath))
@@ -317,7 +317,7 @@ class Actor:
             if ns == '__main__':
                 msg = (
                     "\n\nMake sure you exposed the current module using:\n\n"
-                    "ActorNursery.start_actor(<name>, rpc_module_paths="
+                    "ActorNursery.start_actor(<name>, enable_modules="
                     "[__name__])"
                 )
 

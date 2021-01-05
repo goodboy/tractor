@@ -247,7 +247,7 @@ async def new_proc(
                 # send additional init params
                 await chan.send({
                     "_parent_main_data": subactor._parent_main_data,
-                    "rpc_module_paths": subactor.rpc_module_paths,
+                    "enable_modules": subactor.enable_modules,
                     "_arb_addr": subactor._arb_addr,
                     "bind_host": bind_addr[0],
                     "bind_port": bind_addr[1],
@@ -290,7 +290,7 @@ async def new_proc(
                     # if we're the "main" process start the forkserver
                     # only once and pass its ipc info to downstream
                     # children
-                    # forkserver.set_forkserver_preload(rpc_module_paths)
+                    # forkserver.set_forkserver_preload(enable_modules)
                     forkserver.ensure_running()
                     fs_info = (
                         fs._forkserver_address,

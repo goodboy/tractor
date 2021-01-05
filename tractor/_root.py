@@ -48,6 +48,7 @@ async def open_root_actor(
     # internal logging
     loglevel: Optional[str] = None,
 
+    enable_modules: Optional[List] = None,
     rpc_module_paths: Optional[List] = None,
 
 ) -> typing.Any:
@@ -58,7 +59,16 @@ async def open_root_actor(
     _state._runtime_vars['_is_root'] = True
 
     # caps based rpc list
-    expose_modules = rpc_module_paths or []
+    enable_modules = enable_modules or []
+
+    if rpc_module_paths:
+        warnings.warn(
+            "`rpc_module_paths` is now deprecated, use "
+            " `enable_modules` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        enable_modules.extend(rpc_module_paths)
 
     if start_method is not None:
         _spawn.try_set_start_method(start_method)
@@ -68,7 +78,7 @@ async def open_root_actor(
 
         # expose internal debug module to every actor allowing
         # for use of ``await tractor.breakpoint()``
-        expose_modules.append('tractor._debug')
+        enable_modules.append('tractor._debug')
 
     elif debug_mode:
         raise RuntimeError(
@@ -105,7 +115,7 @@ async def open_root_actor(
             name or 'anonymous',
             arbiter_addr=arbiter_addr,
             loglevel=loglevel,
-            rpc_module_paths=expose_modules,
+            enable_modules=enable_modules,
         )
         host, port = (host, 0)
 
@@ -121,7 +131,7 @@ async def open_root_actor(
             name or 'arbiter',
             arbiter_addr=arbiter_addr,
             loglevel=loglevel,
-            rpc_module_paths=expose_modules,
+            enable_modules=enable_modules,
         )
 
     try:
