@@ -61,10 +61,11 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
                 str(script_file),
             ]
 
+        # XXX: BE FOREVER WARNED: if you enable lots of tractor logging
+        # in the subprocess it may cause infinite blocking on the pipes
+        # due to backpressure!!!
         proc = testdir.popen(
             cmdargs,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
             **kwargs,
         )
         assert not proc.returncode
@@ -101,6 +102,8 @@ def test_example(run_example_in_subproc, example_script):
         with run_example_in_subproc(code) as proc:
             proc.wait()
             err, _ = proc.stderr.read(), proc.stdout.read()
+            # print(f'STDERR: {err}')
+            # print(f'STDOUT: {out}')
 
             # if we get some gnarly output let's aggregate and raise
             errmsg = err.decode()

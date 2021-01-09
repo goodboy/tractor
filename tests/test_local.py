@@ -35,8 +35,9 @@ async def test_self_is_registered(arb_addr):
     "Verify waiting on the arbiter to register itself using the standard api."
     actor = tractor.current_actor()
     assert actor.is_arbiter
-    async with tractor.wait_for_actor('arbiter') as portal:
-        assert portal.channel.uid[0] == 'arbiter'
+    with trio.fail_after(0.2):
+        async with tractor.wait_for_actor('root') as portal:
+            assert portal.channel.uid[0] == 'root'
 
 
 @tractor_test
@@ -46,8 +47,10 @@ async def test_self_is_registered_localportal(arb_addr):
     assert actor.is_arbiter
     async with tractor.get_arbiter(*arb_addr) as portal:
         assert isinstance(portal, tractor._portal.LocalPortal)
-        sockaddr = await portal.run_from_ns('self', 'wait_for_actor', name='arbiter')
-        assert sockaddr[0] == arb_addr
+
+        with trio.fail_after(0.2):
+            sockaddr = await portal.run_from_ns('self', 'wait_for_actor', name='root')
+            assert sockaddr[0] == arb_addr
 
 
 def test_local_actor_async_func(arb_addr):
