@@ -7,7 +7,7 @@ import multiprocessing as mp
 
 import trio
 
-_current_actor: Optional['Actor'] = None  # type: ignore
+_current_actor: Optional['Actor'] = None  # type: ignore # noqa
 _runtime_vars: Dict[str, Any] = {
     '_debug_mode': False,
     '_is_root': False,
@@ -15,12 +15,19 @@ _runtime_vars: Dict[str, Any] = {
 }
 
 
-def current_actor() -> 'Actor':  # type: ignore
+def current_actor(err_on_no_runtime: bool = True) -> 'Actor':  # type: ignore # noqa
     """Get the process-local actor instance.
     """
-    if _current_actor is None:
+    if _current_actor is None and err_on_no_runtime:
         raise RuntimeError("No local actor has been initialized yet")
+
     return _current_actor
+
+
+_conc_name_getters = {
+    'task': trio.lowlevel.current_task,
+    'actor': current_actor
+}
 
 
 class ActorContextInfo(Mapping):
@@ -33,12 +40,9 @@ class ActorContextInfo(Mapping):
     def __iter__(self):
         return iter(self._context_keys)
 
-    def __getitem__(self, key: str):
+    def __getitem__(self, key: str) -> str:
         try:
-            return {
-                'task': trio.lowlevel.current_task,
-                'actor': current_actor
-            }[key]().name
+            return _conc_name_getters[key]().name  # type: ignore
         except RuntimeError:
             # no local actor/task context initialized yet
             return f'no {key} context'

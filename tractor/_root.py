@@ -30,7 +30,10 @@ logger = log.get_logger('tractor')
 async def open_root_actor(
 
     # defaults are above
-    arbiter_addr: Tuple[str, int],
+    arbiter_addr: Tuple[str, int] = (
+        _default_arbiter_host,
+        _default_arbiter_port,
+    ),
 
     name: Optional[str] = 'root',
 
@@ -42,13 +45,20 @@ async def open_root_actor(
     # enables the multi-process debugger support
     debug_mode: bool = False,
 
-    **kwargs,
+    # internal logging
+    loglevel: Optional[str] = None,
+
+    rpc_module_paths: Optional[List] = None,
+
 ) -> typing.Any:
     """Async entry point for ``tractor``.
 
     """
     # mark top most level process as root actor
     _state._runtime_vars['_is_root'] = True
+
+    # caps based rpc list
+    expose_modules = rpc_module_paths or []
 
     if start_method is not None:
         _spawn.try_set_start_method(start_method)
@@ -58,7 +68,7 @@ async def open_root_actor(
 
         # expose internal debug module to every actor allowing
         # for use of ``await tractor.breakpoint()``
-        kwargs.setdefault('rpc_module_paths', []).append('tractor._debug')
+        expose_modules.append('tractor._debug')
 
     elif debug_mode:
         raise RuntimeError(
@@ -70,7 +80,7 @@ async def open_root_actor(
         _default_arbiter_port
     )
 
-    loglevel = kwargs.get('loglevel', log.get_loglevel())
+    loglevel = loglevel or log.get_loglevel()
     if loglevel is not None:
         log._default_loglevel = loglevel
         log.get_console_log(loglevel)
@@ -94,12 +104,14 @@ async def open_root_actor(
         actor = Actor(
             name or 'anonymous',
             arbiter_addr=arbiter_addr,
-            **kwargs
+            loglevel=loglevel,
+            rpc_module_paths=expose_modules,
         )
         host, port = (host, 0)
 
     else:
-        # start this local actor as the arbiter
+        # start this local actor as the arbiter (aka a regular actor who
+        # manages the local registry of "mailboxes")
 
         # Note that if the current actor is the arbiter it is desirable
         # for it to stay up indefinitely until a re-election process has
@@ -108,7 +120,8 @@ async def open_root_actor(
         actor = Arbiter(
             name or 'arbiter',
             arbiter_addr=arbiter_addr,
-            **kwargs
+            loglevel=loglevel,
+            rpc_module_paths=expose_modules,
         )
 
     try:

@@ -31,7 +31,6 @@ log = get_logger(__name__)
 
 __all__ = ['breakpoint', 'post_mortem']
 
-
 # placeholder for function to set a ``trio.Event`` on debugger exit
 _pdb_release_hook: Optional[Callable] = None
 
@@ -120,7 +119,7 @@ async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
     """Acquire a actor local FIFO lock meant to mutex entry to a local
     debugger entry point to avoid tty clobbering by multiple processes.
     """
-    task_name = trio.lowlevel.current_task()
+    task_name = trio.lowlevel.current_task().name
     try:
         log.debug(
             f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}")
@@ -276,7 +275,7 @@ def _mk_pdb():
 
 
 def _set_trace(actor):
-    log.critical(f"\nAttaching pdb to actor: {actor.uid}\n")
+    log.runtime(f"\nAttaching pdb to actor: {actor.uid}\n")
 
     pdb = _mk_pdb()
     pdb.set_trace(

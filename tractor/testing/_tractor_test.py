@@ -2,7 +2,9 @@ import inspect
 import platform
 from functools import partial, wraps
 
-from tractor import run
+import trio
+import tractor
+# from tractor import run
 
 
 __all__ = ['tractor_test']
@@ -34,6 +36,7 @@ def tractor_test(fn):
         **kwargs
     ):
         # __tracebackhide__ = True
+
         if 'arb_addr' in inspect.signature(fn).parameters:
             # injects test suite fixture value to test as well
             # as `run()`
@@ -54,11 +57,33 @@ def tractor_test(fn):
             # set of subprocess spawning backends
             kwargs['start_method'] = start_method
 
-        return run(
-            partial(fn, *args, **kwargs),
-            arbiter_addr=arb_addr,
-            loglevel=loglevel,
-            start_method=start_method,
-        )
+        if kwargs:
+
+            # use explicit root actor start
+
+            async def _main():
+                async with tractor.open_root_actor(
+                    # **kwargs,
+                    arbiter_addr=arb_addr,
+                    loglevel=loglevel,
+                    start_method=start_method,
+
+                    # TODO: only enable when pytest is passed --pdb
+                    # debug_mode=True,
+
+                ) as actor:
+                    await fn(*args, **kwargs)
+
+            main = _main
+
+        else:
+            # use implicit root actor start
+            main = partial(fn, *args, **kwargs),
+
+        return trio.run(main)
+            # arbiter_addr=arb_addr,
+            # loglevel=loglevel,
+            # start_method=start_method,
+        # )
 
     return wrapper
