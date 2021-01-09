@@ -244,7 +244,10 @@ async def open_nursery(
                 # the above "daemon actor" nursery will be notified.
                 async with trio.open_nursery() as ria_nursery:
                     anursery = ActorNursery(
-                        actor, ria_nursery, da_nursery, errors
+                        actor,
+                        ria_nursery,
+                        da_nursery,
+                        errors
                     )
                     try:
                         # spawning of actors happens in the caller's scope
