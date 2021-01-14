@@ -204,8 +204,8 @@ class Portal:
         fn_name: Optional[str] = None,
         **kwargs
     ) -> Any:
-        """Submit a remote function to be scheduled and run by actor,
-        wrap and return its (stream of) result(s).
+        """Submit a remote function to be scheduled and run by actor, in
+        a new task, wrap and return its (stream of) result(s).
 
         This is a blocking call and returns either a value from the
         remote rpc task or a local async generator instance.
