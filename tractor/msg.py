@@ -3,7 +3,7 @@ Messaging pattern APIs and helpers.
 """
 import inspect
 import typing
-from typing import Dict, Any, Set, Union, Callable
+from typing import Dict, Any, Set, Callable
 from functools import partial
 from async_generator import aclosing
 
@@ -90,7 +90,7 @@ def modify_subs(topics2ctxs, topics, ctx):
 
 
 _pub_state: Dict[str, dict] = {}
-_pubtask2lock: Dict[str, dict] = {}
+_pubtask2lock: Dict[str, trio.StrictFIFOLock] = {}
 
 
 def pub(
@@ -184,7 +184,7 @@ def pub(
     if wrapped is None:
         return partial(pub, tasks=tasks)
 
-    task2lock: Dict[Union[str, None], trio.StrictFIFOLock] = {}
+    task2lock: Dict[str, trio.StrictFIFOLock] = {}
 
     for name in tasks:
         task2lock[name] = trio.StrictFIFOLock()

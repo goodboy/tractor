@@ -9,7 +9,7 @@ import importlib.util
 import inspect
 import uuid
 import typing
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Union
 from types import ModuleType
 import sys
 import os
@@ -48,7 +48,9 @@ async def _invoke(
     chan: Channel,
     func: typing.Callable,
     kwargs: Dict[str, Any],
-    task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED,
+    task_status: TaskStatus[
+        Union[trio.CancelScope, BaseException]
+    ] = trio.TASK_STATUS_IGNORED,
 ):
     """Invoke local func and deliver result(s) over provided channel.
     """
@@ -155,6 +157,7 @@ async def _invoke(
         if cs is None:
             # error is from above code not from rpc invocation
             task_status.started(err)
+
     finally:
         # RPC task bookeeping
         try:

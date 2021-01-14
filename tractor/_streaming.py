@@ -37,7 +37,7 @@ def current_context():
 
 
 def stream(func):
-    """Mark an async function as a streaming routine.
+    """Mark an async function as a streaming routine with ``@stream``.
     """
     func._tractor_stream_function = True
     sig = inspect.signature(func)
