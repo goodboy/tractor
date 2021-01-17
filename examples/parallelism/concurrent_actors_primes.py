@@ -50,7 +50,14 @@ async def worker_pool(workers=4):
 
     """
 
-    async with tractor.open_nursery() as tn:
+    async with tractor.open_nursery(
+        loglevel='ERROR',
+
+        # uncomment to use ``multiprocessing`` fork server backend
+        # which gives a startup time boost at the expense of nested
+        # processs scalability
+        # start_method='forkserver')
+    ) as tn:
 
         portals = []
         results = []
@@ -62,7 +69,7 @@ async def worker_pool(workers=4):
             portals.append(
                 await tn.start_actor(
                     f'worker_{i}',
-                    rpc_module_paths=[__name__],
+                    enable_modules=[__name__],
                 )
             )
 
@@ -105,15 +112,9 @@ async def main():
 
         print(f'processing took {time.time() - start} seconds')
 
-if __name__ == '__main__':
-    start = time.time()
-    tractor.run(
-        main,
-        loglevel='ERROR',
 
-        # uncomment to use ``multiprocessing`` fork server backend
-        # which gives a startup time boost at the expense of nested
-        # processs scalability
-        # start_method='forkserver')
-    )
+if __name__ == '__main__':
+
+    start = time.time()
+    trio.run(main)
     print(f'script took {time.time() - start} seconds')
