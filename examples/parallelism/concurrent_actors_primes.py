@@ -4,8 +4,8 @@ Demonstration of the prime number detector example from the
 
 https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor-example
 
-This uses no extra threads or fancy semaphores besides ``tractor``'s
-(TCP) channels.
+This uses no extra threads, fancy semaphores or futures; all we need 
+is ``tractor``'s channels.
 
 """
 from contextlib import asynccontextmanager
@@ -46,11 +46,12 @@ def is_prime(n):
 @asynccontextmanager
 async def worker_pool(workers=4):
     """Though it's a trivial special case for ``tractor``, the well
-    known "worker pool" seems to be the defacto "I want this process
-    pattern" for most parallelism pilgrims.
+    known "worker pool" seems to be the defacto "but, I want this
+    process pattern!" for most parallelism pilgrims.
 
+    Yes, the workers stay alive (and ready for work) until you close
+    the context.
     """
-
     async with tractor.open_nursery() as tn:
 
         portals = []
@@ -67,7 +68,7 @@ async def worker_pool(workers=4):
                 )
             )
 
-        async def map(
+        async def _map(
             worker_func: Callable[[int], bool],
             sequence: List[int]
         ) -> List[bool]:
@@ -90,7 +91,8 @@ async def worker_pool(workers=4):
                 for _ in range(len(sequence)):
                     yield await recv_chan.receive()
 
-        yield map
+        # deliver the parallel "worker mapper" to user code
+        yield _map
 
         # tear down all "workers" on pool close
         await tn.cancel()
@@ -110,7 +112,6 @@ async def main():
 
 
 if __name__ == '__main__':
-
     start = time.time()
     trio.run(main)
     print(f'script took {time.time() - start} seconds')
