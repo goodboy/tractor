@@ -273,10 +273,14 @@ async def new_proc(
                 # ``trio.Process.__aexit__()`` (it tears down stdio
                 # which will kill any waiting remote pdb trace).
 
+                # TODO: No idea how we can enforce zombie
+                # reaping more stringently without the shield
+                # we used to have below...
+
                 # always "hard" join sub procs:
                 # no actor zombies allowed
-                with trio.CancelScope(shield=True):
-                    await proc.wait()
+                # with trio.CancelScope(shield=True):
+                await proc.wait()
         else:
             # `multiprocessing`
             assert _ctx
