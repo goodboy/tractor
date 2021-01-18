@@ -1,6 +1,6 @@
 """
 Run with a process monitor from a terminal using:
-$TERM -e watch -n 0.1  "pstree -a $$" & python examples/parallelism/we_are_processes.py || kill $!
+$TERM -e watch -n 0.1  "pstree -a $$" & python examples/parallelism/we_are_processes.py && kill $!
 
 """
 from multiprocessing import cpu_count
@@ -11,7 +11,7 @@ import trio
 
 
 async def target():
-    print(f"Yo, i'm {tractor.current_actor().name} "
+    print(f"Yo, i'm '{tractor.current_actor().name}' "
           f"running in pid {os.getpid()}")
     await trio.sleep_forever()
 
@@ -31,4 +31,7 @@ async def main():
 
 
 if __name__ == '__main__':
-    trio.run(main)
+    try:
+        trio.run(main)
+    except Exception:
+        print('Zombies Contained')
