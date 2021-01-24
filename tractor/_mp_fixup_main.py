@@ -67,7 +67,7 @@ def _fixup_main_from_name(mod_name: str) -> None:
     main_module = types.ModuleType("__mp_main__")
     main_content = runpy.run_module(mod_name,
                                     run_name="__mp_main__",
-                                    alter_sys=True)
+                                    alter_sys=True)  # type: ignore
     main_module.__dict__.update(main_content)
     sys.modules['__main__'] = sys.modules['__mp_main__'] = main_module
 
@@ -95,6 +95,6 @@ def _fixup_main_from_path(main_path: str) -> None:
     # old_main_modules.append(current_main)
     main_module = types.ModuleType("__mp_main__")
     main_content = runpy.run_path(main_path,
-                                  run_name="__mp_main__")
+                                  run_name="__mp_main__")  # type: ignore
     main_module.__dict__.update(main_content)
     sys.modules['__main__'] = sys.modules['__mp_main__'] = main_module
