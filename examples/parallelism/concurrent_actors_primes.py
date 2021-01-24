@@ -16,6 +16,7 @@ import time
 
 import tractor
 import trio
+from async_generator import aclosing
 
 
 PRIMES = [
@@ -103,10 +104,11 @@ async def main():
     async with worker_pool() as actor_map:
 
         start = time.time()
-        # for number, prime in zip(PRIMES, executor.map(is_prime, PRIMES)):
-        async for number, prime in actor_map(is_prime, PRIMES):
 
-            print(f'{number} is prime: {prime}')
+        async with aclosing(actor_map(is_prime, PRIMES)) as results:
+            async for number, prime in results:
+
+                print(f'{number} is prime: {prime}')
 
         print(f'processing took {time.time() - start} seconds')
 
