@@ -1,24 +1,37 @@
 from itertools import cycle
 from pprint import pformat
+from dataclasses import dataclass, field
 
 import trio
 import tractor
 
-_snd_chan, _recv_chan = trio.open_memory_channel(100)
-_actor_state = {'some_state_stuff': None}
+
+@dataclass
+class MyProcessStateThing:
+    state: dict = field(default_factory=dict)
+
+    def update(self, msg: dict):
+        self.state.update(msg)
+
+
+_actor_state = MyProcessStateThing()
 
 
 async def update_local_state(msg: dict):
+    """Update process-local state from sent message and exit.
+
+    """
+    actor = tractor.current_actor()
 
     global _actor_state
-    actor = tractor.current_actor()
+
 
     print(f'Yo we got a message {msg}')
 
     # update the "actor state"
     _actor_state.update(msg)
 
-    print(f'New local "state" for {actor.uid} is {pformat(_actor_state)}')
+    print(f'New local "state" for {actor.uid} is {pformat(_actor_state.state)}')
 
     # we're done so exit this task running in the subactor
 
@@ -43,7 +56,7 @@ async def main():
         ):
             await portal.run(update_local_state, msg={f'msg_{i}': count})
 
-    # blocks here indefinitely synce we spawned "daemon actors using
+    # blocks here indefinitely synce we spawned "daemon actors" using
     # .start_actor()`, you'll need to control-c to cancel.
 
 
