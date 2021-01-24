@@ -6,6 +6,8 @@ semaphore tracker per ``MainProcess``.
 .. note:: There is no type hinting in this code base (yet) to remain as
           a close as possible to upstream.
 """
+# type: ignore
+
 import os
 import socket
 import signal
