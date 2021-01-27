@@ -17,6 +17,8 @@ class RemoteActorError(Exception):
     "Remote actor exception bundled locally"
     def __init__(self, message, type_str, **msgdata) -> None:
         super().__init__(message)
+        self.type_str = type_str
+
         for ns in [builtins, _this_mod, trio]:
             try:
                 self.type = getattr(ns, type_str)
