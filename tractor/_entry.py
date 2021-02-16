@@ -64,8 +64,7 @@ def _trio_main(
     # we don't need it thanks to our cancellation machinery.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-    # TODO: make a global func to set this or is it too hacky?
-    # os.environ['PYTHONBREAKPOINT'] = 'tractor._debug.breakpoint'
+    log.info(f"Started new trio process for {actor.uid}")
 
     if actor.loglevel is not None:
         log.info(
