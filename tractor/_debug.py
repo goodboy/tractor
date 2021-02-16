@@ -274,14 +274,31 @@ def _mk_pdb():
     return pdb
 
 
-def _set_trace(actor):
-    log.runtime(f"\nAttaching pdb to actor: {actor.uid}\n")
-
+def _set_trace(actor=None):
     pdb = _mk_pdb()
-    pdb.set_trace(
-        # start 2 levels up in user code
-        frame=sys._getframe().f_back.f_back,
-    )
+
+    if actor is not None:
+        log.runtime(f"\nAttaching pdb to actor: {actor.uid}\n")
+
+        pdb.set_trace(
+            # start 2 levels up in user code
+            frame=sys._getframe().f_back.f_back,
+        )
+
+    else:
+        # we entered the global ``breakpoint()`` built-in from sync code
+        global _in_debug, _pdb_release_hook
+        _in_debug = 'sync'
+
+        def nuttin():
+            pass
+
+        _pdb_release_hook = nuttin
+
+        pdb.set_trace(
+            # start 2 levels up in user code
+            frame=sys._getframe().f_back,
+        )
 
 
 breakpoint = partial(
