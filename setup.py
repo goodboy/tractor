@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 from setuptools import setup
 
-with open('README.rst', encoding='utf-8') as f:
+with open('docs/README.rst', encoding='utf-8') as f:
     readme = f.read()
 
 
