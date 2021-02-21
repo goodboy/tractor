@@ -83,8 +83,10 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
     [(p[0], f) for p in os.walk(examples_dir()) for f in p[2]
 
         if '__' not in f
+        and f[0] != '_'
         and 'debugging' not in p[0]
-    ]
+    ],
+    ids=lambda t: t[1],
 )
 def test_example(run_example_in_subproc, example_script):
     """Load and run scripts from this repo's ``examples/`` dir as a user
