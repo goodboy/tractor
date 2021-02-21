@@ -4,6 +4,7 @@ Root actor runtime ignition(s).
 from contextlib import asynccontextmanager
 from functools import partial
 import importlib
+import os
 from typing import Tuple, Optional, List, Any
 import typing
 import warnings
@@ -55,6 +56,11 @@ async def open_root_actor(
     """Async entry point for ``tractor``.
 
     """
+    # Override the global debugger hook to make it play nice with
+    # ``trio``, see:
+    # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
+    os.environ['PYTHONBREAKPOINT'] = 'tractor._debug._set_trace'
+
     # mark top most level process as root actor
     _state._runtime_vars['_is_root'] = True
 
