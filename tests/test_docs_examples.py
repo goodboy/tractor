@@ -78,13 +78,15 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
 
 @pytest.mark.parametrize(
     'example_script',
-    [
-        f for f in os.listdir(examples_dir())
-        if (
-            ('__' not in f) and
-            ('debugging' not in f)
-        )
+
+    # walk yields: (dirpath, dirnames, filenames)
+    [(p[0], f) for p in os.walk(examples_dir()) for f in p[2]
+
+        if '__' not in f
+        and f[0] != '_'
+        and 'debugging' not in p[0]
     ],
+    ids=lambda t: t[1],
 )
 def test_example(run_example_in_subproc, example_script):
     """Load and run scripts from this repo's ``examples/`` dir as a user
@@ -95,7 +97,7 @@ def test_example(run_example_in_subproc, example_script):
     test directory and invoke the script as a module with ``python -m
     test_example``.
     """
-    ex_file = os.path.join(examples_dir(), example_script)
+    ex_file = os.path.join(*example_script)
     with open(ex_file, 'r') as ex:
         code = ex.read()
 
