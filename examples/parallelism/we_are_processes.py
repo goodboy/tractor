@@ -1,6 +1,9 @@
 """
-Run with a process monitor from a terminal using:
-$TERM -e watch -n 0.1  "pstree -a $$" & python examples/parallelism/we_are_processes.py && kill $!
+Run with a process monitor from a terminal using::
+
+    $TERM -e watch -n 0.1  "pstree -a $$" \
+        & python examples/parallelism/we_are_processes.py \
+        && kill $!
 
 """
 from multiprocessing import cpu_count
