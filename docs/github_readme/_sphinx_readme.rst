@@ -69,6 +69,12 @@ Alluring Features
   `trio` drives the `asyncio` scheduler via the astounding "`guest mode`_"
 
 
+Example: self-destruct a process tree
+-------------------------------------
+.. literalinclude:: ../../examples/parallelism/we_are_processes.py
+    :language: python
+
+
 The example you're probably after...
 ------------------------------------
 It seems the initial query from most new users is "how do I make a worker
@@ -77,9 +83,8 @@ pool thing?".
 ``tractor`` is built to handle any SC process tree you can
 imagine; the "worker pool" pattern is a trivial special case:
 
-# TODO: workerpool example
-
-.. literalinclude:: ../../examples/parallelism/we_are_processes.py
+.. literalinclude:: ../../examples/parallelism/concurrent_actors_primes.py
+    :language: python
 
 
 Feel like saying hi?
