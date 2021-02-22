@@ -35,9 +35,9 @@ release = '0.0.0a0.dev0'
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
-    # 'sphinx.ext.autodoc',
-    # 'sphinx.ext.intersphinx',
-    # 'sphinx.ext.todo',
+    'sphinx.ext.autodoc',
+    'sphinx.ext.intersphinx',
+    'sphinx.ext.todo',
     'sphinxcontrib.restbuilder',
 
 ]
