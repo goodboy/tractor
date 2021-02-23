@@ -144,7 +144,7 @@ is ``tractor``'s IPC!
 
 "Native" sub-process debugging
 ------------------------------
-Using the magic of `pdb++`_ and some IPC tricks we've
+Using the magic of `pdb++`_ and some IPC tricks, we've
 been able to create a native feeling debugging experience for
 any (sub)-process in your ``tractor`` tree.
 
