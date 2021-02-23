@@ -1,3 +1,4 @@
+import trio
 import tractor
 
 
@@ -50,7 +51,9 @@ async def main():
              └─ python -m tractor._child --uid ('spawn_until_0', 'de918e6d ...)
 
     """
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery(
+        debug_mode=True,
+    ) as n:
 
         # spawn both actors
         portal = await n.run_in_actor(
@@ -70,4 +73,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    tractor.run(main, debug_mode=True)
+    trio.run(main)

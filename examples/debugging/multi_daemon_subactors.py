@@ -17,10 +17,13 @@ async def name_error():
 async def main():
     """Test breakpoint in a streaming actor.
     """
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery(
+        debug_mode=True,
+        loglevel='error',
+    ) as n:
 
-        p0 = await n.start_actor('bp_forever', rpc_module_paths=[__name__])
-        p1 = await n.start_actor('name_error', rpc_module_paths=[__name__])
+        p0 = await n.start_actor('bp_forever', enable_modules=[__name__])
+        p1 = await n.start_actor('name_error', enable_modules=[__name__])
 
         # retreive results
         stream = await p0.run(breakpoint_forever)
@@ -28,4 +31,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    tractor.run(main, debug_mode=True, loglevel='error')
+    trio.run(main)
