@@ -1,7 +1,4 @@
-tractor
-=======
-The Python async-native multi-core system *you always wanted*.
-
+|logo| ``tractor``: next-gen Python parallelism
 
 |gh_actions|
 |docs|
@@ -216,3 +213,7 @@ channel`_!
 .. |docs| image:: https://readthedocs.org/projects/tractor/badge/?version=latest
     :target: https://tractor.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
+
+.. |logo| image:: _static/tractor_logo_side.svg
+    :width: 200
+    :align: middle
