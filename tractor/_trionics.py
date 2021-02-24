@@ -5,7 +5,6 @@ from functools import partial
 import multiprocessing as mp
 from typing import Tuple, List, Dict, Optional
 import typing
-from contextlib import AsyncExitStack
 import warnings
 
 import trio
@@ -343,25 +342,31 @@ async def open_nursery(
 
     actor = current_actor(err_on_no_runtime=False)
 
-    if actor is None and is_main_process():
-
-        # if we are the parent process start the actor runtime implicitly
-        log.info("Starting actor runtime!")
-        root_runtime_stack = AsyncExitStack()
-        actor = await root_runtime_stack.enter_async_context(
-            open_root_actor(**kwargs)
-        )
-        assert actor is current_actor()
-
-        # mark us for teardown on exit
-        implicit_runtime = True
-
     try:
-        async with _open_and_supervise_one_cancels_all_nursery(
-            actor
-        ) as anursery:
+        if actor is None and is_main_process():
 
-            yield anursery
+            # if we are the parent process start the actor runtime implicitly
+            log.info("Starting actor runtime!")
+
+            # mark us for teardown on exit
+            implicit_runtime = True
+
+            async with open_root_actor(**kwargs) as actor:
+                assert actor is current_actor()
+
+                async with _open_and_supervise_one_cancels_all_nursery(
+                    actor
+                ) as anursery:
+
+                    yield anursery
+
+        else:  # sub-nursery case
+
+            async with _open_and_supervise_one_cancels_all_nursery(
+                actor
+            ) as anursery:
+
+                yield anursery
 
     finally:
         log.debug("Nursery teardown complete")
@@ -369,4 +374,3 @@ async def open_nursery(
         # shutdown runtime if it was started
         if implicit_runtime:
             log.info("Shutting down actor tree")
-            await root_runtime_stack.aclose()
