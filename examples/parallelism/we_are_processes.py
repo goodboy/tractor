@@ -14,8 +14,11 @@ import trio
 
 
 async def target():
-    print(f"Yo, i'm '{tractor.current_actor().name}' "
-          f"running in pid {os.getpid()}")
+    print(
+        f"Yo, i'm '{tractor.current_actor().name}' "
+        f"running in pid {os.getpid()}"
+    )
+
     await trio.sleep_forever()
 
 

@@ -13,62 +13,27 @@
 
 ``tractor`` is a `structured concurrent`_ "`actor model`_" built on trio_ and multi-processing_.
 
-It is an attempt to pair trionic_ `structured concurrency`_ with
-distributed Python. You can think of it as a ``trio``
-*-across-processes* or simply as an opinionated replacement for the
-stdlib's ``multiprocessing`` but built on async programming primitives
-from the ground up.
+We pair structured concurrency with true multi-core Python parallelism;
+the aim is to be the multi-processing framework *you always wanted*.
 
-Don't be scared off by this description. ``tractor`` **is just ``trio``**
-but with nurseries for process management and cancel-able IPC.
-If you understand how to work with ``trio``, ``tractor`` will give you
-the parallelism you've been missing.
-
-``tractor``'s nurseries let you spawn ``trio`` *"actors"*: new Python
-processes which each run a ``trio`` scheduled task tree (also known as
-an `async sandwich`_ - a call to ``trio.run()``). That is, each
-"*Actor*" is a new process plus a ``trio`` runtime.
-
-"Actors" communicate by exchanging asynchronous messages_ and avoid
-sharing state. The intention of this model is to allow for highly
-distributed software that, through the adherence to *structured
-concurrency*, results in systems which fail in predictable and
-recoverable ways.
-
-The first step to grok ``tractor`` is to get the basics of ``trio`` down.
+The first steps to grok ``tractor`` is to get the basics of ``trio`` down.
 A great place to start is the `trio docs`_ and this `blog post`_.
 
-.. _messages: https://en.wikipedia.org/wiki/Message_passing
-.. _trio docs: https://trio.readthedocs.io/en/latest/
-.. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _structured concurrency: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
-.. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
-.. _async generators: https://www.python.org/dev/peps/pep-0525/
 
-
-Install
--------
-No PyPi release yet!
-
-::
-
-    pip install git+git://github.com/goodboy/tractor.git
-
-
-Alluring Features
------------------
-- **It's just** ``trio``, but with SC applied to processes (aka "actors")
+Features
+--------
+- **It's just** a ``trio`` API
 - Infinitely nesteable process trees
-- Built-in API for inter-process streaming
+- Built-in APIs for inter-process streaming
 - A (first ever?) "native" multi-core debugger for Python using `pdb++`_
 - (Soon to land) ``asyncio`` support allowing for "infected" actors where
   `trio` drives the `asyncio` scheduler via the astounding "`guest mode`_"
+- (Soon to land) typed messaging protocols (ex. via ``msgspec``)
 
 
-Example: self-destruct a process tree
--------------------------------------
-``tractor`` protects you from zombies, no matter what.
+Zombie safe: self-destruct a process tree
+-----------------------------------------
+``tractor`` (attempts to) protect from zombies, no matter what.
 
 .. code:: python
 
@@ -88,8 +53,11 @@ Example: self-destruct a process tree
 
 
     async def target():
-       print(f"Yo, i'm '{tractor.current_actor().name}' "
-             f"running in pid {os.getpid()}")
+        print(
+            f"Yo, i'm '{tractor.current_actor().name}' "
+            f"running in pid {os.getpid()}"
+        )
+
        await trio.sleep_forever()
 
 
@@ -114,34 +82,13 @@ Example: self-destruct a process tree
            print('Zombies Contained')
 
 
-The example you're probably after...
-------------------------------------
-It seems the initial ask from most new users is "how do I make a worker
-pool thing?".
-
-``tractor`` is built to handle any SC process tree you can
-imagine; the "worker pool" pattern is a trivial special case.
-
-We have a `full re-implementation <concurrent_actors_primes>`_ of the std-lib's
-``concurrent.futures.ProcessPoolExecutor`` example for reference.
-
-You can run it like so (from this dir) to see the process tree in
-real time::
-
-    $TERM -e watch -n 0.1  "pstree -a $$" \
-        & python examples/parallelism/concurrent_actors_primes.py \
-        && kill $!
-
-This uses no extra threads, fancy semaphores or futures; all we need
-is ``tractor``'s IPC!
+If you can create zombie child processes (without using a system signal)
+it **is a bug**.
 
 
-.. _concurrent_actors_primes: https://github.com/goodboy/tractor/blob/readme_pump/examples/parallelism/concurrent_actors_primes.py
-
-
-"Native" sub-process debugging
-------------------------------
-Using the magic of `pdb++`_ and some IPC tricks, we've
+"Native" multi-process debugging
+--------------------------------
+Using the magic of `pdb++`_ and our internal IPC, we've
 been able to create a native feeling debugging experience for
 any (sub)-process in your ``tractor`` tree.
 
@@ -190,7 +137,64 @@ You can run this with::
     >>> python examples/debugging/multi_daemon_subactors.py
 
 And, yes, there's a built-in crash handling mode B)
+
 We're hoping to add a respawn-from-repl system soon!
+
+
+Worker poolz are easy peasy
+---------------------------
+It seems the initial ask from most new users is "how do I make a worker
+pool thing?".
+
+``tractor`` is built to handle any SC process tree you can
+imagine; the "worker pool" pattern is a trivial special case.
+
+We have a `full re-implementation <concurrent_actors_primes>`_ of the std-lib's
+``concurrent.futures.ProcessPoolExecutor`` example for reference.
+
+You can run it like so (from this dir) to see the process tree in
+real time::
+
+    $TERM -e watch -n 0.1  "pstree -a $$" \
+        & python examples/parallelism/concurrent_actors_primes.py \
+        && kill $!
+
+This uses no extra threads, fancy semaphores or futures; all we need
+is ``tractor``'s IPC!
+
+
+.. _concurrent_actors_primes: https://github.com/goodboy/tractor/examples/parallelism/concurrent_actors_primes.py
+
+Install
+-------
+No PyPi release yet!
+
+::
+
+    pip install git+git://github.com/goodboy/tractor.git
+
+
+Under the hood
+--------------
+``tractor`` is an attempt to pair trionic_ `structured concurrency`_ with
+distributed Python. You can think of it as a ``trio``
+*-across-processes* or simply as an opinionated replacement for the
+stdlib's ``multiprocessing`` but built on async programming primitives
+from the ground up.
+
+``tractor``'s nurseries let you spawn ``trio`` *"actors"*: new Python
+processes which each run a ``trio`` scheduled runtime - a call to ``trio.run()``.
+
+Don't be scared off by this description. ``tractor`` **is just** ``trio``
+but with nurseries for process management and cancel-able streaming IPC.
+If you understand how to work with ``trio``, ``tractor`` will give you
+the parallelism you've been missing.
+
+"Actors" communicate by exchanging asynchronous messages_ and avoid
+sharing state. The intention of this model is to allow for highly
+distributed software that, through the adherence to *structured
+concurrency*, results in systems which fail in predictable and
+recoverable ways.
 
 
 Feel like saying hi?
@@ -206,14 +210,22 @@ channel`_!
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
 .. _pdb++: https://github.com/pdbpp/pdbpp
 .. _guest mode: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
+.. _messages: https://en.wikipedia.org/wiki/Message_passing
+.. _trio docs: https://trio.readthedocs.io/en/latest/
+.. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
+.. _structured concurrency: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
+.. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
+.. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
+.. _async generators: https://www.python.org/dev/peps/pep-0525/
 
 
 .. |gh_actions| image:: https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fgoodboy%2Ftractor%2Fbadge&style=popout-square
     :target: https://actions-badge.atrox.dev/goodboy/tractor/goto
+
 .. |docs| image:: https://readthedocs.org/projects/tractor/badge/?version=latest
     :target: https://tractor.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
 
 .. |logo| image:: _static/tractor_logo_side.svg
-    :width: 200
+    :width: 250
     :align: middle
