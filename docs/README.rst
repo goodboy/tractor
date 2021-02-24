@@ -63,23 +63,23 @@ Zombie safe: self-destruct a process tree
 
     async def main():
 
-       async with tractor.open_nursery() as n:
+        async with tractor.open_nursery() as n:
 
-           for i in range(cpu_count()):
-               await n.run_in_actor(target, name=f'worker_{i}')
+            for i in range(cpu_count()):
+                await n.run_in_actor(target, name=f'worker_{i}')
 
-           print('This process tree will self-destruct in 1 sec...')
-           await trio.sleep(1)
+            print('This process tree will self-destruct in 1 sec...')
+            await trio.sleep(1)
 
-           # you could have done this yourself
-           raise Exception('Self Destructed')
+            # you could have done this yourself
+            raise Exception('Self Destructed')
 
 
     if __name__ == '__main__':
-       try:
-           trio.run(main)
-       except Exception:
-           print('Zombies Contained')
+        try:
+            trio.run(main)
+        except Exception:
+            print('Zombies Contained')
 
 
 If you can create zombie child processes (without using a system signal)
@@ -149,7 +149,7 @@ pool thing?".
 ``tractor`` is built to handle any SC process tree you can
 imagine; the "worker pool" pattern is a trivial special case.
 
-We have a `full re-implementation <concurrent_actors_primes>`_ of the std-lib's
+We have a `full re-implementation <worker_pool>`_ of the std-lib's
 ``concurrent.futures.ProcessPoolExecutor`` example for reference.
 
 You can run it like so (from this dir) to see the process tree in
@@ -163,7 +163,7 @@ This uses no extra threads, fancy semaphores or futures; all we need
 is ``tractor``'s IPC!
 
 
-.. _concurrent_actors_primes: https://github.com/goodboy/tractor/examples/parallelism/concurrent_actors_primes.py
+.. _worker_pool: https://github.com/goodboy/tractor/blob/master/examples/parallelism/concurrent_actors_primes.py
 
 Install
 -------
