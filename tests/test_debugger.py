@@ -82,7 +82,7 @@ def test_root_actor_error(spawn, user_in_out):
     before = str(child.before.decode())
 
     # make sure expected logging and error arrives
-    assert "Attaching to pdb in crashed actor: ('arbiter'" in before
+    assert "Attaching to pdb in crashed actor: ('root'" in before
     assert 'AssertionError' in before
 
     # send user command
@@ -170,7 +170,7 @@ def test_subactor_error(spawn):
     before = str(child.before.decode())
 
     # root actor gets debugger engaged
-    assert "Attaching to pdb in crashed actor: ('arbiter'" in before
+    assert "Attaching to pdb in crashed actor: ('root'" in before
 
     # error is a remote error propagated from the subactor
     assert "RemoteActorError: ('name_error'" in before
@@ -276,7 +276,7 @@ def test_multi_subactors(spawn):
     child.sendline('q')
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
-    assert "Attaching to pdb in crashed actor: ('arbiter'" in before
+    assert "Attaching to pdb in crashed actor: ('root'" in before
     assert "RemoteActorError: ('breakpoint_forever'" in before
     assert 'bdb.BdbQuit' in before
 
@@ -344,7 +344,7 @@ def test_multi_subactors_root_errors(spawn):
     before = str(child.before.decode())
 
     # should have come just after priot prompt
-    assert "Attaching to pdb in crashed actor: ('arbiter'" in before
+    assert "Attaching to pdb in crashed actor: ('root'" in before
     assert "AssertionError" in before
 
     # warnings assert we probably don't need
