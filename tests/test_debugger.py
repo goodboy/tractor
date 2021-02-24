@@ -323,7 +323,6 @@ def test_multi_daemon_subactors(spawn, loglevel):
         child.expect(pexpect.EOF)
 
 
-
 def test_multi_subactors_root_errors(spawn):
     """Multiple subactors, both erroring and breakpointing as well as
     a nested subactor erroring.
@@ -402,7 +401,10 @@ def test_multi_nested_subactors_error_through_nurseries(spawn):
         assert "NameError" in before
 
 
-def test_root_nursery_cancels_before_child_releases_tty_lock(spawn, start_method):
+def test_root_nursery_cancels_before_child_releases_tty_lock(
+    spawn,
+    start_method
+):
     """Test that when the root sends a cancel message before a nested
     child has unblocked (which can happen when it has the tty lock and
     is engaged in pdb) it is indeed cancelled after exiting the debugger.
@@ -419,7 +421,6 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(spawn, start_method
     time.sleep(0.5)
 
     child.sendline('c')
-
 
     for i in range(4):
         time.sleep(0.5)
@@ -439,7 +440,6 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(spawn, start_method
 
             # race conditions on how fast the continue is sent?
             break
-
 
         before = str(child.before.decode())
         assert "NameError: name 'doggypants' is not defined" in before
