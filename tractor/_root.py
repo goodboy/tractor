@@ -164,7 +164,10 @@ async def open_root_actor(
             )
             try:
                 yield actor
-                # result = await main()
+
+            # except BaseException as err:
+            #     breakpoint()
+
             except (Exception, trio.MultiError) as err:
                 logger.exception("Actor crashed:")
                 await _debug._maybe_enter_pm(err)
