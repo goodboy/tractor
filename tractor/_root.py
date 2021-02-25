@@ -164,7 +164,7 @@ async def open_root_actor(
             )
             try:
                 yield actor
-                # result = await main()
+
             except (Exception, trio.MultiError) as err:
                 logger.exception("Actor crashed:")
                 await _debug._maybe_enter_pm(err)
@@ -185,7 +185,7 @@ def run(
     *args,
 
     # runtime kwargs
-    name: Optional[str] = None,
+    name: Optional[str] = 'root',
     arbiter_addr: Tuple[str, int] = (
         _default_arbiter_host,
         _default_arbiter_port,
