@@ -161,7 +161,7 @@ def test_multi_actor_subs_arbiter_pub(
 
         async with tractor.open_nursery() as n:
 
-            name = 'arbiter'
+            name = 'root'
 
             if pub_actor == 'streamer':
                 # start the publisher as a daemon

@@ -185,7 +185,7 @@ def run(
     *args,
 
     # runtime kwargs
-    name: Optional[str] = None,
+    name: Optional[str] = 'root',
     arbiter_addr: Tuple[str, int] = (
         _default_arbiter_host,
         _default_arbiter_port,

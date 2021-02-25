@@ -53,7 +53,7 @@ def test_rpc_errors(arb_addr, to_call, testdir):
     exposed_mods, funcname, inside_err = to_call
     subactor_exposed_mods = []
     func_defined = globals().get(funcname, False)
-    subactor_requests_to = 'arbiter'
+    subactor_requests_to = 'root'
     remote_err = tractor.RemoteActorError
 
     # remote module that fails at import time
