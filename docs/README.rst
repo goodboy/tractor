@@ -13,10 +13,10 @@
 
 ``tractor`` is a `structured concurrent`_ "`actor model`_" built on trio_ and multi-processing_.
 
-We pair structured concurrency with true multi-core Python parallelism;
-the aim is to be the multi-processing framework *you always wanted*.
+We pair structured concurrency and true multi-core parallelism with
+the aim of being the multi-processing framework *you always wanted*.
 
-The first steps to grok ``tractor`` is to get the basics of ``trio`` down.
+The first step to grok ``tractor`` is to get the basics of ``trio`` down.
 A great place to start is the `trio docs`_ and this `blog post`_.
 
 
@@ -26,14 +26,14 @@ Features
 - Infinitely nesteable process trees
 - Built-in APIs for inter-process streaming
 - A (first ever?) "native" multi-core debugger for Python using `pdb++`_
-- (Soon to land) ``asyncio`` support allowing for "infected" actors where
-  `trio` drives the `asyncio` scheduler via the astounding "`guest mode`_"
-- (Soon to land) typed messaging protocols (ex. via ``msgspec``)
+- Support for multiple process spawning backends
+- A modular transport layer, allowing for custom serialization,
+  communications protocols, and environment specific IPC primitives
 
 
 Zombie safe: self-destruct a process tree
 -----------------------------------------
-``tractor`` (attempts to) protect from zombies, no matter what.
+``tractor`` tries to protect you from zombies, no matter what.
 
 .. code:: python
 
@@ -90,7 +90,7 @@ it **is a bug**.
 --------------------------------
 Using the magic of `pdb++`_ and our internal IPC, we've
 been able to create a native feeling debugging experience for
-any (sub)-process in your ``tractor`` tree.
+any (sub-)process in your ``tractor`` tree.
 
 .. code:: python
 
@@ -143,11 +143,12 @@ We're hoping to add a respawn-from-repl system soon!
 
 Worker poolz are easy peasy
 ---------------------------
-It seems the initial ask from most new users is "how do I make a worker
-pool thing?".
+The initial ask from most new users is *"how do I make a worker
+pool thing?"*.
 
-``tractor`` is built to handle any SC process tree you can
-imagine; the "worker pool" pattern is a trivial special case.
+``tractor`` is built to handle any SC (structured concurrent) process
+tree you can imagine; a "worker pool" pattern is a trivial special
+case.
 
 We have a `full re-implementation <worker_pool>`_ of the std-lib's
 ``concurrent.futures.ProcessPoolExecutor`` example for reference.
@@ -169,7 +170,7 @@ Install
 -------
 No PyPi release yet!
 
-::
+From git::
 
     pip install git+git://github.com/goodboy/tractor.git
 
@@ -195,6 +196,16 @@ sharing state. The intention of this model is to allow for highly
 distributed software that, through the adherence to *structured
 concurrency*, results in systems which fail in predictable and
 recoverable ways.
+
+
+What's on the TODO:
+-------------------
+Help us push toward the future.
+
+- (Soon to land) ``asyncio`` support allowing for "infected" actors where
+  `trio` drives the `asyncio` scheduler via the astounding "`guest mode`_"
+- Typed messaging protocols (ex. via ``msgspec``)
+- Erlang-style supervisors via composed context managers
 
 
 Feel like saying hi?
