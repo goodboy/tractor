@@ -208,7 +208,7 @@ pool thing?"*.
 tree you can imagine; a "worker pool" pattern is a trivial special
 case.
 
-We have a `full re-implementation <worker_pool>`_ of the std-lib's
+We have a `full worker pool re-implementation`_ of the std-lib's
 ``concurrent.futures.ProcessPoolExecutor`` example for reference.
 
 You can run it like so (from this dir) to see the process tree in
@@ -222,7 +222,7 @@ This uses no extra threads, fancy semaphores or futures; all we need
 is ``tractor``'s IPC!
 
 
-.. _worker_pool: https://github.com/goodboy/tractor/blob/master/examples/parallelism/concurrent_actors_primes.py
+.. _full worker pool re-implementation: https://github.com/goodboy/tractor/blob/master/examples/parallelism/concurrent_actors_primes.py
 
 Install
 -------
