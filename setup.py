@@ -24,7 +24,7 @@ with open('docs/README.rst', encoding='utf-8') as f:
 
 setup(
     name="tractor",
-    version='0.1.0a0.dev0',  # first ever alpha, dev release
+    version='0.1.0a0',  # first ever alpha
     description='structured concurrrent "actors"',
     long_description=readme,
     license='GPLv3',
