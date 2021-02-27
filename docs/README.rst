@@ -226,7 +226,10 @@ is ``tractor``'s IPC!
 
 Install
 -------
-No PyPi release yet!
+From PyPi::
+
+    pip install tractor
+
 
 From git::
 
