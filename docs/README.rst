@@ -31,6 +31,64 @@ Features
   communications protocols, and environment specific IPC primitives
 
 
+Run a func in a process
+-----------------------
+Use ``trio``'s style of focussing on *tasks as functions*:
+
+.. code:: python
+
+    """
+    Run with a process monitor from a terminal using::
+
+        $TERM -e watch -n 0.1  "pstree -a $$" \
+            & python examples/parallelism/single_func.py \
+            && kill $!
+
+    """
+    import os
+
+    import tractor
+    import trio
+
+
+    async def burn_cpu():
+
+        pid = os.getpid()
+
+        # burn a core @ ~ 50kHz
+        for _ in range(50000):
+            await trio.sleep(1/50000/50)
+
+        return os.getpid()
+
+
+    async def main():
+
+        async with tractor.open_nursery() as n:
+
+            portal = await n.run_in_actor(burn_cpu)
+
+            #  burn rubber in the parent too
+            await burn_cpu()
+
+            # wait on result from target function
+            pid = await portal.result()
+
+        # end of nursery block
+        print(f"Collected subproc {pid}")
+
+
+    if __name__ == '__main__':
+        trio.run(main)
+
+
+This runs ``burn_cpu()`` in a new process and reaps it on completion
+of the nursery block.
+
+If you only need to run a sync function and retreive a single result, you
+might want to check out `trio-parallel`_.
+
+
 Zombie safe: self-destruct a process tree
 -----------------------------------------
 ``tractor`` tries to protect you from zombies, no matter what.
@@ -150,7 +208,7 @@ pool thing?"*.
 tree you can imagine; a "worker pool" pattern is a trivial special
 case.
 
-We have a `full re-implementation <worker_pool>`_ of the std-lib's
+We have a `full worker pool re-implementation`_ of the std-lib's
 ``concurrent.futures.ProcessPoolExecutor`` example for reference.
 
 You can run it like so (from this dir) to see the process tree in
@@ -164,11 +222,14 @@ This uses no extra threads, fancy semaphores or futures; all we need
 is ``tractor``'s IPC!
 
 
-.. _worker_pool: https://github.com/goodboy/tractor/blob/master/examples/parallelism/concurrent_actors_primes.py
+.. _full worker pool re-implementation: https://github.com/goodboy/tractor/blob/master/examples/parallelism/concurrent_actors_primes.py
 
 Install
 -------
-No PyPi release yet!
+From PyPi::
+
+    pip install tractor
+
 
 From git::
 
@@ -228,6 +289,7 @@ channel`_!
 .. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
 .. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
 .. _async generators: https://www.python.org/dev/peps/pep-0525/
+.. _trio-parallel: https://github.com/richardsheridan/trio-parallel
 
 
 .. |gh_actions| image:: https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fgoodboy%2Ftractor%2Fbadge&style=popout-square

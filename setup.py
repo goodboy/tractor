@@ -24,8 +24,8 @@ with open('docs/README.rst', encoding='utf-8') as f:
 
 setup(
     name="tractor",
-    version='0.1.0.alpha0',
-    description='A trionic actor model built on `multiprocessing` and `trio`',
+    version='0.1.0a0',  # first ever alpha
+    description='structured concurrrent "actors"',
     long_description=readme,
     license='GPLv3',
     author='Tyler Goodlet',
@@ -38,14 +38,23 @@ setup(
         'tractor.testing',
     ],
     install_requires=[
-        'msgpack', 'trio>0.8', 'async_generator', 'colorlog', 'wrapt',
-        'trio_typing', 'pdbpp',
+        'trio>0.8',
+        'msgpack',
+        'async_generator',
+        'colorlog',
+        'wrapt',
+        'trio_typing',
+        'pdbpp',
     ],
     tests_require=['pytest'],
     python_requires=">=3.7",
     keywords=[
-        "async", "concurrency", "actor model", "distributed",
-        'trio', 'multiprocessing'
+        'trio',
+        "async",
+        "concurrency",
+        "actor model",
+        "distributed",
+        'multiprocessing'
     ],
     classifiers=[
         'Development Status :: 3 - Alpha',
@@ -57,6 +66,7 @@ setup(
         "Programming Language :: Python :: 3 :: Only",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
         "Intended Audience :: Science/Research",
         "Intended Audience :: Developers",
         "Topic :: System :: Distributed Computing",
