@@ -57,12 +57,12 @@ setup(
         'multiprocessing'
     ],
     classifiers=[
-        'Development Status :: 3 - Alpha',
-        'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)'
-        'Operating System :: POSIX :: Linux',
+        "Development Status :: 3 - Alpha",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: Microsoft :: Windows",
         "Framework :: Trio",
+        "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
         "Programming Language :: Python :: Implementation :: CPython",
-        "Programming Language :: Python :: Implementation :: PyPy",
         "Programming Language :: Python :: 3 :: Only",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
