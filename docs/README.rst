@@ -423,6 +423,7 @@ channel`_!
 .. _async sandwich: https://trio.readthedocs.io/en/latest/tutorial.html#async-sandwich
 .. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
 .. _3 axioms: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=162s
+.. .. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
 .. _adherance to: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=1821s
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
@@ -431,7 +432,7 @@ channel`_!
 .. _messages: https://en.wikipedia.org/wiki/Message_passing
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _structured concurrency: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
+.. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
 .. _async generators: https://www.python.org/dev/peps/pep-0525/
 .. _trio-parallel: https://github.com/richardsheridan/trio-parallel
