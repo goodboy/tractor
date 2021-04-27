@@ -7,6 +7,9 @@ import multiprocessing as mp
 
 import trio
 
+from ._exceptions import NoRuntime
+
+
 _current_actor: Optional['Actor'] = None  # type: ignore # noqa
 _runtime_vars: Dict[str, Any] = {
     '_debug_mode': False,
@@ -19,7 +22,7 @@ def current_actor(err_on_no_runtime: bool = True) -> 'Actor':  # type: ignore # 
     """Get the process-local actor instance.
     """
     if _current_actor is None and err_on_no_runtime:
-        raise RuntimeError("No local actor has been initialized yet")
+        raise NoRuntime("No local actor has been initialized yet")
 
     return _current_actor
 

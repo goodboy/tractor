@@ -46,6 +46,10 @@ class ModuleNotExposed(ModuleNotFoundError):
     "The requested module is not exposed for RPC"
 
 
+class NoRuntime(RuntimeError):
+    "The root actor has not been initialized yet"
+
+
 def pack_error(exc: BaseException) -> Dict[str, Any]:
     """Create an "error message" for tranmission over
     a channel (aka the wire).
