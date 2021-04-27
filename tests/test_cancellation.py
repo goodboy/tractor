@@ -120,7 +120,7 @@ def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
         assert exc.type == AssertionError
 
 
-def do_nothing():
+async def do_nothing():
     pass
 
 
