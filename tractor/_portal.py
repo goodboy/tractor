@@ -182,7 +182,7 @@ class Portal:
         first_msg = await recv_chan.receive()
         functype = first_msg.get('functype')
 
-        if functype == 'function' or functype == 'asyncfunction':
+        if functype == 'asyncfunc':
             resp_type = 'return'
         elif functype == 'asyncgen':
             resp_type = 'yield'
