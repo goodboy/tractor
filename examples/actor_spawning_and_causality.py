@@ -1,7 +1,7 @@
 import tractor
 
 
-def cellar_door():
+async def cellar_door():
     assert not tractor.is_root_process()
     return "Dang that's beautiful"
 

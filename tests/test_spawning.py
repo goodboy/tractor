@@ -51,7 +51,7 @@ def test_local_arbiter_subactor_global_state(arb_addr):
     assert result == 10
 
 
-def movie_theatre_question():
+async def movie_theatre_question():
     """A question asked in a dark theatre, in a tangent
     (errr, I mean different) process.
     """
@@ -80,7 +80,7 @@ async def test_movie_theatre_convo(start_method):
         await portal.cancel_actor()
 
 
-def cellar_door():
+async def cellar_door():
     return "Dang that's beautiful"
 
 

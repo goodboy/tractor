@@ -1,7 +1,7 @@
 import tractor
 
 
-def movie_theatre_question():
+async def movie_theatre_question():
     """A question asked in a dark theatre, in a tangent
     (errr, I mean different) process.
     """
