@@ -64,12 +64,13 @@ async def _invoke(
         kwargs['ctx'] = ctx
         treat_as_gen = True
 
+    # errors raised inside this block are propgated back to caller
     try:
-        is_async_partial = False
-        is_async_gen_partial = False
-        if isinstance(func, partial):
-            is_async_partial = inspect.iscoroutinefunction(func.func)
-            is_async_gen_partial = inspect.isasyncgenfunction(func.func)
+        if not (
+            inspect.isasyncgenfunction(func) or
+            inspect.iscoroutinefunction(func)
+        ):
+            raise TypeError(f'{func} must be an async function!')
 
         coro = func(**kwargs)
 
@@ -1036,7 +1037,7 @@ class Arbiter(Actor):
         self._waiters = {}
         super().__init__(*args, **kwargs)
 
-    def find_actor(self, name: str) -> Optional[Tuple[str, int]]:
+    async def find_actor(self, name: str) -> Optional[Tuple[str, int]]:
         for uid, sockaddr in self._registry.items():
             if name in uid:
                 return sockaddr
@@ -1077,7 +1078,7 @@ class Arbiter(Actor):
 
         return sockaddrs
 
-    def register_actor(
+    async def register_actor(
         self, uid: Tuple[str, str], sockaddr: Tuple[str, int]
     ) -> None:
         name, uuid = uid
@@ -1090,5 +1091,5 @@ class Arbiter(Actor):
             if isinstance(event, trio.Event):
                 event.set()
 
-    def unregister_actor(self, uid: Tuple[str, str]) -> None:
+    async def unregister_actor(self, uid: Tuple[str, str]) -> None:
         self._registry.pop(uid, None)
