@@ -103,7 +103,6 @@ async def open_root_actor(
         _default_arbiter_port,
     )
 
-
     if loglevel is None:
         loglevel = log.get_loglevel()
     else:
