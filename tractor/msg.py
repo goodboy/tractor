@@ -29,9 +29,13 @@ async def fan_out_to_ctxs(
         return tuple(topics2ctxs.keys())
 
     agen = pub_async_gen_func(get_topics=get_topics)
+
     async with aclosing(agen) as pub_gen:
+
         async for published in pub_gen:
+
             ctx_payloads: Dict[str, Any] = {}
+
             for topic, data in published.items():
                 log.debug(f"publishing {topic, data}")
                 # build a new dict packet or invoke provided packetizer
