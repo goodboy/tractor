@@ -182,24 +182,22 @@ def _breakpoint(debug_func) -> Awaitable[None]:
             _debugger_request_cs = cs
             try:
                 async with get_root() as portal:
-                    with trio.fail_after(.5):
-                        stream = await portal.run(
+                        async with portal.open_stream_from(
                             tractor._debug._hijack_stdin_relay_to_child,
                             subactor_uid=actor.uid,
-                        )
-                    async with aclosing(stream):
+                        ) as stream:
 
-                        # block until first yield above
-                        async for val in stream:
+                                # block until first yield above
+                                async for val in stream:
 
-                            assert val == 'Locked'
-                            task_status.started()
+                                    assert val == 'Locked'
+                                    task_status.started()
 
-                            # with trio.CancelScope(shield=True):
-                            await do_unlock.wait()
+                                    # with trio.CancelScope(shield=True):
+                                    await do_unlock.wait()
 
-                            # trigger cancellation of remote stream
-                            break
+                                    # trigger cancellation of remote stream
+                                    break
             finally:
                 log.debug(f"Exiting debugger for actor {actor}")
                 global _in_debug
