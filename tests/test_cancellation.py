@@ -49,7 +49,9 @@ def test_remote_error(arb_addr, args_err):
     async def main():
         async with tractor.open_nursery() as nursery:
 
-            portal = await nursery.run_in_actor(assert_err, name='errorer', **args)
+            portal = await nursery.run_in_actor(
+                assert_err, name='errorer', **args
+            )
 
             # get result(s) from main task
             try:
@@ -168,13 +170,14 @@ async def test_cancel_infinite_streamer(start_method):
         async with tractor.open_nursery() as n:
             portal = await n.start_actor(
                 'donny',
-                rpc_module_paths=[__name__],
+                enable_modules=[__name__],
             )
 
             # this async for loop streams values from the above
             # async generator running in a separate process
-            async for letter in await portal.run(stream_forever):
-                print(letter)
+            async with portal.open_stream_from(stream_forever) as stream:
+                async for letter in stream:
+                    print(letter)
 
     # we support trio's cancellation system
     assert cancel_scope.cancelled_caught
@@ -430,7 +433,6 @@ def test_cancel_via_SIGINT_other_task(
         tractor.run(main)
 
 
-
 async def spin_for(period=3):
     "Sync sleep."
     time.sleep(period)
@@ -438,7 +440,7 @@ async def spin_for(period=3):
 
 async def spawn():
     async with tractor.open_nursery() as tn:
-        portal = await tn.run_in_actor(
+        await tn.run_in_actor(
             spin_for,
             name='sleeper',
         )
@@ -460,7 +462,7 @@ def test_cancel_while_childs_child_in_sync_sleep(
     async def main():
         with trio.fail_after(2):
             async with tractor.open_nursery() as tn:
-                portal = await tn.run_in_actor(
+                await tn.run_in_actor(
                     spawn,
                     name='spawn',
                 )
