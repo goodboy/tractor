@@ -268,28 +268,30 @@ async def close_chans_before_nursery(
                 portal2 = await tn.start_actor(
                     'consumer2', enable_modules=[__name__])
 
-                async with (
-                    portal1.open_stream_from(stream_forever) as agen1,
-                    portal2.open_stream_from(stream_forever) as agen2,
-                ):
-                    async with trio.open_nursery() as n:
-                        n.start_soon(streamer, agen1)
-                        n.start_soon(cancel, use_signal, .5)
-                        try:
-                            await streamer(agen2)
-                        finally:
-                            # Kill the root nursery thus resulting in
-                            # normal arbiter channel ops to fail during
-                            # teardown. It doesn't seem like this is
-                            # reliably triggered by an external SIGINT.
-                            # tractor.current_actor()._root_nursery.cancel_scope.cancel()
+                # TODO: compact this back as was in last commit once
+                # 3.9+, see https://github.com/goodboy/tractor/issues/207
+                async with portal1.open_stream_from(stream_forever) as agen1:
+                    async with portal2.open_stream_from(
+                        stream_forever
+                    ) as agen2:
+                        async with trio.open_nursery() as n:
+                            n.start_soon(streamer, agen1)
+                            n.start_soon(cancel, use_signal, .5)
+                            try:
+                                await streamer(agen2)
+                            finally:
+                                # Kill the root nursery thus resulting in
+                                # normal arbiter channel ops to fail during
+                                # teardown. It doesn't seem like this is
+                                # reliably triggered by an external SIGINT.
+                                # tractor.current_actor()._root_nursery.cancel_scope.cancel()
 
-                            # XXX: THIS IS THE KEY THING that happens
-                            # **before** exiting the actor nursery block
+                                # XXX: THIS IS THE KEY THING that happens
+                                # **before** exiting the actor nursery block
 
-                            # also kill off channels cuz why not
-                            await agen1.aclose()
-                            await agen2.aclose()
+                                # also kill off channels cuz why not
+                                await agen1.aclose()
+                                await agen2.aclose()
         finally:
             with trio.CancelScope(shield=True):
                 await trio.sleep(1)

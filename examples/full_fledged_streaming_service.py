@@ -29,13 +29,13 @@ async def aggregate(seed):
         send_chan, recv_chan = trio.open_memory_channel(500)
 
         async def push_to_chan(portal, send_chan):
-            async with (
-                send_chan,
-                portal.open_stream_from(stream_data, seed=seed) as stream,
-            ):
-                async for value in stream:
-                    # leverage trio's built-in backpressure
-                    await send_chan.send(value)
+
+            # TODO: https://github.com/goodboy/tractor/issues/207
+            async with send_chan:
+                async with portal.open_stream_from(stream_data, seed=seed) as stream:
+                    async for value in stream:
+                        # leverage trio's built-in backpressure
+                        await send_chan.send(value)
 
             print(f"FINISHED ITERATING {portal.channel.uid}")
 
