@@ -101,7 +101,7 @@ def stream(func):
     params = sig.parameters
     if 'stream' not in params and 'ctx' in params:
         warnings.warn(
-            "`@tractr.stream decorated funcs should now declare a `stream` "
+            "`@tractor.stream decorated funcs should now declare a `stream` "
             " arg, `ctx` is now designated for use with @tractor.context",
             DeprecationWarning,
             stacklevel=2,
@@ -141,7 +141,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         self._ctx = ctx
         self._rx_chan = rx_chan
         self._portal = portal
-        # self._chan = portal.channel
         self._shielded = False
 
     # delegate directly to underlying mem channel
@@ -152,7 +151,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         try:
             msg = await self._rx_chan.receive()
             return msg['yield']
-            # return msg['yield']
 
         except KeyError:
             # internal error should never get here
@@ -249,14 +247,14 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
     #     )
 
 
-class MsgStream(ReceiveMsgStream, trio.abc.Channel):
-    """
-    Bidirectional message stream for use within an inter-actor actor
-    ``Context```.
+# class MsgStream(ReceiveMsgStream, trio.abc.Channel):
+#     """
+#     Bidirectional message stream for use within an inter-actor actor
+#     ``Context```.
 
-    """
-    async def send(
-        self,
-        data: Any
-    ) -> None:
-        await self._ctx.chan.send({'yield': data, 'cid': self._ctx.cid})
+#     """
+#     async def send(
+#         self,
+#         data: Any
+#     ) -> None:
+#         await self._ctx.chan.send({'yield': data, 'cid': self._ctx.cid})
