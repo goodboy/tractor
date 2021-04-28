@@ -61,37 +61,38 @@ async def stream_from_single_subactor(stream_func):
                 # no brokerd actor found
                 portal = await nursery.start_actor(
                     'streamerd',
-                    rpc_module_paths=[__name__],
+                    enable_modules=[__name__],
                 )
 
                 seq = range(10)
 
-                stream = await portal.run(
-                    stream_func,  # one of the funcs above
+                async with portal.open_stream_from(
+                    stream_func,
                     sequence=list(seq),  # has to be msgpack serializable
-                )
-                # it'd sure be nice to have an asyncitertools here...
-                iseq = iter(seq)
-                ival = next(iseq)
+                ) as stream:
 
-                async for val in stream:
-                    assert val == ival
+                    # it'd sure be nice to have an asyncitertools here...
+                    iseq = iter(seq)
+                    ival = next(iseq)
+
+                    async for val in stream:
+                        assert val == ival
+
+                        try:
+                            ival = next(iseq)
+                        except StopIteration:
+                            # should cancel far end task which will be
+                            # caught and no error is raised
+                            await stream.aclose()
+
+                    await trio.sleep(0.3)
 
                     try:
-                        ival = next(iseq)
-                    except StopIteration:
-                        # should cancel far end task which will be
-                        # caught and no error is raised
-                        await stream.aclose()
-
-                await trio.sleep(0.3)
-
-                try:
-                    await stream.__anext__()
-                except StopAsyncIteration:
-                    # stop all spawned subactors
-                    await portal.cancel_actor()
-                # await nursery.cancel()
+                        await stream.__anext__()
+                    except StopAsyncIteration:
+                        # stop all spawned subactors
+                        await portal.cancel_actor()
+                    # await nursery.cancel()
 
 
 @pytest.mark.parametrize(
@@ -132,7 +133,7 @@ async def aggregate(seed):
             # fork point
             portal = await nursery.start_actor(
                 name=f'streamer_{i}',
-                rpc_module_paths=[__name__],
+                enable_modules=[__name__],
             )
 
             portals.append(portal)
@@ -141,11 +142,14 @@ async def aggregate(seed):
 
         async def push_to_chan(portal, send_chan):
             async with send_chan:
-                async for value in await portal.run(
-                    __name__, 'stream_data', seed=seed
-                ):
-                    # leverage trio's built-in backpressure
-                    await send_chan.send(value)
+
+                async with portal.open_stream_from(
+                    stream_data, seed=seed,
+                ) as stream:
+
+                    async for value in stream:
+                        # leverage trio's built-in backpressure
+                        await send_chan.send(value)
 
             print(f"FINISHED ITERATING {portal.channel.uid}")
 
@@ -183,22 +187,24 @@ async def a_quadruple_example():
         seed = int(1e3)
         pre_start = time.time()
 
-        portal = await nursery.run_in_actor(
-            aggregate,
-            seed=seed,
+        portal = await nursery.start_actor(
             name='aggregator',
+            enable_modules=[__name__],
         )
 
         start = time.time()
         # the portal call returns exactly what you'd expect
         # as if the remote "aggregate" function was called locally
         result_stream = []
-        async for value in await portal.result():
-            result_stream.append(value)
+
+        async with portal.open_stream_from(aggregate, seed=seed) as stream:
+            async for value in stream:
+                result_stream.append(value)
 
         print(f"STREAM TIME = {time.time() - start}")
         print(f"STREAM + SPAWN TIME = {time.time() - pre_start}")
         assert result_stream == list(range(seed))
+        await portal.cancel_actor()
         return result_stream
 
 
@@ -272,48 +278,55 @@ async def test_respawn_consumer_task(
 
     async with tractor.open_nursery() as n:
 
-        stream = await(await n.run_in_actor(
+        portal = await n.start_actor(
+            name='streamer',
+            enable_modules=[__name__]
+        )
+        async with portal.open_stream_from(
             stream_data,
             seed=11,
-            name='streamer',
-        )).result()
+        ) as stream:
 
-        expect = set(range(11))
-        received = []
+            expect = set(range(11))
+            received = []
 
-        # this is the re-spawn task routine
-        async def consume(task_status=trio.TASK_STATUS_IGNORED):
-            print('starting consume task..')
-            nonlocal stream
+            # this is the re-spawn task routine
+            async def consume(task_status=trio.TASK_STATUS_IGNORED):
+                print('starting consume task..')
+                nonlocal stream
 
-            with trio.CancelScope() as cs:
-                task_status.started(cs)
+                with trio.CancelScope() as cs:
+                    task_status.started(cs)
 
-                # shield stream's underlying channel from cancellation
-                with stream.shield():
+                    # shield stream's underlying channel from cancellation
+                    with stream.shield():
 
-                    async for v in stream:
-                        print(f'from stream: {v}')
-                        expect.remove(v)
-                        received.append(v)
+                        async for v in stream:
+                            print(f'from stream: {v}')
+                            expect.remove(v)
+                            received.append(v)
 
-                print('exited consume')
+                    print('exited consume')
 
-        async with trio.open_nursery() as ln:
-            cs = await ln.start(consume)
+            async with trio.open_nursery() as ln:
+                cs = await ln.start(consume)
 
-            while True:
+                while True:
 
-                await trio.sleep(0.1)
+                    await trio.sleep(0.1)
 
-                if received[-1] % 2 == 0:
+                    if received[-1] % 2 == 0:
 
-                    print('cancelling consume task..')
-                    cs.cancel()
+                        print('cancelling consume task..')
+                        cs.cancel()
 
-                    # respawn
-                    cs = await ln.start(consume)
+                        # respawn
+                        cs = await ln.start(consume)
 
-                if not expect:
-                    print("all values streamed, BREAKING")
-                    break
+                    if not expect:
+                        print("all values streamed, BREAKING")
+                        break
+
+        # TODO: this is justification for a
+        # ``ActorNursery.stream_from_actor()`` helper?
+        await portal.cancel_actor()
