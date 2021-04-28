@@ -24,8 +24,9 @@ async def main():
 
             # this async for loop streams values from the above
             # async generator running in a separate process
-            async for letter in await portal.run(stream_forever):
-                print(letter)
+            async with portal.open_stream_from(stream_forever) as stream:
+                async for letter in stream:
+                    print(letter)
 
     # we support trio's cancellation system
     assert cancel_scope.cancelled_caught
