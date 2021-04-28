@@ -29,7 +29,7 @@ PRIMES = [
 ]
 
 
-def is_prime(n):
+async def is_prime(n):
     if n < 2:
         return False
     if n == 2:
