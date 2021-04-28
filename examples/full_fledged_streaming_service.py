@@ -21,7 +21,7 @@ async def aggregate(seed):
             # fork point
             portal = await nursery.start_actor(
                 name=f'streamer_{i}',
-                rpc_module_paths=[__name__],
+                enable_modules=[__name__],
             )
 
             portals.append(portal)
@@ -29,8 +29,11 @@ async def aggregate(seed):
         send_chan, recv_chan = trio.open_memory_channel(500)
 
         async def push_to_chan(portal, send_chan):
-            async with send_chan:
-                async for value in await portal.run(stream_data, seed=seed):
+            async with (
+                send_chan,
+                portal.open_stream_from(stream_data, seed=seed) as stream,
+            ):
+                async for value in stream:
                     # leverage trio's built-in backpressure
                     await send_chan.send(value)
 
@@ -71,18 +74,24 @@ async def main():
         import time
         pre_start = time.time()
 
-        portal = await nursery.run_in_actor(
-            aggregate,
+        portal = await nursery.start_actor(
             name='aggregator',
-            seed=seed,
+            enable_modules=[__name__],
         )
 
-        start = time.time()
-        # the portal call returns exactly what you'd expect
-        # as if the remote "aggregate" function was called locally
-        result_stream = []
-        async for value in await portal.result():
-            result_stream.append(value)
+        async with portal.open_stream_from(
+            aggregate,
+            seed=seed,
+        ) as stream:
+
+            start = time.time()
+            # the portal call returns exactly what you'd expect
+            # as if the remote "aggregate" function was called locally
+            result_stream = []
+            async for value in stream:
+                result_stream.append(value)
+
+        await portal.cancel_actor()
 
         print(f"STREAM TIME = {time.time() - start}")
         print(f"STREAM + SPAWN TIME = {time.time() - pre_start}")

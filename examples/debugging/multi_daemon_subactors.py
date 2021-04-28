@@ -26,8 +26,8 @@ async def main():
         p1 = await n.start_actor('name_error', enable_modules=[__name__])
 
         # retreive results
-        stream = await p0.run(breakpoint_forever)
-        await p1.run(name_error)
+        async with p0.open_stream_from(breakpoint_forever) as stream:
+            await p1.run(name_error)
 
 
 if __name__ == '__main__':

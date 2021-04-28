@@ -21,4 +21,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    tractor.run(main, debug_mode=True)
+    tractor.run(main, debug_mode=True, loglevel='debug')

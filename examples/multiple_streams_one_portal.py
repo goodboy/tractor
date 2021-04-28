@@ -15,11 +15,12 @@ async def stream_data(seed=10):
 
 async def stream_from_portal(p, consumed):
 
-    async for item in await p.run(stream_data):
-        if item in consumed:
-            consumed.remove(item)
-        else:
-            consumed.append(item)
+    async with p.open_stream_from(stream_data) as stream:
+        async for item in stream:
+            if item in consumed:
+                consumed.remove(item)
+            else:
+                consumed.append(item)
 
 
 async def main():
