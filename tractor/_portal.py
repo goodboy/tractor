@@ -110,8 +110,10 @@ class Portal:
         return cid, recv_chan, functype, first_msg
 
     async def _submit_for_result(self, ns: str, func: str, **kwargs) -> None:
+
         assert self._expect_result is None, \
                 "A pending main result has already been submitted"
+
         self._expect_result = await self._submit(ns, func, kwargs)
 
     async def _return_once(
@@ -266,10 +268,15 @@ class Portal:
             assert isinstance(fn_name, str)
 
         else:  # function reference was passed directly
-            if not (
-                inspect.iscoroutinefunction(func)
+            if (
+                not inspect.iscoroutinefunction(func) or
+                (
+                    inspect.iscoroutinefunction(func) and
+                    getattr(func, '_tractor_stream_function', False)
+                )
             ):
-                raise TypeError(f'{func} must be an async function!')
+                raise TypeError(
+                    f'{func} must be a non-streaming async function!')
 
             fn_mod_path, fn_name = func_deats(func)
 
@@ -285,8 +292,9 @@ class Portal:
     ) -> AsyncGenerator[ReceiveMsgStream, None]:
 
         if not inspect.isasyncgenfunction(async_gen_func):
-            if not inspect.iscoroutinefunction(async_gen_func) or (
-                not getattr(async_gen_func, '_tractor_stream_function', False)
+            if not (
+                inspect.iscoroutinefunction(async_gen_func) and
+                getattr(async_gen_func, '_tractor_stream_function', False)
             ):
                 raise TypeError(
                     f'{async_gen_func} must be an async generator function!')
