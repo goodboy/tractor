@@ -60,14 +60,13 @@ async def subs(
         def pred(i):
             return isinstance(i, int)
 
+    # TODO: https://github.com/goodboy/tractor/issues/207
     async with tractor.find_actor(pub_actor_name) as portal:
-        async with (
-            portal.open_stream_from(
-                pubber,
-                topics=which,
-                seed=seed,
-            ) as stream
-        ):
+        async with portal.open_stream_from(
+            pubber,
+            topics=which,
+            seed=seed,
+        ) as stream:
             task_status.started(stream)
             times = 10
             count = 0
@@ -81,13 +80,11 @@ async def subs(
 
             await stream.aclose()
 
-        async with (
-            portal.open_stream_from(
-                pubber,
-                topics=['odd'],
-                seed=seed,
-            ) as stream
-        ):
+        async with portal.open_stream_from(
+            pubber,
+            topics=['odd'],
+            seed=seed,
+        ) as stream:
             await stream.__anext__()
             count = 0
             # async with aclosing(stream) as stream:
