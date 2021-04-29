@@ -357,7 +357,7 @@ async def mp_new_proc(
         else:
             fs_info = (None, None, None, None, None)
 
-        proc = _ctx.Process(  # type: ignore
+        proc: mp.Process = _ctx.Process(  # type: ignore
             target=_mp_main,
             args=(
                 subactor,
