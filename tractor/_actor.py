@@ -1093,4 +1093,4 @@ class Arbiter(Actor):
                 event.set()
 
     async def unregister_actor(self, uid: Tuple[str, str]) -> None:
-        self._registry.pop(uid, None)
+        self._registry.pop(uid)

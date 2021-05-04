@@ -4,7 +4,6 @@ Inter-process comms abstractions
 import typing
 from typing import Any, Tuple, Optional
 from functools import partial
-import inspect
 
 import msgpack
 import trio

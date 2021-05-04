@@ -108,8 +108,9 @@ async def cancel(use_signal, delay=0):
 
 
 async def stream_from(portal):
-    async for value in await portal.result():
-        print(value)
+    async with portal.open_stream_from(stream_forever) as stream:
+        async for value in stream:
+            print(value)
 
 
 async def spawn_and_check_registry(
@@ -139,18 +140,20 @@ async def spawn_and_check_registry(
         registry = await get_reg()
         assert actor.uid in registry
 
-        if with_streaming:
-            to_run = stream_forever
-        else:
-            to_run = trio.sleep_forever
+        try:
+            async with tractor.open_nursery() as n:
+                async with trio.open_nursery() as trion:
 
-        async with trio.open_nursery() as trion:
-            try:
-                async with tractor.open_nursery() as n:
                     portals = {}
                     for i in range(3):
                         name = f'a{i}'
-                        portals[name] = await n.run_in_actor(to_run, name=name)
+                        if with_streaming:
+                            portals[name] = await n.start_actor(
+                                name=name, enable_modules=[__name__])
+
+                        else:  # no streaming
+                            portals[name] = await n.run_in_actor(
+                                trio.sleep_forever, name=name)
 
                     # wait on last actor to come up
                     async with tractor.wait_for_actor(name):
@@ -171,19 +174,19 @@ async def spawn_and_check_registry(
                         trion.start_soon(cancel, use_signal, 1)
 
                         last_p = pts[-1]
-                        async for value in await last_p.result():
-                            print(value)
+                        await stream_from(last_p)
+
                     else:
                         await cancel(use_signal)
 
-            finally:
-                with trio.CancelScope(shield=True):
-                    await trio.sleep(0.5)
+        finally:
+            with trio.CancelScope(shield=True):
+                await trio.sleep(0.5)
 
-                    # all subactors should have de-registered
-                    registry = await get_reg()
-                    assert len(registry) == extra
-                    assert actor.uid in registry
+                # all subactors should have de-registered
+                registry = await get_reg()
+                assert len(registry) == extra
+                assert actor.uid in registry
 
 
 @pytest.mark.parametrize('use_signal', [False, True])
@@ -260,36 +263,38 @@ async def close_chans_before_nursery(
             get_reg = partial(aportal.run_from_ns, 'self', 'get_registry')
 
             async with tractor.open_nursery() as tn:
-                portal1 = await tn.run_in_actor(
-                    stream_forever,
-                    name='consumer1',
-                )
-                agen1 = await portal1.result()
+                portal1 = await tn.start_actor(
+                    name='consumer1', enable_modules=[__name__])
+                portal2 = await tn.start_actor(
+                    'consumer2', enable_modules=[__name__])
 
-                portal2 = await tn.start_actor('consumer2', rpc_module_paths=[__name__])
-                agen2 = await portal2.run(stream_forever)
+                # TODO: compact this back as was in last commit once
+                # 3.9+, see https://github.com/goodboy/tractor/issues/207
+                async with portal1.open_stream_from(stream_forever) as agen1:
+                    async with portal2.open_stream_from(
+                        stream_forever
+                    ) as agen2:
+                        async with trio.open_nursery() as n:
+                            n.start_soon(streamer, agen1)
+                            n.start_soon(cancel, use_signal, .5)
+                            try:
+                                await streamer(agen2)
+                            finally:
+                                # Kill the root nursery thus resulting in
+                                # normal arbiter channel ops to fail during
+                                # teardown. It doesn't seem like this is
+                                # reliably triggered by an external SIGINT.
+                                # tractor.current_actor()._root_nursery.cancel_scope.cancel()
 
-                async with trio.open_nursery() as n:
-                    n.start_soon(streamer, agen1)
-                    n.start_soon(cancel, use_signal, .5)
-                    try:
-                        await streamer(agen2)
-                    finally:
-                        # Kill the root nursery thus resulting in
-                        # normal arbiter channel ops to fail during
-                        # teardown. It doesn't seem like this is
-                        # reliably triggered by an external SIGINT.
-                        # tractor.current_actor()._root_nursery.cancel_scope.cancel()
+                                # XXX: THIS IS THE KEY THING that happens
+                                # **before** exiting the actor nursery block
 
-                        # XXX: THIS IS THE KEY THING that happens
-                        # **before** exiting the actor nursery block
-
-                        # also kill off channels cuz why not
-                        await agen1.aclose()
-                        await agen2.aclose()
+                                # also kill off channels cuz why not
+                                await agen1.aclose()
+                                await agen2.aclose()
         finally:
             with trio.CancelScope(shield=True):
-                await trio.sleep(.5)
+                await trio.sleep(1)
 
                 # all subactors should have de-registered
                 registry = await get_reg()

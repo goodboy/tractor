@@ -2,6 +2,7 @@
 ``trio`` inspired apis and helpers
 """
 from functools import partial
+import inspect
 import multiprocessing as mp
 from typing import Tuple, List, Dict, Optional
 import typing
@@ -136,6 +137,14 @@ class ActorNursery:
             # use the run_in_actor nursery
             nursery=self._ria_nursery,
         )
+
+        # XXX: don't allow stream funcs
+        if not (
+            inspect.iscoroutinefunction(fn) and
+            not getattr(fn, '_tractor_stream_function', False)
+        ):
+            raise TypeError(f'{fn} must be an async function!')
+
         # this marks the actor to be cancelled after its portal result
         # is retreived, see logic in `open_nursery()` below.
         self._cancel_after_result_on_exit.add(portal)

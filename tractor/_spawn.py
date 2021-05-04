@@ -98,17 +98,11 @@ async def exhaust_portal(
     """
     try:
         log.debug(f"Waiting on final result from {actor.uid}")
-        final = res = await portal.result()
-        # if it's an async-gen then alert that we're cancelling it
-        if inspect.isasyncgen(res):
-            final = []
-            log.warning(
-                f"Blindly consuming asyncgen for {actor.uid}")
-            with trio.fail_after(1):
-                async with aclosing(res) as agen:
-                    async for item in agen:
-                        log.debug(f"Consuming item {item}")
-                        final.append(item)
+
+        # XXX: streams should never be reaped here since they should
+        # always be established and shutdown using a context manager api
+        final = await portal.result()
+
     except (Exception, trio.MultiError) as err:
         # we reraise in the parent task via a ``trio.MultiError``
         return err

@@ -60,44 +60,44 @@ async def subs(
         def pred(i):
             return isinstance(i, int)
 
+    # TODO: https://github.com/goodboy/tractor/issues/207
     async with tractor.find_actor(pub_actor_name) as portal:
-        stream = await portal.run(
+        async with portal.open_stream_from(
             pubber,
             topics=which,
             seed=seed,
-        )
-        task_status.started(stream)
-        times = 10
-        count = 0
-        await stream.__anext__()
-        async for pkt in stream:
-            for topic, value in pkt.items():
-                assert pred(value)
-            count += 1
-            if count >= times:
-                break
-
-        await stream.aclose()
-
-        stream = await portal.run(
-            pubber,
-            topics=['odd'],
-            seed=seed,
-        )
-
-        await stream.__anext__()
-        count = 0
-        # async with aclosing(stream) as stream:
-        try:
+        ) as stream:
+            task_status.started(stream)
+            times = 10
+            count = 0
+            await stream.__anext__()
             async for pkt in stream:
                 for topic, value in pkt.items():
-                    pass
-                    # assert pred(value)
+                    assert pred(value)
                 count += 1
                 if count >= times:
                     break
-        finally:
+
             await stream.aclose()
+
+        async with portal.open_stream_from(
+            pubber,
+            topics=['odd'],
+            seed=seed,
+        ) as stream:
+            await stream.__anext__()
+            count = 0
+            # async with aclosing(stream) as stream:
+            try:
+                async for pkt in stream:
+                    for topic, value in pkt.items():
+                        pass
+                        # assert pred(value)
+                    count += 1
+                    if count >= times:
+                        break
+            finally:
+                await stream.aclose()
 
 
 @tractor.msg.pub(tasks=['one', 'two'])
@@ -128,11 +128,10 @@ async def test_required_args(callwith_expecterror):
             await func(**kwargs)
     else:
         async with tractor.open_nursery() as n:
-            # await func(**kwargs)
-            portal = await n.run_in_actor(
-                multilock_pubber,
+
+            portal = await n.start_actor(
                 name='pubber',
-                **kwargs
+                enable_modules=[__name__],
             )
 
             async with tractor.wait_for_actor('pubber'):
@@ -140,8 +139,14 @@ async def test_required_args(callwith_expecterror):
 
             await trio.sleep(0.5)
 
-            async for val in await portal.result():
-                assert val == {'doggy': 10}
+            async with portal.open_stream_from(
+                multilock_pubber,
+                **kwargs
+            ) as stream:
+                async for val in stream:
+                    assert val == {'doggy': 10}
+
+            await portal.cancel_actor()
 
 
 @pytest.mark.parametrize(
