@@ -169,10 +169,13 @@ async def open_root_actor(
                 logger.exception("Actor crashed:")
                 await _debug._maybe_enter_pm(err)
 
+                # always re-raise
                 raise
+
             finally:
                 logger.info("Shutting down root actor")
-                await actor.cancel()
+                with trio.CancelScope(shield=True):
+                    await actor.cancel()
     finally:
         _state._current_actor = None
         logger.info("Root actor terminated")
