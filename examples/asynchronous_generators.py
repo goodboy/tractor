@@ -14,12 +14,15 @@ async def stream_forever():
 
 
 async def main():
+
     # stream for at most 1 seconds
     with trio.move_on_after(1) as cancel_scope:
+
         async with tractor.open_nursery() as n:
+
             portal = await n.start_actor(
-                f'donny',
-                rpc_module_paths=[__name__],
+                'donny',
+                enable_modules=[__name__],
             )
 
             # this async for loop streams values from the above
@@ -34,4 +37,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    tractor.run(main)
+    trio.run(main)

@@ -74,11 +74,15 @@ def test_rpc_errors(arb_addr, to_call, testdir):
         remote_err = inside_err
 
     async def main():
-        actor = tractor.current_actor()
-        assert actor.is_arbiter
 
         # spawn a subactor which calls us back
-        async with tractor.open_nursery() as n:
+        async with tractor.open_nursery(
+            arbiter_addr=arb_addr,
+            enable_modules=exposed_mods.copy(),
+        ) as n:
+
+            actor = tractor.current_actor()
+            assert actor.is_arbiter
             await n.run_in_actor(
                 sleep_back_actor,
                 actor_name=subactor_requests_to,
@@ -90,15 +94,11 @@ def test_rpc_errors(arb_addr, to_call, testdir):
                 func_name=funcname,
                 exposed_mods=exposed_mods,
                 func_defined=True if func_defined else False,
-                rpc_module_paths=subactor_exposed_mods,
+                enable_modules=subactor_exposed_mods,
             )
 
     def run():
-        tractor.run(
-            main,
-            arbiter_addr=arb_addr,
-            rpc_module_paths=exposed_mods.copy(),
-        )
+        trio.run(main)
 
     # handle both parameterized cases
     if exposed_mods and func_defined:

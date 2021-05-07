@@ -1,3 +1,4 @@
+import trio
 import tractor
 
 
@@ -11,7 +12,7 @@ async def main():
         for i in range(3):
             real_actors.append(await n.start_actor(
                 f'actor_{i}',
-                rpc_module_paths=[__name__],
+                enable_modules=[__name__],
             ))
 
         # start one actor that will fail immediately
@@ -24,6 +25,6 @@ async def main():
 if __name__ == '__main__':
     try:
         # also raises
-        tractor.run(main)
+        trio.run(main)
     except tractor.RemoteActorError:
         print("Look Maa that actor failed hard, hehhh!")
