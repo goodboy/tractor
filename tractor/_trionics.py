@@ -357,7 +357,8 @@ async def open_nursery(
     try:
         if actor is None and is_main_process():
 
-            # if we are the parent process start the actor runtime implicitly
+            # if we are the parent process start the
+            # actor runtime implicitly
             log.info("Starting actor runtime!")
 
             # mark us for teardown on exit
@@ -376,7 +377,6 @@ async def open_nursery(
             async with _open_and_supervise_one_cancels_all_nursery(
                 actor
             ) as anursery:
-
                 yield anursery
 
     finally:
