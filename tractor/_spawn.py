@@ -25,7 +25,10 @@ from . import _forkserver_override
 from ._state import (
     current_actor,
     is_main_process,
+    is_root_process,
+    _runtime_vars,
 )
+
 from .log import get_logger
 from ._portal import Portal
 from ._actor import Actor, ActorFailure
@@ -206,13 +209,46 @@ async def spawn_subactor(
         yield proc
 
     finally:
+        log.debug(f"Attempting to kill {proc}")
 
         # XXX: do this **after** cancellation/tearfown
         # to avoid killing the process too early
         # since trio does this internally on ``__aexit__()``
 
-        log.debug(f"Attempting to kill {proc}")
-        await do_hard_kill(proc)
+        if (
+            is_root_process()
+
+            # XXX: basically the pre-closing of stdstreams in a
+            # root-processe's ``trio.Process.aclose()`` can clobber
+            # any existing debugger session so we avoid
+            and _runtime_vars['_debug_mode']
+        ):
+            # XXX: this is ``trio.Process.aclose()`` minus
+            # the std-streams pre-closing steps and ``Process.kill()``
+            # calls.
+            try:
+                await proc.wait()
+            finally:
+                if proc.returncode is None:
+                    # XXX: skip this when in debug and a session might
+                    # still be live
+                    # proc.kill()
+                    with trio.CancelScope(shield=True):
+                        await proc.wait()
+        else:
+            # NOTE: this timeout used to do nothing since we were shielding
+            # the ``.wait()`` inside ``new_proc()`` which will pretty much
+            # never release until the process exits, now it acts as
+            # a hard-kill time ultimatum.
+            with trio.move_on_after(3) as cs:
+
+                # NOTE: This ``__aexit__()`` shields internally.
+                async with proc:  # calls ``trio.Process.aclose()``
+                    log.debug(f"Terminating {proc}")
+
+            if cs.cancelled_caught:
+                log.critical(f"HARD KILLING {proc}")
+                proc.kill()
 
 
 async def new_proc(
