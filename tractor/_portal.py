@@ -358,33 +358,39 @@ class Portal:
 
         fn_mod_path, fn_name = func_deats(func)
 
-        cid, recv_chan, functype, first_msg = await self._submit(
-            fn_mod_path, fn_name, kwargs)
 
-        assert functype == 'context'
-
-        msg = await recv_chan.receive()
         try:
-            # the "first" value here is delivered by the callee's
-            # ``Context.started()`` call.
-            first = msg['started']
+            cid, recv_chan, functype, first_msg = await self._submit(
+                fn_mod_path, fn_name, kwargs)
 
-        except KeyError:
-            assert msg.get('cid'), ("Received internal error at context?")
+            assert functype == 'context'
+            msg = await recv_chan.receive()
 
-            if msg.get('error'):
-                # raise the error message
-                raise unpack_error(msg, self.channel)
-            else:
-                raise
-        try:
+            try:
+                # the "first" value here is delivered by the callee's
+                # ``Context.started()`` call.
+                first = msg['started']
+
+            except KeyError:
+                assert msg.get('cid'), ("Received internal error at context?")
+
+                if msg.get('error'):
+                    # raise the error message
+                    raise unpack_error(msg, self.channel)
+                else:
+                    raise
+
+            # deliver context instance and .started() msg value in open
+            # tuple.
             ctx = Context(self.channel, cid, _portal=self)
-            yield ctx, first
+            try:
+                yield ctx, first
+
+            finally:
+                await ctx.cancel()
 
         finally:
             await recv_chan.aclose()
-            await ctx.cancel()
-
 
 @dataclass
 class LocalPortal:
