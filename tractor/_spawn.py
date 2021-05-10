@@ -244,6 +244,7 @@ async def new_proc(
     _runtime_vars: Dict[str, Any],  # serialized and sent to _child
 
     *,
+
     infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
@@ -415,6 +416,7 @@ async def new_proc(
             bind_addr=bind_addr,
             parent_addr=parent_addr,
             _runtime_vars=_runtime_vars,
+            infect_asyncio=infect_asyncio,
             task_status=task_status,
         )
 
@@ -430,6 +432,7 @@ async def mp_new_proc(
     parent_addr: Tuple[str, int],
     _runtime_vars: Dict[str, Any],  # serialized and sent to _child
     *,
+    infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
@@ -475,6 +478,7 @@ async def mp_new_proc(
             fs_info,
             start_method,
             parent_addr,
+            infect_asyncio,
         ),
         # daemon=True,
         name=name,
