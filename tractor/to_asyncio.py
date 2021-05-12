@@ -101,7 +101,10 @@ def _run_asyncio_task(
         """Cancel the calling ``trio`` task on error.
         """
         nonlocal aio_err
-        aio_err = task.exception()
+        try:
+            aio_err = task.exception()
+        except asyncio.CancelledError as cerr:
+            aio_err = cerr
 
         if aio_err:
             log.exception(f"asyncio task errorred:\n{aio_err}")
@@ -233,17 +236,25 @@ async def run_task(
         #         raise aio_err
 
     # Do we need this?
-    except BaseException as err:
+    except Exception as err:
         # await tractor.breakpoint()
         aio_err = from_aio._err
+
+        # try:
         if aio_err is not None:
             # always raise from any captured asyncio error
             raise err from aio_err
         else:
             raise
+        # finally:
+        #     if not task.done():
+        #         task.cancel()
 
-    finally:
-        task.cancel()
+    except trio.Cancelled:
+        if not task.done():
+            task.cancel()
+
+        raise
 
 
 # async def stream_from_task
