@@ -479,7 +479,7 @@ class Actor:
         try:
             send_chan, recv_chan = self._cids2qs[(actorid, cid)]
         except KeyError:
-            send_chan, recv_chan = trio.open_memory_channel(1000)
+            send_chan, recv_chan = trio.open_memory_channel(2*10)
             send_chan.cid = cid  # type: ignore
             recv_chan.cid = cid  # type: ignore
             self._cids2qs[(actorid, cid)] = send_chan, recv_chan
