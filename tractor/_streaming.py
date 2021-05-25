@@ -339,7 +339,7 @@ class Context:
                 if self._portal:
                     self._portal._streams.remove(rchan)
 
-    async def started(self, value: Any) -> None:
+    async def started(self, value: Optional[Any] = None) -> None:
 
         if self._portal:
             raise RuntimeError(
