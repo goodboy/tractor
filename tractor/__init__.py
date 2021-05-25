@@ -19,6 +19,7 @@ from ._exceptions import RemoteActorError, ModuleNotExposed
 from ._debug import breakpoint, post_mortem
 from . import msg
 from ._root import run, run_daemon, open_root_actor
+from ._portal import Portal
 
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     'msg',
     'open_nursery',
     'open_root_actor',
+    'Portal',
     'post_mortem',
     'run',
     'run_daemon',
