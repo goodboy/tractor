@@ -3,7 +3,6 @@ Sub-process entry points.
 """
 from functools import partial
 from typing import Tuple, Any
-import signal
 
 import trio  # type: ignore
 
@@ -15,7 +14,7 @@ log = get_logger(__name__)
 
 
 def _mp_main(
-    actor: 'Actor',  # type: ignore
+    actor: 'Actor',  # type: ignore # noqa
     accept_addr: Tuple[str, int],
     forkserver_info: Tuple[Any, Any, Any, Any, Any],
     start_method: str,
@@ -54,16 +53,13 @@ def _mp_main(
 
 
 def _trio_main(
-    actor: 'Actor',  # type: ignore
+    actor: 'Actor',  # type: ignore # noqa
     *,
     parent_addr: Tuple[str, int] = None,
 ) -> None:
     """Entry point for a `trio_run_in_process` subactor.
-    """
-    # Disable sigint handling in children;
-    # we don't need it thanks to our cancellation machinery.
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
+    """
     log.info(f"Started new trio process for {actor.uid}")
 
     if actor.loglevel is not None:

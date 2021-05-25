@@ -1,5 +1,6 @@
 """
 Actor primitives and helpers
+
 """
 from collections import defaultdict
 from functools import partial
@@ -11,6 +12,7 @@ import uuid
 import typing
 from typing import Dict, List, Tuple, Any, Optional, Union
 from types import ModuleType
+import signal
 import sys
 import os
 from contextlib import ExitStack
@@ -689,6 +691,12 @@ class Actor:
 
                 for attr, value in parent_data.items():
                     setattr(self, attr, value)
+
+                # Disable sigint handling in children if NOT running in
+                # debug mode; we shouldn't need it thanks to our
+                # cancellation machinery.
+                if 'debug_mode' not in rvs:
+                    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
             return chan, accept_addr
 
