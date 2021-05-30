@@ -11,6 +11,7 @@ import warnings
 import trio
 from async_generator import asynccontextmanager
 
+from . import _debug
 from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
 from ._actor import Actor
@@ -367,10 +368,26 @@ async def open_nursery(
             async with open_root_actor(**kwargs) as actor:
                 assert actor is current_actor()
 
-                async with _open_and_supervise_one_cancels_all_nursery(
-                    actor
-                ) as anursery:
-                    yield anursery
+                try:
+                    async with _open_and_supervise_one_cancels_all_nursery(
+                        actor
+                    ) as anursery:
+                        yield anursery
+
+                except (Exception, trio.MultiError, trio.Cancelled):
+                    # if we error in the root but the debugger is
+                    # engaged we don't want to prematurely kill (and
+                    # thus clobber access to) the local tty streams.
+                    # instead try to wait for pdb to be released before
+                    # tearing down.
+                    if not _debug._pdb_complete.is_set():
+                        log.warning(
+                            "Root has errored but pdb is active..waiting "
+                            "on debug lock")
+                        with trio.CancelScope(shield=True):
+                            await _debug._pdb_complete.wait()
+
+                    raise
 
         else:  # sub-nursery case
 
