@@ -179,8 +179,7 @@ async def open_root_actor(
 
             finally:
                 logger.info("Shutting down root actor")
-                with trio.CancelScope(shield=True):
-                    await actor.cancel()
+                await actor.cancel()
     finally:
         _state._current_actor = None
         logger.info("Root actor terminated")
