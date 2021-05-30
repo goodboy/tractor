@@ -279,7 +279,7 @@ class Actor:
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
         self.loglevel = loglevel
-        self._arb_addr = arbiter_addr
+        self._arb_addr = tuple(arbiter_addr) if arbiter_addr is not None else None
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
@@ -529,6 +529,7 @@ class Actor:
                 # ``scope = Nursery.start()``
                 task_status.started(loop_cs)
                 async for msg in chan:
+
                     if msg is None:  # loop terminate sentinel
 
                         log.debug(
@@ -1075,10 +1076,10 @@ class Actor:
         parlance.
         """
         await chan.send(self.uid)
-        uid: Tuple[str, str] = await chan.recv()
+        uid: Tuple[str, str] = tuple(await chan.recv())
 
-        if not isinstance(uid, tuple):
-            raise ValueError(f"{uid} is not a valid uid?!")
+        # if not isinstance(uid, tuple):
+        #     raise ValueError(f"{uid} is not a valid uid?!")
 
         chan.uid = uid
         log.info(f"Handshake with actor {uid}@{chan.raddr} complete")
@@ -1145,8 +1146,9 @@ class Arbiter(Actor):
     async def register_actor(
         self, uid: Tuple[str, str], sockaddr: Tuple[str, int]
     ) -> None:
+        uid = tuple(uid)
         name, uuid = uid
-        self._registry[uid] = sockaddr
+        self._registry[uid] = tuple(sockaddr)
 
         # pop and signal all waiter events
         events = self._waiters.pop(name, ())
@@ -1156,4 +1158,4 @@ class Arbiter(Actor):
                 event.set()
 
     async def unregister_actor(self, uid: Tuple[str, str]) -> None:
-        self._registry.pop(uid)
+        self._registry.pop(tuple(uid))
