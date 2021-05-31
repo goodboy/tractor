@@ -249,34 +249,51 @@ the parallelism you may have been needing.
 
 
 Wait, huh?! I thought "actors" have messages, and mailboxes and stuff?!
------------------------------------------------------------------------
+***********************************************************************
 Let's stop and ask how many canon actor model papers have you actually read?
 
 From the author's mouth, **the only thing required** is `adherance to`_
 the `3 axioms`_, *and that's it*.
 
-To get more fired up on the matter, please read issue 1 and issue 2.
+To get more fired up on the matter, please read these issues:
 
-*News flash*: many "actor systems" people create aren't really "actor
-models" since they don't adhere to the `3 axioms`_.  Despite not looking
-like an one from the outside ``tractor`` **does seem to adhere** to the
-base requirements to be considered an "actor model".
+- https://github.com/goodboy/tractor/issues/210
+- https://github.com/goodboy/tractor/issues/18
+
+*News flash*: many "actor systems" aren't really "actor models" since
+they **don't adhere** to the `3 axioms`_ and pay even less attention to 
+the problem of *unbounded non-determinism* (which was the whole point
+for creation of the model in the first place).
+
+Again, ``tractor`` does seem to adhere to the base requirements of
+an "actor model"::
+
+    In response to a message, an actor may:
+
+    - send a finite number of new messages
+    - create a finite number of new actors
+    - designate a new behavior to process subsequent messages
+
+``tractor`` requires *no further api changes* to accomplish this.
 
 If you want do debate this further please feel free to chime in on our
-chat or discuss on one of the above issues **after you've read
-everything in them**.
+chat or discuss on one of the above issues *after you've read
+everything in them*.
 
-Let's keep our parlance simple
-******************************
-The main goal of ``tractor`` besides the above feature set is is to
-allow for highly distributed software that, through the adherence to
-*structured concurrency*, results in systems which fail in predictable,
-recoverable and maybe even understandable ways.
-
+Let's clarify our parlance
+**************************
 Whether or not ``tractor`` has "actors" underneath should be mostly
-irrelvant to users other then for referring to the interactions of 
-our primary runtime primitives: a Python process + `trio.run()` + 
-surrounding IPC machinery as *single-units-of-abstraction*.
+irrelevant to users other then for referring to the interactions of our
+primary runtime primitives: each Python process + ``trio.run()``
++ surrounding IPC machinery. These are our high level, base
+*runtime-units-of-abstraction* which both *are* (as much as they can
+be in Python) and will be referred to as our *"actors"*.
+
+The main goal of ``tractor`` is is to allow for highly distributed
+software that, through the adherence to *structured concurrency*,
+results in systems which fail in predictable, recoverable and maybe even
+understandable ways; being an "actor model" is just one way to describe
+properties of the system.
 
 
 What's on the TODO:
