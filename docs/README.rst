@@ -3,18 +3,15 @@
 |gh_actions|
 |docs|
 
-.. _actor model: https://en.wikipedia.org/wiki/Actor_model
-.. _trio: https://github.com/python-trio/trio
-.. _multi-processing: https://en.wikipedia.org/wiki/Multiprocessing
-.. _trionic: https://trio.readthedocs.io/en/latest/design.html#high-level-design-principles
-.. _async sandwich: https://trio.readthedocs.io/en/latest/tutorial.html#async-sandwich
-.. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
+``tractor`` is a `structured concurrent`_, multi-processing_ runtime built on trio_.
 
+Fundamentally ``tractor`` gives you parallelism via ``trio``-"*actors*":
+our nurseries_ let you spawn new Python processes which each run a ``trio``
+scheduled runtime - a call to ``trio.run()``.
 
-``tractor`` is a `structured concurrent`_ "`actor model`_" built on trio_ and multi-processing_.
-
-We pair structured concurrency and true multi-core parallelism with
-the aim of being the multi-processing framework *you always wanted*.
+We believe the system adhere's to the `3 axioms`_ of an "`actor model`_"
+but likely *does not* look like what *you* probably think an "actor
+model" looks like, and that's *intentional*.
 
 The first step to grok ``tractor`` is to get the basics of ``trio`` down.
 A great place to start is the `trio docs`_ and this `blog post`_.
@@ -23,12 +20,13 @@ A great place to start is the `trio docs`_ and this `blog post`_.
 Features
 --------
 - **It's just** a ``trio`` API
-- Infinitely nesteable process trees
-- Built-in APIs for inter-process streaming
-- A (first ever?) "native" multi-core debugger for Python using `pdb++`_
-- Support for multiple process spawning backends
-- A modular transport layer, allowing for custom serialization,
+- *Infinitely nesteable* process trees
+- Built-in inter-process streaming APIs
+- A (first ever?) "native" multi-core debugger UX for Python using `pdb++`_
+- Support for a swappable, OS specific, process spawning layer
+- A modular transport stack, allowing for custom serialization,
   communications protocols, and environment specific IPC primitives
+- `structured concurrency`_ from the ground up
 
 
 Run a func in a process
@@ -244,19 +242,41 @@ distributed Python. You can think of it as a ``trio``
 stdlib's ``multiprocessing`` but built on async programming primitives
 from the ground up.
 
-``tractor``'s nurseries let you spawn ``trio`` *"actors"*: new Python
-processes which each run a ``trio`` scheduled runtime - a call to ``trio.run()``.
-
 Don't be scared off by this description. ``tractor`` **is just** ``trio``
 but with nurseries for process management and cancel-able streaming IPC.
 If you understand how to work with ``trio``, ``tractor`` will give you
-the parallelism you've been missing.
+the parallelism you may have been needing.
 
-"Actors" communicate by exchanging asynchronous messages_ and avoid
-sharing state. The intention of this model is to allow for highly
-distributed software that, through the adherence to *structured
-concurrency*, results in systems which fail in predictable and
-recoverable ways.
+
+Wait, huh?! I thought "actors" have messages, and mailboxes and stuff?!
+-----------------------------------------------------------------------
+Let's stop and ask how many canon actor model papers have you actually read?
+
+From the author's mouth, **the only thing required** is `adherance to`_
+the `3 axioms`_, *and that's it*.
+
+To get more fired up on the matter, please read issue 1 and issue 2.
+
+*News flash*: many "actor systems" people create aren't really "actor
+models" since they don't adhere to the `3 axioms`_.  Despite not looking
+like an one from the outside ``tractor`` **does seem to adhere** to the
+base requirements to be considered an "actor model".
+
+If you want do debate this further please feel free to chime in on our
+chat or discuss on one of the above issues **after you've read
+everything in them**.
+
+Let's keep our parlance simple
+******************************
+The main goal of ``tractor`` besides the above feature set is is to
+allow for highly distributed software that, through the adherence to
+*structured concurrency*, results in systems which fail in predictable,
+recoverable and maybe even understandable ways.
+
+Whether or not ``tractor`` has "actors" underneath should be mostly
+irrelvant to users other then for referring to the interactions of 
+our primary runtime primitives: a Python process + `trio.run()` + 
+surrounding IPC machinery as *single-units-of-abstraction*.
 
 
 What's on the TODO:
@@ -278,6 +298,15 @@ say hi, please feel free to reach us in our `matrix channel`_.  If
 matrix seems too hip, we're also mostly all in the the `trio gitter
 channel`_!
 
+.. _nurseries: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/#nurseries-a-structured-replacement-for-go-statements
+.. _actor model: https://en.wikipedia.org/wiki/Actor_model
+.. _trio: https://github.com/python-trio/trio
+.. _multi-processing: https://en.wikipedia.org/wiki/Multiprocessing
+.. _trionic: https://trio.readthedocs.io/en/latest/design.html#high-level-design-principles
+.. _async sandwich: https://trio.readthedocs.io/en/latest/tutorial.html#async-sandwich
+.. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
+.. _3 axioms: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=162s
+.. _adherance to: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=1821s
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
 .. _pdb++: https://github.com/pdbpp/pdbpp
@@ -286,7 +315,6 @@ channel`_!
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
 .. _structured concurrency: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
 .. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
 .. _async generators: https://www.python.org/dev/peps/pep-0525/
 .. _trio-parallel: https://github.com/richardsheridan/trio-parallel
