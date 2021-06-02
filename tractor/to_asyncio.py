@@ -111,7 +111,6 @@ def _run_asyncio_task(
 
         # cancel_scope.cancel()
         from_aio._err = aio_err
-        to_trio.close()
 
     task.add_done_callback(cancel_trio)
 
