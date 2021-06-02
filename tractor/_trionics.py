@@ -385,8 +385,7 @@ async def open_nursery(
                         log.warning(
                             "Root has errored but pdb is active..waiting "
                             "on debug lock")
-                        with trio.CancelScope(shield=True):
-                            await _debug._pdb_complete.wait()
+                        await _debug._pdb_complete.wait()
 
                     raise
 
