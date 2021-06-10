@@ -359,6 +359,7 @@ class Portal:
         fn_mod_path, fn_name = func_deats(func)
 
 
+        recv_chan: trio.ReceiveMemoryChannel = None
         try:
             cid, recv_chan, functype, first_msg = await self._submit(
                 fn_mod_path, fn_name, kwargs)
@@ -390,7 +391,8 @@ class Portal:
                 await ctx.cancel()
 
         finally:
-            await recv_chan.aclose()
+            if recv_chan is not None:
+                await recv_chan.aclose()
 
 @dataclass
 class LocalPortal:
