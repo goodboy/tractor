@@ -523,11 +523,14 @@ class Actor:
                 task_status.started(loop_cs)
                 async for msg in chan:
                     if msg is None:  # loop terminate sentinel
+
                         log.debug(
                             f"Cancelling all tasks for {chan} from {chan.uid}")
-                        for (channel, cid) in self._rpc_tasks:
+
+                        for (channel, cid) in self._rpc_tasks.copy():
                             if channel is chan:
                                 await self._cancel_task(cid, channel)
+
                         log.debug(
                                 f"Msg loop signalled to terminate for"
                                 f" {chan} from {chan.uid}")
