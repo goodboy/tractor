@@ -52,9 +52,14 @@ async def assert_state(value: bool):
     assert _state == value
 
 
-def test_simple_contex():
+@pytest.mark.parametrize(
+    'error_parent',
+    [False, True],
+)
+def test_simple_context(error_parent):
 
     async def main():
+
         async with tractor.open_nursery() as n:
 
             portal = await n.start_actor(
@@ -74,10 +79,19 @@ def test_simple_contex():
             # after cancellation
             await portal.run(assert_state, value=False)
 
+            if error_parent:
+                raise ValueError
+
             # shut down daemon
             await portal.cancel_actor()
 
-    trio.run(main)
+    if error_parent:
+        try:
+            trio.run(main)
+        except ValueError:
+            pass
+    else:
+        trio.run(main)
 
 
 @tractor.context
