@@ -317,7 +317,7 @@ class Actor:
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
         self.loglevel = loglevel
-        self._arb_addr = tuple(arbiter_addr) if arbiter_addr is not None else None
+        self._arb_addr = tuple(arbiter_addr) if arbiter_addr is not None else (None, None)
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
@@ -791,7 +791,15 @@ class Actor:
                 _state._runtime_vars.update(rvs)
 
                 for attr, value in parent_data.items():
-                    setattr(self, attr, value)
+
+                    if attr == '_arb_addr':
+                        # XXX: msgspec doesn't support serializing tuples
+                        # so just cash manually here since it's what our
+                        # internals expect.
+                        self._arb_addr = tuple(value)
+
+                    else:
+                        setattr(self, attr, value)
 
             return chan, accept_addr
 
