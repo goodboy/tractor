@@ -45,13 +45,16 @@ setup(
         'trio_typing',
 
         # tooling
+        'tricycle',
+        'trio_typing',
+
         'colorlog',
         'wrapt',
         'pdbpp',
 
         # serialization
         'msgpack',
-
+        'msgspec',
     ],
     tests_require=['pytest'],
     python_requires=">=3.8",
