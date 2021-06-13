@@ -28,6 +28,7 @@ from ._exceptions import (
     unpack_error,
     ModuleNotExposed,
     is_multi_cancelled,
+    ContextCancelled,
 )
 from . import _debug
 from ._discovery import get_arbiter
@@ -151,9 +152,12 @@ async def _invoke(
                 task_status.started(cs)
                 await chan.send({'return': await coro, 'cid': cid})
 
-            # if cs.cancelled_caught:
-            #     # task was cancelled so relay to the cancel to caller
-            #     await chan.send({'return': await coro, 'cid': cid})
+            if cs.cancelled_caught:
+                # task-contex was cancelled so relay to the cancel to caller
+                raise ContextCancelled(
+                    f'{func.__name__} cancelled itself',
+                    suberror_type=trio.Cancelled,
+                )
 
         else:
             # regular async function
@@ -167,7 +171,8 @@ async def _invoke(
         # TODO: maybe we'll want differnet "levels" of debugging
         # eventualy such as ('app', 'supervisory', 'runtime') ?
         if not isinstance(err, trio.ClosedResourceError) and (
-            not is_multi_cancelled(err)
+            not is_multi_cancelled(err)) and (
+            not isinstance(err, ContextCancelled)
         ):
             # XXX: is there any case where we'll want to debug IPC
             # disconnects? I can't think of a reason that inspecting
@@ -302,7 +307,7 @@ class Actor:
         self._parent_chan: Optional[Channel] = None
         self._forkserver_info: Optional[
             Tuple[Any, Any, Any, Any, Any]] = None
-        self._actoruid2nursery: Dict[str, 'ActorNursery'] = {}  # type: ignore
+        self._actoruid2nursery: Dict[str, 'ActorNursery'] = {}  # type: ignore  # noqa
 
     async def wait_for_peer(
         self, uid: Tuple[str, str]
