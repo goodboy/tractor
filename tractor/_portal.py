@@ -17,7 +17,12 @@ from async_generator import asynccontextmanager
 from ._state import current_actor
 from ._ipc import Channel
 from .log import get_logger
-from ._exceptions import unpack_error, NoResult, RemoteActorError
+from ._exceptions import (
+    unpack_error,
+    NoResult,
+    RemoteActorError,
+    ContextCancelled,
+)
 from ._streaming import Context, ReceiveMsgStream
 
 
@@ -84,7 +89,7 @@ class Portal:
         ns: str,
         func: str,
         kwargs,
-    ) -> Tuple[str, trio.abc.ReceiveChannel, str, Dict[str, Any]]:
+    ) -> Tuple[str, trio.MemoryReceiveChannel, str, Dict[str, Any]]:
         """Submit a function to be scheduled and run by actor, return the
         associated caller id, response queue, response type str,
         first message packet as a tuple.
@@ -327,7 +332,14 @@ class Portal:
             # message right now since there shouldn't be a reason to
             # stop and restart the stream, right?
             try:
+
+                # We are for sure done with this stream and no more
+                # messages are expected to be delivered from the
+                # runtime's msg loop.
+                await recv_chan.aclose()
+
                 await ctx.cancel()
+
             except trio.ClosedResourceError:
                 # if the far end terminates before we send a cancel the
                 # underlying transport-channel may already be closed.
@@ -337,18 +349,21 @@ class Portal:
 
     @asynccontextmanager
     async def open_context(
+
         self,
         func: Callable,
+        cancel_on_exit: bool = False,
         **kwargs,
+
     ) -> AsyncGenerator[Tuple[Context, Any], None]:
-        """Open an inter-actor task context.
+        '''Open an inter-actor task context.
 
         This is a synchronous API which allows for deterministic
         setup/teardown of a remote task. The yielded ``Context`` further
-        allows for opening bidirectional streams - see
-        ``Context.open_stream()``.
+        allows for opening bidirectional streams, explicit cancellation
+        and synchronized final result collection. See ``tractor.Context``.
 
-        """
+        '''
         # conduct target func method structural checks
         if not inspect.iscoroutinefunction(func) and (
             getattr(func, '_tractor_contex_function', False)
@@ -358,8 +373,8 @@ class Portal:
 
         fn_mod_path, fn_name = func_deats(func)
 
+        recv_chan: Optional[trio.MemoryReceiveChannel] = None
 
-        recv_chan: trio.ReceiveMemoryChannel = None
         try:
             cid, recv_chan, functype, first_msg = await self._submit(
                 fn_mod_path, fn_name, kwargs)
@@ -383,12 +398,37 @@ class Portal:
 
             # deliver context instance and .started() msg value in open
             # tuple.
-            ctx = Context(self.channel, cid, _portal=self)
+            ctx = Context(
+                self.channel,
+                cid,
+                _portal=self,
+                _recv_chan=recv_chan,
+            )
+
             try:
                 yield ctx, first
 
-            finally:
+                if cancel_on_exit:
+                    await ctx.cancel()
+
+                else:
+                    if not ctx._cancel_called:
+                        await ctx.result()
+
+            except ContextCancelled:
+                # if the context was cancelled by client code
+                # then we don't need to raise since user code
+                # is expecting this.
+                if not ctx._cancel_called:
+                    raise
+
+            except BaseException:
+                # the context cancels itself on any deviation
                 await ctx.cancel()
+                raise
+
+            finally:
+                log.info(f'Context for {func.__name__} completed')
 
         finally:
             if recv_chan is not None:
