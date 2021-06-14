@@ -250,23 +250,17 @@ the parallelism you may have been needing.
 
 Wait, huh?! I thought "actors" have messages, and mailboxes and stuff?!
 ***********************************************************************
-Let's stop and ask how many canon actor model papers have you actually read?
+Let's stop and ask how many canon actor model papers have you actually read ;)
+
+From our experience many "actor systems" aren't really "actor models"
+since they **don't adhere** to the `3 axioms`_ and pay even less
+attention to the problem of *unbounded non-determinism* (which was the
+whole point for creation of the model in the first place).
 
 From the author's mouth, **the only thing required** is `adherance to`_
 the `3 axioms`_, *and that's it*.
 
-To get more fired up on the matter, please read these issues:
-
-- https://github.com/goodboy/tractor/issues/210
-- https://github.com/goodboy/tractor/issues/18
-
-*News flash*: many "actor systems" aren't really "actor models" since
-they **don't adhere** to the `3 axioms`_ and pay even less attention to 
-the problem of *unbounded non-determinism* (which was the whole point
-for creation of the model in the first place).
-
-Again, ``tractor`` does seem to adhere to the base requirements of
-an "actor model"::
+``tractor`` adheres to said base requirements of an "actor model"::
 
     In response to a message, an actor may:
 
@@ -274,11 +268,16 @@ an "actor model"::
     - create a finite number of new actors
     - designate a new behavior to process subsequent messages
 
-``tractor`` requires *no further api changes* to accomplish this.
+
+**and** requires *no further api changes* to accomplish this.
 
 If you want do debate this further please feel free to chime in on our
-chat or discuss on one of the above issues *after you've read
-everything in them*.
+chat or discuss on one of the following issues *after you've read
+everything in them*::
+
+- https://github.com/goodboy/tractor/issues/210
+- https://github.com/goodboy/tractor/issues/18
+
 
 Let's clarify our parlance
 **************************
