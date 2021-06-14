@@ -332,12 +332,6 @@ class Portal:
             # message right now since there shouldn't be a reason to
             # stop and restart the stream, right?
             try:
-
-                # We are for sure done with this stream and no more
-                # messages are expected to be delivered from the
-                # runtime's msg loop.
-                await recv_chan.aclose()
-
                 await ctx.cancel()
 
             except trio.ClosedResourceError:
