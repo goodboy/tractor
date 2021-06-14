@@ -33,9 +33,9 @@ async def publisher(
         for sub_stream in _registry[sub]:
             await sub_stream.send(val)
 
-        # throttle send rate to ~4Hz
+        # throttle send rate to ~1kHz
         # making it readable to a human user
-        await trio.sleep(1/4)
+        await trio.sleep(1/1000)
 
 
 @tractor.context
@@ -133,7 +133,7 @@ def test_dynamic_pub_sub():
             )
 
             # block until cancelled by user
-            with trio.fail_after(10):
+            with trio.fail_after(3):
                 await trio.sleep_forever()
 
     try:
