@@ -161,7 +161,7 @@ async def _hijack_stdin_relay_to_child(
     ctx: tractor.Context,
     subactor_uid: Tuple[str, str]
 
-) -> None:
+) -> str:
 
     global _pdb_complete
 
@@ -179,6 +179,7 @@ async def _hijack_stdin_relay_to_child(
 
     async with _acquire_debug_lock(subactor_uid):
 
+        # XXX: only shield the context sync step!
         with trio.CancelScope(shield=True):
 
             # indicate to child that we've locked stdio
@@ -188,12 +189,22 @@ async def _hijack_stdin_relay_to_child(
 
         # wait for unlock pdb by child
         async with ctx.open_stream() as stream:
-            assert await stream.receive() == 'Unlock'
+            try:
+                assert await stream.receive() == 'pdb_unlock'
+
+            except trio.BrokenResourceError:
+                # XXX: there may be a race with the portal teardown
+                # with the calling actor which we can safely ignore
+                # the alternative would be sending an ack message
+                # and allowing the client to wait for us to teardown
+                # first?
+                pass
 
     log.debug(
         f"TTY lock released, remote task: {task_name}:{subactor_uid}")
 
     log.debug(f"Actor {subactor_uid} RELEASED stdin hijack lock")
+    return "pdb_unlock_complete"
 
 
 async def _breakpoint(debug_func) -> None:
@@ -233,8 +244,17 @@ async def _breakpoint(debug_func) -> None:
                             # unblock local caller
                             task_status.started()
 
+                            # TODO: shielding currently can cause hangs...
+                            # with trio.CancelScope(shield=True):
+
                             await _pdb_complete.wait()
-                            await stream.send('Unlock')
+                            await stream.send('pdb_unlock')
+
+                            # sync with callee termination
+                            assert await ctx.result() == "pdb_unlock_complete"
+
+            except tractor.ContextCancelled:
+                log.warning('Root actor cancelled debug lock')
 
             finally:
                 log.debug(f"Exiting debugger for actor {actor}")
