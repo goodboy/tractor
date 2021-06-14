@@ -74,7 +74,7 @@ html_theme_options = {
 html_sidebars = {
     "**": [
         "sbt-sidebar-nav.html",
-        "sidebar-search-bs.html",
+        # "sidebar-search-bs.html",
         # 'localtoc.html',
     ],
     #     'logo.html',

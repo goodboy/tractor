@@ -273,7 +273,7 @@ the `3 axioms`_, *and that's it*.
 
 If you want do debate this further please feel free to chime in on our
 chat or discuss on one of the following issues *after you've read
-everything in them*::
+everything in them*:
 
 - https://github.com/goodboy/tractor/issues/210
 - https://github.com/goodboy/tractor/issues/18
