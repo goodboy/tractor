@@ -78,7 +78,7 @@ def tractor_test(fn):
 
         else:
             # use implicit root actor start
-            main = partial(fn, *args, **kwargs),
+            main = partial(fn, *args, **kwargs)
 
         return trio.run(main)
             # arbiter_addr=arb_addr,
