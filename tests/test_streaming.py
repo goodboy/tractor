@@ -32,13 +32,16 @@ async def async_gen_stream(sequence):
 
     # block indefinitely waiting to be cancelled by ``aclose()`` call
     with trio.CancelScope() as cs:
-        await trio.sleep(float('inf'))
+        await trio.sleep_forever()
         assert 0
     assert cs.cancelled_caught
 
 
 @tractor.stream
-async def context_stream(ctx, sequence):
+async def context_stream(
+    ctx: tractor.Context,
+    sequence
+):
     for i in sequence:
         await ctx.send_yield(i)
         await trio.sleep(0.1)
