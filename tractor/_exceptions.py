@@ -1,7 +1,7 @@
 """
 Our classy exception set.
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Type
 import importlib
 import builtins
 import traceback
@@ -18,7 +18,7 @@ class RemoteActorError(Exception):
     def __init__(
         self,
         message: str,
-        suberror_type: Optional[Exception] = None,
+        suberror_type: Optional[Type[BaseException]] = None,
         **msgdata
 
     ) -> None:
@@ -78,7 +78,7 @@ def unpack_error(
     tb_str = error.get('tb_str', '')
     message = f"{chan.uid}\n" + tb_str
     type_name = error['type_str']
-    suberror_type = Exception
+    suberror_type: Type[BaseException] = Exception
 
     if type_name == 'ContextCancelled':
         err_type = ContextCancelled
