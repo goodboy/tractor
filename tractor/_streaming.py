@@ -61,7 +61,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         return msg['yield']
 
     async def receive(self):
-        # see ``.aclose()`` to an alt to always checking this
+        # see ``.aclose()`` for an alt to always checking this
         if self._eoc:
             raise trio.EndOfChannel
 
@@ -80,7 +80,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
 
             if msg.get('stop'):
                 log.debug(f"{self} was stopped at remote end")
-                self._eoc = True
 
                 # when the send is closed we assume the stream has
                 # terminated and signal this local iterator to stop
@@ -150,6 +149,8 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         on close.
 
         """
+        self._eoc = True
+
         # XXX: keep proper adherance to trio's `.aclose()` semantics:
         # https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
         rx_chan = self._rx_chan
@@ -199,8 +200,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
                 # in which case our stop message is meaningless since
                 # it can't traverse the transport.
                 log.debug(f'Channel for {self} was already closed')
-
-        self._eoc = True
 
         # close the local mem chan??!?
 
