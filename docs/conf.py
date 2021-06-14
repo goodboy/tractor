@@ -23,7 +23,7 @@ master_doc = 'index'
 # -- Project information -----------------------------------------------------
 
 project = 'tractor'
-copyright = '2018, Tyler Goodlet'
+copyright = '2021, Tyler Goodlet'
 author = 'Tyler Goodlet'
 
 # The full version, including alpha/beta/rc tags
@@ -40,8 +40,6 @@ extensions = [
     'sphinx.ext.todo',
 ]
 
-# Add any paths that contain templates here, relative to this directory.
-templates_path = ['_templates']
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -55,7 +53,6 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 # a list of builtin themes.
 #
 html_theme = 'sphinx_book_theme'
-
 pygments_style = 'algol_nu'
 
 # Theme options are theme-specific and customize the look and feel of a theme
@@ -64,38 +61,53 @@ pygments_style = 'algol_nu'
 html_theme_options = {
     # 'logo': 'tractor_logo_side.svg',
     # 'description': 'Structured concurrent "actors"',
+
+    "repository_branch": "docs_revamp",
     "repository_url": "https://github.com/goodboy/tractor",
     "use_repository_button": True,
     "home_page_in_toc": False,
     "show_toc_level": 1,
-    "path_to_docs": "docs",
+    "path_to_docs": "docs/",
+    # "home_page_in_toc": True,
+    "single_page": False,
+
+    # "sidebarwidth": '30%',
+    'extra_navbar': "<p>nextttt-gennnnn</p>",
 
 }
+# doesn't seem to work?
+
+html_title = 'structured concurrent Python'
+html_logo = 'images/tractor_logo_side.svg'
+html_favicon = 'images/tractor_logo_side.svg'
+# show_navbar_depth = 1
+
 html_sidebars = {
     "**": [
         "sbt-sidebar-nav.html",
+        # "searchbox.html",
+        # 'globaltoc.html',
         # "sidebar-search-bs.html",
-        # 'localtoc.html',
+        # 'logo.html',
     ],
-    #     'logo.html',
     #     'github.html',
     #     'relations.html',
     #     'searchbox.html'
     # ]
 }
 
-# doesn't seem to work?
-# extra_navbar = "<p>nextttt-gennnnn</p>"
-
-html_title = ''
-html_logo = '_static/tractor_logo_side.svg'
-html_favicon = '_static/tractor_logo_side.svg'
-# show_navbar_depth = 1
-
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+# Add any paths that contain templates here, relative to this directory.
+templates_path = ['_templates']
+
+html_css_files = [
+    '_static/css/custom.css',
+]
+
 
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
