@@ -78,7 +78,7 @@ html_theme_options = {
 # doesn't seem to work?
 
 html_title = 'structured concurrent Python'
-html_logo = 'images/tractor_logo_side.svg'
+html_logo = '_static/tractor_logo_side.svg'
 html_favicon = 'images/tractor_logo_side.svg'
 # show_navbar_depth = 1
 
