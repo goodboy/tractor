@@ -85,9 +85,9 @@ html_favicon = 'images/tractor_logo_side.svg'
 html_sidebars = {
     "**": [
         "sbt-sidebar-nav.html",
+        "search-field.html",
         # "searchbox.html",
         # 'globaltoc.html',
-        # "sidebar-search-bs.html",
         # 'logo.html',
     ],
     #     'github.html',
