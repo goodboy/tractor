@@ -41,6 +41,10 @@ class ContextCancelled(RemoteActorError):
     "Inter-actor task context cancelled itself on the callee side."
 
 
+class TransportClosed(trio.ClosedResourceError):
+    "Underlying channel transport was closed prior to use"
+
+
 class NoResult(RuntimeError):
     "No final result is expected for this actor"
 
@@ -66,12 +70,15 @@ def pack_error(exc: BaseException) -> Dict[str, Any]:
 
 
 def unpack_error(
+
     msg: Dict[str, Any],
     chan=None,
     err_type=RemoteActorError
+
 ) -> Exception:
     """Unpack an 'error' message from the wire
     into a local ``RemoteActorError``.
+
     """
     error = msg['error']
 
