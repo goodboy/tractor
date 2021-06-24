@@ -177,6 +177,7 @@ class Portal:
                 f"Cancelling all streams with {self.channel.uid}")
             for stream in self._streams.copy():
                 try:
+                    # with trio.CancelScope(shield=True):
                     await stream.aclose()
                 except trio.ClosedResourceError:
                     # don't error the stream having already been closed
@@ -369,64 +370,78 @@ class Portal:
 
         recv_chan: Optional[trio.MemoryReceiveChannel] = None
 
+        cid, recv_chan, functype, first_msg = await self._submit(
+            fn_mod_path, fn_name, kwargs)
+
+        assert functype == 'context'
+        msg = await recv_chan.receive()
+
         try:
-            cid, recv_chan, functype, first_msg = await self._submit(
-                fn_mod_path, fn_name, kwargs)
+            # the "first" value here is delivered by the callee's
+            # ``Context.started()`` call.
+            first = msg['started']
 
-            assert functype == 'context'
-            msg = await recv_chan.receive()
+        except KeyError:
+            assert msg.get('cid'), ("Received internal error at context?")
 
-            try:
-                # the "first" value here is delivered by the callee's
-                # ``Context.started()`` call.
-                first = msg['started']
-
-            except KeyError:
-                assert msg.get('cid'), ("Received internal error at context?")
-
-                if msg.get('error'):
-                    # raise the error message
-                    raise unpack_error(msg, self.channel)
-                else:
-                    raise
-
-            # deliver context instance and .started() msg value in open
-            # tuple.
-            ctx = Context(
-                self.channel,
-                cid,
-                _portal=self,
-                _recv_chan=recv_chan,
-            )
-
-            try:
-                yield ctx, first
-
-                if cancel_on_exit:
-                    await ctx.cancel()
-
-                else:
-                    if not ctx._cancel_called:
-                        await ctx.result()
-
-            except ContextCancelled:
-                # if the context was cancelled by client code
-                # then we don't need to raise since user code
-                # is expecting this.
-                if not ctx._cancel_called:
-                    raise
-
-            except BaseException:
-                # the context cancels itself on any deviation
-                await ctx.cancel()
+            if msg.get('error'):
+                # raise the error message
+                raise unpack_error(msg, self.channel)
+            else:
                 raise
 
-            finally:
-                log.info(f'Context for {func.__name__} completed')
+        # deliver context instance and .started() msg value in open
+        # tuple.
+        try:
+            async with trio.open_nursery() as scope_nursery:
+                ctx = Context(
+                    self.channel,
+                    cid,
+                    _portal=self,
+                    _recv_chan=recv_chan,
+                    _scope_nursery=scope_nursery,
+                )
+                recv_chan._ctx = ctx
 
-        finally:
-            if recv_chan is not None:
-                await recv_chan.aclose()
+                yield ctx, first
+
+            log.info(f'Context for {func.__name__} completed')
+
+            if cancel_on_exit:
+                await ctx.cancel()
+
+            else:
+                if not ctx._cancel_called:
+                    await ctx.result()
+
+            await recv_chan.aclose()
+
+            # except TypeError:
+            #     # if fn_name == '_emsd_main':
+            #     import tractor
+            #     await tractor.breakpoint()
+
+        except ContextCancelled:
+            if not ctx._cancel_called:
+                raise
+
+            # if the context was cancelled by client code
+            # then we don't need to raise since user code
+            # is expecting this and the block should exit.
+            else:
+                log.debug(f'Context {ctx} cancelled gracefully')
+
+        except trio.Cancelled:
+            # the context cancels itself on any deviation
+            await ctx.cancel()
+            raise
+
+        # finally:
+        #     log.info(f'Context for {func.__name__} completed')
+
+        # finally:
+        #     if recv_chan is not None:
+
 
 @dataclass
 class LocalPortal:
@@ -464,6 +479,7 @@ async def open_portal(
     was_connected = False
 
     async with maybe_open_nursery(nursery, shield=shield) as nursery:
+
         if not channel.connected():
             await channel.connect()
             was_connected = True
@@ -485,11 +501,12 @@ async def open_portal(
         portal = Portal(channel)
         try:
             yield portal
+
         finally:
             await portal.aclose()
 
             if was_connected:
-                # cancel remote channel-msg loop
+                # gracefully signal remote channel-msg loop
                 await channel.send(None)
 
             # cancel background msg loop task
