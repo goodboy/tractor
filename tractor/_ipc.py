@@ -23,7 +23,7 @@ log = get_logger(__name__)
 ms_decode = msgspec.Encoder().encode
 
 
-class MsgpackStream:
+class MsgpackTCPStream:
     '''A ``trio.SocketStream`` delivering ``msgpack`` formatted data
     using ``msgpack-python``.
 
@@ -122,7 +122,7 @@ class MsgpackStream:
         return self.stream.socket.fileno() != -1
 
 
-class MsgspecStream(MsgpackStream):
+class MsgspecTCPStream(MsgpackTCPStream):
     '''A ``trio.SocketStream`` delivering ``msgpack`` formatted data
     using ``msgspec``.
 
@@ -147,24 +147,22 @@ class MsgspecStream(MsgpackStream):
         while True:
             try:
                 header = await self.recv_stream.receive_exactly(4)
-                if header is None:
-                    continue
 
-                if header == b'':
-                    log.debug(f"Stream connection {self.raddr} was closed")
-                    return
+            except (ValueError):
+                raise TransportClosed(
+                    f'transport {self} was already closed prior ro read'
+                )
 
-                size, = struct.unpack("<I", header)
+            if header == b'':
+                raise TransportClosed(
+                    f'transport {self} was already closed prior ro read'
+                )
 
-                log.trace(f'received header {size}')
+            size, = struct.unpack("<I", header)
 
-                msg_bytes = await self.recv_stream.receive_exactly(size)
+            log.trace(f'received header {size}')
 
-            # the value error here is to catch a connect with immediate
-            # disconnect that will cause an EOF error inside `tricycle`.
-            except (ValueError, trio.BrokenResourceError):
-                log.warning(f"Stream connection {self.raddr} broke")
-                return
+            msg_bytes = await self.recv_stream.receive_exactly(size)
 
             log.trace(f"received {msg_bytes}")  # type: ignore
             yield decoder.decode(msg_bytes)
@@ -194,8 +192,8 @@ class Channel:
         auto_reconnect: bool = False,
         stream: trio.SocketStream = None,  # expected to be active
 
-        # stream_serializer: type = MsgpackStream,
-        stream_serializer_type: type = MsgspecStream,
+        # stream_serializer_type: type = MsgspecTCPStream,
+        stream_serializer_type: type = MsgpackTCPStream,
 
     ) -> None:
 
@@ -236,7 +234,6 @@ class Channel:
         return self.msgstream.raddr if self.msgstream else None
 
     async def connect(
-
         self,
         destaddr: Tuple[Any, ...] = None,
         **kwargs
