@@ -46,6 +46,7 @@ class ActorFailure(Exception):
 
 
 async def _invoke(
+
     actor: 'Actor',
     cid: str,
     chan: Channel,
@@ -58,10 +59,12 @@ async def _invoke(
     """Invoke local func and deliver result(s) over provided channel.
     """
     treat_as_gen = False
-    cs = None
+
     cancel_scope = trio.CancelScope()
-    ctx = Context(chan, cid, _cancel_scope=cancel_scope)
-    context = False
+    cs: trio.CancelScope = None
+
+    ctx = Context(chan, cid)
+    context: bool = False
 
     if getattr(func, '_tractor_stream_function', False):
         # handle decorated ``@tractor.stream`` async functions
@@ -149,14 +152,22 @@ async def _invoke(
             # context func with support for bi-dir streaming
             await chan.send({'functype': 'context', 'cid': cid})
 
-            with cancel_scope as cs:
+            async with trio.open_nursery() as scope_nursery:
+                ctx._scope_nursery = scope_nursery
+                cs = scope_nursery.cancel_scope
                 task_status.started(cs)
                 await chan.send({'return': await coro, 'cid': cid})
 
             if cs.cancelled_caught:
+                if ctx._cancel_called:
+                    msg = f'{func.__name__} cancelled itself',
+
+                else:
+                    msg = f'{func.__name__} was remotely cancelled',
+
                 # task-contex was cancelled so relay to the cancel to caller
                 raise ContextCancelled(
-                    f'{func.__name__} cancelled itself',
+                    msg,
                     suberror_type=trio.Cancelled,
                 )
 
@@ -191,8 +202,10 @@ async def _invoke(
             await chan.send(err_msg)
 
         except trio.ClosedResourceError:
-            log.warning(
-                f"Failed to ship error to caller @ {chan.uid}")
+            # if we can't propagate the error that's a big boo boo
+            log.error(
+                f"Failed to ship error to caller @ {chan.uid} !?"
+            )
 
         if cs is None:
             # error is from above code not from rpc invocation
@@ -372,12 +385,16 @@ class Actor:
             raise mne
 
     async def _stream_handler(
+
         self,
         stream: trio.SocketStream,
+
     ) -> None:
         """Entry point for new inbound connections to the channel server.
+
         """
         self._no_more_peers = trio.Event()  # unset
+
         chan = Channel(stream=stream)
         log.info(f"New connection to us {chan}")
 
@@ -423,10 +440,24 @@ class Actor:
         try:
             await self._process_messages(chan)
         finally:
+
+            # channel cleanup sequence
+
+            # for (channel, cid) in self._rpc_tasks.copy():
+            #     if channel is chan:
+            #         with trio.CancelScope(shield=True):
+            #             await self._cancel_task(cid, channel)
+
+            #             # close all consumer side task mem chans
+            #             send_chan, _ = self._cids2qs[(chan.uid, cid)]
+            #             assert send_chan.cid == cid  # type: ignore
+            #             await send_chan.aclose()
+
             # Drop ref to channel so it can be gc-ed and disconnected
             log.debug(f"Releasing channel {chan} from {chan.uid}")
             chans = self._peers.get(chan.uid)
             chans.remove(chan)
+
             if not chans:
                 log.debug(f"No more channels for {chan.uid}")
                 self._peers.pop(chan.uid, None)
@@ -439,14 +470,22 @@ class Actor:
 
             # # XXX: is this necessary (GC should do it?)
             if chan.connected():
+                # if the channel is still connected it may mean the far
+                # end has not closed and we may have gotten here due to
+                # an error and so we should at least try to terminate
+                # the channel from this end gracefully.
+
                 log.debug(f"Disconnecting channel {chan}")
                 try:
-                    # send our msg loop terminate sentinel
+                    # send a msg loop terminate sentinel
                     await chan.send(None)
+
+                    # XXX: do we want this?
+                    # causes "[104] connection reset by peer" on other end
                     # await chan.aclose()
+
                 except trio.BrokenResourceError:
-                    log.exception(
-                        f"Channel for {chan.uid} was already zonked..")
+                    log.warning(f"Channel for {chan.uid} was already closed")
 
     async def _push_result(
         self,
@@ -456,18 +495,22 @@ class Actor:
     ) -> None:
         """Push an RPC result to the local consumer's queue.
         """
-        actorid = chan.uid
-        assert actorid, f"`actorid` can't be {actorid}"
-        send_chan, recv_chan = self._cids2qs[(actorid, cid)]
+        # actorid = chan.uid
+        assert chan.uid, f"`chan.uid` can't be {chan.uid}"
+        send_chan, recv_chan = self._cids2qs[(chan.uid, cid)]
         assert send_chan.cid == cid  # type: ignore
 
-        # if 'stop' in msg:
+        if 'error' in msg:
+            ctx = getattr(recv_chan, '_ctx', None)
+            # if ctx:
+            #     ctx._error_from_remote_msg(msg)
+
         #     log.debug(f"{send_chan} was terminated at remote end")
         #     # indicate to consumer that far end has stopped
         #     return await send_chan.aclose()
 
         try:
-            log.debug(f"Delivering {msg} from {actorid} to caller {cid}")
+            log.debug(f"Delivering {msg} from {chan.uid} to caller {cid}")
             # maintain backpressure
             await send_chan.send(msg)
 
@@ -486,7 +529,9 @@ class Actor:
         self,
         actorid: Tuple[str, str],
         cid: str
+
     ) -> Tuple[trio.abc.SendChannel, trio.abc.ReceiveChannel]:
+
         log.debug(f"Getting result queue for {actorid} cid {cid}")
         try:
             send_chan, recv_chan = self._cids2qs[(actorid, cid)]
@@ -548,6 +593,7 @@ class Actor:
                         log.debug(
                                 f"Msg loop signalled to terminate for"
                                 f" {chan} from {chan.uid}")
+
                         break
 
                     log.trace(   # type: ignore
