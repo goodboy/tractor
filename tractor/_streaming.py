@@ -7,7 +7,7 @@ from contextlib import contextmanager, asynccontextmanager
 from dataclasses import dataclass
 from typing import (
     Any, Iterator, Optional, Callable,
-    AsyncGenerator,
+    AsyncGenerator, Dict,
 )
 
 import warnings
@@ -67,6 +67,9 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
             raise trio.EndOfChannel
 
         try:
+            # if self._ctx.chan.uid[0] == 'brokerd.ib':
+            #     breakpoint()
+
             msg = await self._rx_chan.receive()
             return msg['yield']
 
@@ -135,6 +138,11 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
             raise  # propagate
 
         # except trio.Cancelled:
+        #     if not self._shielded:
+        #         # if shielded we don't propagate a cancelled
+        #         raise
+
+        # except trio.Cancelled:
         #     # relay cancels to the remote task
         #     await self.aclose()
         #     raise
@@ -165,7 +173,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         # https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
         rx_chan = self._rx_chan
 
-        if rx_chan._closed:
+        if rx_chan._closed:  # or self._eoc:
             log.warning(f"{self} is already closed")
 
             # this stream has already been closed so silently succeed as
@@ -212,7 +220,10 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
                 # stop from the caller side
                 await self._ctx.send_stop()
 
-            except trio.BrokenResourceError:
+            except (
+                trio.BrokenResourceError,
+                trio.ClosedResourceError
+            ):
                 # the underlying channel may already have been pulled
                 # in which case our stop message is meaningless since
                 # it can't traverse the transport.
@@ -254,18 +265,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         # still need to consume msgs that are "in transit" from the far
         # end (eg. for ``Context.result()``).
 
-    # TODO: but make it broadcasting to consumers
-    # def clone(self):
-    #     """Clone this receive channel allowing for multi-task
-    #     consumption from the same channel.
-
-    #     """
-    #     return ReceiveStream(
-    #         self._cid,
-    #         self._rx_chan.clone(),
-    #         self._portal,
-    #     )
-
 
 class MsgStream(ReceiveMsgStream, trio.abc.Channel):
     """
@@ -281,6 +280,17 @@ class MsgStream(ReceiveMsgStream, trio.abc.Channel):
 
         '''
         await self._ctx.chan.send({'yield': data, 'cid': self._ctx.cid})
+
+    # TODO: but make it broadcasting to consumers
+    def clone(self):
+        """Clone this receive channel allowing for multi-task
+        consumption from the same channel.
+
+        """
+        return MsgStream(
+            self._ctx,
+            self._rx_chan.clone(),
+        )
 
 
 @dataclass
@@ -308,7 +318,7 @@ class Context:
     _cancel_called: bool = False
 
     # only set on the callee side
-    _cancel_scope: Optional[trio.CancelScope] = None
+    _scope_nursery: Optional[trio.Nursery] = None
 
     async def send_yield(self, data: Any) -> None:
 
@@ -322,6 +332,16 @@ class Context:
 
     async def send_stop(self) -> None:
         await self.chan.send({'stop': True, 'cid': self.cid})
+
+    def _error_from_remote_msg(
+        self,
+        msg: Dict[str, Any],
+
+    ) -> None:
+        async def raiser():
+            raise unpack_error(msg, self.chan)
+
+        self._scope_nursery.start_soon(raiser)
 
     async def cancel(self) -> None:
         '''Cancel this inter-actor-task context.
@@ -361,13 +381,16 @@ class Context:
                         f"{cid} for {self._portal.channel.uid}")
         else:
             # ensure callee side
-            assert self._cancel_scope
+            assert self._scope_nursery
             # TODO: should we have an explicit cancel message
             # or is relaying the local `trio.Cancelled` as an
             # {'error': trio.Cancelled, cid: "blah"} enough?
             # This probably gets into the discussion in
             # https://github.com/goodboy/tractor/issues/36
-            self._cancel_scope.cancel()
+            self._scope_nursery.cancel_scope.cancel()
+
+        if self._recv_chan:
+            await self._recv_chan.aclose()
 
     @asynccontextmanager
     async def open_stream(
