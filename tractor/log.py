@@ -30,16 +30,17 @@ DATE_FORMAT = '%b %d %H:%M:%S'
 LEVELS = {
     'GARBAGE': 1,
     'TRACE': 5,
-    'PROFILE': 15,
-    'RUNTIME': 500,
+    'RUNTIME': 15,
+    'PDB': 500,
     'QUIET': 1000,
 }
 STD_PALETTE = {
     'CRITICAL': 'red',
     'ERROR': 'red',
-    'RUNTIME': 'white',
+    'PDB': 'white',
     'WARNING': 'yellow',
     'INFO': 'green',
+    'RUNTIME': 'white',
     'DEBUG': 'white',
     'TRACE': 'cyan',
     'GARBAGE': 'blue',
