@@ -147,7 +147,7 @@ async def cancel_on_completion(
             )
 
         else:
-            log.info(
+            log.runtime(
                 f"Cancelling {portal.channel.uid} gracefully "
                 f"after result {result}")
 
@@ -256,7 +256,7 @@ async def new_proc(
                 subactor,
                 parent_addr,
             ) as proc:
-                log.info(f"Started {proc}")
+                log.runtime(f"Started {proc}")
 
                 # wait for actor to spawn and connect back to us
                 # channel should have handshake completed by the
@@ -406,7 +406,7 @@ async def mp_new_proc(
         if not proc.is_alive():
             raise ActorFailure("Couldn't start sub-actor?")
 
-        log.info(f"Started {proc}")
+        log.runtime(f"Started {proc}")
 
         try:
             # wait for actor to spawn and connect back to us
