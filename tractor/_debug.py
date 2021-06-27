@@ -45,7 +45,8 @@ _global_actor_in_debug: Optional[Tuple[str, str]] = None
 
 # lock in root actor preventing multi-access to local tty
 _debug_lock: trio.StrictFIFOLock = trio.StrictFIFOLock()
-_pdb_complete: Optional[trio.Event] = None
+_local_pdb_complete: Optional[trio.Event] = None
+_no_remote_has_tty: Optional[trio.Event] = None
 
 # XXX: set by the current task waiting on the root tty lock
 # and must be cancelled if this actor is cancelled via message
@@ -130,14 +131,15 @@ async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
 
     task_name = trio.lowlevel.current_task().name
 
-    log.debug(
-        f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}")
+    log.pdb(
+        f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}"
+    )
 
     async with _debug_lock:
 
-        # _debug_lock._uid = uid
         _global_actor_in_debug = uid
         log.debug(f"TTY lock acquired, remote task: {task_name}:{uid}")
+
         yield
 
     _global_actor_in_debug = None
@@ -162,8 +164,17 @@ async def _hijack_stdin_relay_to_child(
     subactor_uid: Tuple[str, str]
 
 ) -> str:
+    '''Hijack the tty in the root process of an actor tree such that
+    the pdbpp debugger console can be allocated to a sub-actor for repl
+    bossing.
 
-    global _pdb_complete
+    '''
+    global _no_remote_has_tty
+
+    # mark the tty lock as being in use so that the runtime
+    # can try to avoid clobbering any connection from a child
+    # that's currently relying on it.
+    _no_remote_has_tty = trio.Event()
 
     task_name = trio.lowlevel.current_task().name
 
@@ -184,7 +195,7 @@ async def _hijack_stdin_relay_to_child(
 
             # indicate to child that we've locked stdio
             await ctx.started('Locked')
-            log.runtime(  # type: ignore
+            log.pdb(  # type: ignore
                 f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
 
         # wait for unlock pdb by child
@@ -204,6 +215,7 @@ async def _hijack_stdin_relay_to_child(
         f"TTY lock released, remote task: {task_name}:{subactor_uid}")
 
     log.debug(f"Actor {subactor_uid} RELEASED stdin hijack lock")
+    _no_remote_has_tty.set()
     return "pdb_unlock_complete"
 
 
@@ -228,7 +240,7 @@ async def _breakpoint(
     actor = tractor.current_actor()
     task_name = trio.lowlevel.current_task().name
 
-    global _pdb_complete, _pdb_release_hook
+    global _local_pdb_complete, _pdb_release_hook
     global _local_task_in_debug, _global_actor_in_debug
 
     async def wait_for_parent_stdin_hijack(
@@ -260,7 +272,7 @@ async def _breakpoint(
                             # TODO: shielding currently can cause hangs...
                             # with trio.CancelScope(shield=True):
 
-                            await _pdb_complete.wait()
+                            await _local_pdb_complete.wait()
                             await stream.send('pdb_unlock')
 
                             # sync with callee termination
@@ -275,8 +287,8 @@ async def _breakpoint(
                 _local_task_in_debug = None
                 log.debug(f"Child {actor} released parent stdio lock")
 
-    if not _pdb_complete or _pdb_complete.is_set():
-        _pdb_complete = trio.Event()
+    if not _local_pdb_complete or _local_pdb_complete.is_set():
+        _local_pdb_complete = trio.Event()
 
     # TODO: need a more robust check for the "root" actor
     if actor._parent_chan and not is_root_process():
@@ -291,7 +303,7 @@ async def _breakpoint(
             # support for recursive entries to `tractor.breakpoint()`
             log.warning(f"{actor.uid} already has a debug lock, waiting...")
 
-            await _pdb_complete.wait()
+            await _local_pdb_complete.wait()
             await trio.sleep(0.1)
 
         # mark local actor as "in debug mode" to avoid recurrent
@@ -299,7 +311,7 @@ async def _breakpoint(
         _local_task_in_debug = task_name
 
         # assign unlock callback for debugger teardown hooks
-        _pdb_release_hook = _pdb_complete.set
+        _pdb_release_hook = _local_pdb_complete.set
 
         # this **must** be awaited by the caller and is done using the
         # root nursery so that the debugger can continue to run without
@@ -334,13 +346,13 @@ async def _breakpoint(
 
         # the lock must be released on pdb completion
         def teardown():
-            global _pdb_complete, _debug_lock
+            global _local_pdb_complete, _debug_lock
             global _global_actor_in_debug, _local_task_in_debug
 
             _debug_lock.release()
             _global_actor_in_debug = None
             _local_task_in_debug = None
-            _pdb_complete.set()
+            _local_pdb_complete.set()
 
         _pdb_release_hook = teardown
 
@@ -368,7 +380,7 @@ def _set_trace(actor=None):
     pdb = _mk_pdb()
 
     if actor is not None:
-        log.runtime(f"\nAttaching pdb to actor: {actor.uid}\n")  # type: ignore
+        log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")  # type: ignore
 
         pdb.set_trace(
             # start 2 levels up in user code
@@ -398,7 +410,7 @@ breakpoint = partial(
 
 
 def _post_mortem(actor):
-    log.runtime(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
+    log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
     pdb = _mk_pdb()
 
     # custom Pdb post-mortem entry
