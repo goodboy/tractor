@@ -207,11 +207,24 @@ async def _hijack_stdin_relay_to_child(
     return "pdb_unlock_complete"
 
 
-async def _breakpoint(debug_func) -> None:
-    """``tractor`` breakpoint entry for engaging pdb machinery
-    in subactors.
+async def _breakpoint(
 
-    """
+    debug_func,
+
+    # TODO:
+    # shield: bool = False
+
+) -> None:
+    '''``tractor`` breakpoint entry for engaging pdb machinery
+    in the root or a subactor.
+
+    '''
+    # TODO: is it possible to debug a trio.Cancelled except block?
+    # right now it seems like we can kinda do with by shielding
+    # around ``tractor.breakpoint()`` but not if we move the shielded
+    # scope here???
+    # with trio.CancelScope(shield=shield):
+
     actor = tractor.current_actor()
     task_name = trio.lowlevel.current_task().name
 
@@ -291,7 +304,13 @@ async def _breakpoint(debug_func) -> None:
         # this **must** be awaited by the caller and is done using the
         # root nursery so that the debugger can continue to run without
         # being restricted by the scope of a new task nursery.
+
+        # NOTE: if we want to debug a trio.Cancelled triggered exception
+        # we have to figure out how to avoid having the service nursery
+        # cancel on this task start? I *think* this works below?
+        # actor._service_n.cancel_scope.shield = shield
         await actor._service_n.start(wait_for_parent_stdin_hijack)
+        # actor._service_n.cancel_scope.shield = False
 
     elif is_root_process():
 
