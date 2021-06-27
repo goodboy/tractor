@@ -207,11 +207,24 @@ async def _hijack_stdin_relay_to_child(
     return "pdb_unlock_complete"
 
 
-async def _breakpoint(debug_func) -> None:
-    """``tractor`` breakpoint entry for engaging pdb machinery
-    in subactors.
+async def _breakpoint(
 
-    """
+    debug_func,
+
+    # TODO:
+    # shield: bool = False
+
+) -> None:
+    '''``tractor`` breakpoint entry for engaging pdb machinery
+    in the root or a subactor.
+
+    '''
+    # TODO: is it possible to debug a trio.Cancelled except block?
+    # right now it seems like we can kinda do with by shielding
+    # around ``tractor.breakpoint()`` but not if we move the shielded
+    # scope here???
+    # with trio.CancelScope(shield=shield):
+
     actor = tractor.current_actor()
     task_name = trio.lowlevel.current_task().name
 
