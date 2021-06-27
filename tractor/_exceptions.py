@@ -57,13 +57,22 @@ class NoRuntime(RuntimeError):
     "The root actor has not been initialized yet"
 
 
-def pack_error(exc: BaseException) -> Dict[str, Any]:
+def pack_error(
+    exc: BaseException,
+    tb = None,
+
+) -> Dict[str, Any]:
     """Create an "error message" for tranmission over
     a channel (aka the wire).
     """
+    if tb:
+        tb_str = ''.join(traceback.format_tb(tb))
+    else:
+        tb_str = traceback.format_exc()
+
     return {
         'error': {
-            'tb_str': traceback.format_exc(),
+            'tb_str': tb_str,
             'type_str': type(exc).__name__,
         }
     }
