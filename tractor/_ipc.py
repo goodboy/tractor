@@ -46,9 +46,8 @@ class MsgpackTCPStream:
         assert isinstance(rsockname, tuple)
         self._raddr = rsockname[:2]
 
-        # start and seed first entry to read loop
+        # start first entry to read loop
         self._agen = self._iter_packets()
-        # self._agen.asend(None) is None
 
         self._send_lock = trio.StrictFIFOLock()
 
