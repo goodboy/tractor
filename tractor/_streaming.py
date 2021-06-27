@@ -350,6 +350,8 @@ class Context:
         Timeout quickly in an attempt to sidestep 2-generals...
 
         '''
+        log.warning(f'Cancelling caller side of context {self}')
+
         self._cancel_called = True
 
         if self._portal:  # caller side:
