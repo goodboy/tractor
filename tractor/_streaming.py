@@ -67,8 +67,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
             raise trio.EndOfChannel
 
         try:
-            # if self._ctx.chan.uid[0] == 'brokerd.ib':
-            #     breakpoint()
 
             msg = await self._rx_chan.receive()
             return msg['yield']
@@ -173,7 +171,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         # https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
         rx_chan = self._rx_chan
 
-        if rx_chan._closed:  # or self._eoc:
+        if rx_chan._closed: # or self._eoc:
             log.warning(f"{self} is already closed")
 
             # this stream has already been closed so silently succeed as
@@ -338,6 +336,12 @@ class Context:
         msg: Dict[str, Any],
 
     ) -> None:
+        '''Unpack and raise a msg error into the local scope
+        nursery for this context.
+
+        Acts as a form of "relay" for a remote error raised
+        in the corresponding remote callee task.
+        '''
         async def raiser():
             raise unpack_error(msg, self.chan)
 
@@ -350,11 +354,13 @@ class Context:
         Timeout quickly in an attempt to sidestep 2-generals...
 
         '''
-        log.warning(f'Cancelling caller side of context {self}')
+        side = 'caller' if self._portal else 'callee'
+
+        log.warning(f'Cancelling {side} side of context to {self.chan}')
 
         self._cancel_called = True
 
-        if self._portal:  # caller side:
+        if side == 'caller':
             if not self._portal:
                 raise RuntimeError(
                     "No portal found, this is likely a callee side context"
@@ -382,8 +388,8 @@ class Context:
                         "May have failed to cancel remote task "
                         f"{cid} for {self._portal.channel.uid}")
         else:
-            # ensure callee side
-            assert self._scope_nursery
+            # callee side remote task
+
             # TODO: should we have an explicit cancel message
             # or is relaying the local `trio.Cancelled` as an
             # {'error': trio.Cancelled, cid: "blah"} enough?
