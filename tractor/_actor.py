@@ -195,21 +195,32 @@ async def _invoke(
 
     except (Exception, trio.MultiError) as err:
 
-        # TODO: maybe we'll want differnet "levels" of debugging
-        # eventualy such as ('app', 'supervisory', 'runtime') ?
-        if (
-            not is_multi_cancelled(err) and (
-                not isinstance(err, ContextCancelled) or
-                (isinstance(err, ContextCancelled) and ctx._cancel_called)
-            )
-        ):
-            # XXX: is there any case where we'll want to debug IPC
-            # disconnects? I can't think of a reason that inspecting
-            # this type of failure will be useful for respawns or
-            # recovery logic - the only case is some kind of strange bug
-            # in `trio` itself?
-            entered = await _debug._maybe_enter_pm(err)
-            if not entered:
+        if not is_multi_cancelled(err):
+
+            log.exception("Actor crashed:")
+
+            # TODO: maybe we'll want different "levels" of debugging
+            # eventualy such as ('app', 'supervisory', 'runtime') ?
+
+            # if not isinstance(err, trio.ClosedResourceError) and (
+            # if not is_multi_cancelled(err) and (
+
+            entered_debug: bool = False
+            if not isinstance(err, ContextCancelled) or (
+                isinstance(err, ContextCancelled) and ctx._cancel_called
+            ):
+                # XXX: is there any case where we'll want to debug IPC
+                # disconnects as a default?
+                #
+                # I can't think of a reason that inspecting
+                # this type of failure will be useful for respawns or
+                # recovery logic - the only case is some kind of strange bug
+                # in our transport layer itself? Going to keep this
+                # open ended for now.
+
+                entered_debug = await _debug._maybe_enter_pm(err)
+
+            if not entered_debug:
                 log.exception("Actor crashed:")
 
         # always ship errors back to caller
