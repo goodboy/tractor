@@ -124,10 +124,11 @@ class PdbwTeardown(pdbpp.Pdb):
 
 @asynccontextmanager
 async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
-    """Acquire a actor local FIFO lock meant to mutex entry to a local
-    debugger entry point to avoid tty clobbering by multiple processes.
-    """
-    global _debug_lock, _global_actor_in_debug
+    '''Acquire a actor local FIFO lock meant to mutex entry to a local
+    debugger entry point to avoid tty clobbering a global root process.
+
+    '''
+    global _debug_lock, _global_actor_in_debug, _no_remote_has_tty
 
     task_name = trio.lowlevel.current_task().name
 
@@ -135,15 +136,60 @@ async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
         f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}"
     )
 
-    async with _debug_lock:
+    we_acquired = False
+
+    if _no_remote_has_tty is None:
+        # mark the tty lock as being in use so that the runtime
+        # can try to avoid clobbering any connection from a child
+        # that's currently relying on it.
+        _no_remote_has_tty = trio.Event()
+
+    try:
+        log.debug(
+            f"entering lock checkpoint, remote task: {task_name}:{uid}"
+        )
+        we_acquired = True
+        await _debug_lock.acquire()
+
+        # we_acquired = True
 
         _global_actor_in_debug = uid
         log.debug(f"TTY lock acquired, remote task: {task_name}:{uid}")
 
-        yield
+        # NOTE: critical section!
+        # this yield is unshielded.
+        # IF we received a cancel during the shielded lock
+        # entry of some next-in-queue requesting task,
+        # then the resumption here will result in that
+        # Cancelled being raised to our caller below!
 
-    _global_actor_in_debug = None
-    log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
+        # in this case the finally below should trigger
+        # and the surrounding calle side context should cancel
+        # normally relaying back to the caller.
+
+        yield _debug_lock
+
+    finally:
+        # if _global_actor_in_debug == uid:
+        if we_acquired and _debug_lock.locked():
+            _debug_lock.release()
+
+        # IFF there are no more requesting tasks queued up fire, the
+        # "tty-unlocked" event thereby alerting any monitors of the lock that
+        # we are now back in the "tty unlocked" state. This is basically
+        # and edge triggered signal around an empty queue of sub-actor
+        # tasks that may have tried to acquire the lock.
+        stats = _debug_lock.statistics()
+        if (
+            not stats.owner
+        ):
+            log.pdb(f"No more tasks waiting on tty lock! says {uid}")
+            _no_remote_has_tty.set()
+            _no_remote_has_tty = None
+
+        _global_actor_in_debug = None
+
+        log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
 
 
 # @contextmanager
@@ -169,53 +215,43 @@ async def _hijack_stdin_relay_to_child(
     bossing.
 
     '''
-    global _no_remote_has_tty
-
-    # mark the tty lock as being in use so that the runtime
-    # can try to avoid clobbering any connection from a child
-    # that's currently relying on it.
-    _no_remote_has_tty = trio.Event()
-
     task_name = trio.lowlevel.current_task().name
 
     # TODO: when we get to true remote debugging
     # this will deliver stdin data?
 
     log.debug(
-        "Attempting to acquire TTY lock, "
+        "Attempting to acquire TTY lock\n"
         f"remote task: {task_name}:{subactor_uid}"
     )
 
     log.debug(f"Actor {subactor_uid} is WAITING on stdin hijack lock")
 
-    async with _acquire_debug_lock(subactor_uid):
+    with trio.CancelScope(shield=True):
 
-        # XXX: only shield the context sync step!
-        with trio.CancelScope(shield=True):
+        async with _acquire_debug_lock(subactor_uid):
 
             # indicate to child that we've locked stdio
             await ctx.started('Locked')
             log.pdb(  # type: ignore
                 f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
 
-        # wait for unlock pdb by child
-        async with ctx.open_stream() as stream:
-            try:
-                assert await stream.receive() == 'pdb_unlock'
+            # wait for unlock pdb by child
+            async with ctx.open_stream() as stream:
+                try:
+                    assert await stream.receive() == 'pdb_unlock'
 
-            except trio.BrokenResourceError:
-                # XXX: there may be a race with the portal teardown
-                # with the calling actor which we can safely ignore
-                # the alternative would be sending an ack message
-                # and allowing the client to wait for us to teardown
-                # first?
-                pass
+                except trio.BrokenResourceError:
+                    # XXX: there may be a race with the portal teardown
+                    # with the calling actor which we can safely ignore
+                    # the alternative would be sending an ack message
+                    # and allowing the client to wait for us to teardown
+                    # first?
+                    pass
 
     log.debug(
         f"TTY lock released, remote task: {task_name}:{subactor_uid}")
 
-    log.debug(f"Actor {subactor_uid} RELEASED stdin hijack lock")
-    _no_remote_has_tty.set()
     return "pdb_unlock_complete"
 
 
@@ -230,16 +266,20 @@ async def _breakpoint(debug_func) -> None:
     global _local_pdb_complete, _pdb_release_hook
     global _local_task_in_debug, _global_actor_in_debug
 
+    await trio.lowlevel.checkpoint()
+
     async def wait_for_parent_stdin_hijack(
         task_status=trio.TASK_STATUS_IGNORED
     ):
         global _debugger_request_cs
 
-        with trio.CancelScope() as cs:
+        with trio.CancelScope(shield=True) as cs:
             _debugger_request_cs = cs
 
             try:
                 async with get_root() as portal:
+
+                    log.error('got portal')
 
                     # this syncs to child's ``Context.started()`` call.
                     async with portal.open_context(
@@ -249,18 +289,22 @@ async def _breakpoint(debug_func) -> None:
 
                     ) as (ctx, val):
 
+                        log.error('locked context')
                         assert val == 'Locked'
 
                         async with ctx.open_stream() as stream:
 
+                            log.error('opened stream')
                             # unblock local caller
                             task_status.started()
 
-                            # TODO: shielding currently can cause hangs...
-                            # with trio.CancelScope(shield=True):
+                            try:
+                                await _local_pdb_complete.wait()
 
-                            await _local_pdb_complete.wait()
-                            await stream.send('pdb_unlock')
+                            finally:
+                                # TODO: shielding currently can cause hangs...
+                                with trio.CancelScope(shield=True):
+                                    await stream.send('pdb_unlock')
 
                             # sync with callee termination
                             assert await ctx.result() == "pdb_unlock_complete"
@@ -279,6 +323,7 @@ async def _breakpoint(debug_func) -> None:
 
     # TODO: need a more robust check for the "root" actor
     if actor._parent_chan and not is_root_process():
+
         if _local_task_in_debug:
             if _local_task_in_debug == task_name:
                 # this task already has the lock and is
@@ -303,7 +348,13 @@ async def _breakpoint(debug_func) -> None:
         # this **must** be awaited by the caller and is done using the
         # root nursery so that the debugger can continue to run without
         # being restricted by the scope of a new task nursery.
-        await actor._service_n.start(wait_for_parent_stdin_hijack)
+
+        # NOTE: if we want to debug a trio.Cancelled triggered exception
+        # we have to figure out how to avoid having the service nursery
+        # cancel on this task start? I *think* this works below?
+        # actor._service_n.cancel_scope.shield = shield
+        with trio.CancelScope(shield=True):
+            await actor._service_n.start(wait_for_parent_stdin_hijack)
 
     elif is_root_process():
 
@@ -320,6 +371,11 @@ async def _breakpoint(debug_func) -> None:
         # XXX: since we need to enter pdb synchronously below,
         # we have to release the lock manually from pdb completion
         # callbacks. Can't think of a nicer way then this atm.
+        if _debug_lock.locked():
+            log.warning(
+                'Root actor attempting to acquire active tty lock'
+                f' owned by {_global_actor_in_debug}')
+
         await _debug_lock.acquire()
 
         _global_actor_in_debug = actor.uid
