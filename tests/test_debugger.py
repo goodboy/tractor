@@ -505,3 +505,21 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
         assert "tractor._exceptions.RemoteActorError: ('spawner0'" in before
         assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
         assert "NameError: name 'doggypants' is not defined" in before
+
+
+def test_root_cancels_child_context_during_startup(
+    spawn,
+):
+    '''Verify a fast fail in the root doesn't lock up the child reaping
+    and all while using the new context api.
+
+    '''
+    child = spawn('fast_error_in_root_after_spawn')
+
+    child.expect(r"\(Pdb\+\+\)")
+
+    before = str(child.before.decode())
+    assert "AssertionError" in before
+
+    child.sendline('c')
+    child.expect(pexpect.EOF)
