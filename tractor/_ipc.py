@@ -2,6 +2,7 @@
 Inter-process comms abstractions
 """
 from functools import partial
+from pprint import pformat
 import struct
 import typing
 from typing import Any, Tuple, Optional
@@ -62,7 +63,7 @@ class MsgpackTCPStream:
         )
         while True:
             data = await self.stream.receive_some(2**10)
-            log.trace(f"received {data}")  # type: ignore
+            log.transport(f"received {data}")  # type: ignore
 
             if data == b'':
                 raise TransportClosed(
@@ -136,11 +137,11 @@ class MsgspecTCPStream(MsgpackTCPStream):
 
             size, = struct.unpack("<I", header)
 
-            log.trace(f'received header {size}')
+            log.transport(f'received header {size}')
 
             msg_bytes = await self.recv_stream.receive_exactly(size)
 
-            log.trace(f"received {msg_bytes}")  # type: ignore
+            log.transport(f"received {msg_bytes}")  # type: ignore
             yield decoder.decode(msg_bytes)
 
     async def send(self, data: Any) -> None:
@@ -209,6 +210,7 @@ class Channel:
         return self.msgstream.raddr if self.msgstream else None
 
     async def connect(
+
         self,
         destaddr: Tuple[Any, ...] = None,
         **kwargs
@@ -226,11 +228,15 @@ class Channel:
             **kwargs
         )
         self.msgstream = self.stream_serializer_type(stream)
+
+        log.transport(
+            f'Opened channel to peer {self.laddr} -> {self.raddr}'
+        )
         return stream
 
     async def send(self, item: Any) -> None:
 
-        log.trace(f"send `{item}`")  # type: ignore
+        log.transport(f"send `{item}`")  # type: ignore
         assert self.msgstream
 
         await self.msgstream.send(item)
@@ -249,11 +255,13 @@ class Channel:
             raise
 
     async def aclose(self) -> None:
-        log.debug(f"Closing {self}")
+        log.transport(
+            f'Closing channel to {self.uid} '
+            f'{self.laddr} -> {self.raddr}'
+        )
         assert self.msgstream
         await self.msgstream.stream.aclose()
         self._closed = True
-        log.error(f'CLOSING CHAN {self}')
 
     async def __aenter__(self):
         await self.connect()
@@ -276,11 +284,11 @@ class Channel:
                     await self.connect()
                 cancelled = cancel_scope.cancelled_caught
                 if cancelled:
-                    log.warning(
+                    log.transport(
                         "Reconnect timed out after 3 seconds, retrying...")
                     continue
                 else:
-                    log.warning("Stream connection re-established!")
+                    log.transport("Stream connection re-established!")
                     # run any reconnection sequence
                     on_recon = self._recon_seq
                     if on_recon:
@@ -289,7 +297,7 @@ class Channel:
             except (OSError, ConnectionRefusedError):
                 if not down:
                     down = True
-                    log.warning(
+                    log.transport(
                         f"Connection to {self.raddr} went down, waiting"
                         " for re-establishment")
                 await trio.sleep(1)
