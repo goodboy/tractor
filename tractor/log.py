@@ -29,19 +29,20 @@ LOG_FORMAT = (
 DATE_FORMAT = '%b %d %H:%M:%S'
 LEVELS = {
     'GARBAGE': 1,
-    'TRACE': 5,
-    'PROFILE': 15,
-    'RUNTIME': 500,
+    'TRANSPORT': 5,
+    'RUNTIME': 15,
+    'PDB': 500,
     'QUIET': 1000,
 }
 STD_PALETTE = {
     'CRITICAL': 'red',
     'ERROR': 'red',
-    'RUNTIME': 'white',
+    'PDB': 'white',
     'WARNING': 'yellow',
     'INFO': 'green',
+    'RUNTIME': 'white',
     'DEBUG': 'white',
-    'TRACE': 'cyan',
+    'TRANSPORT': 'cyan',
     'GARBAGE': 'blue',
 }
 BOLD_PALETTE = {
@@ -76,7 +77,7 @@ def get_logger(
     # additional levels
     for name, val in LEVELS.items():
         logging.addLevelName(val, name)
-        # ex. create ``logger.trace()``
+        # ex. create ``logger.runtime()``
         setattr(logger, name.lower(), partial(logger.log, val))
 
     return logger
