@@ -157,6 +157,7 @@ async def cancel_on_completion(
 
 async def do_hard_kill(
     proc: trio.Process,
+
 ) -> None:
     # NOTE: this timeout used to do nothing since we were shielding
     # the ``.wait()`` inside ``new_proc()`` which will pretty much
@@ -209,44 +210,46 @@ async def spawn_subactor(
         yield proc
 
     finally:
-        log.debug(f"Attempting to kill {proc}")
+        log.runtime(f"Attempting to kill {proc}")
 
         # XXX: do this **after** cancellation/tearfown
         # to avoid killing the process too early
         # since trio does this internally on ``__aexit__()``
 
-        if (
-            is_root_process()
+        # if (
+        #     is_root_process()
 
-            # XXX: basically the pre-closing of stdstreams in a
-            # root-processe's ``trio.Process.aclose()`` can clobber
-            # any existing debugger session so we avoid
-            and _runtime_vars['_debug_mode']
-            and _global_actor_in_debug is not None
-        ):
-            # XXX: this is ``trio.Process.aclose()`` MINUS the
-            # std-streams pre-closing steps inside ``proc.__aexit__()``
-            # (see below) which incluses a ``Process.kill()`` call
+        #     # XXX: basically the pre-closing of stdstreams in a
+        #     # root-processe's ``trio.Process.aclose()`` can clobber
+        #     # any existing debugger session so we avoid
+        #     and _runtime_vars['_debug_mode']
+        #     and _global_actor_in_debug is not None
+        # ):
+        #     # XXX: this is ``trio.Process.aclose()`` MINUS the
+        #     # std-streams pre-closing steps inside ``proc.__aexit__()``
+        #     # (see below) which incluses a ``Process.kill()`` call
 
-            log.critical(
-                "Root process tty is locked in debug mode by "
-                f"{_global_actor_in_debug}. If the console is hanging, you "
-                "may need to trigger a KBI to kill any "
-                "not-fully-initialized" " subprocesses and allow errors "
-                "from `trio` to propagate"
-            )
-            try:
-                # one more graceful wait try can can be cancelled by KBI
-                # sent by user.
-                await proc.wait()
+        #     log.error(
+        #         "Root process tty is locked in debug mode by "
+        #         f"{_global_actor_in_debug}. If the console is hanging, you "
+        #         "may need to trigger a KBI to kill any "
+        #         "not-fully-initialized" " subprocesses and allow errors "
+        #         "from `trio` to propagate"
+        #     )
+        #     try:
+        #         # one more graceful wait try can can be cancelled by KBI
+        #         # sent by user.
+        #         await proc.wait()
 
-            finally:
-                if proc.returncode is None:
-                    # with trio.CancelScope(shield=True):
-                    await do_hard_kill(proc)
-        else:
-            # with trio.CancelScope(shield=True):
-            await do_hard_kill(proc)
+        #     finally:
+        #         if proc.returncode is None:
+        #             # with trio.CancelScope(shield=True):
+        #             #     await proc.wait()
+
+        #             await do_hard_kill(proc)
+        # else:
+
+        await do_hard_kill(proc)
 
 
 async def new_proc(
