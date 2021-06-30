@@ -463,7 +463,8 @@ class Actor:
             log.runtime(
                 f"already have channel(s) for {uid}:{chans}?"
             )
-        log.trace(f"Registered {chan} for {uid}")  # type: ignore
+
+        log.runtime(f"Registered {chan} for {uid}")  # type: ignore
         # append new channel
         self._peers[uid].append(chan)
 
@@ -636,7 +637,7 @@ class Actor:
 
                         break
 
-                    log.trace(   # type: ignore
+                    log.transport(   # type: ignore
                         f"Received msg {msg} from {chan.uid}")
 
                     cid = msg.get('cid')
