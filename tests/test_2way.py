@@ -262,7 +262,7 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
             async with ctx.open_stream() as stream:
                 async for msg in stream:
                     pass
-        except trio.ClosedResourceError:
+        except tractor.ContextCancelled:
             pass
         else:
             assert 0, "Should have received closed resource error?"
