@@ -110,7 +110,7 @@ class PdbwTeardown(pdbpp.Pdb):
 
 #     async with aclosing(async_stdin):
 #         async for msg in async_stdin:
-#             log.trace(f"Stdin input:\n{msg}")
+#             log.runtime(f"Stdin input:\n{msg}")
 #             # encode to bytes
 #             bmsg = str.encode(msg)
 
