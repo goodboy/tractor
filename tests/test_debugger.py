@@ -307,20 +307,47 @@ def test_multi_daemon_subactors(spawn, loglevel):
     before = str(child.before.decode())
     assert "NameError" in before
 
-    child.sendline('c')
+    # XXX: hoorayy the root clobering the child here was fixed!
 
+    # now the root actor won't clobber the bp_forever child
+    # during it's first access to the debug lock, but will instead
+    # wait for the lock to release, by the edge triggered
+    # ``_debug._no_remote_has_tty`` event before sending cancel messages
+    # (via portals) to its underlings B)
+
+    # IMO, this demonstrates the true power of SC system design.
+    child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
-    assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
+    assert "Attaching pdb to actor: ('bp_forever'," in before
+
+
+    child.sendline('c')
+    child.expect(r"\(Pdb\+\+\)")
+    before = str(child.before.decode())
 
     try:
-        child.sendline('c')
-        child.expect(pexpect.EOF)
-    except pexpect.exceptions.TIMEOUT:
-        # Failed to exit using continue..?
+        # final error in root
+        assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
 
-        child.sendline('q')
-        child.expect(pexpect.EOF)
+    except AssertionError:
+    # except pexpect.exceptions.TIMEOUT:
+
+        # one last entry in the root
+        child.sendline('c')
+        child.expect(r"\(Pdb\+\+\)")
+        before = str(child.before.decode())
+        assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
+
+        # theory there should have been some msg like this from
+        # root announcing it avoided a clobber of the child's lock,
+        # but it seems unreliable in testing here to gnab it.
+        # assert "in use by child ('bp_forever'," in before
+
+    child.sendline('c')
+    # final error in root
+    assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
+    child.expect(pexpect.EOF)
 
 
 def test_multi_subactors_root_errors(spawn):
@@ -372,7 +399,7 @@ def test_multi_nested_subactors_error_through_nurseries(spawn):
     child = spawn('multi_nested_subactors_error_up_through_nurseries')
 
     # startup time can be iffy
-    time.sleep(1)
+    # time.sleep(1)
 
     for i in range(12):
         try:
