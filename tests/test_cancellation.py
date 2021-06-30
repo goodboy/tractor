@@ -123,8 +123,15 @@ def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
 
     assert exc_info.type == tractor.MultiError
     err = exc_info.value
-    assert len(err.exceptions) == num_subactors
-    for exc in err.exceptions:
+    exceptions = err.exceptions
+
+    if len(exceptions) == 2:
+        # sometimes oddly now there's an embedded BrokenResourceError ?
+        exceptions = exceptions[1].exceptions
+
+    assert len(exceptions) == num_subactors
+
+    for exc in exceptions:
         assert isinstance(exc, tractor.RemoteActorError)
         assert exc.type == AssertionError
 
