@@ -30,7 +30,7 @@ async def publisher(
 
         sub = 'even' if is_even(val) else 'odd'
 
-        for sub_stream in _registry[sub]:
+        for sub_stream in _registry[sub].copy():
             await sub_stream.send(val)
 
         # throttle send rate to ~1kHz
