@@ -287,7 +287,7 @@ class Actor:
         enable_modules: List[str] = [],
         uid: str = None,
         loglevel: str = None,
-        arbiter_addr: Optional[Tuple[str, int]] = (None, None),
+        arbiter_addr: Optional[Tuple[str, int]] = None,
         spawn_method: Optional[str] = None
     ) -> None:
         """This constructor is called in the parent actor **before** the spawning
@@ -317,7 +317,8 @@ class Actor:
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
         self.loglevel = loglevel
-        self._arb_addr = tuple(arbiter_addr)
+
+        self._arb_addr = arbiter_addr or (None, None)
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
@@ -796,7 +797,8 @@ class Actor:
                         # XXX: msgspec doesn't support serializing tuples
                         # so just cash manually here since it's what our
                         # internals expect.
-                        self._arb_addr = tuple(value)
+                        address: Tuple[str, int] = value
+                        self._arb_addr = value
 
                     else:
                         setattr(self, attr, value)
@@ -1171,6 +1173,7 @@ class Actor:
     async def _do_handshake(
         self,
         chan: Channel
+
     ) -> Tuple[str, str]:
         """Exchange (name, UUIDs) identifiers as the first communication step.
 
@@ -1178,10 +1181,10 @@ class Actor:
         parlance.
         """
         await chan.send(self.uid)
-        uid: Tuple[str, str] = tuple(await chan.recv())
+        uid: Tuple[str, str] = await chan.recv()
 
-        # if not isinstance(uid, tuple):
-        #     raise ValueError(f"{uid} is not a valid uid?!")
+        if not isinstance(uid, tuple):
+            raise ValueError(f"{uid} is not a valid uid?!")
 
         chan.uid = uid
         log.runtime(f"Handshake with actor {uid}@{chan.raddr} complete")
@@ -1246,10 +1249,12 @@ class Arbiter(Actor):
         return sockaddrs
 
     async def register_actor(
-        self, uid: Tuple[str, str], sockaddr: Tuple[str, int]
+        self,
+        uid: Tuple[str, str],
+        sockaddr: Tuple[str, str]
+
     ) -> None:
-        uid = tuple(uid)
-        name, uuid = uid
+        name, uuid = tuple(uid)
         self._registry[uid] = tuple(sockaddr)
 
         # pop and signal all waiter events

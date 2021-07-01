@@ -160,7 +160,7 @@ class MsgspecTCPStream(MsgpackTCPStream):
 
             size, = struct.unpack("<I", header)
 
-            log.trace(f'received header {size}')
+            log.trace(f'received header {size}')  # type: ignore
 
             msg_bytes = await self.recv_stream.receive_exactly(size)
 
@@ -170,11 +170,11 @@ class MsgspecTCPStream(MsgpackTCPStream):
     async def send(self, data: Any) -> None:
         async with self._send_lock:
 
-            bytes_data = self.encode(data)
+            bytes_data: bytes = self.encode(data)
 
             # supposedly the fastest says,
             # https://stackoverflow.com/a/54027962
-            size: int = struct.pack("<I", len(bytes_data))
+            size: bytes = struct.pack("<I", len(bytes_data))
 
             return await self.stream.send_all(size + bytes_data)
 
@@ -197,17 +197,17 @@ class Channel:
         self._recon_seq = on_reconnect
         self._autorecon = auto_reconnect
 
+        stream_serializer_type = MsgpackTCPStream
+
         try:
             # if installed load the msgspec transport since it's faster
             import msgspec  # noqa
-            stream_serializer_type: type = MsgspecTCPStream
-
+            stream_serializer_type = MsgspecTCPStream
         except ImportError:
-            stream_serializer_type: type = MsgpackTCPStream
+            pass
 
         self.stream_serializer_type = stream_serializer_type
-        self.msgstream: Optional[type] = stream_serializer_type(
-            stream) if stream else None
+        self.msgstream = stream_serializer_type(stream) if stream else None
 
         if self.msgstream and destaddr:
             raise ValueError(
@@ -215,8 +215,10 @@ class Channel:
             )
 
         self._destaddr = self.msgstream.raddr if self.msgstream else destaddr
+
         # set after handshake - always uid of far end
         self.uid: Optional[Tuple[str, str]] = None
+
         # set if far end actor errors internally
         self._exc: Optional[Exception] = None
         self._agen = self._aiter_recv()
