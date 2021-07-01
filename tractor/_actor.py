@@ -287,7 +287,7 @@ class Actor:
         enable_modules: List[str] = [],
         uid: str = None,
         loglevel: str = None,
-        arbiter_addr: Optional[Tuple[str, int]] = None,
+        arbiter_addr: Optional[Tuple[str, int]] = (None, None),
         spawn_method: Optional[str] = None
     ) -> None:
         """This constructor is called in the parent actor **before** the spawning
@@ -317,7 +317,7 @@ class Actor:
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
         self.loglevel = loglevel
-        self._arb_addr = tuple(arbiter_addr) if arbiter_addr is not None else (None, None)
+        self._arb_addr = tuple(arbiter_addr)
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
