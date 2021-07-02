@@ -38,13 +38,20 @@ setup(
         'tractor.testing',
     ],
     install_requires=[
+
+        # trio related
         'trio>0.8',
-        'msgpack',
         'async_generator',
+        'trio_typing',
+
+        # tooling
         'colorlog',
         'wrapt',
-        'trio_typing',
         'pdbpp',
+
+        # serialization
+        'msgpack',
+
     ],
     tests_require=['pytest'],
     python_requires=">=3.7",
