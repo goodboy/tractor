@@ -203,7 +203,7 @@ class Actor:
         enable_modules: List[str] = [],
         uid: str = None,
         loglevel: str = None,
-        arbiter_addr: Optional[Tuple[str, int]] = (None, None),
+        arbiter_addr: Optional[Tuple[str, int]] = None,
         spawn_method: Optional[str] = None
     ) -> None:
         """This constructor is called in the parent actor **before** the spawning
