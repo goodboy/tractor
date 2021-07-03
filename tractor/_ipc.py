@@ -57,7 +57,26 @@ class MsgpackTCPStream:
             use_list=False,
         )
         while True:
-            data = await self.stream.receive_some(2**10)
+
+            try:
+                data = await self.stream.receive_some(2**10)
+
+            except trio.BrokenResourceError as err:
+                msg = err.args[0]
+
+                # XXX: handle connection-reset-by-peer the same as a EOF.
+                # we're currently remapping this since we allow
+                # a quick connect then drop for root actors when
+                # checking to see if there exists an "arbiter"
+                # on the chosen sockaddr (``_root.py:108`` or thereabouts)
+                if '[Errno 104]' in msg:
+                    raise TransportClosed(
+                        f'{self} was broken with {msg}'
+                    )
+
+                else:
+                    raise
+
             log.trace(f"received {data}")  # type: ignore
 
             if data == b'':
@@ -175,11 +194,13 @@ class Channel:
             raise
 
     async def aclose(self) -> None:
-        log.debug(f"Closing {self}")
+        log.debug(
+            f'Closing channel to {self.uid} '
+            f'{self.laddr} -> {self.raddr}'
+        )
         assert self.msgstream
         await self.msgstream.stream.aclose()
         self._closed = True
-        log.error(f'CLOSING CHAN {self}')
 
     async def __aenter__(self):
         await self.connect()

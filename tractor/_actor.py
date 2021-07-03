@@ -263,7 +263,7 @@ class Actor:
         self._parent_chan: Optional[Channel] = None
         self._forkserver_info: Optional[
             Tuple[Any, Any, Any, Any, Any]] = None
-        self._actoruid2nursery: Dict[str, 'ActorNursery'] = {}  # type: ignore
+        self._actoruid2nursery: Dict[str, 'ActorNursery'] = {}  # type: ignore  # noqa
 
     async def wait_for_peer(
         self, uid: Tuple[str, str]
@@ -341,8 +341,8 @@ class Actor:
             uid = await self._do_handshake(chan)
 
         except (
-            trio.BrokenResourceError,
-            trio.ClosedResourceError,
+            # trio.BrokenResourceError,
+            # trio.ClosedResourceError,
             TransportClosed,
         ):
             # XXX: This may propagate up from ``Channel._aiter_recv()``
@@ -592,20 +592,16 @@ class Actor:
 
         except (
             TransportClosed,
-            trio.BrokenResourceError,
-            trio.ClosedResourceError
         ):
-            # channels "breaking" is ok since we don't have a teardown
-            # handshake for them (yet) and instead we simply bail out
-            # of the message loop and expect the teardown sequence
-            # to clean up.
-            log.error(f"{chan} form {chan.uid} closed abruptly")
-            # raise
-
-        except trio.ClosedResourceError:
-            log.error(f"{chan} form {chan.uid} broke")
+            # channels "breaking" (for TCP streams by EOF or 104
+            # connection-reset) is ok since we don't have a teardown
+            # handshake for them (yet) and instead we simply bail out of
+            # the message loop and expect the teardown sequence to clean
+            # up.
+            log.debug(f'channel from {chan.uid} closed abruptly:\n{chan}')
 
         except (Exception, trio.MultiError) as err:
+
             # ship any "internal" exception (i.e. one from internal machinery
             # not from an rpc task) to parent
             log.exception("Actor errored:")
