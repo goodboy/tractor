@@ -105,6 +105,11 @@ async def open_root_actor(
     arbiter_found = False
 
     try:
+        # TODO: this connect-and-bail forces us to have to carefully
+        # rewrap TCP 104-connection-reset errors as EOF so as to avoid
+        # propagating cancel-causing errors to the channel-msg loop
+        # machinery.  Likely it would be better to eventually have
+        # a "discovery" protocol with basic handshake instead.
         async with _connect_chan(host, port):
             arbiter_found = True
 
@@ -174,8 +179,11 @@ async def open_root_actor(
 
             finally:
                 logger.info("Shutting down root actor")
-                with trio.CancelScope(shield=True):
-                    await actor.cancel()
+                try:
+                    with trio.CancelScope(shield=True):
+                        await actor.cancel()
+                except Exception as err:
+                    log.warning('Root was already cancelled')
     finally:
         _state._current_actor = None
         logger.info("Root actor terminated")
