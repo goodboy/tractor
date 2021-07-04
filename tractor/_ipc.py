@@ -69,7 +69,13 @@ class MsgpackTCPStream:
                 # a quick connect then drop for root actors when
                 # checking to see if there exists an "arbiter"
                 # on the chosen sockaddr (``_root.py:108`` or thereabouts)
-                if '[Errno 104]' in msg:
+                if (
+                    # nix
+                    '[Errno 104]' in msg or
+
+                    # windows
+                    '[WinError 10054]' in msg
+                ):
                     raise TransportClosed(
                         f'{self} was broken with {msg}'
                     )
