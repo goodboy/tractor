@@ -297,15 +297,30 @@ def test_multi_daemon_subactors(spawn, loglevel):
 
     child.expect(r"\(Pdb\+\+\)")
 
+    # there is a race for which subactor will acquire
+    # the root's tty lock first
+
     before = str(child.before.decode())
-    assert "Attaching pdb to actor: ('bp_forever'" in before
+
+    bp_forever_msg = "Attaching pdb to actor: ('bp_forever'"
+    name_error_msg = "NameError"
+
+    if bp_forever_msg in before:
+        next_msg = name_error_msg
+
+    elif name_error_msg in before:
+        next_msg = bp_forever_msg
+
+    else:
+        raise ValueError("Neither log msg was found !?")
 
     child.sendline('c')
 
     # first name_error failure
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
-    assert "NameError" in before
+
+    assert next_msg in before
 
     child.sendline('c')
 
