@@ -309,7 +309,7 @@ def test_multi_daemon_subactors(spawn, loglevel):
         next_msg = name_error_msg
 
     elif name_error_msg in before:
-        next_msg = bp_forever_msg
+        next_msg = None
 
     else:
         raise ValueError("Neither log msg was found !?")
@@ -320,7 +320,8 @@ def test_multi_daemon_subactors(spawn, loglevel):
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
 
-    assert next_msg in before
+    if next_msg:
+        assert next_msg in before
 
     child.sendline('c')
 
@@ -331,9 +332,10 @@ def test_multi_daemon_subactors(spawn, loglevel):
     try:
         child.sendline('c')
         child.expect(pexpect.EOF)
-    except pexpect.exceptions.TIMEOUT:
-        # Failed to exit using continue..?
 
+    except pexpect.exceptions.TIMEOUT:
+
+        # Failed to exit using continue..?
         child.sendline('q')
         child.expect(pexpect.EOF)
 
