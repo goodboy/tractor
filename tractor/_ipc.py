@@ -1,6 +1,7 @@
 """
 Inter-process comms abstractions
 """
+import platform
 import typing
 from typing import Any, Tuple, Optional
 from functools import partial
@@ -12,6 +13,9 @@ from async_generator import asynccontextmanager
 from .log import get_logger
 from ._exceptions import TransportClosed
 log = get_logger(__name__)
+
+
+_is_windows = platform.system() == 'Windows'
 
 # :eyeroll:
 try:
@@ -73,8 +77,9 @@ class MsgpackTCPStream:
                     # nix
                     '[Errno 104]' in msg or
 
-                    # windows
-                    '[WinError 10054]' in msg
+                    # on windows it seems there are a variety of errors
+                    # to handle..
+                    _is_windows
                 ):
                     raise TransportClosed(
                         f'{self} was broken with {msg}'
