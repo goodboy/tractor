@@ -197,9 +197,11 @@ async def _invoke(
 
         # TODO: maybe we'll want differnet "levels" of debugging
         # eventualy such as ('app', 'supervisory', 'runtime') ?
-        if not isinstance(err, trio.ClosedResourceError) and (
-            not is_multi_cancelled(err)) and (
-            not isinstance(err, ContextCancelled)
+        if (
+            not is_multi_cancelled(err) and (
+                not isinstance(err, ContextCancelled) or
+                (isinstance(err, ContextCancelled) and ctx._cancel_called)
+            )
         ):
             # XXX: is there any case where we'll want to debug IPC
             # disconnects? I can't think of a reason that inspecting
@@ -443,7 +445,7 @@ class Actor:
 
         chans = self._peers[uid]
 
-        # TODO: re-use channels for new connections instead 
+        # TODO: re-use channels for new connections instead
         # of always new ones; will require changing all the
         # discovery funcs
         if chans:
@@ -519,10 +521,10 @@ class Actor:
         send_chan, recv_chan = self._cids2qs[(chan.uid, cid)]
         assert send_chan.cid == cid  # type: ignore
 
-        if 'error' in msg:
-            ctx = getattr(recv_chan, '_ctx', None)
-            # if ctx:
-            #     ctx._error_from_remote_msg(msg)
+        # if 'error' in msg:
+        #     ctx = getattr(recv_chan, '_ctx', None)
+        #     if ctx:
+        #         ctx._error_from_remote_msg(msg)
 
         #     log.debug(f"{send_chan} was terminated at remote end")
         #     # indicate to consumer that far end has stopped
