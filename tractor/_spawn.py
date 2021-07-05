@@ -225,7 +225,6 @@ async def new_proc(
     parent_addr: Tuple[str, int],
     _runtime_vars: Dict[str, Any],  # serialized and sent to _child
     *,
-    use_trio_run_in_process: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 ) -> None:
     """Create a new ``multiprocessing.Process`` using the
@@ -236,7 +235,7 @@ async def new_proc(
     # mark the new actor with the global spawn method
     subactor._spawn_method = _spawn_method
 
-    if use_trio_run_in_process or _spawn_method == 'trio':
+    if _spawn_method == 'trio':
         async with trio.open_nursery() as nursery:
             async with spawn_subactor(
                 subactor,
@@ -338,7 +337,6 @@ async def mp_new_proc(
     parent_addr: Tuple[str, int],
     _runtime_vars: Dict[str, Any],  # serialized and sent to _child
     *,
-    use_trio_run_in_process: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
