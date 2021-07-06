@@ -105,6 +105,11 @@ async def open_root_actor(
     arbiter_found = False
 
     try:
+        # TODO: this connect-and-bail forces us to have to carefully
+        # rewrap TCP 104-connection-reset errors as EOF so as to avoid
+        # propagating cancel-causing errors to the channel-msg loop
+        # machinery.  Likely it would be better to eventually have
+        # a "discovery" protocol with basic handshake instead.
         async with _connect_chan(host, port):
             arbiter_found = True
 

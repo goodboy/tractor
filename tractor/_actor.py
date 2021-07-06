@@ -27,6 +27,7 @@ from ._exceptions import (
     unpack_error,
     ModuleNotExposed,
     is_multi_cancelled,
+    TransportClosed,
 )
 from . import _debug
 from ._discovery import get_arbiter
@@ -262,7 +263,7 @@ class Actor:
         self._parent_chan: Optional[Channel] = None
         self._forkserver_info: Optional[
             Tuple[Any, Any, Any, Any, Any]] = None
-        self._actoruid2nursery: Dict[str, 'ActorNursery'] = {}  # type: ignore
+        self._actoruid2nursery: Dict[str, 'ActorNursery'] = {}  # type: ignore  # noqa
 
     async def wait_for_peer(
         self, uid: Tuple[str, str]
@@ -338,7 +339,18 @@ class Actor:
         # send/receive initial handshake response
         try:
             uid = await self._do_handshake(chan)
-        except StopAsyncIteration:
+
+        except (
+            # trio.BrokenResourceError,
+            # trio.ClosedResourceError,
+            TransportClosed,
+        ):
+            # XXX: This may propagate up from ``Channel._aiter_recv()``
+            # and ``MsgpackStream._inter_packets()`` on a read from the
+            # stream particularly when the runtime is first starting up
+            # inside ``open_root_actor()`` where there is a check for
+            # a bound listener on the "arbiter" addr.  the reset will be
+            # because the handshake was never meant took place.
             log.warning(f"Channel {chan} failed to handshake")
             return
 
@@ -578,22 +590,35 @@ class Actor:
                     )
                     await self.cancel_rpc_tasks(chan)
 
-        except trio.ClosedResourceError:
-            log.error(f"{chan} form {chan.uid} broke")
+        except (
+            TransportClosed,
+        ):
+            # channels "breaking" (for TCP streams by EOF or 104
+            # connection-reset) is ok since we don't have a teardown
+            # handshake for them (yet) and instead we simply bail out of
+            # the message loop and expect the teardown sequence to clean
+            # up.
+            log.debug(f'channel from {chan.uid} closed abruptly:\n{chan}')
+
         except (Exception, trio.MultiError) as err:
+
             # ship any "internal" exception (i.e. one from internal machinery
             # not from an rpc task) to parent
             log.exception("Actor errored:")
             if self._parent_chan:
                 await self._parent_chan.send(pack_error(err))
-            raise
+
             # if this is the `MainProcess` we expect the error broadcasting
             # above to trigger an error at consuming portal "checkpoints"
+            raise
+
         except trio.Cancelled:
             # debugging only
             log.debug(f"Msg loop was cancelled for {chan}")
             raise
+
         finally:
+            # msg debugging for when he machinery is brokey
             log.debug(
                 f"Exiting msg loop for {chan} from {chan.uid} "
                 f"with last msg:\n{msg}")
