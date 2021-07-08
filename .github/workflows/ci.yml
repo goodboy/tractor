@@ -6,15 +6,19 @@ jobs:
   mypy:
     name: 'MyPy'
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2
+
       - name: Setup python
         uses: actions/setup-python@v2
         with:
-          python-version: '3.8'
+          python-version: '3.9'
+
       - name: Install dependencies
-        run: pip install -U . --upgrade-strategy eager
+        run: pip install -U . --upgrade-strategy eager -r requirements-test.txt
+
       - name: Run MyPy check
         run: mypy tractor/ --ignore-missing-imports
 
