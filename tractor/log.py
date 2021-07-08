@@ -26,14 +26,15 @@ LOG_FORMAT = (
     " {thin_white}{filename}{log_color}:{reset}{thin_white}{lineno}{log_color}"
     " {reset}{bold_white}{thin_white}{message}"
 )
+
 DATE_FORMAT = '%b %d %H:%M:%S'
+
 LEVELS = {
-    'GARBAGE': 1,
     'TRANSPORT': 5,
     'RUNTIME': 15,
     'PDB': 500,
-    'QUIET': 1000,
 }
+
 STD_PALETTE = {
     'CRITICAL': 'red',
     'ERROR': 'red',
@@ -43,19 +44,44 @@ STD_PALETTE = {
     'RUNTIME': 'white',
     'DEBUG': 'white',
     'TRANSPORT': 'cyan',
-    'GARBAGE': 'blue',
 }
+
 BOLD_PALETTE = {
     'bold': {
         level: f"bold_{color}" for level, color in STD_PALETTE.items()}
 }
 
 
+class StackLevelAdapter(logging.LoggerAdapter):
+
+    def transport(
+        self,
+        msg: str,
+
+    ) -> None:
+        return self.log(5, msg)
+
+    def runtime(
+        self,
+        msg: str,
+    ) -> None:
+        return self.log(15, msg)
+
+    def pdb(
+        self,
+        msg: str,
+    ) -> None:
+        return self.log(500, msg)
+
+
 def get_logger(
+
     name: str = None,
     _root_name: str = _proj_name,
-) -> logging.LoggerAdapter:
-    '''Return the package log or a sub-log for `name` if provided.
+
+) -> StackLevelAdapter:
+    '''Return the package log or a sub-logger for ``name`` if provided.
+
     '''
     log = rlog = logging.getLogger(_root_name)
 
@@ -72,13 +98,14 @@ def get_logger(
 
     # add our actor-task aware adapter which will dynamically look up
     # the actor and task names at each log emit
-    logger = logging.LoggerAdapter(log, ActorContextInfo())
+    logger = StackLevelAdapter(log, ActorContextInfo())
 
     # additional levels
     for name, val in LEVELS.items():
         logging.addLevelName(val, name)
-        # ex. create ``logger.runtime()``
-        setattr(logger, name.lower(), partial(logger.log, val))
+
+        # ensure customs levels exist as methods
+        assert getattr(logger, name.lower()), f'Logger does not define {name}'
 
     return logger
 
