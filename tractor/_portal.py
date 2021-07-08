@@ -391,9 +391,8 @@ class Portal:
             else:
                 raise
 
-        _err = None
-        # deliver context instance and .started() msg value in open
-        # tuple.
+        _err: Optional[BaseException] = None
+        # deliver context instance and .started() msg value in open tuple.
         try:
             async with trio.open_nursery() as scope_nursery:
                 ctx = Context(
@@ -403,15 +402,12 @@ class Portal:
                     _recv_chan=recv_chan,
                     _scope_nursery=scope_nursery,
                 )
-                recv_chan._ctx = ctx
+
+                # pairs with handling in ``Actor._push_result()``
+                # recv_chan._ctx = ctx
 
                 # await trio.lowlevel.checkpoint()
                 yield ctx, first
-
-                # if not ctx._cancel_called:
-                #     await ctx.result()
-
-            # await recv_chan.aclose()
 
         except ContextCancelled as err:
             _err = err
@@ -462,7 +458,7 @@ class Portal:
             else:
                 log.info(
                     f'Context {fn_name} returned '
-                    f'value from callee `{self._result}`'
+                    f'value from callee `{result}`'
                 )
 
 

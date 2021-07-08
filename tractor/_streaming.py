@@ -332,6 +332,8 @@ class Context:
         Acts as a form of "relay" for a remote error raised
         in the corresponding remote callee task.
         '''
+        assert self._scope_nursery
+
         async def raiser():
             raise unpack_error(msg, self.chan)
 
@@ -385,6 +387,7 @@ class Context:
             # {'error': trio.Cancelled, cid: "blah"} enough?
             # This probably gets into the discussion in
             # https://github.com/goodboy/tractor/issues/36
+            assert self._scope_nursery
             self._scope_nursery.cancel_scope.cancel()
 
         if self._recv_chan:
