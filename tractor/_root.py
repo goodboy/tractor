@@ -86,6 +86,9 @@ async def open_root_actor(
         # for use of ``await tractor.breakpoint()``
         enable_modules.append('tractor._debug')
 
+        if loglevel is None:
+            loglevel = 'pdb'
+
     elif debug_mode:
         raise RuntimeError(
             "Debug mode is only supported for the `trio` backend!"
