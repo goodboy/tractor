@@ -64,7 +64,7 @@ async def _invoke(
     tb = None
 
     cancel_scope = trio.CancelScope()
-    cs: trio.CancelScope = None
+    cs: Optional[trio.CancelScope] = None
 
     ctx = Context(chan, cid)
     context: bool = False
