@@ -497,7 +497,12 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
 
         child.sendline('c')
 
-    child.expect(pexpect.EOF)
+    while True:
+        try:
+            child.expect(pexpect.EOF)
+            break
+        except pexpect.exceptions.TIMEOUT:
+            print('child was ablel to grab tty lock again?')
 
     if not timed_out_early:
 
