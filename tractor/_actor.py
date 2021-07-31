@@ -41,10 +41,6 @@ from . import _mp_fixup_main
 log = get_logger('tractor')
 
 
-class ActorFailure(Exception):
-    "General actor failure"
-
-
 async def _invoke(
 
     actor: 'Actor',
@@ -56,8 +52,10 @@ async def _invoke(
         Union[trio.CancelScope, BaseException]
     ] = trio.TASK_STATUS_IGNORED,
 ):
-    """Invoke local func and deliver result(s) over provided channel.
-    """
+    '''Invoke local func and deliver result(s) over provided channel.
+
+    '''
+    __tracebackhide__ = True
     treat_as_gen = False
 
     # possible a traceback (not sure what typing is for this..)
