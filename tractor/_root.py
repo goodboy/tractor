@@ -86,6 +86,9 @@ async def open_root_actor(
         # for use of ``await tractor.breakpoint()``
         enable_modules.append('tractor._debug')
 
+        if loglevel is None:
+            loglevel = 'pdb'
+
     elif debug_mode:
         raise RuntimeError(
             "Debug mode is only supported for the `trio` backend!"
@@ -179,8 +182,7 @@ async def open_root_actor(
 
             finally:
                 logger.info("Shutting down root actor")
-                with trio.CancelScope(shield=True):
-                    await actor.cancel()
+                await actor.cancel()
     finally:
         _state._current_actor = None
         logger.info("Root actor terminated")

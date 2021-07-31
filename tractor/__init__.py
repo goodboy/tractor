@@ -5,11 +5,21 @@ tractor: An actor model micro-framework built on
 from trio import MultiError
 
 from ._ipc import Channel
-from ._streaming import Context, stream
+from ._streaming import (
+    Context,
+    ReceiveMsgStream,
+    MsgStream,
+    stream,
+    context,
+)
 from ._discovery import get_arbiter, find_actor, wait_for_actor
 from ._trionics import open_nursery
 from ._state import current_actor, is_root_process
-from ._exceptions import RemoteActorError, ModuleNotExposed
+from ._exceptions import (
+    RemoteActorError,
+    ModuleNotExposed,
+    ContextCancelled,
+)
 from ._debug import breakpoint, post_mortem
 from . import msg
 from ._root import run, run_daemon, open_root_actor
@@ -21,6 +31,7 @@ __all__ = [
     'ModuleNotExposed',
     'MultiError',
     'RemoteActorError',
+    'ContextCancelled',
     'breakpoint',
     'current_actor',
     'find_actor',
@@ -33,7 +44,9 @@ __all__ = [
     'run',
     'run_daemon',
     'stream',
-    'wait_for_actor',
+    'context',
+    'ReceiveMsgStream',
+    'MsgStream',
     'to_asyncio',
     'wait_for_actor',
 ]

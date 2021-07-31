@@ -102,7 +102,7 @@ class PdbwTeardown(pdbpp.Pdb):
 
 #     async with aclosing(async_stdin):
 #         async for msg in async_stdin:
-#             log.trace(f"Stdin input:\n{msg}")
+#             log.runtime(f"Stdin input:\n{msg}")
 #             # encode to bytes
 #             bmsg = str.encode(msg)
 
@@ -276,7 +276,7 @@ def _set_trace(actor=None):
     pdb = _mk_pdb()
 
     if actor is not None:
-        log.runtime(f"\nAttaching pdb to actor: {actor.uid}\n")
+        log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
 
         pdb.set_trace(
             # start 2 levels up in user code
@@ -306,7 +306,7 @@ breakpoint = partial(
 
 
 def _post_mortem(actor):
-    log.runtime(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
+    log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
     pdb = _mk_pdb()
 
     # custom Pdb post-mortem entry

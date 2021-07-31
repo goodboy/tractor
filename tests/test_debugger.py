@@ -8,6 +8,7 @@ TODO: None of these tests have been run successfully on windows yet.
 """
 import time
 from os import path
+import platform
 
 import pytest
 import pexpect
@@ -23,6 +24,13 @@ from conftest import repodir
 # - root error before child breakpoint
 # - root error after child breakpoint
 # - recurrent root errors
+
+
+if platform.system() == 'Windows':
+    pytest.skip(
+        'Debugger tests have no windows support (yet)',
+        allow_module_level=True,
+    )
 
 
 def examples_dir():

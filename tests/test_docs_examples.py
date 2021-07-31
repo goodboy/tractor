@@ -84,8 +84,8 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
 
         if '__' not in f
         and f[0] != '_'
-        and 'debugging' not in p[0]
-    ],
+        and 'debugging' not in p[0]],
+
     ids=lambda t: t[1],
 )
 def test_example(run_example_in_subproc, example_script):
@@ -98,6 +98,10 @@ def test_example(run_example_in_subproc, example_script):
     test_example``.
     """
     ex_file = os.path.join(*example_script)
+
+    if 'rpc_bidir_streaming' in ex_file and sys.version_info < (3, 9):
+        pytest.skip("2-way streaming example requires py3.9 async with syntax")
+
     with open(ex_file, 'r') as ex:
         code = ex.read()
 

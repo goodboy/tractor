@@ -14,6 +14,7 @@ from types import ModuleType
 import sys
 import os
 from contextlib import ExitStack
+import warnings
 
 import trio  # type: ignore
 from trio_typing import TaskStatus
@@ -27,6 +28,7 @@ from ._exceptions import (
     unpack_error,
     ModuleNotExposed,
     is_multi_cancelled,
+    ContextCancelled,
     TransportClosed,
 )
 from . import _debug
@@ -44,6 +46,7 @@ class ActorFailure(Exception):
 
 
 async def _invoke(
+
     actor: 'Actor',
     cid: str,
     chan: Channel,
@@ -56,14 +59,43 @@ async def _invoke(
     """Invoke local func and deliver result(s) over provided channel.
     """
     treat_as_gen = False
-    cs = None
+
+    # possible a traceback (not sure what typing is for this..)
+    tb = None
+
     cancel_scope = trio.CancelScope()
-    ctx = Context(chan, cid, cancel_scope)
+    cs: Optional[trio.CancelScope] = None
+
+    ctx = Context(chan, cid)
+    context: bool = False
 
     if getattr(func, '_tractor_stream_function', False):
         # handle decorated ``@tractor.stream`` async functions
+        sig = inspect.signature(func)
+        params = sig.parameters
+
+        # compat with old api
         kwargs['ctx'] = ctx
+
+        if 'ctx' in params:
+            warnings.warn(
+                "`@tractor.stream decorated funcs should now declare "
+                "a `stream`  arg, `ctx` is now designated for use with "
+                "@tractor.context",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        elif 'stream' in params:
+            assert 'stream' in params
+            kwargs['stream'] = ctx
+
         treat_as_gen = True
+
+    elif getattr(func, '_tractor_context_function', False):
+        # handle decorated ``@tractor.context`` async function
+        kwargs['ctx'] = ctx
+        context = True
 
     # errors raised inside this block are propgated back to caller
     try:
@@ -102,52 +134,106 @@ async def _invoke(
             # `StopAsyncIteration` system here for returning a final
             # value if desired
             await chan.send({'stop': True, 'cid': cid})
-        else:
-            if treat_as_gen:
-                await chan.send({'functype': 'asyncgen', 'cid': cid})
-                # XXX: the async-func may spawn further tasks which push
-                # back values like an async-generator would but must
-                # manualy construct the response dict-packet-responses as
-                # above
-                with cancel_scope as cs:
-                    task_status.started(cs)
-                    await coro
-                if not cs.cancelled_caught:
-                    # task was not cancelled so we can instruct the
-                    # far end async gen to tear down
-                    await chan.send({'stop': True, 'cid': cid})
-            else:
-                # regular async function
-                await chan.send({'functype': 'asyncfunc', 'cid': cid})
-                with cancel_scope as cs:
-                    task_status.started(cs)
+
+        # one way @stream func that gets treated like an async gen
+        elif treat_as_gen:
+            await chan.send({'functype': 'asyncgen', 'cid': cid})
+            # XXX: the async-func may spawn further tasks which push
+            # back values like an async-generator would but must
+            # manualy construct the response dict-packet-responses as
+            # above
+            with cancel_scope as cs:
+                task_status.started(cs)
+                await coro
+
+            if not cs.cancelled_caught:
+                # task was not cancelled so we can instruct the
+                # far end async gen to tear down
+                await chan.send({'stop': True, 'cid': cid})
+
+        elif context:
+            # context func with support for bi-dir streaming
+            await chan.send({'functype': 'context', 'cid': cid})
+
+            async with trio.open_nursery() as scope_nursery:
+                ctx._scope_nursery = scope_nursery
+                cs = scope_nursery.cancel_scope
+                task_status.started(cs)
+                try:
                     await chan.send({'return': await coro, 'cid': cid})
+                except trio.Cancelled as err:
+                    tb = err.__traceback__
+
+            if cs.cancelled_caught:
+
+                # TODO: pack in ``trio.Cancelled.__traceback__`` here
+                # so they can be unwrapped and displayed on the caller
+                # side!
+
+                fname = func.__name__
+                if ctx._cancel_called:
+                    msg = f'{fname} cancelled itself'
+
+                elif cs.cancel_called:
+                    msg = (
+                        f'{fname} was remotely cancelled by its caller '
+                        f'{ctx.chan.uid}'
+                    )
+
+                # task-contex was cancelled so relay to the cancel to caller
+                raise ContextCancelled(
+                    msg,
+                    suberror_type=trio.Cancelled,
+                )
+
+        else:
+            # regular async function
+            await chan.send({'functype': 'asyncfunc', 'cid': cid})
+            with cancel_scope as cs:
+                task_status.started(cs)
+                await chan.send({'return': await coro, 'cid': cid})
 
     except (Exception, trio.MultiError) as err:
 
-        # TODO: maybe we'll want differnet "levels" of debugging
-        # eventualy such as ('app', 'supervisory', 'runtime') ?
-        if not isinstance(err, trio.ClosedResourceError) and (
-            not is_multi_cancelled(err)
-        ):
-            # XXX: is there any case where we'll want to debug IPC
-            # disconnects? I can't think of a reason that inspecting
-            # this type of failure will be useful for respawns or
-            # recovery logic - the only case is some kind of strange bug
-            # in `trio` itself?
-            entered = await _debug._maybe_enter_pm(err)
-            if not entered:
+        if not is_multi_cancelled(err):
+
+            log.exception("Actor crashed:")
+
+            # TODO: maybe we'll want different "levels" of debugging
+            # eventualy such as ('app', 'supervisory', 'runtime') ?
+
+            # if not isinstance(err, trio.ClosedResourceError) and (
+            # if not is_multi_cancelled(err) and (
+
+            entered_debug: bool = False
+            if not isinstance(err, ContextCancelled) or (
+                isinstance(err, ContextCancelled) and ctx._cancel_called
+            ):
+                # XXX: is there any case where we'll want to debug IPC
+                # disconnects as a default?
+                #
+                # I can't think of a reason that inspecting
+                # this type of failure will be useful for respawns or
+                # recovery logic - the only case is some kind of strange bug
+                # in our transport layer itself? Going to keep this
+                # open ended for now.
+
+                entered_debug = await _debug._maybe_enter_pm(err)
+
+            if not entered_debug:
                 log.exception("Actor crashed:")
 
         # always ship errors back to caller
-        err_msg = pack_error(err)
+        err_msg = pack_error(err, tb=tb)
         err_msg['cid'] = cid
         try:
             await chan.send(err_msg)
 
         except trio.ClosedResourceError:
-            log.warning(
-                f"Failed to ship error to caller @ {chan.uid}")
+            # if we can't propagate the error that's a big boo boo
+            log.error(
+                f"Failed to ship error to caller @ {chan.uid} !?"
+            )
 
         if cs is None:
             # error is from above code not from rpc invocation
@@ -165,7 +251,7 @@ async def _invoke(
                 f"Task {func} likely errored or cancelled before it started")
         finally:
             if not actor._rpc_tasks:
-                log.info("All RPC tasks have completed")
+                log.runtime("All RPC tasks have completed")
                 actor._ongoing_rpc_tasks.set()
 
 
@@ -180,10 +266,10 @@ _lifetime_stack: ExitStack = ExitStack()
 class Actor:
     """The fundamental concurrency primitive.
 
-    An *actor* is the combination of a regular Python or
-    ``multiprocessing.Process`` executing a ``trio`` task tree, communicating
+    An *actor* is the combination of a regular Python process
+    executing a ``trio`` task tree, communicating
     with other actors through "portals" which provide a native async API
-    around "channels".
+    around various IPC transport "channels".
     """
     is_arbiter: bool = False
 
@@ -327,14 +413,18 @@ class Actor:
             raise mne
 
     async def _stream_handler(
+
         self,
         stream: trio.SocketStream,
+
     ) -> None:
         """Entry point for new inbound connections to the channel server.
+
         """
         self._no_more_peers = trio.Event()  # unset
+
         chan = Channel(stream=stream)
-        log.info(f"New connection to us {chan}")
+        log.runtime(f"New connection to us {chan}")
 
         # send/receive initial handshake response
         try:
@@ -365,11 +455,16 @@ class Actor:
             event.set()
 
         chans = self._peers[uid]
+
+        # TODO: re-use channels for new connections instead
+        # of always new ones; will require changing all the
+        # discovery funcs
         if chans:
-            log.warning(
+            log.runtime(
                 f"already have channel(s) for {uid}:{chans}?"
             )
-        log.trace(f"Registered {chan} for {uid}")  # type: ignore
+
+        log.runtime(f"Registered {chan} for {uid}")  # type: ignore
         # append new channel
         self._peers[uid].append(chan)
 
@@ -378,10 +473,24 @@ class Actor:
         try:
             await self._process_messages(chan)
         finally:
+
+            # channel cleanup sequence
+
+            # for (channel, cid) in self._rpc_tasks.copy():
+            #     if channel is chan:
+            #         with trio.CancelScope(shield=True):
+            #             await self._cancel_task(cid, channel)
+
+            #             # close all consumer side task mem chans
+            #             send_chan, _ = self._cids2qs[(chan.uid, cid)]
+            #             assert send_chan.cid == cid  # type: ignore
+            #             await send_chan.aclose()
+
             # Drop ref to channel so it can be gc-ed and disconnected
             log.debug(f"Releasing channel {chan} from {chan.uid}")
             chans = self._peers.get(chan.uid)
             chans.remove(chan)
+
             if not chans:
                 log.debug(f"No more channels for {chan.uid}")
                 self._peers.pop(chan.uid, None)
@@ -394,14 +503,22 @@ class Actor:
 
             # # XXX: is this necessary (GC should do it?)
             if chan.connected():
+                # if the channel is still connected it may mean the far
+                # end has not closed and we may have gotten here due to
+                # an error and so we should at least try to terminate
+                # the channel from this end gracefully.
+
                 log.debug(f"Disconnecting channel {chan}")
                 try:
-                    # send our msg loop terminate sentinel
+                    # send a msg loop terminate sentinel
                     await chan.send(None)
+
+                    # XXX: do we want this?
+                    # causes "[104] connection reset by peer" on other end
                     # await chan.aclose()
+
                 except trio.BrokenResourceError:
-                    log.exception(
-                        f"Channel for {chan.uid} was already zonked..")
+                    log.warning(f"Channel for {chan.uid} was already closed")
 
     async def _push_result(
         self,
@@ -411,22 +528,32 @@ class Actor:
     ) -> None:
         """Push an RPC result to the local consumer's queue.
         """
-        actorid = chan.uid
-        assert actorid, f"`actorid` can't be {actorid}"
-        send_chan, recv_chan = self._cids2qs[(actorid, cid)]
+        # actorid = chan.uid
+        assert chan.uid, f"`chan.uid` can't be {chan.uid}"
+        send_chan, recv_chan = self._cids2qs[(chan.uid, cid)]
         assert send_chan.cid == cid  # type: ignore
 
-        if 'stop' in msg:
-            log.debug(f"{send_chan} was terminated at remote end")
-            # indicate to consumer that far end has stopped
-            return await send_chan.aclose()
+        # if 'error' in msg:
+        #     ctx = getattr(recv_chan, '_ctx', None)
+        #     if ctx:
+        #         ctx._error_from_remote_msg(msg)
+
+        #     log.debug(f"{send_chan} was terminated at remote end")
+        #     # indicate to consumer that far end has stopped
+        #     return await send_chan.aclose()
 
         try:
-            log.debug(f"Delivering {msg} from {actorid} to caller {cid}")
+            log.debug(f"Delivering {msg} from {chan.uid} to caller {cid}")
             # maintain backpressure
             await send_chan.send(msg)
 
         except trio.BrokenResourceError:
+            # TODO: what is the right way to handle the case where the
+            # local task has already sent a 'stop' / StopAsyncInteration
+            # to the other side but and possibly has closed the local
+            # feeder mem chan? Do we wait for some kind of ack or just
+            # let this fail silently and bubble up (currently)?
+
             # XXX: local consumer has closed their side
             # so cancel the far end streaming task
             log.warning(f"{send_chan} consumer is already closed")
@@ -435,7 +562,9 @@ class Actor:
         self,
         actorid: Tuple[str, str],
         cid: str
+
     ) -> Tuple[trio.abc.SendChannel, trio.abc.ReceiveChannel]:
+
         log.debug(f"Getting result queue for {actorid} cid {cid}")
         try:
             send_chan, recv_chan = self._cids2qs[(actorid, cid)]
@@ -489,23 +618,28 @@ class Actor:
                 task_status.started(loop_cs)
                 async for msg in chan:
                     if msg is None:  # loop terminate sentinel
+
                         log.debug(
                             f"Cancelling all tasks for {chan} from {chan.uid}")
-                        for (channel, cid) in self._rpc_tasks:
+
+                        for (channel, cid) in self._rpc_tasks.copy():
                             if channel is chan:
                                 await self._cancel_task(cid, channel)
+
                         log.debug(
                                 f"Msg loop signalled to terminate for"
                                 f" {chan} from {chan.uid}")
+
                         break
 
-                    log.trace(   # type: ignore
+                    log.transport(   # type: ignore
                         f"Received msg {msg} from {chan.uid}")
 
                     cid = msg.get('cid')
                     if cid:
                         # deliver response to local caller/waiter
                         await self._push_result(chan, cid, msg)
+
                         log.debug(
                             f"Waiting on next msg for {chan} from {chan.uid}")
                         continue
@@ -566,7 +700,7 @@ class Actor:
                         else:
                             # mark that we have ongoing rpc tasks
                             self._ongoing_rpc_tasks = trio.Event()
-                            log.info(f"RPC func is {func}")
+                            log.runtime(f"RPC func is {func}")
                             # store cancel scope such that the rpc task can be
                             # cancelled gracefully if requested
                             self._rpc_tasks[(chan, cid)] = (
@@ -575,7 +709,7 @@ class Actor:
                         # self.cancel() was called so kill this msg loop
                         # and break out into ``_async_main()``
                         log.warning(
-                            f"{self.uid} was remotely cancelled; "
+                            f"Actor {self.uid} was remotely cancelled; "
                             "waiting on cancellation completion..")
                         await self._cancel_complete.wait()
                         loop_cs.cancel()
@@ -1043,7 +1177,7 @@ class Actor:
             raise ValueError(f"{uid} is not a valid uid?!")
 
         chan.uid = uid
-        log.info(f"Handshake with actor {uid}@{chan.raddr} complete")
+        log.runtime(f"Handshake with actor {uid}@{chan.raddr} complete")
         return uid
 
 

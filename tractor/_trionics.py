@@ -252,6 +252,12 @@ async def _open_and_supervise_one_cancels_all_nursery(
                         f"Waiting on subactors {anursery._children} "
                         "to complete"
                     )
+
+                    # Last bit before first nursery block ends in the case
+                    # where we didn't error in the caller's scope
+                    log.debug("Waiting on all subactors to complete")
+                    anursery._join_procs.set()
+
                 except BaseException as err:
                     # if the caller's scope errored then we activate our
                     # one-cancels-all supervisor strategy (don't
@@ -291,11 +297,6 @@ async def _open_and_supervise_one_cancels_all_nursery(
                             raise trio.MultiError(merr.exceptions + [err])
                     else:
                         raise
-
-                # Last bit before first nursery block ends in the case
-                # where we didn't error in the caller's scope
-                log.debug("Waiting on all subactors to complete")
-                anursery._join_procs.set()
 
                 # ria_nursery scope end
 
@@ -357,7 +358,8 @@ async def open_nursery(
     try:
         if actor is None and is_main_process():
 
-            # if we are the parent process start the actor runtime implicitly
+            # if we are the parent process start the
+            # actor runtime implicitly
             log.info("Starting actor runtime!")
 
             # mark us for teardown on exit
@@ -376,7 +378,6 @@ async def open_nursery(
             async with _open_and_supervise_one_cancels_all_nursery(
                 actor
             ) as anursery:
-
                 yield anursery
 
     finally:
