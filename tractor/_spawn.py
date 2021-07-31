@@ -29,8 +29,9 @@ from ._state import (
 
 from .log import get_logger
 from ._portal import Portal
-from ._actor import Actor, ActorFailure
+from ._actor import Actor
 from ._entry import _mp_main
+from ._exceptions import ActorFailure
 
 
 log = get_logger('tractor')
