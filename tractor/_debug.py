@@ -123,7 +123,9 @@ class PdbwTeardown(pdbpp.Pdb):
 
 
 @asynccontextmanager
-async def _acquire_debug_lock(uid: Tuple[str, str]) -> AsyncIterator[None]:
+async def _acquire_debug_lock(
+    uid: Tuple[str, str]
+) -> AsyncIterator[trio.StrictFIFOLock]:
     '''Acquire a actor local FIFO lock meant to mutex entry to a local
     debugger entry point to avoid tty clobbering a global root process.
 
