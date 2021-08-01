@@ -325,7 +325,7 @@ def test_multi_daemon_subactors(spawn, loglevel):
     # NOTE: previously since we did not have clobber prevention
     # in the root actor this final resume could result in the debugger
     # tearing down since both child actors would be cancelled and it was
-    # unlikely that `bp_forever` would re-acquire the tty loack again.
+    # unlikely that `bp_forever` would re-acquire the tty lock again.
     # Now, we should have a final resumption in the root plus a possible
     # second entry by `bp_forever`.
 
@@ -335,7 +335,7 @@ def test_multi_daemon_subactors(spawn, loglevel):
 
     assert next_msg in before
 
-    # XXX: hoorayy the root clobering the child here was fixed!
+    # XXX: hooray the root clobbering the child here was fixed!
     # IMO, this demonstrates the true power of SC system design.
 
     # now the root actor won't clobber the bp_forever child
@@ -412,18 +412,15 @@ def test_multi_subactors_root_errors(spawn):
 def test_multi_nested_subactors_error_through_nurseries(spawn):
     """Verify deeply nested actors that error trigger debugger entries
     at each actor nurserly (level) all the way up the tree.
-    """
 
-    # NOTE: previously, inside this script was a a bug where if the
+    """
+    # NOTE: previously, inside this script was a bug where if the
     # parent errors before a 2-levels-lower actor has released the lock,
     # the parent tries to cancel it but it's stuck in the debugger?
     # A test (below) has now been added to explicitly verify this is
     # fixed.
 
     child = spawn('multi_nested_subactors_error_up_through_nurseries')
-
-    # startup time can be iffy
-    # time.sleep(1)
 
     for i in range(12):
         try:
@@ -502,7 +499,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
             child.expect(pexpect.EOF)
             break
         except pexpect.exceptions.TIMEOUT:
-            print('child was ablel to grab tty lock again?')
+            print('child was able to grab tty lock again?')
 
     if not timed_out_early:
 

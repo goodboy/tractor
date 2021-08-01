@@ -283,9 +283,10 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     if is_root_process():
                         log.exception(f"we're root with {err}")
 
-                        # wait to see if a sub-actor task
-                        # will be scheduled and grab the tty
-                        # lock on the next tick
+                        # TODO: could this make things more deterministic?
+                        # wait to see if a sub-actor task will be
+                        # scheduled and grab the tty lock on the next
+                        # tick?
                         # await trio.testing.wait_all_tasks_blocked()
 
                         debug_complete = _debug._no_remote_has_tty
