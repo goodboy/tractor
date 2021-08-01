@@ -12,6 +12,10 @@ import trio
 _this_mod = importlib.import_module(__name__)
 
 
+class ActorFailure(Exception):
+    "General actor failure"
+
+
 class RemoteActorError(Exception):
     # TODO: local recontruction of remote exception deats
     "Remote actor exception bundled locally"
@@ -40,6 +44,7 @@ class InternalActorError(RemoteActorError):
 class TransportClosed(trio.ClosedResourceError):
     "Underlying channel transport was closed prior to use"
 
+
 class ContextCancelled(RemoteActorError):
     "Inter-actor task context cancelled itself on the callee side."
 
@@ -58,7 +63,7 @@ class NoRuntime(RuntimeError):
 
 def pack_error(
     exc: BaseException,
-    tb = None,
+    tb=None,
 
 ) -> Dict[str, Any]:
     """Create an "error message" for tranmission over

@@ -174,8 +174,11 @@ async def open_root_actor(
                 yield actor
 
             except (Exception, trio.MultiError) as err:
-                logger.exception("Actor crashed:")
-                await _debug._maybe_enter_pm(err)
+
+                entered = await _debug._maybe_enter_pm(err)
+
+                if not entered:
+                    logger.exception("Root actor crashed:")
 
                 # always re-raise
                 raise

@@ -11,7 +11,8 @@ import warnings
 import trio
 from async_generator import asynccontextmanager
 
-from ._state import current_actor, is_main_process
+from . import _debug
+from ._state import current_actor, is_main_process, is_root_process
 from .log import get_logger, get_loglevel
 from ._actor import Actor
 from ._portal import Portal
@@ -169,16 +170,25 @@ class ActorNursery:
 
         log.warning(f"Cancelling nursery in {self._actor.uid}")
         with trio.move_on_after(3) as cs:
+
             async with trio.open_nursery() as nursery:
+
                 for subactor, proc, portal in self._children.values():
+
+                    # TODO: are we ever even going to use this or
+                    # is the spawning backend responsible for such
+                    # things? I'm thinking latter.
                     if hard_kill:
                         proc.terminate()
+
                     else:
                         if portal is None:  # actor hasn't fully spawned yet
                             event = self._actor._peer_connected[subactor.uid]
                             log.warning(
                                 f"{subactor.uid} wasn't finished spawning?")
+
                             await event.wait()
+
                             # channel/portal should now be up
                             _, _, portal = self._children[subactor.uid]
 
@@ -238,6 +248,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
             # As such if the strategy propagates any error(s) upwards
             # the above "daemon actor" nursery will be notified.
             async with trio.open_nursery() as ria_nursery:
+
                 anursery = ActorNursery(
                     actor,
                     ria_nursery,
@@ -248,21 +259,54 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # spawning of actors happens in the caller's scope
                     # after we yield upwards
                     yield anursery
-                    log.debug(
+
+                    log.runtime(
                         f"Waiting on subactors {anursery._children} "
                         "to complete"
                     )
 
                     # Last bit before first nursery block ends in the case
                     # where we didn't error in the caller's scope
-                    log.debug("Waiting on all subactors to complete")
+
+                    # signal all process monitor tasks to conduct
+                    # hard join phase.
                     anursery._join_procs.set()
 
                 except BaseException as err:
+
+                    # If we error in the root but the debugger is
+                    # engaged we don't want to prematurely kill (and
+                    # thus clobber access to) the local tty since it
+                    # will make the pdb repl unusable.
+                    # Instead try to wait for pdb to be released before
+                    # tearing down.
+                    if is_root_process():
+                        log.exception(f"we're root with {err}")
+
+                        # TODO: could this make things more deterministic?
+                        # wait to see if a sub-actor task will be
+                        # scheduled and grab the tty lock on the next
+                        # tick?
+                        # await trio.testing.wait_all_tasks_blocked()
+
+                        debug_complete = _debug._no_remote_has_tty
+                        if (
+                            debug_complete and
+                            not debug_complete.is_set()
+                        ):
+                            log.warning(
+                                'Root has errored but pdb is in use by '
+                                f'child {_debug._global_actor_in_debug}\n'
+                                'Waiting on tty lock to release..')
+
+                            with trio.CancelScope(shield=True):
+                                await debug_complete.wait()
+
                     # if the caller's scope errored then we activate our
                     # one-cancels-all supervisor strategy (don't
                     # worry more are coming).
                     anursery._join_procs.set()
+
                     try:
                         # XXX: hypothetically an error could be
                         # raised and then a cancel signal shows up
@@ -301,7 +345,15 @@ async def _open_and_supervise_one_cancels_all_nursery(
                 # ria_nursery scope end
 
         # XXX: do we need a `trio.Cancelled` catch here as well?
-        except (Exception, trio.MultiError, trio.Cancelled) as err:
+        # this is the catch around the ``.run_in_actor()`` nursery
+        except (
+
+            Exception,
+            trio.MultiError,
+            trio.Cancelled
+
+        ) as err:
+
             # If actor-local error was raised while waiting on
             # ".run_in_actor()" actors then we also want to cancel all
             # remaining sub-actors (due to our lone strategy:
@@ -368,6 +420,7 @@ async def open_nursery(
             async with open_root_actor(**kwargs) as actor:
                 assert actor is current_actor()
 
+                # try:
                 async with _open_and_supervise_one_cancels_all_nursery(
                     actor
                 ) as anursery:

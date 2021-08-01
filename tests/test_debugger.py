@@ -317,32 +317,58 @@ def test_multi_daemon_subactors(spawn, loglevel):
         next_msg = name_error_msg
 
     elif name_error_msg in before:
-        next_msg = None
+        next_msg = bp_forever_msg
 
     else:
         raise ValueError("Neither log msg was found !?")
 
-    child.sendline('c')
+    # NOTE: previously since we did not have clobber prevention
+    # in the root actor this final resume could result in the debugger
+    # tearing down since both child actors would be cancelled and it was
+    # unlikely that `bp_forever` would re-acquire the tty lock again.
+    # Now, we should have a final resumption in the root plus a possible
+    # second entry by `bp_forever`.
 
-    # first name_error failure
+    child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
 
-    if next_msg:
-        assert next_msg in before
+    assert next_msg in before
 
-    child.sendline('c')
+    # XXX: hooray the root clobbering the child here was fixed!
+    # IMO, this demonstrates the true power of SC system design.
 
-    child.expect(r"\(Pdb\+\+\)")
-    before = str(child.before.decode())
-    assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
+    # now the root actor won't clobber the bp_forever child
+    # during it's first access to the debug lock, but will instead
+    # wait for the lock to release, by the edge triggered
+    # ``_debug._no_remote_has_tty`` event before sending cancel messages
+    # (via portals) to its underlings B)
+
+    # at some point here there should have been some warning msg from
+    # the root announcing it avoided a clobber of the child's lock, but
+    # it seems unreliable in testing here to gnab it:
+    # assert "in use by child ('bp_forever'," in before
+
+    # wait for final error in root
+    while True:
+
+        child.sendline('c')
+        child.expect(r"\(Pdb\+\+\)")
+        before = str(child.before.decode())
+        try:
+
+            # root error should be packed as remote error
+            assert "_exceptions.RemoteActorError: ('name_error'" in before
+            break
+
+        except AssertionError:
+            assert bp_forever_msg in before
 
     try:
         child.sendline('c')
         child.expect(pexpect.EOF)
 
     except pexpect.exceptions.TIMEOUT:
-
         # Failed to exit using continue..?
         child.sendline('q')
         child.expect(pexpect.EOF)
@@ -386,18 +412,15 @@ def test_multi_subactors_root_errors(spawn):
 def test_multi_nested_subactors_error_through_nurseries(spawn):
     """Verify deeply nested actors that error trigger debugger entries
     at each actor nurserly (level) all the way up the tree.
-    """
 
-    # NOTE: previously, inside this script was a a bug where if the
+    """
+    # NOTE: previously, inside this script was a bug where if the
     # parent errors before a 2-levels-lower actor has released the lock,
     # the parent tries to cancel it but it's stuck in the debugger?
     # A test (below) has now been added to explicitly verify this is
     # fixed.
 
     child = spawn('multi_nested_subactors_error_up_through_nurseries')
-
-    # startup time can be iffy
-    time.sleep(1)
 
     for i in range(12):
         try:
@@ -471,7 +494,12 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
 
         child.sendline('c')
 
-    child.expect(pexpect.EOF)
+    while True:
+        try:
+            child.expect(pexpect.EOF)
+            break
+        except pexpect.exceptions.TIMEOUT:
+            print('child was able to grab tty lock again?')
 
     if not timed_out_early:
 
@@ -479,3 +507,21 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
         assert "tractor._exceptions.RemoteActorError: ('spawner0'" in before
         assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
         assert "NameError: name 'doggypants' is not defined" in before
+
+
+def test_root_cancels_child_context_during_startup(
+    spawn,
+):
+    '''Verify a fast fail in the root doesn't lock up the child reaping
+    and all while using the new context api.
+
+    '''
+    child = spawn('fast_error_in_root_after_spawn')
+
+    child.expect(r"\(Pdb\+\+\)")
+
+    before = str(child.before.decode())
+    assert "AssertionError" in before
+
+    child.sendline('c')
+    child.expect(pexpect.EOF)

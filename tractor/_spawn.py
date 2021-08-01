@@ -26,10 +26,12 @@ from ._state import (
     current_actor,
     is_main_process,
 )
+
 from .log import get_logger
 from ._portal import Portal
-from ._actor import Actor, ActorFailure
+from ._actor import Actor
 from ._entry import _mp_main
+from ._exceptions import ActorFailure
 
 
 log = get_logger('tractor')
@@ -144,7 +146,7 @@ async def cancel_on_completion(
             )
 
         else:
-            log.info(
+            log.runtime(
                 f"Cancelling {portal.channel.uid} gracefully "
                 f"after result {result}")
 
@@ -206,12 +208,12 @@ async def spawn_subactor(
         yield proc
 
     finally:
+        log.runtime(f"Attempting to kill {proc}")
 
         # XXX: do this **after** cancellation/tearfown
         # to avoid killing the process too early
         # since trio does this internally on ``__aexit__()``
 
-        log.debug(f"Attempting to kill {proc}")
         await do_hard_kill(proc)
 
 
@@ -241,7 +243,7 @@ async def new_proc(
                 subactor,
                 parent_addr,
             ) as proc:
-                log.info(f"Started {proc}")
+                log.runtime(f"Started {proc}")
 
                 # wait for actor to spawn and connect back to us
                 # channel should have handshake completed by the
@@ -396,7 +398,7 @@ async def mp_new_proc(
         if not proc.is_alive():
             raise ActorFailure("Couldn't start sub-actor?")
 
-        log.info(f"Started {proc}")
+        log.runtime(f"Started {proc}")
 
         try:
             # wait for actor to spawn and connect back to us
