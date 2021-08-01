@@ -422,27 +422,22 @@ def test_multi_nested_subactors_error_through_nurseries(spawn):
 
     child = spawn('multi_nested_subactors_error_up_through_nurseries')
 
+    timed_out_early: bool = False
+
     for i in range(12):
         try:
             child.expect(r"\(Pdb\+\+\)")
             child.sendline('c')
             time.sleep(0.1)
 
-        except (
-            pexpect.exceptions.EOF,
-            pexpect.exceptions.TIMEOUT,
-        ):
-            # races all over..
-
-            print(f"Failed early on {i}?")
-            before = str(child.before.decode())
-
-            timed_out_early = True
+        except pexpect.exceptions.EOF:
 
             # race conditions on how fast the continue is sent?
+            print(f"Failed early on {i}?")
+            timed_out_early = True
             break
-
-    child.expect(pexpect.EOF)
+    else:
+        child.expect(pexpect.EOF)
 
     if not timed_out_early:
         before = str(child.before.decode())
@@ -499,6 +494,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
             child.expect(pexpect.EOF)
             break
         except pexpect.exceptions.TIMEOUT:
+            child.sendline('c')
             print('child was able to grab tty lock again?')
 
     if not timed_out_early:
