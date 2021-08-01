@@ -174,7 +174,7 @@ async def open_root_actor(
                 yield actor
 
             except (Exception, trio.MultiError) as err:
-                # with trio.CancelScope(shield=True):
+
                 entered = await _debug._maybe_enter_pm(err)
 
                 if not entered:

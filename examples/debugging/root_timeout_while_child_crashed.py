@@ -20,9 +20,9 @@ async def main():
         # spawn both actors
         portal = await n.run_in_actor(key_error)
 
-        # XXX: originally a bug causes by this
-        # where root would enter debugger even
-        # though child should have it locked.
+        # XXX: originally a bug caused by this is where root would enter
+        # the debugger and clobber the tty used by the repl even though
+        # child should have it locked.
         with trio.fail_after(1):
             await trio.Event().wait()
 

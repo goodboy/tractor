@@ -66,7 +66,7 @@ class PdbwTeardown(pdbpp.Pdb):
     # override the pdbpp config with our coolio one
     DefaultConfig = TractorConfig
 
-    # TODO: figure out how to dissallow recursive .set_trace() entry
+    # TODO: figure out how to disallow recursive .set_trace() entry
     # since that'll cause deadlock for us.
     def set_continue(self):
         try:
@@ -125,9 +125,14 @@ class PdbwTeardown(pdbpp.Pdb):
 @asynccontextmanager
 async def _acquire_debug_lock(
     uid: Tuple[str, str]
+
 ) -> AsyncIterator[trio.StrictFIFOLock]:
-    '''Acquire a actor local FIFO lock meant to mutex entry to a local
-    debugger entry point to avoid tty clobbering a global root process.
+    '''Acquire a root-actor local FIFO lock which tracks mutex access of
+    the process tree's global debugger breakpoint.
+
+    This lock avoids tty clobbering (by preventing multiple processes
+    reading from stdstreams) and ensures multi-actor, sequential access
+    to the ``pdb`` repl.
 
     '''
     global _debug_lock, _global_actor_in_debug, _no_remote_has_tty
@@ -153,21 +158,18 @@ async def _acquire_debug_lock(
         we_acquired = True
         await _debug_lock.acquire()
 
-        # we_acquired = True
-
         _global_actor_in_debug = uid
         log.debug(f"TTY lock acquired, remote task: {task_name}:{uid}")
 
-        # NOTE: critical section!
-        # this yield is unshielded.
-        # IF we received a cancel during the shielded lock
-        # entry of some next-in-queue requesting task,
-        # then the resumption here will result in that
-        # Cancelled being raised to our caller below!
+        # NOTE: critical section: this yield is unshielded!
 
-        # in this case the finally below should trigger
-        # and the surrounding calle side context should cancel
-        # normally relaying back to the caller.
+        # IF we received a cancel during the shielded lock entry of some
+        # next-in-queue requesting task, then the resumption here will
+        # result in that ``trio.Cancelled`` being raised to our caller
+        # (likely from ``_hijack_stdin_for_child()`` below)!  In
+        # this case the ``finally:`` below should trigger and the
+        # surrounding caller side context should cancel normally
+        # relaying back to the caller.
 
         yield _debug_lock
 
@@ -194,19 +196,8 @@ async def _acquire_debug_lock(
         log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
 
 
-# @contextmanager
-# def _disable_sigint():
-#     try:
-#         # disable sigint handling while in debug
-#         prior_handler = signal.signal(signal.SIGINT, handler)
-#         yield
-#     finally:
-#         # restore SIGINT handling
-#         signal.signal(signal.SIGINT, prior_handler)
-
-
 @tractor.context
-async def _hijack_stdin_relay_to_child(
+async def _hijack_stdin_for_child(
 
     ctx: tractor.Context,
     subactor_uid: Tuple[str, str]
@@ -235,8 +226,7 @@ async def _hijack_stdin_relay_to_child(
 
             # indicate to child that we've locked stdio
             await ctx.started('Locked')
-            log.pdb(  # type: ignore
-                f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
+            log.pdb(f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
 
             # wait for unlock pdb by child
             async with ctx.open_stream() as stream:
@@ -245,14 +235,13 @@ async def _hijack_stdin_relay_to_child(
 
                 except trio.BrokenResourceError:
                     # XXX: there may be a race with the portal teardown
-                    # with the calling actor which we can safely ignore
-                    # the alternative would be sending an ack message
+                    # with the calling actor which we can safely ignore.
+                    # The alternative would be sending an ack message
                     # and allowing the client to wait for us to teardown
                     # first?
                     pass
 
-    log.debug(
-        f"TTY lock released, remote task: {task_name}:{subactor_uid}")
+    log.debug(f"TTY lock released, remote task: {task_name}:{subactor_uid}")
 
     return "pdb_unlock_complete"
 
@@ -299,7 +288,7 @@ async def _breakpoint(
                     # this syncs to child's ``Context.started()`` call.
                     async with portal.open_context(
 
-                        tractor._debug._hijack_stdin_relay_to_child,
+                        tractor._debug._hijack_stdin_for_child,
                         subactor_uid=actor.uid,
 
                     ) as (ctx, val):
@@ -377,8 +366,7 @@ async def _breakpoint(
         # may have the tty locked prior
         global _debug_lock
 
-        # TODO: wait, what about multiple root tasks acquiring
-        # it though.. shrug?
+        # TODO: wait, what about multiple root tasks acquiring it though?
         # root process (us) already has it; ignore
         if _global_actor_in_debug == actor.uid:
             return
@@ -408,8 +396,8 @@ async def _breakpoint(
 
         _pdb_release_hook = teardown
 
-    # block here one (at the appropriate frame *up* where
-    # ``breakpoint()`` was awaited and begin handling stdio
+    # block here one (at the appropriate frame *up*) where
+    # ``breakpoint()`` was awaited and begin handling stdio.
     log.debug("Entering the synchronous world of pdb")
     debug_func(actor)
 
