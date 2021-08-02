@@ -281,7 +281,6 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # Instead try to wait for pdb to be released before
                     # tearing down.
                     if is_root_process():
-                        log.exception(f"we're root with {err}")
 
                         # TODO: could this make things more deterministic?
                         # wait to see if a sub-actor task will be
