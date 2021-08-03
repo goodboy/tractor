@@ -17,6 +17,7 @@ from . import _spawn
 from . import _state
 from . import log
 from ._ipc import _connect_chan
+from ._exceptions import is_multi_cancelled
 
 
 # set at startup and after forks
@@ -177,7 +178,7 @@ async def open_root_actor(
 
                 entered = await _debug._maybe_enter_pm(err)
 
-                if not entered:
+                if not entered and not is_multi_cancelled(err):
                     logger.exception("Root actor crashed:")
 
                 # always re-raise
