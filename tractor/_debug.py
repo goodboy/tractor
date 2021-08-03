@@ -418,12 +418,13 @@ async def _breakpoint(
     debug_func(actor)
 
 
-def _mk_pdb():
+def _mk_pdb() -> PdbwTeardown:
+
     # XXX: setting these flags on the pdb instance are absolutely
-    # critical to having ctrl-c work in the ``trio`` standard way!
-    # The stdlib's pdb supports entering the current sync frame
-    # on a SIGINT, with ``trio`` we pretty much never want this
-    # and we did we can handle it in the ``tractor`` task runtime.
+    # critical to having ctrl-c work in the ``trio`` standard way!  The
+    # stdlib's pdb supports entering the current sync frame on a SIGINT,
+    # with ``trio`` we pretty much never want this and if we did we can
+    # handle it in the ``tractor`` task runtime.
 
     pdb = PdbwTeardown()
     pdb.allow_kbdint = True
