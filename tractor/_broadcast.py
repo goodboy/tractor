@@ -15,9 +15,9 @@ import tractor
 from trio.lowlevel import current_task
 from trio.abc import ReceiveChannel
 from trio._core._run import Task
-from trio._channel import (
-    MemoryReceiveChannel,
-)
+# from trio._channel import (
+#     MemoryReceiveChannel,
+# )
 
 
 class Lagged(trio.TooSlowError):
@@ -43,7 +43,7 @@ class BroadcastReceiver(ReceiveChannel):
         self._rx = rx_chan
         self._queue = queue
         self._subs: dict[Task, int] = {}  # {id(current_task()): -1}
-        self._clones: dict[Task, MemoryReceiveChannel] = {}
+        self._clones: dict[Task, ReceiveChannel] = {}
         self._value_received: Optional[trio.Event] = None
 
     async def receive(self):
@@ -138,7 +138,7 @@ class BroadcastReceiver(ReceiveChannel):
 
 def broadcast_receiver(
 
-    recv_chan: MemoryReceiveChannel,
+    recv_chan: ReceiveChannel,
     max_buffer_size: int,
 
 ) -> BroadcastReceiver:
