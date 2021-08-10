@@ -145,13 +145,7 @@ class BroadcastReceiver(ReceiveChannel):
         # value, so queue sched it on the internal event.
         else:
             await state.sender_ready.wait()
-
-            # TODO: optimization: if this is always true can't we just
-            # skip iterating these sequence numbers on the fastest
-            # task's wakeup and always read from state.queue[0]?
             seq = state.subs[key]
-            assert seq == 0, 'Internal error?'
-
             state.subs[key] -= 1
             return state.queue[seq]
 
