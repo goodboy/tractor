@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import (
     Any, Iterator, Optional, Callable,
     AsyncGenerator, Dict,
+    AsyncIterator, Awaitable
 )
 
 import warnings
@@ -47,7 +48,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
     def __init__(
         self,
         ctx: 'Context',  # typing: ignore # noqa
-        rx_chan: trio.abc.ReceiveChannel,
+        rx_chan: trio.MemoryReceiveChannel,
     ) -> None:
         self._ctx = ctx
         self._rx_chan = rx_chan
@@ -246,7 +247,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
     async def subscribe(
         self,
 
-    ) -> BroadcastReceiver:
+    ) -> AsyncIterator[BroadcastReceiver]:
         '''Allocate and return a ``BroadcastReceiver`` which delegates
         to this message stream.
 
@@ -259,21 +260,24 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         receiver wrapper.
 
         '''
+        # NOTE: This operation is indempotent and non-reversible, so be
+        # sure you can deal with any (theoretical) overhead of the the
+        # allocated ``BroadcastReceiver`` before calling this method for
+        # the first time.
         if self._broadcaster is None:
             self._broadcaster = broadcast_receiver(
                 self,
-                self._rx_chan._state.max_buffer_size,
+                self._rx_chan._state.max_buffer_size,  # type: ignore
             )
-            # override the original stream instance's receive to
-            # delegate to the broadcaster receive such that
-            # new subscribers will be copied received values
-            # XXX: this operation is indempotent and non-reversible,
-            # so be sure you can deal with any (theoretical) overhead
-            # of the the ``BroadcastReceiver`` before calling
-            # this method for the first time.
 
-            # XXX: why does this work without a recursion issue?!
-            self.receive = self._broadcaster.receive
+            # NOTE: we override the original stream instance's receive
+            # method to now delegate to the broadcaster's ``.receive()``
+            # such that new subscribers will be copied received values
+            # and this stream doesn't have to expect it's original
+            # consumer(s) to get a new broadcast rx handle.
+            self.receive = self._broadcaster.receive  # type: ignore
+            # seems there's no graceful way to type this with ``mypy``?
+            # https://github.com/python/mypy/issues/708
 
         async with self._broadcaster.subscribe() as bstream:
             # a ``MsgStream`` clone is allocated for the
