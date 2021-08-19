@@ -24,7 +24,7 @@ jobs:
 
   testing:
     name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
-    timeout-minutes: 5
+    timeout-minutes: 9
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
