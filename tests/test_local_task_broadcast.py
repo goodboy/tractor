@@ -13,7 +13,9 @@ from tractor._broadcast import broadcast_receiver, Lagged
 
 @tractor.context
 async def echo_sequences(
+
     ctx:  tractor.Context,
+
 ) -> None:
     '''Bidir streaming endpoint which will stream
     back any sequence it is sent item-wise.
@@ -108,9 +110,8 @@ def test_ensure_slow_consumers_lag_out(
     '''
     async def main():
 
-        async with tractor.open_root_actor(
-            debug_mode=True,
-        ):
+        # make sure it all works within the runtime
+        async with tractor.open_root_actor():
 
             num_laggers = 4
             laggers: dict[str, int] = {}
