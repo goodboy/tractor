@@ -77,7 +77,7 @@ class BroadcastState:
 
     # map of underlying instance id keys to receiver instances which
     # must be provided as a singleton per broadcaster set.
-    subs: dict[str, int]
+    subs: dict[int, int]
 
     # broadcast event to wake up all sleeping consumer tasks
     # on a newly produced value from the sender.
