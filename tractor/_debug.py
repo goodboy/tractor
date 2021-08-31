@@ -253,7 +253,11 @@ async def _hijack_stdin_for_child(
                 # try:
                 #     assert await stream.receive() == 'pdb_unlock'
 
-        except trio.BrokenResourceError:
+        except (
+            trio.BrokenResourceError,
+            trio.Cancelled,  # by local cancellation
+            trio.ClosedResourceError,  # by self._rx_chan
+        ) as err:
             # XXX: there may be a race with the portal teardown
             # with the calling actor which we can safely ignore.
             # The alternative would be sending an ack message
@@ -261,6 +265,9 @@ async def _hijack_stdin_for_child(
             # first?
             if lock and lock.locked():
                 lock.release()
+
+            if isinstance(err, trio.Cancelled):
+                raise
 
     log.debug(f"TTY lock released, remote task: {task_name}:{subactor_uid}")
 
