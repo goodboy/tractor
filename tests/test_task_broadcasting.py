@@ -142,7 +142,7 @@ def test_consumer_and_parent_maybe_lag(
 
     async def main():
 
-        sequence = list(range(1000))
+        sequence = list(range(300))
         parent_delay, sub_delay = task_delays
 
         async with open_sequence_streamer(
