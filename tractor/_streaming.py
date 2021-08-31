@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import (
     Any, Iterator, Optional, Callable,
     AsyncGenerator, Dict,
-    AsyncIterator, Awaitable
+    AsyncIterator
 )
 
 import warnings
@@ -264,7 +264,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
                 self,
                 # use memory channel size by default
                 self._rx_chan._state.max_buffer_size,  # type: ignore
-               receive_afunc=self.receive,
+                receive_afunc=self.receive,
             )
 
             # NOTE: we override the original stream instance's receive
@@ -277,6 +277,8 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
             # https://github.com/python/mypy/issues/708
 
         async with self._broadcaster.subscribe() as bstream:
+            assert bstream.key != self._broadcaster.key
+            assert bstream._recv == self._broadcaster._recv
             yield bstream
 
 
