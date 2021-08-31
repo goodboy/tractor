@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from functools import partial
 from itertools import cycle
 import time
-from typing import Optional
+from typing import Optional, List, Tuple
 
 import pytest
 import trio
@@ -61,8 +61,8 @@ async def ensure_sequence(
 @asynccontextmanager
 async def open_sequence_streamer(
 
-    sequence: list[int],
-    arb_addr: tuple[str, int],
+    sequence: List[int],
+    arb_addr: Tuple[str, int],
     start_method: str,
     shield: bool = False,
 
