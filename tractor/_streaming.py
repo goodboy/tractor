@@ -46,11 +46,9 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         self,
         ctx: 'Context',  # typing: ignore # noqa
         rx_chan: trio.abc.ReceiveChannel,
-        shield: bool = False,
     ) -> None:
         self._ctx = ctx
         self._rx_chan = rx_chan
-        self._shielded = shield
 
         # flag to denote end of stream
         self._eoc: bool = False
@@ -103,7 +101,10 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         except (
             trio.ClosedResourceError,  # by self._rx_chan
             trio.EndOfChannel,  # by self._rx_chan or `stop` msg from far end
-            trio.Cancelled,  # by local cancellation
+
+            # Wait why would we do an implicit close on cancel? THAT'S
+            # NOT HOW MEM CHANS WORK!!?!?!?!?
+            # trio.Cancelled,  # by local cancellation
         ):
             # XXX: we close the stream on any of these error conditions:
 
@@ -135,23 +136,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
 
             raise  # propagate
 
-    @contextmanager
-    def shield(
-        self
-    ) -> Iterator['ReceiveMsgStream']:  # noqa
-        """Shield this stream's underlying channel such that a local consumer task
-        can be cancelled (and possibly restarted) using ``trio.Cancelled``.
-
-        Note that here, "shielding" here guards against relaying
-        a ``'stop'`` message to the far end of the stream thus keeping
-        the stream machinery active and ready for further use, it does
-        not have anything to do with an internal ``trio.CancelScope``.
-
-        """
-        self._shielded = True
-        yield self
-        self._shielded = False
-
     async def aclose(self):
         """Cancel associated remote actor task and local memory channel
         on close.
@@ -167,18 +151,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
             # this stream has already been closed so silently succeed as
             # per ``trio.AsyncResource`` semantics.
             # https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
-            return
-
-        # TODO: broadcasting to multiple consumers
-        # stats = rx_chan.statistics()
-        # if stats.open_receive_channels > 1:
-        #     # if we've been cloned don't kill the stream
-        #     log.debug(
-        #       "there are still consumers running keeping stream alive")
-        #     return
-
-        if self._shielded:
-            log.warning(f"{self} is shielded, portal channel being kept alive")
             return
 
         # XXX: This must be set **AFTER** the shielded test above!
@@ -397,7 +369,6 @@ class Context:
     async def open_stream(
 
         self,
-        shield: bool = False,
 
     ) -> AsyncGenerator[MsgStream, None]:
         '''Open a ``MsgStream``, a bi-directional stream connected to the
@@ -455,7 +426,6 @@ class Context:
         async with MsgStream(
             ctx=self,
             rx_chan=recv_chan,
-            shield=shield,
         ) as rchan:
 
             if self._portal:
