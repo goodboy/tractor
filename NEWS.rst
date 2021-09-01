@@ -2,6 +2,8 @@
 Changelog
 =========
 
+.. towncrier release notes start
+
 tractor 0.1.0a1 (2021-08-01)
 ============================
 
@@ -9,9 +11,10 @@ Features
 --------
 - Updated our uni-directional streaming API (`#206
   <https://github.com/goodboy/tractor/pull/206>`_) to require a context
-  manager style ``async Portal.stream_from(target) as stream:`` which
-  explicitly determines when to stop a stream in the calling (aka portal
-  opening) actor much like ``async_generator.aclosing()`` enforcement.
+  manager style ``async with Portal.open_stream_from(target) as stream:``
+  which explicitly determines when to stop a stream in the calling (aka
+  portal opening) actor much like ``async_generator.aclosing()``
+  enforcement.
 
 - Improved the ``multiprocessing`` backend sub-actor reaping (`#208
   <https://github.com/goodboy/tractor/pull/208>`_) during actor nursery
@@ -36,9 +39,9 @@ Experiments and WIPs
   land by next release.
 
 - Improved "infect ``asyncio``" cross-loop task cancellation and error
-  propagation by vastly simplifying the approach.  We may end up just
-  going with a use of ``anyio`` in the medium term to avoid re-doing
-  work done by that group cross-event-loop portals.  See the
+  propagation by vastly simplifying the cross-loop-task streaming approach. 
+  We may end up just going with a use of ``anyio`` in the medium term to
+  avoid re-doing work done by their cross-event-loop portals.  See the
   ``infect_asyncio`` for details.
 
 
@@ -67,7 +70,7 @@ Trivial/Internal Changes
 - Added a new ``TransportClosed`` internal exception/signal (`#215
   <https://github.com/goodboy/tractor/pull/215>`_ for catching TCP
   channel gentle closes instead of silently falling through the message
-  handler loop via an async generator ``return```.
+  handler loop via an async generator ``return``.
 
 
 Deprecations and Removals
