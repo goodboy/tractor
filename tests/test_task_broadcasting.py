@@ -64,7 +64,6 @@ async def open_sequence_streamer(
     sequence: List[int],
     arb_addr: Tuple[str, int],
     start_method: str,
-    shield: bool = False,
 
 ) -> tractor.MsgStream:
 
@@ -83,7 +82,7 @@ async def open_sequence_streamer(
         ) as (ctx, first):
 
             assert first is None
-            async with ctx.open_stream(shield=shield) as stream:
+            async with ctx.open_stream() as stream:
                 yield stream
 
         await portal.cancel_actor()
@@ -224,15 +223,7 @@ def test_faster_task_to_recv_is_cancelled_by_slower(
             arb_addr,
             start_method,
 
-            # NOTE: this MUST be set to avoid the stream terminating
-            # early when the faster subtask is cancelled by the slower
-            # parent task.
-            shield=True,
-
         ) as stream:
-
-            # alt to passing kwarg above.
-            # with stream.shield():
 
             async with trio.open_nursery() as n:
                 n.start_soon(
