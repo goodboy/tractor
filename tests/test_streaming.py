@@ -313,12 +313,12 @@ async def test_respawn_consumer_task(
                     task_status.started(cs)
 
                     # shield stream's underlying channel from cancellation
-                    with stream.shield():
+                    # with stream.shield():
 
-                        async for v in stream:
-                            print(f'from stream: {v}')
-                            expect.remove(v)
-                            received.append(v)
+                    async for v in stream:
+                        print(f'from stream: {v}')
+                        expect.remove(v)
+                        received.append(v)
 
                     print('exited consume')
 
