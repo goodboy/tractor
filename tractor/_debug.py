@@ -196,6 +196,22 @@ async def _acquire_debug_lock(
         log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
 
 
+def handler(signum, frame, *args):
+    """Specialized debugger compatible SIGINT handler.
+
+    In childred we always ignore to avoid deadlocks since cancellation
+    should always be managed by the parent supervising actor. The root
+    is always cancelled on ctrl-c.
+    """
+    if is_root_process():
+        tractor.current_actor().cancel_soon()
+    else:
+        print(
+            "tractor ignores SIGINT while in debug mode\n"
+            "If you have a special need for it please open an issue.\n"
+        )
+
+
 @tractor.context
 async def _hijack_stdin_for_child(
 
@@ -222,24 +238,36 @@ async def _hijack_stdin_for_child(
 
     with trio.CancelScope(shield=True):
 
-        async with _acquire_debug_lock(subactor_uid):
+        try:
+            lock = None
+            async with _acquire_debug_lock(subactor_uid) as lock:
 
-            # indicate to child that we've locked stdio
-            await ctx.started('Locked')
-            log.pdb(f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
+                # indicate to child that we've locked stdio
+                await ctx.started('Locked')
+                log.pdb(f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
 
-            # wait for unlock pdb by child
-            async with ctx.open_stream() as stream:
-                try:
+                # wait for unlock pdb by child
+                async with ctx.open_stream() as stream:
                     assert await stream.receive() == 'pdb_unlock'
 
-                except trio.BrokenResourceError:
-                    # XXX: there may be a race with the portal teardown
-                    # with the calling actor which we can safely ignore.
-                    # The alternative would be sending an ack message
-                    # and allowing the client to wait for us to teardown
-                    # first?
-                    pass
+                # try:
+                #     assert await stream.receive() == 'pdb_unlock'
+
+        except (
+            trio.BrokenResourceError,
+            trio.Cancelled,  # by local cancellation
+            trio.ClosedResourceError,  # by self._rx_chan
+        ) as err:
+            # XXX: there may be a race with the portal teardown
+            # with the calling actor which we can safely ignore.
+            # The alternative would be sending an ack message
+            # and allowing the client to wait for us to teardown
+            # first?
+            if lock and lock.locked():
+                lock.release()
+
+            if isinstance(err, trio.Cancelled):
+                raise
 
     log.debug(f"TTY lock released, remote task: {task_name}:{subactor_uid}")
 
@@ -283,7 +311,7 @@ async def _breakpoint(
             try:
                 async with get_root() as portal:
 
-                    log.error('got portal')
+                    log.pdb('got portal')
 
                     # this syncs to child's ``Context.started()`` call.
                     async with portal.open_context(
@@ -293,7 +321,7 @@ async def _breakpoint(
 
                     ) as (ctx, val):
 
-                        log.error('locked context')
+                        log.pdb('locked context')
                         assert val == 'Locked'
 
                         async with ctx.open_stream() as stream:
@@ -376,10 +404,17 @@ async def _breakpoint(
         # callbacks. Can't think of a nicer way then this atm.
         if _debug_lock.locked():
             log.warning(
-                'Root actor attempting to acquire active tty lock'
+                'Root actor attempting to shield-acquire active tty lock'
                 f' owned by {_global_actor_in_debug}')
 
-        await _debug_lock.acquire()
+            with trio.CancelScope(shield=True):
+                # must shield here to avoid hitting a ``Cancelled`` and
+                # a child getting stuck bc we clobbered the tty
+                await _debug_lock.acquire()
+
+        else:
+            # may be cancelled
+            await _debug_lock.acquire()
 
         _global_actor_in_debug = actor.uid
         _local_task_in_debug = task_name
@@ -402,12 +437,13 @@ async def _breakpoint(
     debug_func(actor)
 
 
-def _mk_pdb():
+def _mk_pdb() -> PdbwTeardown:
+
     # XXX: setting these flags on the pdb instance are absolutely
-    # critical to having ctrl-c work in the ``trio`` standard way!
-    # The stdlib's pdb supports entering the current sync frame
-    # on a SIGINT, with ``trio`` we pretty much never want this
-    # and we did we can handle it in the ``tractor`` task runtime.
+    # critical to having ctrl-c work in the ``trio`` standard way!  The
+    # stdlib's pdb supports entering the current sync frame on a SIGINT,
+    # with ``trio`` we pretty much never want this and if we did we can
+    # handle it in the ``tractor`` task runtime.
 
     pdb = PdbwTeardown()
     pdb.allow_kbdint = True
