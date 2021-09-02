@@ -29,23 +29,26 @@ log = get_logger(__name__)
 
 
 class ReceiveMsgStream(trio.abc.ReceiveChannel):
-    """A wrapper around a ``trio._channel.MemoryReceiveChannel`` with
-    special behaviour for signalling stream termination across an
-    inter-actor ``Channel``. This is the type returned to a local task
-    which invoked a remote streaming function using `Portal.run()`.
+    '''A IPC message stream for receiving logically sequenced values
+    over an inter-actor ``Channel``. This is the type returned to
+    a local task which entered either ``Portal.open_stream_from()`` or
+    ``Context.open_stream()``.
 
     Termination rules:
 
-    - if the local task signals stop iteration a cancel signal is
-      relayed to the remote task indicating to stop streaming
-    - if the remote task signals the end of a stream, raise
-      a ``StopAsyncIteration`` to terminate the local ``async for``
+    - on cancellation the stream is **not** implicitly closed and the
+      surrounding ``Context`` is expected to handle how that cancel
+      is relayed to any task on the remote side.
+    - if the remote task signals the end of a stream the
+      ``ReceiveChannel`` semantics dictate that a ``StopAsyncIteration``
+      to terminate the local ``async for``.
 
-    """
+    '''
     def __init__(
         self,
         ctx: 'Context',  # typing: ignore # noqa
         rx_chan: trio.abc.ReceiveChannel,
+
     ) -> None:
         self._ctx = ctx
         self._rx_chan = rx_chan
@@ -59,13 +62,16 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         return msg['yield']
 
     async def receive(self):
+        '''Async receive a single msg from the IPC transport, the next
+        in sequence for this stream.
+
+        '''
         # see ``.aclose()`` for notes on the old behaviour prior to
         # introducing this
         if self._eoc:
             raise trio.EndOfChannel
 
         try:
-
             msg = await self._rx_chan.receive()
             return msg['yield']
 
@@ -101,10 +107,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         except (
             trio.ClosedResourceError,  # by self._rx_chan
             trio.EndOfChannel,  # by self._rx_chan or `stop` msg from far end
-
-            # Wait why would we do an implicit close on cancel? THAT'S
-            # NOT HOW MEM CHANS WORK!!?!?!?!?
-            # trio.Cancelled,  # by local cancellation
         ):
             # XXX: we close the stream on any of these error conditions:
 
@@ -153,7 +155,6 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
             # https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
             return
 
-        # XXX: This must be set **AFTER** the shielded test above!
         self._eoc = True
 
         # NOTE: this is super subtle IPC messaging stuff:
@@ -175,9 +176,14 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         # ``__aexit__()`` on teardown so it **does not** need to be
         # called here.
         if not self._ctx._portal:
+            # Only for 2 way streams can we can send stop from the
+            # caller side.
             try:
-                # only for 2 way streams can we can send
-                # stop from the caller side
+                # NOTE: if this call is cancelled we expect this end to
+                # handle as though the stop was never sent (though if it
+                # was it shouldn't matter since it's unlikely a user
+                # will try to re-use a stream after attemping to close
+                # it).
                 await self._ctx.send_stop()
 
             except (
@@ -189,9 +195,9 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
                 # it can't traverse the transport.
                 log.debug(f'Channel for {self} was already closed')
 
-        # close the local mem chan ``self._rx_chan`` ??!?
+        # Do we close the local mem chan ``self._rx_chan`` ??!?
 
-        # DEFINITELY NOT if we're a bi-dir ``MsgStream``!
+        # NO, DEFINITELY NOT if we're a bi-dir ``MsgStream``!
         # BECAUSE this same core-msg-loop mem recv-chan is used to deliver
         # the potential final result from the surrounding inter-actor
         # `Context` so we don't want to close it until that context has
