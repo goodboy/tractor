@@ -1,6 +1,6 @@
 '''
 ``tokio`` style broadcast channel.
-https://tokio-rs.github.io/tokio/doc/tokio/sync/broadcast/index.html
+https://docs.rs/tokio/1.11.0/tokio/sync/broadcast/index.html
 
 '''
 from __future__ import annotations
@@ -146,7 +146,7 @@ class BroadcastReceiver(ReceiveChannel):
                 # receiver's position is updated to the oldest value
                 # contained by the channel. The next call to recv will
                 # return this value."
-                # https://tokio-rs.github.io/tokio/doc/tokio/sync/broadcast/index.html#lagging
+                # https://docs.rs/tokio/1.11.0/tokio/sync/broadcast/index.html#lagging
 
                 # decrement to the last value and expect
                 # consumer to either handle the ``Lagged`` and come back
