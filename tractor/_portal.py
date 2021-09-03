@@ -294,6 +294,7 @@ class Portal:
     async def open_stream_from(
         self,
         async_gen_func: Callable,  # typing: ignore
+        shield: bool = False,
         **kwargs,
 
     ) -> AsyncGenerator[ReceiveMsgStream, None]:
@@ -320,7 +321,9 @@ class Portal:
         ctx = Context(self.channel, cid, _portal=self)
         try:
             # deliver receive only stream
-            async with ReceiveMsgStream(ctx, recv_chan) as rchan:
+            async with ReceiveMsgStream(
+                ctx, recv_chan, shield=shield
+            ) as rchan:
                 self._streams.add(rchan)
                 yield rchan
 

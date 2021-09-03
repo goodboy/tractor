@@ -2,12 +2,14 @@
 Message stream types and APIs.
 
 """
+from __future__ import annotations
 import inspect
 from contextlib import contextmanager, asynccontextmanager
 from dataclasses import dataclass
 from typing import (
     Any, Iterator, Optional, Callable,
     AsyncGenerator, Dict,
+    AsyncIterator
 )
 
 import warnings
@@ -17,6 +19,7 @@ import trio
 from ._ipc import Channel
 from ._exceptions import unpack_error, ContextCancelled
 from ._state import current_actor
+from ._broadcast import broadcast_receiver, BroadcastReceiver
 from .log import get_logger
 
 
@@ -47,11 +50,14 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
     def __init__(
         self,
         ctx: 'Context',  # typing: ignore # noqa
-        rx_chan: trio.abc.ReceiveChannel,
+        rx_chan: trio.MemoryReceiveChannel,
+        shield: bool = False,
+        _broadcaster: Optional[BroadcastReceiver] = None,
 
     ) -> None:
         self._ctx = ctx
         self._rx_chan = rx_chan
+        self._broadcaster = _broadcaster
 
         # flag to denote end of stream
         self._eoc: bool = False
@@ -231,6 +237,50 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         # still need to consume msgs that are "in transit" from the far
         # end (eg. for ``Context.result()``).
 
+    @asynccontextmanager
+    async def subscribe(
+        self,
+
+    ) -> AsyncIterator[BroadcastReceiver]:
+        '''Allocate and return a ``BroadcastReceiver`` which delegates
+        to this message stream.
+
+        This allows multiple local tasks to receive each their own copy
+        of this message stream.
+
+        This operation is indempotent and and mutates this stream's
+        receive machinery to copy and window-length-store each received
+        value from the far end via the internally created broudcast
+        receiver wrapper.
+
+        '''
+        # NOTE: This operation is indempotent and non-reversible, so be
+        # sure you can deal with any (theoretical) overhead of the the
+        # allocated ``BroadcastReceiver`` before calling this method for
+        # the first time.
+        if self._broadcaster is None:
+
+            bcast = self._broadcaster = broadcast_receiver(
+                self,
+                # use memory channel size by default
+                self._rx_chan._state.max_buffer_size,  # type: ignore
+                receive_afunc=self.receive,
+            )
+
+            # NOTE: we override the original stream instance's receive
+            # method to now delegate to the broadcaster's ``.receive()``
+            # such that new subscribers will be copied received values
+            # and this stream doesn't have to expect it's original
+            # consumer(s) to get a new broadcast rx handle.
+            self.receive = bcast.receive  # type: ignore
+            # seems there's no graceful way to type this with ``mypy``?
+            # https://github.com/python/mypy/issues/708
+
+        async with self._broadcaster.subscribe() as bstream:
+            assert bstream.key != self._broadcaster.key
+            assert bstream._recv == self._broadcaster._recv
+            yield bstream
+
 
 class MsgStream(ReceiveMsgStream, trio.abc.Channel):
     """
@@ -246,17 +296,6 @@ class MsgStream(ReceiveMsgStream, trio.abc.Channel):
 
         '''
         await self._ctx.chan.send({'yield': data, 'cid': self._ctx.cid})
-
-    # TODO: but make it broadcasting to consumers
-    def clone(self):
-        """Clone this receive channel allowing for multi-task
-        consumption from the same channel.
-
-        """
-        return MsgStream(
-            self._ctx,
-            self._rx_chan.clone(),
-        )
 
 
 @dataclass
