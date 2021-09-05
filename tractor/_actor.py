@@ -430,7 +430,10 @@ class Actor:
             uid = await self._do_handshake(chan)
 
         except (
+            # we need this for ``msgspec`` for some reason?
+            # for now, it's been put in the stream backend.
             # trio.BrokenResourceError,
+
             # trio.ClosedResourceError,
             TransportClosed,
         ):
@@ -797,7 +800,7 @@ class Actor:
                         # XXX: msgspec doesn't support serializing tuples
                         # so just cash manually here since it's what our
                         # internals expect.
-                        address: Tuple[str, int] = tuple(value)
+                        address: Tuple[str, int] = tuple(value) if value else value
                         self._arb_addr = address
 
                     else:

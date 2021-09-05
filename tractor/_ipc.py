@@ -148,7 +148,14 @@ class MsgspecTCPStream(MsgpackTCPStream):
             try:
                 header = await self.recv_stream.receive_exactly(4)
 
-            except (ValueError):
+            except (
+                ValueError,
+
+                # not sure entirely why we need this but without it we
+                # seem to be getting racy failures here on
+                # arbiter/registry name subs..
+                trio.BrokenResourceError,
+            ):
                 raise TransportClosed(
                     f'transport {self} was already closed prior ro read'
                 )
