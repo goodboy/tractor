@@ -254,6 +254,7 @@ async def _hijack_stdin_for_child(
                 #     assert await stream.receive() == 'pdb_unlock'
 
         except (
+            trio.MultiError,
             trio.BrokenResourceError,
             trio.Cancelled,  # by local cancellation
             trio.ClosedResourceError,  # by self._rx_chan
@@ -343,6 +344,7 @@ async def _breakpoint(
 
             except tractor.ContextCancelled:
                 log.warning('Root actor cancelled debug lock')
+                raise
 
             finally:
                 log.debug(f"Exiting debugger for actor {actor}")
@@ -407,10 +409,14 @@ async def _breakpoint(
                 'Root actor attempting to shield-acquire active tty lock'
                 f' owned by {_global_actor_in_debug}')
 
-            with trio.CancelScope(shield=True):
-                # must shield here to avoid hitting a ``Cancelled`` and
-                # a child getting stuck bc we clobbered the tty
-                await _debug_lock.acquire()
+            stats = _debug_lock.statistics()
+            if stats.owner:
+                breakpoint()
+
+            # with trio.CancelScope(shield=True):
+            # must shield here to avoid hitting a ``Cancelled`` and
+            # a child getting stuck bc we clobbered the tty
+            await _debug_lock.acquire()
 
         else:
             # may be cancelled
