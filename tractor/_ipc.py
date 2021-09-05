@@ -160,11 +160,11 @@ class MsgspecTCPStream(MsgpackTCPStream):
 
             size, = struct.unpack("<I", header)
 
-            log.trace(f'received header {size}')  # type: ignore
+            log.transport(f'received header {size}')  # type: ignore
 
             msg_bytes = await self.recv_stream.receive_exactly(size)
 
-            log.trace(f"received {msg_bytes}")  # type: ignore
+            log.transport(f"received {msg_bytes}")  # type: ignore
             yield self.decode(msg_bytes)
 
     async def send(self, data: Any) -> None:
