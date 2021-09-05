@@ -318,7 +318,7 @@ class Actor:
         # @dataclass once we get py3.7
         self.loglevel = loglevel
 
-        self._arb_addr = arbiter_addr or (None, None)
+        self._arb_addr = arbiter_addr
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
@@ -797,8 +797,8 @@ class Actor:
                         # XXX: msgspec doesn't support serializing tuples
                         # so just cash manually here since it's what our
                         # internals expect.
-                        address: Tuple[str, int] = value
-                        self._arb_addr = value
+                        address: Tuple[str, int] = tuple(value)
+                        self._arb_addr = address
 
                     else:
                         setattr(self, attr, value)
@@ -1181,7 +1181,7 @@ class Actor:
         parlance.
         """
         await chan.send(self.uid)
-        uid: Tuple[str, str] = await chan.recv()
+        uid: Tuple[str, str] = tuple(await chan.recv())
 
         if not isinstance(uid, tuple):
             raise ValueError(f"{uid} is not a valid uid?!")
@@ -1254,7 +1254,7 @@ class Arbiter(Actor):
         sockaddr: Tuple[str, str]
 
     ) -> None:
-        name, uuid = tuple(uid)
+        name, uuid = uid = tuple(uid)
         self._registry[uid] = tuple(sockaddr)
 
         # pop and signal all waiter events
