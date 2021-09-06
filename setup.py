@@ -60,7 +60,7 @@ setup(
     extras_require={
 
         # serialization
-        'msgspec': ["msgspec; python_version >= '3.9'"],
+        'msgspec': ["msgspec >= 0.3.2'; python_version >= '3.9'"],
 
     },
     tests_require=['pytest'],
