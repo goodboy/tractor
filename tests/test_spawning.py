@@ -1,6 +1,7 @@
 """
 Spawning basics
 """
+from typing import Dict, Tuple
 
 import pytest
 import trio
@@ -11,7 +12,11 @@ from conftest import tractor_test
 data_to_pass_down = {'doggy': 10, 'kitty': 4}
 
 
-async def spawn(is_arbiter, data, arb_addr):
+async def spawn(
+    is_arbiter: bool,
+    data: Dict,
+    arb_addr: Tuple[str, int],
+):
     namespaces = [__name__]
 
     await trio.sleep(0.1)

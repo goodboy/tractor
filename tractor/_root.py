@@ -95,10 +95,10 @@ async def open_root_actor(
             "Debug mode is only supported for the `trio` backend!"
         )
 
-    arbiter_addr = (host, port) = arbiter_addr or (
+    arbiter_addr = (host, port) = tuple(arbiter_addr or (
         _default_arbiter_host,
-        _default_arbiter_port
-    )
+        _default_arbiter_port,
+    ))
 
     loglevel = loglevel or log.get_loglevel()
     if loglevel is not None:
