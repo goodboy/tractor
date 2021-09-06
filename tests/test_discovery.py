@@ -136,7 +136,7 @@ async def spawn_and_check_registry(
             if actor.is_arbiter:
 
                 async def get_reg():
-                    return actor._registry
+                    return await actor.get_registry()
 
                 extra = 1  # arbiter is local root actor
             else:
@@ -187,13 +187,12 @@ async def spawn_and_check_registry(
                             await cancel(use_signal)
 
             finally:
-                with trio.CancelScope(shield=True):
-                    await trio.sleep(0.5)
+                await trio.sleep(0.5)
 
-                    # all subactors should have de-registered
-                    registry = await get_reg()
-                    assert len(registry) == extra
-                    assert actor.uid in registry
+                # all subactors should have de-registered
+                registry = await get_reg()
+                assert len(registry) == extra
+                assert actor.uid in registry
 
 
 @pytest.mark.parametrize('use_signal', [False, True])
@@ -277,7 +276,9 @@ async def close_chans_before_nursery(
 
                     # TODO: compact this back as was in last commit once
                     # 3.9+, see https://github.com/goodboy/tractor/issues/207
-                    async with portal1.open_stream_from(stream_forever) as agen1:
+                    async with portal1.open_stream_from(
+                        stream_forever
+                    ) as agen1:
                         async with portal2.open_stream_from(
                             stream_forever
                         ) as agen2:
@@ -293,8 +294,9 @@ async def close_chans_before_nursery(
                                     # reliably triggered by an external SIGINT.
                                     # tractor.current_actor()._root_nursery.cancel_scope.cancel()
 
-                                    # XXX: THIS IS THE KEY THING that happens
-                                    # **before** exiting the actor nursery block
+                                    # XXX: THIS IS THE KEY THING that
+                                    # happens **before** exiting the
+                                    # actor nursery block
 
                                     # also kill off channels cuz why not
                                     await agen1.aclose()
