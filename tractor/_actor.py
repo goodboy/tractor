@@ -800,8 +800,9 @@ class Actor:
                         # XXX: msgspec doesn't support serializing tuples
                         # so just cash manually here since it's what our
                         # internals expect.
-                        address: Tuple[str, int] = tuple(value) if value else value
-                        self._arb_addr = address
+                        self._arb_addr: Tuple[str, int] = (
+                            tuple(value) if value else value
+                        )
 
                     else:
                         setattr(self, attr, value)
@@ -1206,8 +1207,10 @@ class Arbiter(Actor):
     is_arbiter = True
 
     def __init__(self, *args, **kwargs):
+
         self._registry = defaultdict(list)
         self._waiters = {}
+
         super().__init__(*args, **kwargs)
 
     async def find_actor(self, name: str) -> Optional[Tuple[str, int]]:
@@ -1220,22 +1223,25 @@ class Arbiter(Actor):
     async def get_registry(
         self
     ) -> Dict[str, Tuple[str, str]]:
-        """Return current name registry.
-        """
+        '''Return current name registry.
+
+        This method is async to allow for cross-actor invocation.
+        '''
         # NOTE: requires ``strict_map_key=False`` to the msgpack
         # unpacker since we have tuples as keys (not this makes the
         # arbiter suscetible to hashdos):
         # https://github.com/msgpack/msgpack-python#major-breaking-changes-in-msgpack-10
-        return self._registry
+        return dict(self._registry)
 
     async def wait_for_actor(
-        self, name: str
+        self,
+        name: str,
     ) -> List[Tuple[str, int]]:
-        """Wait for a particular actor to register.
+        '''Wait for a particular actor to register.
 
         This is a blocking call if no actor by the provided name is currently
         registered.
-        """
+        '''
         sockaddrs = []
 
         for (aname, _), sockaddr in self._registry.items():
@@ -1267,5 +1273,8 @@ class Arbiter(Actor):
             if isinstance(event, trio.Event):
                 event.set()
 
-    async def unregister_actor(self, uid: Tuple[str, str]) -> None:
+    async def unregister_actor(
+        self,
+        uid: Tuple[str, str]
+    ) -> None:
         self._registry.pop(tuple(uid))
