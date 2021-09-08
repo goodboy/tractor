@@ -42,7 +42,7 @@ async def test_reg_then_unreg(arb_addr):
 
         await trio.sleep(0.1)
         assert uid not in aportal.actor._registry
-        sockaddrs = actor._registry[uid]
+        sockaddrs = actor._registry.get(uid)
         assert not sockaddrs
 
 
