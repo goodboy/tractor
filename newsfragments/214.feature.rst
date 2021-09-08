@@ -1,0 +1,9 @@
+Add optional `msgspec <https://jcristharif.com/msgspec/>`_ support over
+TCP streams as an alernative, faster MessagePack codec.
+
+This get's us moving toward typed messaging/IPC protocols. Further,
+``msgspec`` structs may be a valid tool to start for formalizing our "SC
+dialog un-protocol" messages as described in `#36
+<https://github.com/goodboy/tractor/issues/36>`_`.
+
+
