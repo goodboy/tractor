@@ -1,6 +1,0 @@
-Handle broken channel/stream faults where the root's tty lock is left acquired by some
-child actor who went MIA and the root ends up hanging indefinitely.
-
-There's two parts here:
-- Don't shield wait on the lock
-- Always do our best to release the lock on the expected worst case connection faults

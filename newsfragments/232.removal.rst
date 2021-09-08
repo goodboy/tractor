@@ -1,1 +1,0 @@
-Drop Python 3.7 support in preparation for supporting 3.9+ syntax.

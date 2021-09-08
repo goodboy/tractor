@@ -1,9 +1,0 @@
-Drop stream "shielding" support which was originally added to sidestep
-a cancelled call to ``.receive()``
-
-In the original api design a stream instance was returned directly from
-a call to ``Portal.run()`` and thus there was no "exit phase" to handle
-cancellations and errors which would trigger implicit closure. Now that
-we have said enter/exit semantics with ``Portal.open_stream_from()`` and
-``Context.open_stream()`` we can drop this implicit (and arguably
-confusing) behavior.

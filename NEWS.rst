@@ -4,6 +4,56 @@ Changelog
 
 .. towncrier release notes start
 
+tractor 0.1.0a2 (2021-09-07)
+============================
+
+Features
+--------
+
+- Add `tokio-style broadcast channels
+  <https://docs.rs/tokio/1.11.0/tokio/sync/broadcast/index.html>`_ as
+  a solution for `#204 <https://github.com/goodboy/tractor/pull/204>`_ and
+  discussed thoroughly in `trio/#987
+  <https://github.com/python-trio/trio/issues/987>`_.
+
+  This gives us local task broadcast functionality using a new
+  ``BroadcastReceiver`` type which can wrap ``trio.ReceiveChannel``  and
+  provide fan-out copies of a stream of data to every subscribed consumer.
+  We use this new machinery to provide a ``ReceiveMsgStream.subscribe()``
+  async context manager which can be used by actor-local concumers tasks
+  to easily pull from a shared and dynamic IPC stream. (`#229
+  <https://github.com/goodboy/tractor/pull/229>`_)
+
+
+Bugfixes
+--------
+
+- Handle broken channel/stream faults where the root's tty lock is left
+  acquired by some child actor who went MIA and the root ends up hanging
+  indefinitely. (`#234 <https://github.com/goodboy/tractor/pull/234>`_)
+
+  There's two parts here: we no longer shield wait on the lock and,
+  now always do our best to release the lock on the expected worst
+  case connection faults.
+
+
+Deprecations and Removals
+-------------------------
+
+- Drop stream "shielding" support which was originally added to sidestep
+  a cancelled call to ``.receive()``
+
+  In the original api design a stream instance was returned directly from
+  a call to ``Portal.run()`` and thus there was no "exit phase" to handle
+  cancellations and errors which would trigger implicit closure. Now that
+  we have said enter/exit semantics with ``Portal.open_stream_from()`` and
+  ``Context.open_stream()`` we can drop this implicit (and arguably
+  confusing) behavior. (`#230 <https://github.com/goodboy/tractor/pull/230>`_)
+
+- Drop Python 3.7 support in preparation for supporting 3.9+ syntax.
+  (`#232 <https://github.com/goodboy/tractor/pull/232>`_)
+
+
 tractor 0.1.0a1 (2021-08-01)
 ============================
 

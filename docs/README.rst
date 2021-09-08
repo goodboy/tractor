@@ -21,7 +21,7 @@ Features
 --------
 - **It's just** a ``trio`` API
 - *Infinitely nesteable* process trees
-- Built-in inter-process streaming APIs
+- Builtin IPC streaming APIs with task fan-out broadcasting
 - A (first ever?) "native" multi-core debugger UX for Python using `pdb++`_
 - Support for a swappable, OS specific, process spawning layer
 - A modular transport stack, allowing for custom serialization,
