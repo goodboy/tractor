@@ -24,8 +24,9 @@ Features
 - Builtin IPC streaming APIs with task fan-out broadcasting
 - A (first ever?) "native" multi-core debugger UX for Python using `pdb++`_
 - Support for a swappable, OS specific, process spawning layer
-- A modular transport stack, allowing for custom serialization,
-  communications protocols, and environment specific IPC primitives
+- A modular transport stack, allowing for custom serialization (eg.
+  `msgspec`_), communications protocols, and environment specific IPC
+  primitives
 - `structured concurrency`_ from the ground up
 
 
@@ -322,6 +323,12 @@ From PyPi::
     pip install tractor
 
 
+To try out the (optionally) faster `msgspec`_ codec instead of the
+default ``msgpack`` lib::
+
+    pip install tractor[msgspec]
+
+
 From git::
 
     pip install git+git://github.com/goodboy/tractor.git
@@ -394,7 +401,8 @@ Help us push toward the future.
 
 - (Soon to land) ``asyncio`` support allowing for "infected" actors where
   `trio` drives the `asyncio` scheduler via the astounding "`guest mode`_"
-- Typed messaging protocols (ex. via ``msgspec``)
+- Typed messaging protocols (ex. via ``msgspec``, see `#36
+  <https://github.com/goodboy/tractor/issues/36>`_)
 - Erlang-style supervisors via composed context managers
 
 
@@ -427,6 +435,7 @@ channel`_!
 .. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
 .. _async generators: https://www.python.org/dev/peps/pep-0525/
 .. _trio-parallel: https://github.com/richardsheridan/trio-parallel
+.. _msgspec: https://jcristharif.com/msgspec/
 
 
 .. |gh_actions| image:: https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fgoodboy%2Ftractor%2Fbadge&style=popout-square
