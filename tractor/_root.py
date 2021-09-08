@@ -21,8 +21,8 @@ from ._exceptions import is_multi_cancelled
 
 
 # set at startup and after forks
-_default_arbiter_host = '127.0.0.1'
-_default_arbiter_port = 1616
+_default_arbiter_host: str = '127.0.0.1'
+_default_arbiter_port: int = 1616
 
 
 logger = log.get_logger('tractor')
@@ -32,7 +32,7 @@ logger = log.get_logger('tractor')
 async def open_root_actor(
 
     # defaults are above
-    arbiter_addr: Tuple[str, int] = (
+    arbiter_addr: Optional[Tuple[str, int]] = (
         _default_arbiter_host,
         _default_arbiter_port,
     ),
@@ -95,10 +95,10 @@ async def open_root_actor(
             "Debug mode is only supported for the `trio` backend!"
         )
 
-    arbiter_addr = (host, port) = tuple(arbiter_addr or (
+    arbiter_addr = (host, port) = arbiter_addr or (
         _default_arbiter_host,
         _default_arbiter_port,
-    ))
+    )
 
     loglevel = loglevel or log.get_loglevel()
     if loglevel is not None:
