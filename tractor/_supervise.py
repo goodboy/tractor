@@ -307,8 +307,8 @@ async def _open_and_supervise_one_cancels_all_nursery(
                                 f'child {_debug._global_actor_in_debug}\n'
                                 'Waiting on tty lock to release..')
 
-                            # with trio.CancelScope(shield=True):
-                            await debug_complete.wait()
+                            with trio.CancelScope(shield=True):
+                                await debug_complete.wait()
 
                     # if the caller's scope errored then we activate our
                     # one-cancels-all supervisor strategy (don't

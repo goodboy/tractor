@@ -2,6 +2,7 @@
 Multi-core debugging for da peeps!
 
 """
+from __future__ import annotations
 import bdb
 import sys
 from functools import partial
@@ -20,11 +21,13 @@ from ._exceptions import is_multi_cancelled
 try:
     # wtf: only exported when installed in dev mode?
     import pdbpp
+
 except ImportError:
     # pdbpp is installed in regular mode...it monkey patches stuff
     import pdb
     assert pdb.xpm, "pdbpp is not installed?"  # type: ignore
     pdbpp = pdb
+
 
 log = get_logger(__name__)
 
@@ -83,6 +86,23 @@ class PdbwTeardown(pdbpp.Pdb):
             global _local_task_in_debug
             _local_task_in_debug = None
             _pdb_release_hook()
+
+
+def _mk_pdb() -> PdbwTeardown:
+
+    # XXX: setting these flags on the pdb instance are absolutely
+    # critical to having ctrl-c work in the ``trio`` standard way!  The
+    # stdlib's pdb supports entering the current sync frame on a SIGINT,
+    # with ``trio`` we pretty much never want this and if we did we can
+    # handle it in the ``tractor`` task runtime.
+    # global pdb
+
+    pdb = PdbwTeardown()
+    pdb.nosigint = True
+    pdb.allow_kbdint = True
+    opts = (allow_kbdint, nosigint) = pdb.allow_kbdint, pdb.nosigint
+    print(f'`pdbp` was configured with {opts}')
+    return pdb
 
 
 # TODO: will be needed whenever we get to true remote debugging.
@@ -441,21 +461,6 @@ async def _breakpoint(
     # ``breakpoint()`` was awaited and begin handling stdio.
     log.debug("Entering the synchronous world of pdb")
     debug_func(actor)
-
-
-def _mk_pdb() -> PdbwTeardown:
-
-    # XXX: setting these flags on the pdb instance are absolutely
-    # critical to having ctrl-c work in the ``trio`` standard way!  The
-    # stdlib's pdb supports entering the current sync frame on a SIGINT,
-    # with ``trio`` we pretty much never want this and if we did we can
-    # handle it in the ``tractor`` task runtime.
-
-    pdb = PdbwTeardown()
-    pdb.allow_kbdint = True
-    pdb.nosigint = True
-
-    return pdb
 
 
 def _set_trace(actor=None):
