@@ -55,7 +55,8 @@ def _run_asyncio_task(
     or stream the result back to ``trio``.
 
     """
-    assert current_actor().is_infected_aio()
+    if not current_actor().is_infected_aio():
+        raise RuntimeError("`infect_asyncio` mode is not enabled!?")
 
     # ITC (inter task comms)
     from_trio = asyncio.Queue(qsize)  # type: ignore
@@ -174,11 +175,11 @@ async def run_task(
         else:
             raise
 
-    except trio.Cancelled:
-        if not task.done():
-            task.cancel()
-
-        raise
+    # except trio.Cancelled:
+        # raise
+    finally:
+        # if not task.done():
+        task.cancel()
 
 
 # TODO: explicit api for the streaming case where
