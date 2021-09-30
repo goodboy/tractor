@@ -177,17 +177,19 @@ class MsgspecTCPStream(MsgpackTCPStream):
 
             log.transport(f"received {msg_bytes}")  # type: ignore
             try:
-                assert not last_decode_failed
                 yield self.decode(msg_bytes)
             except (
                 msgspec.DecodingError,
                 UnicodeDecodeError,
             ):
-                # ignore decoding errors for now and assume they have to
-                # do with a channel drop - hope that receiving from the
-                # channel will raise an expected error and bubble up.
-                log.error('`msgspec` failed to decode!?')
-                last_decode_failed = True
+                if not last_decode_failed:
+                    # ignore decoding errors for now and assume they have to
+                    # do with a channel drop - hope that receiving from the
+                    # channel will raise an expected error and bubble up.
+                    log.error('`msgspec` failed to decode!?')
+                    last_decode_failed = True
+                else:
+                    raise
 
     async def send(self, data: Any) -> None:
         async with self._send_lock:
