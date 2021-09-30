@@ -431,7 +431,7 @@ async def _breakpoint(
 
             stats = _debug_lock.statistics()
             if stats.owner:
-                breakpoint()
+                print(f'LOCK STATS: {stats}')
 
             # with trio.CancelScope(shield=True):
             # must shield here to avoid hitting a ``Cancelled`` and
