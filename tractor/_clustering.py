@@ -17,7 +17,10 @@ async def open_actor_cluster(
     count: int = cpu_count(),
     names: Optional[list[str]] = None,
 
-) -> AsyncGenerator[..., dict[str, tractor.Portal]]:
+) -> AsyncGenerator[
+    list[str],
+    dict[str, tractor.Portal]
+]:
 
     portals: dict[str, tractor.Portal] = {}
     uid = tractor.current_actor().uid
@@ -30,20 +33,18 @@ async def open_actor_cluster(
         raise ValueError(
             'Number of names is {len(names)} but count it {count}')
 
-    async with (
-        tractor.open_nursery() as an,
-        trio.open_nursery() as n,
-    ):
-        for index, key in zip(range(count), names):
+    async with tractor.open_nursery() as an:
+        async with trio.open_nursery() as n:
+            for index, key in zip(range(count), names):
 
-            async def start(i) -> None:
-                key = f'worker_{i}.' + '_'.join(uid)
-                portals[key] = await an.start_actor(
-                    enable_modules=modules,
-                    name=key,
-                )
+                async def start(i) -> None:
+                    key = f'worker_{i}.' + '_'.join(uid)
+                    portals[key] = await an.start_actor(
+                        enable_modules=modules,
+                        name=key,
+                    )
 
-            n.start_soon(start, index)
+                n.start_soon(start, index)
 
         assert len(portals) == count
         yield portals
