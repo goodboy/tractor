@@ -2,6 +2,8 @@
 Bidirectional streaming and context API.
 
 """
+import platform
+
 import pytest
 import trio
 import tractor
@@ -69,9 +71,11 @@ def test_simple_context(
     pointlessly_open_stream,
 ):
 
+    timeout = 1.5 if not platform.system() == 'Windows' else 3
+
     async def main():
 
-        with trio.fail_after(1.5):
+        with trio.fail_after(timeout):
             async with tractor.open_nursery() as nursery:
 
                 portal = await nursery.start_actor(
