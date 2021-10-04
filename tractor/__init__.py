@@ -13,7 +13,7 @@ from ._streaming import (
     context,
 )
 from ._discovery import get_arbiter, find_actor, wait_for_actor
-from ._trionics import open_nursery
+from ._supervise import open_nursery
 from ._state import current_actor, is_root_process
 from ._exceptions import (
     RemoteActorError,
