@@ -126,6 +126,10 @@ def test_simple_context(
             trio.run(main)
         except error_parent:
             pass
+        except trio.MultiError as me:
+            # XXX: on windows it seems we may have to expect the group error
+            from tractor._exceptions import is_multi_cancelled
+            assert is_multi_cancelled(me)
     else:
         trio.run(main)
 
