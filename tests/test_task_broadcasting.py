@@ -12,7 +12,7 @@ import pytest
 import trio
 from trio.lowlevel import current_task
 import tractor
-from tractor._broadcast import broadcast_receiver, Lagged
+from tractor.trionics import broadcast_receiver, Lagged
 
 
 @tractor.context
@@ -432,7 +432,6 @@ def test_first_recver_is_cancelled():
             tx, rx = trio.open_memory_channel(1)
             brx = broadcast_receiver(rx, 1)
             cs = trio.CancelScope()
-            sequence = list(range(3))
 
             async def sub_and_recv():
                 with cs:
