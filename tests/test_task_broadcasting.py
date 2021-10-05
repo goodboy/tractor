@@ -1,5 +1,6 @@
 """
 Broadcast channels for fan-out to local tasks.
+
 """
 from contextlib import asynccontextmanager
 from functools import partial
@@ -332,6 +333,9 @@ def test_ensure_slow_consumers_lag_out(
                                 await trio.sleep(delay)
 
                             if task.name == 'sub_1':
+                                # trigger checkpoint to clean out other subs
+                                await trio.sleep(0)
+
                                 # the non-lagger got
                                 # a ``trio.EndOfChannel``
                                 # because the ``tx`` below was closed
