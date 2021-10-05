@@ -38,7 +38,7 @@ async def _enter_and_sleep(
 @acm
 async def async_enter_all(
 
-    *mngrs: list[AsyncContextManager[T]],
+    *mngrs: tuple[AsyncContextManager[T]],
 
 ) -> tuple[T]:
 
