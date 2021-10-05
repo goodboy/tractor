@@ -1,5 +1,6 @@
 """
 Portal api
+
 """
 import importlib
 import inspect
@@ -173,7 +174,7 @@ class Portal:
         # terminate all locally running async generator
         # IPC calls
         if self._streams:
-            log.warning(
+            log.cancel(
                 f"Cancelling all streams with {self.channel.uid}")
             for stream in self._streams.copy():
                 try:
@@ -196,19 +197,17 @@ class Portal:
         """Cancel the actor on the other end of this portal.
         """
         if not self.channel.connected():
-            log.warning("This portal is already closed can't cancel")
+            log.cancel("This portal is already closed can't cancel")
             return False
 
         await self._cancel_streams()
 
-        log.warning(
+        log.cancel(
             f"Sending actor cancel request to {self.channel.uid} on "
             f"{self.channel}")
         try:
             # send cancel cmd - might not get response
             # XXX: sure would be nice to make this work with a proper shield
-            # with trio.CancelScope() as cancel_scope:
-            # with trio.CancelScope(shield=True) as cancel_scope:
             with trio.move_on_after(0.5) as cancel_scope:
                 cancel_scope.shield = True
 
@@ -216,13 +215,13 @@ class Portal:
                 return True
 
             if cancel_scope.cancelled_caught:
-                log.warning(f"May have failed to cancel {self.channel.uid}")
+                log.cancel(f"May have failed to cancel {self.channel.uid}")
 
             # if we get here some weird cancellation case happened
             return False
 
         except trio.ClosedResourceError:
-            log.warning(
+            log.cancel(
                 f"{self.channel} for {self.channel.uid} was already closed?")
             return False
 
@@ -347,7 +346,7 @@ class Portal:
             except trio.ClosedResourceError:
                 # if the far end terminates before we send a cancel the
                 # underlying transport-channel may already be closed.
-                log.warning(f'Context {ctx} was already closed?')
+                log.cancel(f'Context {ctx} was already closed?')
 
             # XXX: should this always be done?
             # await recv_chan.aclose()
@@ -446,7 +445,7 @@ class Portal:
             _err = err
             # the context cancels itself on any cancel
             # causing error.
-            log.error(f'Context {ctx} sending cancel to far end')
+            log.cancel(f'Context {ctx} sending cancel to far end')
             with trio.CancelScope(shield=True):
                 await ctx.cancel()
             raise
@@ -468,15 +467,15 @@ class Portal:
 
             if _err:
                 if ctx._cancel_called:
-                    log.warning(
+                    log.cancel(
                         f'Context {fn_name} cancelled by caller with\n{_err}'
                     )
                 elif _err is not None:
-                    log.warning(
+                    log.cancel(
                         f'Context {fn_name} cancelled by callee with\n{_err}'
                     )
             else:
-                log.info(
+                log.runtime(
                     f'Context {fn_name} returned '
                     f'value from callee `{result}`'
                 )

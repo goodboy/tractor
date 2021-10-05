@@ -185,11 +185,11 @@ async def open_root_actor(
                 raise
 
             finally:
-                logger.info("Shutting down root actor")
+                logger.cancel("Shutting down root actor")
                 await actor.cancel()
     finally:
         _state._current_actor = None
-        logger.info("Root actor terminated")
+        logger.runtime("Root actor terminated")
 
 
 def run(

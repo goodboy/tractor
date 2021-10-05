@@ -168,7 +168,7 @@ class ActorNursery:
         """
         self.cancelled = True
 
-        log.warning(f"Cancelling nursery in {self._actor.uid}")
+        log.cancel(f"Cancelling nursery in {self._actor.uid}")
         with trio.move_on_after(3) as cs:
 
             async with trio.open_nursery() as nursery:
@@ -320,7 +320,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                             ) or (
                                 is_multi_cancelled(err)
                             ):
-                                log.warning(
+                                log.cancel(
                                     f"Nursery for {current_actor().uid} "
                                     f"was cancelled with {etype}")
                             else:
@@ -357,7 +357,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
             # ".run_in_actor()" actors then we also want to cancel all
             # remaining sub-actors (due to our lone strategy:
             # one-cancels-all).
-            log.warning(f"Nursery cancelling due to {err}")
+            log.cancel(f"Nursery cancelling due to {err}")
             if anursery._children:
                 with trio.CancelScope(shield=True):
                     await anursery.cancel()

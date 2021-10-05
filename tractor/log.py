@@ -31,6 +31,7 @@ DATE_FORMAT = '%b %d %H:%M:%S'
 LEVELS = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
+    'CANCEL': 16,
     'PDB': 500,
 }
 
@@ -40,6 +41,7 @@ STD_PALETTE = {
     'PDB': 'white',
     'WARNING': 'yellow',
     'INFO': 'green',
+    'CANCEL': 'yellow',
     'RUNTIME': 'white',
     'DEBUG': 'white',
     'TRANSPORT': 'cyan',
@@ -67,6 +69,12 @@ class StackLevelAdapter(logging.LoggerAdapter):
         msg: str,
     ) -> None:
         return self.log(15, msg)
+
+    def cancel(
+        self,
+        msg: str,
+    ) -> None:
+        return self.log(16, msg)
 
     def pdb(
         self,

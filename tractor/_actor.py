@@ -318,7 +318,10 @@ class Actor:
         # @dataclass once we get py3.7
         self.loglevel = loglevel
 
-        self._arb_addr = (str(arbiter_addr[0]), int(arbiter_addr[1])) if arbiter_addr else None
+        self._arb_addr = (
+            str(arbiter_addr[0]),
+            int(arbiter_addr[1])
+        ) if arbiter_addr else None
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
@@ -622,7 +625,7 @@ class Actor:
 
                     if msg is None:  # loop terminate sentinel
 
-                        log.runtime(
+                        log.cancel(
                             f"Cancelling all tasks for {chan} from {chan.uid}")
 
                         for (channel, cid) in self._rpc_tasks.copy():
@@ -738,12 +741,20 @@ class Actor:
             log.runtime(f'channel from {chan.uid} closed abruptly:\n{chan}')
 
         except (Exception, trio.MultiError) as err:
+            if (
+                isinstance(err, RuntimeError) and
+                self._service_n.cancel_scope.cancel_called
+            ):
+                log.cancel(
+                    f'Service nursery cancelled before it handled {funcname}'
+                )
 
-            # ship any "internal" exception (i.e. one from internal machinery
-            # not from an rpc task) to parent
-            log.exception("Actor errored:")
-            if self._parent_chan:
-                await self._parent_chan.send(pack_error(err))
+            else:
+                # ship any "internal" exception (i.e. one from internal
+                # machinery not from an rpc task) to parent
+                log.exception("Actor errored:")
+                if self._parent_chan:
+                    await self._parent_chan.send(pack_error(err))
 
             # if this is the `MainProcess` we expect the error broadcasting
             # above to trigger an error at consuming portal "checkpoints"
@@ -923,9 +934,9 @@ class Actor:
                                 shield=True,
                             )
                         )
-                    log.info("Waiting on service nursery to complete")
-                log.info("Service nursery complete")
-                log.info("Waiting on root nursery to complete")
+                    log.runtime("Waiting on service nursery to complete")
+                log.runtime("Service nursery complete")
+                log.runtime("Waiting on root nursery to complete")
 
             # Blocks here as expected until the root nursery is
             # killed (i.e. this actor is cancelled or signalled by the parent)
@@ -959,11 +970,11 @@ class Actor:
             raise
 
         finally:
-            log.info("Root nursery complete")
+            log.runtime("Root nursery complete")
 
             # tear down all lifetime contexts if not in guest mode
             # XXX: should this just be in the entrypoint?
-            log.warning("Closing all actor lifetime contexts")
+            log.cancel("Closing all actor lifetime contexts")
             _lifetime_stack.close()
 
             # Unregister actor from the arbiter
@@ -1058,7 +1069,7 @@ class Actor:
               spawning new rpc tasks
             - return control the parent channel message loop
         """
-        log.warning(f"{self.uid} is trying to cancel")
+        log.cancel(f"{self.uid} is trying to cancel")
         self._cancel_called = True
 
         # cancel all ongoing rpc tasks
@@ -1068,7 +1079,7 @@ class Actor:
             # with the root actor in this tree
             dbcs = _debug._debugger_request_cs
             if dbcs is not None:
-                log.pdb("Cancelling active debugger request")
+                log.cancel("Cancelling active debugger request")
                 dbcs.cancel()
 
             # kill all ongoing tasks
@@ -1082,7 +1093,7 @@ class Actor:
             if self._service_n:
                 self._service_n.cancel_scope.cancel()
 
-        log.warning(f"{self.uid} was sucessfullly cancelled")
+        log.cancel(f"{self.uid} was sucessfullly cancelled")
         self._cancel_complete.set()
         return True
 
@@ -1109,10 +1120,10 @@ class Actor:
             # be cancelled was indeed spawned by a request from this channel
             scope, func, is_complete = self._rpc_tasks[(chan, cid)]
         except KeyError:
-            log.warning(f"{cid} has already completed/terminated?")
+            log.cancel(f"{cid} has already completed/terminated?")
             return
 
-        log.runtime(
+        log.cancel(
             f"Cancelling task:\ncid: {cid}\nfunc: {func}\n"
             f"peer: {chan.uid}\n")
 
@@ -1141,7 +1152,7 @@ class Actor:
         registered for each.
         """
         tasks = self._rpc_tasks
-        log.info(f"Cancelling all {len(tasks)} rpc tasks:\n{tasks} ")
+        log.cancel(f"Cancelling all {len(tasks)} rpc tasks:\n{tasks} ")
         for (chan, cid) in tasks.copy():
             if only_chan is not None:
                 if only_chan != chan:
@@ -1150,7 +1161,7 @@ class Actor:
             # TODO: this should really done in a nursery batch
             await self._cancel_task(cid, chan)
 
-        log.info(
+        log.cancel(
             f"Waiting for remaining rpc tasks to complete {tasks}")
         await self._ongoing_rpc_tasks.wait()
 
