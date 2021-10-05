@@ -52,6 +52,8 @@ BOLD_PALETTE = {
 }
 
 
+# TODO: this isn't showing the correct '{filename}'
+# as it did before..
 class StackLevelAdapter(logging.LoggerAdapter):
 
     def transport(
