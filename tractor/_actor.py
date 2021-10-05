@@ -195,8 +195,6 @@ async def _invoke(
 
         if not is_multi_cancelled(err):
 
-            log.exception("Actor crashed:")
-
             # TODO: maybe we'll want different "levels" of debugging
             # eventualy such as ('app', 'supervisory', 'runtime') ?
 
@@ -218,8 +216,8 @@ async def _invoke(
 
                 entered_debug = await _debug._maybe_enter_pm(err)
 
-            if not entered_debug:
-                log.exception("Actor crashed:")
+                if not entered_debug:
+                    log.exception("Actor crashed:")
 
         # always ship errors back to caller
         err_msg = pack_error(err, tb=tb)
