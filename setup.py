@@ -45,6 +45,10 @@ setup(
         'trio_typing',
 
         # tooling
+        'tricycle',
+        'trio_typing',
+
+        # tooling
         'colorlog',
         'wrapt',
         'pdbpp',
@@ -53,6 +57,12 @@ setup(
         'msgpack',
 
     ],
+    extras_require={
+
+        # serialization
+        'msgspec': ["msgspec >= 0.3.2'; python_version >= '3.9'"],
+
+    },
     tests_require=['pytest'],
     python_requires=">=3.8",
     keywords=[

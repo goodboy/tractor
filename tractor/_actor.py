@@ -317,7 +317,8 @@ class Actor:
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
         self.loglevel = loglevel
-        self._arb_addr = arbiter_addr
+
+        self._arb_addr = (str(arbiter_addr[0]), int(arbiter_addr[1])) if arbiter_addr else None
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
@@ -421,7 +422,7 @@ class Actor:
         """
         self._no_more_peers = trio.Event()  # unset
 
-        chan = Channel(stream=stream)
+        chan = Channel.from_stream(stream)
         log.runtime(f"New connection to us {chan}")
 
         # send/receive initial handshake response
@@ -429,7 +430,10 @@ class Actor:
             uid = await self._do_handshake(chan)
 
         except (
+            # we need this for ``msgspec`` for some reason?
+            # for now, it's been put in the stream backend.
             # trio.BrokenResourceError,
+
             # trio.ClosedResourceError,
             TransportClosed,
         ):
@@ -615,6 +619,7 @@ class Actor:
                 # ``scope = Nursery.start()``
                 task_status.started(loop_cs)
                 async for msg in chan:
+
                     if msg is None:  # loop terminate sentinel
 
                         log.debug(
@@ -775,6 +780,7 @@ class Actor:
 
             if self._spawn_method == "trio":
                 # Receive runtime state from our parent
+                parent_data: dict[str, Any]
                 parent_data = await chan.recv()
                 log.debug(
                     "Received state from parent:\n"
@@ -790,7 +796,16 @@ class Actor:
                 _state._runtime_vars.update(rvs)
 
                 for attr, value in parent_data.items():
-                    setattr(self, attr, value)
+
+                    if attr == '_arb_addr':
+                        # XXX: ``msgspec`` doesn't support serializing tuples
+                        # so just cash manually here since it's what our
+                        # internals expect.
+                        value = tuple(value) if value else None
+                        self._arb_addr = value
+
+                    else:
+                        setattr(self, attr, value)
 
             return chan, accept_addr
 
@@ -804,21 +819,25 @@ class Actor:
     async def _async_main(
         self,
         accept_addr: Optional[Tuple[str, int]] = None,
+
         # XXX: currently ``parent_addr`` is only needed for the
         # ``multiprocessing`` backend (which pickles state sent to
         # the child instead of relaying it over the connect-back
         # channel). Once that backend is removed we can likely just
-        # change this so a simple ``is_subactor: bool`` which will
+        # change this to a simple ``is_subactor: bool`` which will
         # be False when running as root actor and True when as
         # a subactor.
         parent_addr: Optional[Tuple[str, int]] = None,
         task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
+
     ) -> None:
-        """Start the channel server, maybe connect back to the parent, and
+        """
+        Start the channel server, maybe connect back to the parent, and
         start the main task.
 
         A "root-most" (or "top-level") nursery for this actor is opened here
         and when cancelled effectively cancels the actor.
+
         """
         registered_with_arbiter = False
         try:
@@ -1162,6 +1181,7 @@ class Actor:
     async def _do_handshake(
         self,
         chan: Channel
+
     ) -> Tuple[str, str]:
         """Exchange (name, UUIDs) identifiers as the first communication step.
 
@@ -1169,12 +1189,13 @@ class Actor:
         parlance.
         """
         await chan.send(self.uid)
-        uid: Tuple[str, str] = await chan.recv()
+        value = await chan.recv()
+        uid: Tuple[str, str] = (str(value[0]), str(value[1]))
 
         if not isinstance(uid, tuple):
             raise ValueError(f"{uid} is not a valid uid?!")
 
-        chan.uid = uid
+        chan.uid = str(uid[0]), str(uid[1])
         log.runtime(f"Handshake with actor {uid}@{chan.raddr} complete")
         return uid
 
@@ -1191,8 +1212,13 @@ class Arbiter(Actor):
     is_arbiter = True
 
     def __init__(self, *args, **kwargs):
-        self._registry = defaultdict(list)
+
+        self._registry: Dict[
+            Tuple[str, str],
+            Tuple[str, int],
+        ] = {}
         self._waiters = {}
+
         super().__init__(*args, **kwargs)
 
     async def find_actor(self, name: str) -> Optional[Tuple[str, int]]:
@@ -1204,9 +1230,11 @@ class Arbiter(Actor):
 
     async def get_registry(
         self
-    ) -> Dict[str, Tuple[str, str]]:
-        """Return current name registry.
-        """
+    ) -> Dict[Tuple[str, str], Tuple[str, int]]:
+        '''Return current name registry.
+
+        This method is async to allow for cross-actor invocation.
+        '''
         # NOTE: requires ``strict_map_key=False`` to the msgpack
         # unpacker since we have tuples as keys (not this makes the
         # arbiter suscetible to hashdos):
@@ -1214,13 +1242,14 @@ class Arbiter(Actor):
         return self._registry
 
     async def wait_for_actor(
-        self, name: str
+        self,
+        name: str,
     ) -> List[Tuple[str, int]]:
-        """Wait for a particular actor to register.
+        '''Wait for a particular actor to register.
 
         This is a blocking call if no actor by the provided name is currently
         registered.
-        """
+        '''
         sockaddrs = []
 
         for (aname, _), sockaddr in self._registry.items():
@@ -1237,10 +1266,13 @@ class Arbiter(Actor):
         return sockaddrs
 
     async def register_actor(
-        self, uid: Tuple[str, str], sockaddr: Tuple[str, int]
+        self,
+        uid: Tuple[str, str],
+        sockaddr: Tuple[str, int]
+
     ) -> None:
-        name, uuid = uid
-        self._registry[uid] = sockaddr
+        uid = name, uuid = (str(uid[0]), str(uid[1]))
+        self._registry[uid] = (str(sockaddr[0]), int(sockaddr[1]))
 
         # pop and signal all waiter events
         events = self._waiters.pop(name, ())
@@ -1249,5 +1281,9 @@ class Arbiter(Actor):
             if isinstance(event, trio.Event):
                 event.set()
 
-    async def unregister_actor(self, uid: Tuple[str, str]) -> None:
+    async def unregister_actor(
+        self,
+        uid: Tuple[str, str]
+    ) -> None:
+        uid = (str(uid[0]), str(uid[1]))
         self._registry.pop(uid)
