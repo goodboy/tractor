@@ -612,6 +612,8 @@ class Actor:
         # TODO: once https://github.com/python-trio/trio/issues/467 gets
         # worked out we'll likely want to use that!
         msg = None
+        nursery_cancelled_before_task: bool = False
+
         log.runtime(f"Entering msg loop for {chan} from {chan.uid}")
         try:
             with trio.CancelScope(shield=shield) as loop_cs:
@@ -692,10 +694,16 @@ class Actor:
                     # spin up a task for the requested function
                     log.runtime(f"Spawning task for {func}")
                     assert self._service_n
-                    cs = await self._service_n.start(
-                        partial(_invoke, self, cid, chan, func, kwargs),
-                        name=funcname,
-                    )
+                    try:
+                        cs = await self._service_n.start(
+                            partial(_invoke, self, cid, chan, func, kwargs),
+                            name=funcname,
+                        )
+                    except RuntimeError:
+                        # avoid reporting a benign race condition
+                        # during actor runtime teardown.
+                        nursery_cancelled_before_task = True
+
                     # never allow cancelling cancel requests (results in
                     # deadlock and other weird behaviour)
                     if func != self.cancel:
@@ -741,14 +749,12 @@ class Actor:
             log.runtime(f'channel from {chan.uid} closed abruptly:\n{chan}')
 
         except (Exception, trio.MultiError) as err:
-            if (
-                isinstance(err, RuntimeError) and
-                self._service_n.cancel_scope.cancel_called
-            ):
+            if nursery_cancelled_before_task:
+                sn = self._service_n
+                assert sn and sn.cancel_scope.cancel_called
                 log.cancel(
                     f'Service nursery cancelled before it handled {funcname}'
                 )
-
             else:
                 # ship any "internal" exception (i.e. one from internal
                 # machinery not from an rpc task) to parent
