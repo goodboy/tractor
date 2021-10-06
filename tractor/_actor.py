@@ -422,7 +422,7 @@ class Actor:
         """
         self._no_more_peers = trio.Event()  # unset
 
-        chan = Channel(stream=stream)
+        chan = Channel.from_stream(stream)
         log.runtime(f"New connection to us {chan}")
 
         # send/receive initial handshake response
@@ -819,21 +819,25 @@ class Actor:
     async def _async_main(
         self,
         accept_addr: Optional[Tuple[str, int]] = None,
+
         # XXX: currently ``parent_addr`` is only needed for the
         # ``multiprocessing`` backend (which pickles state sent to
         # the child instead of relaying it over the connect-back
         # channel). Once that backend is removed we can likely just
-        # change this so a simple ``is_subactor: bool`` which will
+        # change this to a simple ``is_subactor: bool`` which will
         # be False when running as root actor and True when as
         # a subactor.
         parent_addr: Optional[Tuple[str, int]] = None,
         task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
+
     ) -> None:
-        """Start the channel server, maybe connect back to the parent, and
+        """
+        Start the channel server, maybe connect back to the parent, and
         start the main task.
 
         A "root-most" (or "top-level") nursery for this actor is opened here
         and when cancelled effectively cancels the actor.
+
         """
         registered_with_arbiter = False
         try:
