@@ -91,35 +91,6 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     return _ctx
 
 
-# async def exhaust_portal(
-#     portal: Portal,
-#     actor: Actor
-# ) -> Any:
-#     """Pull final result from portal (assuming it has one).
-
-#     If the main task is an async generator do our best to consume
-#     what's left of it.
-#     """
-#     try:
-#         log.debug(f"Waiting on final result from {actor.uid}")
-
-#         # XXX: streams should never be reaped here since they should
-#         # always be established and shutdown using a context manager api
-#         final = await portal.result()
-
-#     except (Exception, trio.MultiError) as err:
-#         # we reraise in the parent task via a ``trio.MultiError``
-#         return err
-#     except trio.Cancelled as err:
-#         # lol, of course we need this too ;P
-#         # TODO: merge with above?
-#         log.warning(f"Cancelled result waiter for {portal.actor.uid}")
-#         return err
-#     else:
-#         log.debug(f"Returning final result: {final}")
-#         return final
-
-
 async def result_from_portal(
     portal: Portal,
     actor: Actor,
