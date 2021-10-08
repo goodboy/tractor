@@ -49,6 +49,7 @@ async def _invoke(
     chan: Channel,
     func: typing.Callable,
     kwargs: Dict[str, Any],
+    is_rpc: bool = True,
     task_status: TaskStatus[
         Union[trio.CancelScope, BaseException]
     ] = trio.TASK_STATUS_IGNORED,
@@ -243,10 +244,11 @@ async def _invoke(
             scope, func, is_complete = actor._rpc_tasks.pop((chan, cid))
             is_complete.set()
         except KeyError:
-            # If we're cancelled before the task returns then the
-            # cancel scope will not have been inserted yet
-            log.warning(
-                f"Task {func} likely errored or cancelled before it started")
+            if is_rpc:
+                # If we're cancelled before the task returns then the
+                # cancel scope will not have been inserted yet
+                log.warning(
+                    f"Task {func} likely errored or cancelled before it started")
         finally:
             if not actor._rpc_tasks:
                 log.runtime("All RPC tasks have completed")
@@ -680,7 +682,7 @@ class Actor:
                                 await pdb_complete.wait()
 
                             # we immediately start the runtime machinery shutdown
-                            await _invoke(self, cid, chan, func, kwargs)
+                            await _invoke(self, cid, chan, func, kwargs, is_rpc=False)
 
                             # self.cancel() was called so kill this msg loop
                             # and break out into ``_async_main()``
@@ -721,10 +723,11 @@ class Actor:
                             partial(_invoke, self, cid, chan, func, kwargs),
                             name=funcname,
                         )
-                    except RuntimeError:
+                    except (RuntimeError, trio.MultiError):
                         # avoid reporting a benign race condition
                         # during actor runtime teardown.
                         nursery_cancelled_before_task = True
+                        break
 
                     # never allow cancelling cancel requests (results in
                     # deadlock and other weird behaviour)
