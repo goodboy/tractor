@@ -65,15 +65,14 @@ def _trio_main(
     parent_addr: Tuple[str, int] = None,
     infect_asyncio: bool = False,
 ) -> None:
-    """Entry point for a `trio_run_in_process` subactor.
     """
-    # Disable sigint handling in children;
-    # we don't need it thanks to our cancellation machinery.
+    Entry point for a `trio_run_in_process` subactor.
+
+    """
+    log.info(f"Started new trio process for {actor.uid}")
+
+    # Disable sigint handling in children?
     # signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-    log.info(f"Started new trio process for {actor.uid}")
-
-    log.info(f"Started new trio process for {actor.uid}")
 
     if actor.loglevel is not None:
         log.info(
