@@ -282,6 +282,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
     # after daemon nursery exit
     finally:
+        log.cancel(f'Waiting on remaining children {anursery._children}')
         with trio.CancelScope(shield=True):
             await anursery._all_children_reaped.wait()
         # No errors were raised while awaiting ".run_in_actor()"
@@ -302,10 +303,11 @@ async def _open_and_supervise_one_cancels_all_nursery(
             else:
                 raise list(errors.values())[0]
 
-        elif original_err:
-            raise original_err
-
         log.cancel(f'{anursery} terminated gracefully')
+
+        # XXX" honestly no idea why this is needed but sure..
+        if isinstance(original_err, KeyboardInterrupt) and anursery.cancelled:
+            raise original_err
 
 
 @asynccontextmanager
