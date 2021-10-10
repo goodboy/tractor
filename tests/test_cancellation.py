@@ -122,16 +122,20 @@ def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
         trio.run(main)
 
     assert exc_info.type == tractor.MultiError
-    err = exc_info.value
-    exceptions = err.exceptions
+    multi = exc_info.value
+    exceptions = multi.exceptions
 
     if len(exceptions) == 2:
-        # sometimes oddly now there's an embedded BrokenResourceError ?
-        exceptions = exceptions[1].exceptions
+        # sometimes there's an embedded BrokenResourceError
+        # next to the main multierror?
+        for exc in exceptions:
+            if hasattr(exc, 'exceptions'):
+                multi = exc
+                break
 
-    assert len(exceptions) == num_subactors
+    assert len(multi.exceptions) == num_subactors
 
-    for exc in exceptions:
+    for exc in multi.exceptions:
         assert isinstance(exc, tractor.RemoteActorError)
         assert exc.type == AssertionError
 
@@ -355,8 +359,12 @@ async def test_nested_multierrors(loglevel, start_method):
                         depth=depth,
                     )
         except trio.MultiError as err:
+            _err = err
             assert len(err.exceptions) == subactor_breadth
             for subexc in err.exceptions:
+
+                # NOTE: use [print(f'err: {err}') for err in _err.exceptions]
+                # to inspect errors from console on failure
 
                 # verify first level actor errors are wrapped as remote
                 if platform.system() == 'Windows':
@@ -388,6 +396,8 @@ async def test_nested_multierrors(loglevel, start_method):
                 else:
                     assert (subexc.type is tractor.RemoteActorError) or (
                         subexc.type is trio.Cancelled)
+        else:
+            pytest.fail(f'Got no error from nursery?')
 
 
 @no_windows
