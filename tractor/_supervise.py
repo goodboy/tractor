@@ -198,7 +198,8 @@ class ActorNursery:
         # one-cancels-all strat
         async with trio.open_nursery() as cancel_sender:
             for subactor, proc, portal in childs.values():
-                cancel_sender.start_soon(portal.cancel_actor)
+                if proc.poll() is None and not portal.cancel_called:
+                    cancel_sender.start_soon(portal.cancel_actor)
 
         # cancel all spawner tasks
         # self._spawn_n.cancel_scope.cancel()
@@ -298,7 +299,6 @@ async def _open_and_supervise_one_cancels_all_nursery(
             #   same as a user code failure.
 
             except BaseException as err:
-                print('ERROR')
                 # anursery._join_procs.set()
                 src_err = err
 
