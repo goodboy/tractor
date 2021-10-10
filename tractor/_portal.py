@@ -84,6 +84,15 @@ class Portal:
         ] = None
         self._streams: Set[ReceiveMsgStream] = set()
         self.actor = current_actor()
+        self._cancel_called: bool = False
+
+    @property
+    def cancel_called(self) -> bool:
+        '''
+        Same principle as ``trio.CancelScope.cancel_called``.
+
+        '''
+        return self._cancel_called
 
     async def _submit(
         self,
@@ -197,9 +206,16 @@ class Portal:
         # we'll need to .aclose all those channels here
         await self._cancel_streams()
 
-    async def cancel_actor(self):
-        """Cancel the actor on the other end of this portal.
-        """
+    async def cancel_actor(self) -> None:
+        '''
+        Cancel the actor on the other end of this portal.
+
+        That means cancelling the "actor runtime" not just any one
+        task that's running there.
+
+        '''
+        self._cancel_called = True
+
         if not self.channel.connected():
             log.cancel("This portal is already closed can't cancel")
             return False
@@ -207,8 +223,8 @@ class Portal:
         await self._cancel_streams()
 
         log.cancel(
-            f"Sending actor cancel request to {self.channel.uid} on "
-            f"{self.channel}")
+            f"Sending runtime cancel msg to {self.channel.uid} @ "
+            f"{self.channel.raddr}")
         try:
             # send cancel cmd - might not get response
             # XXX: sure would be nice to make this work with a proper shield
