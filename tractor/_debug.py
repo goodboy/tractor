@@ -350,7 +350,7 @@ async def _breakpoint(
 
                         async with ctx.open_stream() as stream:
 
-                            log.error('opened stream')
+                            log.debug('opened stream')
                             # unblock local caller
                             task_status.started()
 
@@ -564,11 +564,12 @@ async def maybe_wait_for_debugger() -> None:
         if _global_actor_in_debug:
             sub_in_debug = tuple(_global_actor_in_debug)
 
-        for _ in range(2):
+        for _ in range(1):
             with trio.CancelScope(shield=True):
 
-                log.warning(
-                    'Root polling for debug')
+                log.pdb(
+                    'Polling for debug lock'
+                )
                 await trio.sleep(0.01)
 
                 debug_complete = _no_remote_has_tty
