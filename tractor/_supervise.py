@@ -12,7 +12,7 @@ import trio
 from async_generator import asynccontextmanager
 
 from . import _debug
-from ._debug import maybe_wait_for_debugger
+from ._debug import maybe_wait_for_debugger, breakpoint
 from ._state import current_actor, is_main_process, is_root_process
 from .log import get_logger, get_loglevel
 from ._actor import Actor
@@ -48,9 +48,18 @@ class ActorNursery:
         # cancelled when their "main" result arrives
         self._cancel_after_result_on_exit: set = set()
         self.cancelled: bool = False
+        self._cancel_called: bool = False
         self._join_procs = trio.Event()
         self._all_children_reaped = trio.Event()
         self.errors = errors
+
+    @property
+    def cancel_called(self) -> bool:
+        '''
+        Same principle as ``trio.CancelScope.cancel_called``.
+
+        '''
+        return self._cancel_called
 
     async def start_actor(
         self,
@@ -177,17 +186,22 @@ class ActorNursery:
 
         If ``hard_killl`` is set to ``True`` then kill the processes
         directly without any far end graceful ``trio`` cancellation.
-        """
-        self.cancelled = True
 
+        """
         # entries may be poppsed by the spawning backend as
         # actors cancel individually
         childs = self._children.copy()
+
+        if self.cancel_called:
+            log.warning(
+                f'Nursery with children {len(childs)} already cancelled')
+            return
 
         log.cancel(
             f'Cancelling nursery in {self._actor.uid} with children\n'
             f'{childs.keys()}'
         )
+        self._cancel_called = True
 
         # wake up all spawn tasks to move on as those nursery
         # has ``__aexit__()``-ed
@@ -196,44 +210,69 @@ class ActorNursery:
         await maybe_wait_for_debugger()
 
         # one-cancels-all strat
-        async with trio.open_nursery() as cancel_sender:
-            for subactor, proc, portal in childs.values():
-                if proc.poll() is None and not portal.cancel_called:
-                    cancel_sender.start_soon(portal.cancel_actor)
+        try:
+            async with trio.open_nursery() as cancel_sender:
+                for subactor, proc, portal in childs.values():
+                    if not portal.cancel_called and portal.channel.connected():
+                        cancel_sender.start_soon(portal.cancel_actor)
+
+        except trio.MultiError as err:
+            _err = err
+            log.exception(f'{self} errors during cancel')
+            # await breakpoint()
+        #     # LOL, ok so multiprocessing requires this for some reason..
+        #     with trio.CancelScope(shield=True):
+        #         await trio.lowlevel.checkpoint()
 
         # cancel all spawner tasks
         # self._spawn_n.cancel_scope.cancel()
+        self.cancelled = True
 
     async def _handle_err(
         self,
         err: BaseException,
         portal: Optional[Portal] = None,
+        is_ctx_error: bool = False,
 
-    ) -> None:
+    ) -> bool:
         # XXX: hypothetically an error could be
         # raised and then a cancel signal shows up
         # slightly after in which case the `else:`
         # block here might not complete?  For now,
         # shield both.
-        with trio.CancelScope(shield=True):
-            etype = type(err)
+        if is_ctx_error:
+            assert not portal
+            uid = self._actor.uid
+        else:
+            uid = portal.channel.uid
 
-            if etype in (
-                trio.Cancelled,
-                KeyboardInterrupt
-            ) or (
-                is_multi_cancelled(err)
-            ):
-                log.cancel(
-                    f"Nursery for {current_actor().uid} "
-                    f"was cancelled with {etype}")
-            else:
-                log.exception(
-                    f"Nursery for {current_actor().uid} "
-                    f"errored with {err}, ")
+        if err not in self.errors.values():
+            self.errors[uid] = err
 
-            # cancel all subactors
-            await self.cancel()
+            with trio.CancelScope(shield=True):
+                etype = type(err)
+
+                if etype in (
+                    trio.Cancelled,
+                    KeyboardInterrupt
+                ) or (
+                    is_multi_cancelled(err)
+                ):
+                    log.cancel(
+                        f"Nursery for {current_actor().uid} "
+                        f"was cancelled with {etype}")
+                else:
+                    log.error(
+                        f"Nursery for {current_actor().uid} "
+                        f"errored from {uid} with\n{err}")
+
+                # cancel all subactors
+                await self.cancel()
+
+            return True
+
+        log.warning(f'Skipping duplicate error for {uid}')
+        return False
 
 
 @asynccontextmanager
@@ -251,6 +290,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
     # actors spawned in "daemon mode" (aka started using
     # ``ActorNursery.start_actor()``).
     src_err: Optional[BaseException] = None
+    nurse_err: Optional[BaseException] = None
 
     # errors from this daemon actor nursery bubble up to caller
     try:
@@ -303,9 +343,16 @@ async def _open_and_supervise_one_cancels_all_nursery(
                 src_err = err
 
                 # with trio.CancelScope(shield=True):
-                await anursery._handle_err(err)
-                raise
+                should_raise = await anursery._handle_err(err, is_ctx_error=True)
 
+                # XXX: raising here causes some cancellation
+                # / multierror tests to fail because of what appears to
+                # be double raise? we probably need to see how `trio`
+                # does this case..
+                if should_raise:
+                    raise
+
+    # except trio.MultiError as err:
     except BaseException as err:
         # nursery bubble up
         nurse_err = err
@@ -331,14 +378,14 @@ async def _open_and_supervise_one_cancels_all_nursery(
         # collected in ``errors`` so cancel all actors, summarize
         # all errors and re-raise.
 
-        if src_err and src_err not in errors.values():
-            errors[actor.uid] = src_err
-
+        # await breakpoint()
         if errors:
+            # if nurse_err or src_err:
             if anursery._children:
                 raise RuntimeError("WHERE TF IS THE ZOMBIE LORD!?!?!")
                 # with trio.CancelScope(shield=True):
                 #     await anursery.cancel()
+
 
             # use `MultiError` as needed
             if len(errors) > 1:
