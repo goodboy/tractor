@@ -74,7 +74,15 @@ def pytest_configure(config):
 @pytest.fixture(scope='session', autouse=True)
 def loglevel(request):
     orig = tractor.log._default_loglevel
-    level = tractor.log._default_loglevel = request.config.option.loglevel
+
+    level_from_cli = request.config.option.loglevel
+    # disable built-in capture when user passes the `--ll` value
+    # presuming they already know they want to see console logging
+    # and don't need it repeated by pytest.
+    if level_from_cli:
+        request.config.option.showcapture = 'no'
+
+    level = tractor.log._default_loglevel = level_from_cli
     yield level
     tractor.log._default_loglevel = orig
 
