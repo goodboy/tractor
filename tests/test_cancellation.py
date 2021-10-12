@@ -23,9 +23,9 @@ async def sleep_forever():
     await trio.sleep_forever()
 
 
-async def do_nuthin():
+async def do_nuthin(sleep=0):
     # just nick the scheduler
-    await trio.sleep(0)
+    await trio.sleep(sleep)
 
 
 @pytest.mark.parametrize(
@@ -100,6 +100,7 @@ def test_multierror(arb_addr):
 @pytest.mark.parametrize('delay', (0, 0.5))
 @pytest.mark.parametrize(
     'num_subactors', range(25, 26),
+    # 'num_subactors', range(2, 3),
 )
 def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
     """Verify we raise a ``trio.MultiError`` out of a nursery where
@@ -222,7 +223,7 @@ async def test_cancel_infinite_streamer(start_method):
         # daemon complete quickly delay while single task
         # actors error after brief delay
         (3, tractor.MultiError, AssertionError,
-         (assert_err, {'delay': 1}), (do_nuthin, {}, False)),
+         (assert_err, {'delay': 1}), (do_nuthin, {'sleep': 0}, False)),
     ],
     ids=[
         '1_run_in_actor_fails',
@@ -325,6 +326,7 @@ async def spawn_and_error(breadth, depth) -> None:
                 )
                 kwargs = {
                     'name': f'{name}_errorer_{i}',
+                    # 'delay': 0.01,
                 }
             await nursery.run_in_actor(*args, **kwargs)
 
@@ -389,13 +391,23 @@ async def test_nested_multierrors(loglevel, start_method):
                     # on windows sometimes spawning is just too slow and
                     # we get back the (sent) cancel signal instead
                     if platform.system() == 'Windows':
-                        assert (subexc.type is trio.MultiError) or (
-                            subexc.type is tractor.RemoteActorError)
+                        assert subexc.type in (
+                            trio.MultiError,
+                            tractor.RemoteActorError,
+                        )
+
                     else:
-                        assert subexc.type is trio.MultiError
+                        assert subexc.type in (
+                            trio.MultiError,
+                            trio.Cancelled,
+                            # tractor.RemoteActorError,
+                        )
                 else:
-                    assert (subexc.type is tractor.RemoteActorError) or (
-                        subexc.type is trio.Cancelled)
+                    assert subexc.type in (
+                        tractor.RemoteActorError,
+                        trio.Cancelled,
+                    )
+
         else:
             pytest.fail(f'Got no error from nursery?')
 
