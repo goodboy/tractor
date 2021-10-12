@@ -138,7 +138,7 @@ class Portal:
         resptype: str,
         first_msg: dict
     ) -> Any:
-        __tracebackhide__ = True
+        # __tracebackhide__ = True
         assert resptype == 'asyncfunc'  # single response
 
         msg = await recv_chan.receive()
@@ -154,7 +154,7 @@ class Portal:
         Return the result(s) from the remote actor's "main" task.
 
         """
-        __tracebackhide__ = True
+        # __tracebackhide__ = True
         # Check for non-rpc errors slapped on the
         # channel for which we always raise
         exc = self.channel._exc
