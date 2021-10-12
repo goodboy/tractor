@@ -58,7 +58,7 @@ async def _invoke(
     Invoke local func and deliver result(s) over provided channel.
 
     '''
-    __tracebackhide__ = True
+    # __tracebackhide__ = True
     treat_as_gen = False
 
     # possible a traceback (not sure what typing is for this..)
@@ -69,6 +69,7 @@ async def _invoke(
 
     ctx = Context(chan, cid)
     context: bool = False
+    fname = func.__name__
 
     if getattr(func, '_tractor_stream_function', False):
         # handle decorated ``@tractor.stream`` async functions
@@ -164,6 +165,7 @@ async def _invoke(
                     await chan.send({'return': await coro, 'cid': cid})
                 except trio.Cancelled as err:
                     tb = err.__traceback__
+                    raise
 
             if cs.cancelled_caught:
 
@@ -171,7 +173,6 @@ async def _invoke(
                 # so they can be unwrapped and displayed on the caller
                 # side!
 
-                fname = func.__name__
                 if ctx._cancel_called:
                     msg = f'{fname} cancelled itself'
 
@@ -192,11 +193,25 @@ async def _invoke(
             await chan.send({'functype': 'asyncfunc', 'cid': cid})
             with cancel_scope as cs:
                 task_status.started(cs)
-                await chan.send({'return': await coro, 'cid': cid})
+                try:
+                    await chan.send({'return': await coro, 'cid': cid})
+                except trio.Cancelled as err:
+                    tb = err.__traceback__
+                    raise
+                # await chan.send({'return': await coro, 'cid': cid})
 
             if cs.cancelled_caught:
+                # if cs.cancel_called:
+                if cs.cancel_called:
+                    msg = (
+                        f'{fname} was remotely cancelled by its caller '
+                        f'{ctx.chan.uid}'
+                    )
+                else:
+                    msg = f'{fname} cancelled itself'
+
                 raise ContextCancelled(
-                    'cancelled',
+                    msg,
                     suberror_type=trio.Cancelled,
                 )
 
@@ -561,7 +576,8 @@ class Actor:
         send_chan, recv_chan = self._cids2qs[(chan.uid, cid)]
         assert send_chan.cid == cid  # type: ignore
 
-        # if 'error' in msg:
+        if 'error' in msg:
+            recv_chan
         #     ctx = getattr(recv_chan, '_ctx', None)
         #     if ctx:
         #         ctx._error_from_remote_msg(msg)
@@ -1027,7 +1043,7 @@ class Actor:
             raise
 
         finally:
-            log.info("Runtime nursery complete")
+            log.runtime("root runtime nursery complete")
 
             # tear down all lifetime contexts if not in guest mode
             # XXX: should this just be in the entrypoint?
