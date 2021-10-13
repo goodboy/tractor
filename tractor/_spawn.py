@@ -21,6 +21,7 @@ from multiprocessing import forkserver  # type: ignore
 from typing import Tuple
 
 from . import _forkserver_override
+from ._debug import maybe_wait_for_debugger
 from ._state import (
     current_actor,
     is_main_process,
@@ -275,13 +276,15 @@ async def new_proc(
                 nursery.cancel_scope.cancel()
 
         finally:
+            # The "hard" reap since no actor zombies are allowed!
+            # XXX: do this **after** cancellation/tearfown to avoid
+            # killing the process too early.
             if proc.poll() is None:
-                log.cancel(f"Attempting to hard kill {proc}")
-
-                # The "hard" reap since no actor zombies are allowed!
-                # XXX: do this **after** cancellation/tearfown to avoid
-                # killing the process too early.
                 with trio.CancelScope(shield=True):
+                    # don't clobber an ongoing pdb
+                    await maybe_wait_for_debugger()
+
+                    log.cancel(f"Attempting to hard kill {proc}")
                     await do_hard_kill(proc)
 
             log.debug(f"Joined {proc}")
