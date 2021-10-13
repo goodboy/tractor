@@ -139,7 +139,7 @@ async def _acquire_debug_lock(
 
     task_name = trio.lowlevel.current_task().name
 
-    log.pdb(
+    log.debug(
         f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}"
     )
 
@@ -187,7 +187,7 @@ async def _acquire_debug_lock(
         if (
             not stats.owner
         ):
-            log.pdb(f"No more tasks waiting on tty lock! says {uid}")
+            log.debug(f"No more tasks waiting on tty lock! says {uid}")
             _no_remote_has_tty.set()
             _no_remote_has_tty = None
 
@@ -272,7 +272,7 @@ async def _hijack_stdin_for_child(
             if isinstance(err, trio.Cancelled):
                 raise
         finally:
-            log.pdb("TTY lock released, remote task:"
+            log.debug("TTY lock released, remote task:"
                     f"{task_name}:{subactor_uid}")
 
     return "pdb_unlock_complete"
@@ -314,8 +314,6 @@ async def _breakpoint(
 
             try:
                 async with get_root() as portal:
-
-                    log.pdb('got portal')
 
                     # this syncs to child's ``Context.started()`` call.
                     async with portal.open_context(
@@ -560,6 +558,12 @@ async def maybe_wait_for_debugger() -> None:
                 log.warning(
                     'Root polling for debug')
                 await trio.sleep(0.01)
+
+                # TODO: could this make things more deterministic?
+                # wait to see if a sub-actor task will be
+                # scheduled and grab the tty lock on the next
+                # tick?
+                # await trio.testing.wait_all_tasks_blocked()
 
                 debug_complete = _no_remote_has_tty
                 if (
