@@ -4,10 +4,10 @@ Message stream types and APIs.
 """
 from __future__ import annotations
 import inspect
-from contextlib import contextmanager, asynccontextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import (
-    Any, Iterator, Optional, Callable,
+    Any, Optional, Callable,
     AsyncGenerator, Dict,
     AsyncIterator
 )
@@ -153,7 +153,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         rx_chan = self._rx_chan
 
         if rx_chan._closed:
-            log.warning(f"{self} is already closed")
+            log.cancel(f"{self} is already closed")
 
             # this stream has already been closed so silently succeed as
             # per ``trio.AsyncResource`` semantics.
@@ -367,7 +367,7 @@ class Context:
         '''
         side = 'caller' if self._portal else 'callee'
 
-        log.warning(f'Cancelling {side} side of context to {self.chan.uid}')
+        log.cancel(f'Cancelling {side} side of context to {self.chan.uid}')
 
         self._cancel_called = True
 
@@ -380,7 +380,7 @@ class Context:
             cid = self.cid
             with trio.move_on_after(0.5) as cs:
                 cs.shield = True
-                log.warning(
+                log.cancel(
                     f"Cancelling stream {cid} to "
                     f"{self._portal.channel.uid}")
 
@@ -395,11 +395,11 @@ class Context:
                 # some other network error occurred.
                 # if not self._portal.channel.connected():
                 if not self.chan.connected():
-                    log.warning(
+                    log.cancel(
                         "May have failed to cancel remote task "
                         f"{cid} for {self._portal.channel.uid}")
                 else:
-                    log.warning(
+                    log.cancel(
                         "Timed out on cancelling remote task "
                         f"{cid} for {self._portal.channel.uid}")
         else:
@@ -521,9 +521,8 @@ class Context:
                     except KeyError:
 
                         if 'yield' in msg:
-                            # far end task is still streaming to us..
-                            log.warning(f'Remote stream deliverd {msg}')
-                            # do disard
+                            # far end task is still streaming to us so discard
+                            log.warning(f'Discarding stream delivered {msg}')
                             continue
 
                         elif 'stop' in msg:

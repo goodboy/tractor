@@ -2,7 +2,6 @@
 Log like a forester!
 """
 import sys
-from functools import partial
 import logging
 import colorlog  # type: ignore
 from typing import Optional
@@ -32,6 +31,7 @@ DATE_FORMAT = '%b %d %H:%M:%S'
 LEVELS = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
+    'CANCEL': 16,
     'PDB': 500,
 }
 
@@ -41,6 +41,7 @@ STD_PALETTE = {
     'PDB': 'white',
     'WARNING': 'yellow',
     'INFO': 'green',
+    'CANCEL': 'yellow',
     'RUNTIME': 'white',
     'DEBUG': 'white',
     'TRANSPORT': 'cyan',
@@ -69,11 +70,53 @@ class StackLevelAdapter(logging.LoggerAdapter):
     ) -> None:
         return self.log(15, msg)
 
+    def cancel(
+        self,
+        msg: str,
+    ) -> None:
+        return self.log(16, msg)
+
     def pdb(
         self,
         msg: str,
     ) -> None:
         return self.log(500, msg)
+
+    def log(self, level, msg, *args, **kwargs):
+        """
+        Delegate a log call to the underlying logger, after adding
+        contextual information from this adapter instance.
+        """
+        if self.isEnabledFor(level):
+            # msg, kwargs = self.process(msg, kwargs)
+            self._log(level, msg, args, **kwargs)
+
+    # LOL, the stdlib doesn't allow passing through ``stacklevel``..
+    def _log(
+        self,
+        level,
+        msg,
+        args,
+        exc_info=None,
+        extra=None,
+        stack_info=False,
+
+        # XXX: bit we added to show fileinfo from actual caller.
+        # this level then ``.log()`` then finally the caller's level..
+        stacklevel=3,
+    ):
+        """
+        Low-level log implementation, proxied to allow nested logger adapters.
+        """
+        return self.logger._log(
+            level,
+            msg,
+            args,
+            exc_info=exc_info,
+            extra=self.extra,
+            stack_info=stack_info,
+            stacklevel=stacklevel,
+        )
 
 
 def get_logger(
