@@ -10,6 +10,7 @@ from typing import Tuple, Optional, Callable, AsyncIterator
 
 import tractor
 import trio
+from trio_typing import TaskStatus
 
 from .log import get_logger
 from . import _state
@@ -284,8 +285,8 @@ async def wait_for_parent_stdin_hijack(
     task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED
 ):
     '''
-    Connect to the root actor via a ctx and invoke a task which locks a root-local
-    TTY lock.
+    Connect to the root actor via a ctx and invoke a task which locks
+    a root-local TTY lock.
 
     This function is used by any sub-actor to acquire mutex access to
     pdb and the root's TTY for interactive debugging (see below inside
@@ -544,7 +545,7 @@ async def _maybe_enter_pm(err):
 
 @acm
 async def acquire_debug_lock(
-    subactor: Actor,
+    subactor: 'Actor',  # noqa
 ) -> None:
     '''
     Grab root's debug lock on entry, release on exit.
