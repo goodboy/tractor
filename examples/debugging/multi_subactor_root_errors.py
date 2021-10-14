@@ -1,3 +1,8 @@
+'''
+Test that a nested nursery will avoid clobbering
+the debugger latched by a broken child.
+
+'''
 import trio
 import tractor
 
@@ -35,6 +40,7 @@ async def main():
     """
     async with tractor.open_nursery(
         debug_mode=True,
+        # loglevel='cancel',
     ) as n:
 
         # spawn both actors

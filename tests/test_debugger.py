@@ -236,7 +236,8 @@ def test_subactor_breakpoint(spawn):
 
 
 def test_multi_subactors(spawn):
-    """Multiple subactors, both erroring and breakpointing as well as
+    """
+    Multiple subactors, both erroring and breakpointing as well as
     a nested subactor erroring.
     """
     child = spawn(r'multi_subactors')
@@ -259,6 +260,7 @@ def test_multi_subactors(spawn):
     # first name_error failure
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
+    assert "Attaching to pdb in crashed actor: ('name_error'" in before
     assert "NameError" in before
 
     # continue again
@@ -267,6 +269,7 @@ def test_multi_subactors(spawn):
     # 2nd name_error failure
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
+    assert "Attaching to pdb in crashed actor: ('name_error_1'" in before
     assert "NameError" in before
 
     # breakpoint loop should re-engage
@@ -274,6 +277,19 @@ def test_multi_subactors(spawn):
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
     assert "Attaching pdb to actor: ('breakpoint_forever'" in before
+
+    # wait for spawn error to show up
+    while 'breakpoint_forever' in before:
+        child.sendline('c')
+        child.expect(r"\(Pdb\+\+\)")
+        before = str(child.before.decode())
+
+    # 2nd depth nursery should trigger
+    # child.sendline('c')
+    # child.expect(r"\(Pdb\+\+\)")
+    # before = str(child.before.decode())
+    assert "Attaching to pdb in crashed actor: ('spawn_error'" in before
+    assert "RemoteActorError: ('name_error_1'" in before
 
     # now run some "continues" to show re-entries
     for _ in range(5):
@@ -284,16 +300,24 @@ def test_multi_subactors(spawn):
     child.sendline('q')
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
+    # debugger attaches to root
     assert "Attaching to pdb in crashed actor: ('root'" in before
+    # expect a multierror with exceptions for each sub-actor
     assert "RemoteActorError: ('breakpoint_forever'" in before
+    assert "RemoteActorError: ('name_error'" in before
+    assert "RemoteActorError: ('spawn_error'" in before
+    assert "RemoteActorError: ('name_error_1'" in before
     assert 'bdb.BdbQuit' in before
 
     # process should exit
     child.sendline('c')
     child.expect(pexpect.EOF)
-
+    # repeat of previous multierror for final output
     before = str(child.before.decode())
     assert "RemoteActorError: ('breakpoint_forever'" in before
+    assert "RemoteActorError: ('name_error'" in before
+    assert "RemoteActorError: ('spawn_error'" in before
+    assert "RemoteActorError: ('name_error_1'" in before
     assert 'bdb.BdbQuit' in before
 
 
@@ -387,16 +411,29 @@ def test_multi_subactors_root_errors(spawn):
     before = str(child.before.decode())
     assert "NameError: name 'doggypants' is not defined" in before
 
-    # continue again
+    # continue again to catch 2nd name error from
+    # actor 'name_error_1' (which is 2nd depth).
     child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
-
-    # should now get attached in root with assert error
     before = str(child.before.decode())
+    assert "Attaching to pdb in crashed actor: ('name_error_1'" in before
+    assert "NameError" in before
 
-    # should have come just after priot prompt
+    child.sendline('c')
+    child.expect(r"\(Pdb\+\+\)")
+    before = str(child.before.decode())
+    assert "Attaching to pdb in crashed actor: ('spawn_error'" in before
+    # boxed error from previous step
+    assert "RemoteActorError: ('name_error_1'" in before
+    assert "NameError" in before
+
+    child.sendline('c')
+    child.expect(r"\(Pdb\+\+\)")
+    before = str(child.before.decode())
     assert "Attaching to pdb in crashed actor: ('root'" in before
-    assert "AssertionError" in before
+    # boxed error from first level failure
+    assert "RemoteActorError: ('name_error'" in before
+    assert "NameError" in before
 
     # warnings assert we probably don't need
     # assert "Cancelling nursery in ('spawn_error'," in before
@@ -406,6 +443,7 @@ def test_multi_subactors_root_errors(spawn):
     child.expect(pexpect.EOF)
 
     before = str(child.before.decode())
+    # error from root actor and root task that created top level nursery
     assert "AssertionError" in before
 
 
