@@ -249,7 +249,7 @@ async def new_proc(
                     if is_root_process():
                         await maybe_wait_for_debugger()
                     else:
-                        async with acquire_debug_lock():
+                        async with acquire_debug_lock(uid):
                             # soft wait on the proc to terminate
                             with trio.move_on_after(0.5):
                                 await proc.wait()
@@ -315,7 +315,7 @@ async def new_proc(
                 if cancel_during_spawn:
 
                     # Try again to avoid TTY clobbering.
-                    async with acquire_debug_lock():
+                    async with acquire_debug_lock(uid):
                         with trio.move_on_after(0.5):
                             await proc.wait()
 

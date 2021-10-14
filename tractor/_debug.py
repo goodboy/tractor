@@ -6,7 +6,13 @@ import bdb
 import sys
 from functools import partial
 from contextlib import asynccontextmanager as acm
-from typing import Tuple, Optional, Callable, AsyncIterator
+from typing import (
+    Tuple,
+    Optional,
+    Callable,
+    AsyncIterator,
+    AsyncGenerator,
+)
 
 import tractor
 import trio
@@ -281,7 +287,7 @@ async def _hijack_stdin_for_child(
 
 
 async def wait_for_parent_stdin_hijack(
-    actor: 'Actor',  # noqa
+    actor_uid: Tuple[str, str],
     task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED
 ):
     '''
@@ -307,7 +313,7 @@ async def wait_for_parent_stdin_hijack(
                 async with portal.open_context(
 
                     tractor._debug._hijack_stdin_for_child,
-                    subactor_uid=actor.uid,
+                    subactor_uid=actor_uid,
 
                 ) as (ctx, val):
 
@@ -319,6 +325,7 @@ async def wait_for_parent_stdin_hijack(
                         task_status.started(cs)
 
                         try:
+                            assert _local_pdb_complete
                             await _local_pdb_complete.wait()
 
                         finally:
@@ -333,10 +340,10 @@ async def wait_for_parent_stdin_hijack(
             log.warning('Root actor cancelled debug lock')
 
         finally:
-            log.debug(f"Exiting debugger for actor {actor.uid}")
+            log.debug(f"Exiting debugger for actor {actor_uid}")
             global _local_task_in_debug
             _local_task_in_debug = None
-            log.debug(f"Child {actor.uid} released parent stdio lock")
+            log.debug(f"Child {actor_uid} released parent stdio lock")
 
 
 async def _breakpoint(
@@ -545,8 +552,8 @@ async def _maybe_enter_pm(err):
 
 @acm
 async def acquire_debug_lock(
-    subactor: 'Actor',  # noqa
-) -> None:
+    subactor_uid: Tuple[str, str]
+) -> AsyncGenerator[None, tuple]:
     '''
     Grab root's debug lock on entry, release on exit.
 
@@ -554,9 +561,9 @@ async def acquire_debug_lock(
     async with trio.open_nursery() as n:
         cs = await n.start(
             wait_for_parent_stdin_hijack,
-            subactor,
+            subactor_uid,
         )
-        yield
+        yield None
         cs.cancel()
 
 
