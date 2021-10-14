@@ -102,6 +102,7 @@ def _run_asyncio_task(
         except BaseException as err:
             aio_err = err
             from_aio._err = aio_err
+            raise
         finally:
             aio_task_complete.set()
             if result != orig and aio_err is None:
@@ -119,9 +120,11 @@ def _run_asyncio_task(
     else:
         raise TypeError(f"No support for invoking {coro}")
 
-    def cancel_trio(task):
-        """Cancel the calling ``trio`` task on error.
-        """
+    def cancel_trio(task) -> None:
+        '''
+        Cancel the calling ``trio`` task on error.
+
+        '''
         nonlocal aio_err
         try:
             aio_err = task.exception()
