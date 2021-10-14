@@ -5,7 +5,7 @@ Multi-core debugging for da peeps!
 import bdb
 import sys
 from functools import partial
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager as acm
 from typing import Tuple, Optional, Callable, AsyncIterator
 
 import tractor
@@ -122,7 +122,7 @@ class PdbwTeardown(pdbpp.Pdb):
 #                 break
 
 
-@asynccontextmanager
+@acm
 async def _acquire_debug_lock(
     uid: Tuple[str, str]
 
@@ -542,30 +542,46 @@ async def _maybe_enter_pm(err):
         return False
 
 
-async def maybe_wait_for_debugger() -> None:
+@acm
+async def acquire_debug_lock(
+    subactor: Actor,
+) -> None:
+    '''
+    Grab root's debug lock on entry, release on exit.
 
-    global _no_remote_has_tty, _global_actor_in_debug, _wait_all_tasks_lock
+    '''
+    async with trio.open_nursery() as n:
+        cs = await n.start(
+            wait_for_parent_stdin_hijack,
+            subactor,
+        )
+        yield
+        cs.cancel()
 
-    # If we error in the root but the debugger is
-    # engaged we don't want to prematurely kill (and
-    # thus clobber access to) the local tty since it
-    # will make the pdb repl unusable.
-    # Instead try to wait for pdb to be released before
-    # tearing down.
+
+async def maybe_wait_for_debugger(
+    poll_steps: int = 2,
+    poll_delay: float = 0.1,
+) -> None:
+
+    if not _state.debug_mode():
+        return
+
     if (
-        _state.debug_mode() or
         is_root_process()
     ):
+        global _no_remote_has_tty, _global_actor_in_debug, _wait_all_tasks_lock
 
-        # TODO: could this make things more deterministic?
-        # wait to see if a sub-actor task will be
-        # scheduled and grab the tty lock on the next
-        # tick?
-        # await trio.testing.wait_all_tasks_blocked()
+        # If we error in the root but the debugger is
+        # engaged we don't want to prematurely kill (and
+        # thus clobber access to) the local tty since it
+        # will make the pdb repl unusable.
+        # Instead try to wait for pdb to be released before
+        # tearing down.
 
         sub_in_debug = None
 
-        for _ in range(2):
+        for _ in range(poll_steps):
 
             if _global_actor_in_debug:
                 sub_in_debug = tuple(_global_actor_in_debug)
@@ -574,7 +590,7 @@ async def maybe_wait_for_debugger() -> None:
                 'Root polling for debug')
 
             with trio.CancelScope(shield=True):
-                await trio.sleep(0.1)
+                await trio.sleep(poll_delay)
 
                 # TODO: could this make things more deterministic?  wait
                 # to see if a sub-actor task will be scheduled and grab
@@ -594,7 +610,7 @@ async def maybe_wait_for_debugger() -> None:
 
                     await debug_complete.wait()
 
-                await trio.sleep(0.1)
+                await trio.sleep(poll_delay)
                 continue
         else:
             log.warning(
