@@ -410,7 +410,7 @@ async def _breakpoint(
         with trio.CancelScope(shield=True):
             await actor._service_n.start(
                 wait_for_parent_stdin_hijack,
-                actor,
+                actor.uid,
             )
 
     elif is_root_process():
@@ -552,7 +552,7 @@ async def _maybe_enter_pm(err):
 
 @acm
 async def acquire_debug_lock(
-    subactor_uid: Tuple[str, str]
+    subactor_uid: Tuple[str, str],
 ) -> AsyncGenerator[None, tuple]:
     '''
     Grab root's debug lock on entry, release on exit.
