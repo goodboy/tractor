@@ -1,5 +1,6 @@
 """
 Cancellation and error propagation
+
 """
 import os
 import signal
@@ -377,10 +378,13 @@ async def test_nested_multierrors(loglevel, start_method):
 
                     elif isinstance(subexc, trio.MultiError):
                         for subsub in subexc.exceptions:
-                            assert subsub.type in (
-                                tractor.RemoteActorError,
+
+                            if subsub in (tractor.RemoteActorError,):
+                                subsub = subsub.type
+
+                            assert subsub in (
                                 trio.Cancelled,
-                                trio.MultiError
+                                trio.MultiError,
                             )
                 else:
                     assert isinstance(subexc, tractor.RemoteActorError)
