@@ -382,7 +382,7 @@ async def test_nested_multierrors(loglevel, start_method):
                             if subsub in (tractor.RemoteActorError,):
                                 subsub = subsub.type
 
-                            assert subsub in (
+                            assert type(subsub) in (
                                 trio.Cancelled,
                                 trio.MultiError,
                             )
@@ -394,13 +394,14 @@ async def test_nested_multierrors(loglevel, start_method):
                     # on windows sometimes spawning is just too slow and
                     # we get back the (sent) cancel signal instead
                     if platform.system() == 'Windows':
-                        assert (subexc.type is trio.MultiError) or (
-                            subexc.type is tractor.RemoteActorError)
+                        if isinstance(subexc, tractor.RemoteActorError):
+                            assert subexc.type in (trio.MultiError, tractor.RemoteActorError)
+                        else:
+                            assert isinstance(subexc, trio.MultiError)
                     else:
                         assert subexc.type is trio.MultiError
                 else:
-                    assert (subexc.type is tractor.RemoteActorError) or (
-                        subexc.type is trio.Cancelled)
+                    assert subexc.type in (tractor.RemoteActorError, trio.Cancelled)
 
 
 @no_windows
