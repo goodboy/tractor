@@ -326,8 +326,11 @@ async def new_proc(
                     await do_hard_kill(proc)
 
             log.debug(f"Joined {proc}")
-            # pop child entry to indicate we no longer managing this subactor
-            subactor, proc, portal = actor_nursery._children.pop(subactor.uid)
+
+            if not cancelled_during_spawn:
+                # pop child entry to indicate we no longer managing this
+                # subactor
+                actor_nursery._children.pop(subactor.uid)
 
     else:
         # `multiprocessing`
