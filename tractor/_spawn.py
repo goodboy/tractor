@@ -229,7 +229,7 @@ async def new_proc(
                 subactor.loglevel
             ]
 
-        cancel_during_spawn: bool = False
+        cancelled_during_spawn: bool = False
         try:
             proc = await trio.open_process(spawn_cmd)
 
@@ -242,8 +242,7 @@ async def new_proc(
                 event, chan = await actor_nursery._actor.wait_for_peer(
                     subactor.uid)
             except trio.Cancelled:
-                cancel_during_spawn = True
-
+                cancelled_during_spawn = True
                 # we may cancel before the child connects back in which
                 # case avoid clobbering the pdb tty.
                 if debug_mode():
@@ -312,14 +311,16 @@ async def new_proc(
             log.cancel(f'Hard reap sequence starting for {uid}')
 
             with trio.CancelScope(shield=True):
-                # don't clobber an ongoing pdb
-                await maybe_wait_for_debugger()
 
-                # Try again to avoid TTY clobbering.
-                if cancel_during_spawn and debug_mode():
+                # don't clobber an ongoing pdb
+                if cancelled_during_spawn:
+                    # Try again to avoid TTY clobbering.
                     async with acquire_debug_lock(uid):
                         with trio.move_on_after(0.5):
                             await proc.wait()
+
+                if is_root_process():
+                    await maybe_wait_for_debugger()
 
                 if proc.poll() is None:
                     log.cancel(f"Attempting to hard kill {proc}")
