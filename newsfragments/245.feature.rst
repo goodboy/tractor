@@ -8,6 +8,6 @@ higher priority. Previously, it was possible that task cancel requests
 could actually also themselves be cancelled if a "actor-runtime" cancel
 request was received (can happen during messy multi actor crashes that
 propagate). Instead cancels now block the msg loop until serviced and
-a response is relayed back to the requester. This alsoa allowed for
+a response is relayed back to the requester. This also allows for
 improved debugger support since we have determinism guarantees about
 which processes must wait before hard killing their children.
