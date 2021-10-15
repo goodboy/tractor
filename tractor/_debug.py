@@ -21,7 +21,7 @@ from trio_typing import TaskStatus
 from .log import get_logger
 from . import _state
 from ._discovery import get_root
-from ._state import is_root_process
+from ._state import is_root_process, debug_mode
 from ._exceptions import is_multi_cancelled
 
 try:
@@ -525,7 +525,7 @@ post_mortem = partial(
 
 async def _maybe_enter_pm(err):
     if (
-        _state.debug_mode()
+        debug_mode()
 
         # NOTE: don't enter debug mode recursively after quitting pdb
         # Iow, don't re-enter the repl if the `quit` command was issued
@@ -572,7 +572,7 @@ async def maybe_wait_for_debugger(
     poll_delay: float = 0.1,
 ) -> None:
 
-    if not _state.debug_mode():
+    if not debug_mode():
         return
 
     if (

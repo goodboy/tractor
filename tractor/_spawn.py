@@ -30,6 +30,7 @@ from ._state import (
     current_actor,
     is_main_process,
     is_root_process,
+    debug_mode,
 )
 
 from .log import get_logger
@@ -242,17 +243,19 @@ async def new_proc(
                     subactor.uid)
             except trio.Cancelled:
                 cancel_during_spawn = True
+
                 # we may cancel before the child connects back in which
                 # case avoid clobbering the pdb tty.
-                with trio.CancelScope(shield=True):
-                    # don't clobber an ongoing pdb
-                    if is_root_process():
-                        await maybe_wait_for_debugger()
-                    else:
-                        async with acquire_debug_lock(uid):
-                            # soft wait on the proc to terminate
-                            with trio.move_on_after(0.5):
-                                await proc.wait()
+                if debug_mode():
+                    with trio.CancelScope(shield=True):
+                        # don't clobber an ongoing pdb
+                        if is_root_process():
+                            await maybe_wait_for_debugger()
+                        else:
+                            async with acquire_debug_lock(uid):
+                                # soft wait on the proc to terminate
+                                with trio.move_on_after(0.5):
+                                    await proc.wait()
                 raise
 
             portal = Portal(chan)
@@ -312,9 +315,8 @@ async def new_proc(
                 # don't clobber an ongoing pdb
                 await maybe_wait_for_debugger()
 
-                if cancel_during_spawn:
-
-                    # Try again to avoid TTY clobbering.
+                # Try again to avoid TTY clobbering.
+                if cancel_during_spawn and debug_mode():
                     async with acquire_debug_lock(uid):
                         with trio.move_on_after(0.5):
                             await proc.wait()
