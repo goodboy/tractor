@@ -1,0 +1,13 @@
+Change the core message loop to handle task and actor-runtime cancel
+requests immediately instead of scheduling them as is done for rpc-task
+requests.
+
+In order to obtain more reliable teardown mechanics for (complex) actor
+trees it's important that we specially treat cancel requests as having
+higher priority. Previously, it was possible that task cancel requests
+could actually also themselves be cancelled if a "actor-runtime" cancel
+request was received (can happen during messy multi actor crashes that
+propagate). Instead cancels now block the msg loop until serviced and
+a response is relayed back to the requester. This alsoa allowed for
+improved debugger support since we have determinism guarantees about
+which processes must wait before hard killing their children.
