@@ -25,7 +25,8 @@ async def open_actor_cluster(
 ]:
 
     portals: dict[str, tractor.Portal] = {}
-    uid = tractor.current_actor().uid
+    uid = __import__('random').randint(0, 2 ** 16)
+    # uid = tractor.current_actor().uid
 
     if not names:
         suffix = '_'.join(uid)
