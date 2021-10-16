@@ -35,6 +35,7 @@ setup(
     platforms=['linux', 'windows'],
     packages=[
         'tractor',
+        'tractor.trionics',
         'tractor.testing',
     ],
     install_requires=[
