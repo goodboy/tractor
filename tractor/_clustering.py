@@ -51,3 +51,5 @@ async def open_actor_cluster(
 
         assert len(portals) == count
         yield portals
+
+        await an.cancel()
