@@ -13,12 +13,12 @@ import trio
 T = TypeVar("T")
 
 
-async def _enter_and_sleep(
+async def _enter_and_wait(
 
     mngr: AsyncContextManager[T],
     to_yield: dict[int, T],
     all_entered: trio.Event,
-    # task_status: TaskStatus[T] = trio.TASK_STATUS_IGNORED,
+    teardown_trigger: trio.Event,
 
 ) -> T:
     '''Open the async context manager deliver it's value
@@ -31,14 +31,14 @@ async def _enter_and_sleep(
         if all(to_yield.values()):
             all_entered.set()
 
-        # sleep until cancelled
-        await trio.sleep_forever()
+        await teardown_trigger.wait()
 
 
 @acm
 async def async_enter_all(
 
     *mngrs: tuple[AsyncContextManager[T]],
+    teardown_trigger: trio.Event,
 
 ) -> tuple[T]:
 
@@ -49,16 +49,13 @@ async def async_enter_all(
     async with trio.open_nursery() as n:
         for mngr in mngrs:
             n.start_soon(
-                _enter_and_sleep,
+                _enter_and_wait,
                 mngr,
                 to_yield,
                 all_entered,
+                teardown_trigger,
             )
 
         # deliver control once all managers have started up
         await all_entered.wait()
         yield tuple(to_yield.values())
-
-        # tear down all sleeper tasks thus triggering individual
-        # mngr ``__aexit__()``s.
-        n.cancel_scope.cancel()
