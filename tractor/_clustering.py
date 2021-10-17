@@ -18,6 +18,8 @@ async def open_actor_cluster(
     modules: list[str],
     count: int = cpu_count(),
     names: Optional[list[str]] = None,
+    start_method: Optional[str] = None,
+    hard_kill: bool = False,
 
 ) -> AsyncGenerator[
     list[str],
@@ -36,7 +38,7 @@ async def open_actor_cluster(
         raise ValueError(
             'Number of names is {len(names)} but count it {count}')
 
-    async with tractor.open_nursery() as an:
+    async with tractor.open_nursery(start_method=start_method) as an:
         async with trio.open_nursery() as n:
             for index, key in zip(range(count), names):
 
@@ -52,4 +54,4 @@ async def open_actor_cluster(
         assert len(portals) == count
         yield portals
 
-        await an.cancel()
+        await an.cancel(hard_kill=hard_kill)
