@@ -12,6 +12,7 @@ import trio
 from async_generator import asynccontextmanager
 
 from . import _debug
+from ._debug import maybe_wait_for_debugger
 from ._state import current_actor, is_main_process, is_root_process
 from .log import get_logger, get_loglevel
 from ._actor import Actor
@@ -280,26 +281,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # will make the pdb repl unusable.
                     # Instead try to wait for pdb to be released before
                     # tearing down.
-                    if is_root_process():
-
-                        # TODO: could this make things more deterministic?
-                        # wait to see if a sub-actor task will be
-                        # scheduled and grab the tty lock on the next
-                        # tick?
-                        # await trio.testing.wait_all_tasks_blocked()
-
-                        debug_complete = _debug._no_remote_has_tty
-                        if (
-                            debug_complete and
-                            not debug_complete.is_set()
-                        ):
-                            log.warning(
-                                'Root has errored but pdb is in use by '
-                                f'child {_debug._global_actor_in_debug}\n'
-                                'Waiting on tty lock to release..')
-
-                            # with trio.CancelScope(shield=True):
-                            await debug_complete.wait()
+                    await maybe_wait_for_debugger()
 
                     # if the caller's scope errored then we activate our
                     # one-cancels-all supervisor strategy (don't

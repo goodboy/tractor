@@ -1,5 +1,6 @@
 """
 Cancellation and error propagation
+
 """
 import os
 import signal
@@ -365,7 +366,8 @@ async def test_nested_multierrors(loglevel, start_method):
                     # to happen before an actor is spawned
                     if isinstance(subexc, trio.Cancelled):
                         continue
-                    else:
+
+                    elif isinstance(subexc, tractor.RemoteActorError):
                         # on windows it seems we can't exactly be sure wtf
                         # will happen..
                         assert subexc.type in (
@@ -373,6 +375,17 @@ async def test_nested_multierrors(loglevel, start_method):
                             trio.Cancelled,
                             trio.MultiError
                         )
+
+                    elif isinstance(subexc, trio.MultiError):
+                        for subsub in subexc.exceptions:
+
+                            if subsub in (tractor.RemoteActorError,):
+                                subsub = subsub.type
+
+                            assert type(subsub) in (
+                                trio.Cancelled,
+                                trio.MultiError,
+                            )
                 else:
                     assert isinstance(subexc, tractor.RemoteActorError)
 
@@ -381,13 +394,14 @@ async def test_nested_multierrors(loglevel, start_method):
                     # on windows sometimes spawning is just too slow and
                     # we get back the (sent) cancel signal instead
                     if platform.system() == 'Windows':
-                        assert (subexc.type is trio.MultiError) or (
-                            subexc.type is tractor.RemoteActorError)
+                        if isinstance(subexc, tractor.RemoteActorError):
+                            assert subexc.type in (trio.MultiError, tractor.RemoteActorError)
+                        else:
+                            assert isinstance(subexc, trio.MultiError)
                     else:
                         assert subexc.type is trio.MultiError
                 else:
-                    assert (subexc.type is tractor.RemoteActorError) or (
-                        subexc.type is trio.Cancelled)
+                    assert subexc.type in (tractor.RemoteActorError, trio.Cancelled)
 
 
 @no_windows
@@ -447,6 +461,7 @@ def test_cancel_via_SIGINT_other_task(
 
     with pytest.raises(KeyboardInterrupt):
         trio.run(main)
+
 
 async def spin_for(period=3):
     "Sync sleep."

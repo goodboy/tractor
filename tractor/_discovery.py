@@ -44,7 +44,7 @@ async def get_arbiter(
 @asynccontextmanager
 async def get_root(
     **kwargs,
-) -> typing.AsyncGenerator[Union[Portal, LocalPortal], None]:
+) -> typing.AsyncGenerator[Portal, None]:
 
     host, port = _runtime_vars['_root_mailbox']
     assert host is not None

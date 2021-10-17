@@ -4,5 +4,5 @@ now and use the default `fragment set`_.
 
 
 .. _towncrier docs: https://github.com/twisted/towncrier#quick-start
-.. _pluggy release readme: https://github.com/twisted/towncrier#quick-start
+.. _pluggy release readme: https://github.com/pytest-dev/pluggy/blob/main/changelog/README.rst
 .. _fragment set: https://github.com/twisted/towncrier#news-fragments

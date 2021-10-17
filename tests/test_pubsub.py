@@ -180,6 +180,7 @@ def test_multi_actor_subs_arbiter_pub(
                     'streamer',
                     enable_modules=[__name__],
                 )
+                name = 'streamer'
 
             even_portal = await n.run_in_actor(
                 subs,
