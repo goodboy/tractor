@@ -2,8 +2,8 @@
 Async context manager primitives with hard ``trio``-aware semantics
 
 '''
-from typing import AsyncContextManager
-from typing import TypeVar
+from typing import AsyncContextManager, AsyncGenerator
+from typing import TypeVar, Sequence
 from contextlib import asynccontextmanager as acm
 
 import trio
@@ -14,21 +14,19 @@ T = TypeVar("T")
 
 
 async def _enter_and_wait(
-
     mngr: AsyncContextManager[T],
-    to_yield: dict[int, T],
+    unwrapped: dict[int, T],
     all_entered: trio.Event,
     teardown_trigger: trio.Event,
-
-) -> T:
+) -> None:
     '''Open the async context manager deliver it's value
     to this task's spawner and sleep until cancelled.
 
     '''
     async with mngr as value:
-        to_yield[id(mngr)] = value
+        unwrapped[id(mngr)] = value
 
-        if all(to_yield.values()):
+        if all(unwrapped.values()):
             all_entered.set()
 
         await teardown_trigger.wait()
@@ -36,13 +34,14 @@ async def _enter_and_wait(
 
 @acm
 async def async_enter_all(
-
-    *mngrs: tuple[AsyncContextManager[T]],
+    mngrs: Sequence[AsyncContextManager[T]],
     teardown_trigger: trio.Event,
-
-) -> tuple[T]:
-
-    to_yield = {}.fromkeys(id(mngr) for mngr in mngrs)
+) -> AsyncGenerator[tuple[T, ...], None]:
+    """This async context manager expects a 'teardown_trigger' from the
+    outside world which will be used internally to gracefully teardown
+    individual context managers.
+    """
+    unwrapped = {}.fromkeys(id(mngr) for mngr in mngrs)
 
     all_entered = trio.Event()
 
@@ -51,11 +50,12 @@ async def async_enter_all(
             n.start_soon(
                 _enter_and_wait,
                 mngr,
-                to_yield,
+                unwrapped,
                 all_entered,
                 teardown_trigger,
             )
 
         # deliver control once all managers have started up
         await all_entered.wait()
-        yield tuple(to_yield.values())
+
+        yield tuple(unwrapped.values())
