@@ -14,25 +14,20 @@ import tractor
 
 @acm
 async def open_actor_cluster(
-
     modules: list[str],
     count: int = cpu_count(),
     names: Optional[list[str]] = None,
     start_method: Optional[str] = None,
     hard_kill: bool = False,
-
 ) -> AsyncGenerator[
     list[str],
     dict[str, tractor.Portal]
 ]:
 
     portals: dict[str, tractor.Portal] = {}
-    uid = str(__import__('random').randint(0, 2 ** 16))
-    # uid = tractor.current_actor().uid
 
     if not names:
-        suffix = '_'.join(uid)
-        names = [f'worker_{i}.' + suffix for i in range(count)]
+        names = [f'worker_{i}' for i in range(count)]
 
     if not len(names) == count:
         raise ValueError(
@@ -40,16 +35,17 @@ async def open_actor_cluster(
 
     async with tractor.open_nursery(start_method=start_method) as an:
         async with trio.open_nursery() as n:
-            for index, key in zip(range(count), names):
+            uid = tractor.current_actor().uid
 
-                async def start(i) -> None:
-                    key = f'worker_{i}.' + '_'.join(uid)
-                    portals[key] = await an.start_actor(
-                        enable_modules=modules,
-                        name=key,
-                    )
+            async def _start(name: str) -> None:
+                name = f'{name}.{uid}'
+                portals[name] = await an.start_actor(
+                    enable_modules=modules,
+                    name=name,
+                )
 
-                n.start_soon(start, index)
+            for name in names:
+                n.start_soon(_start, name)
 
         assert len(portals) == count
         yield portals
