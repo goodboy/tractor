@@ -23,19 +23,15 @@ async def worker(ctx: tractor.Context) -> None:
 
 @tractor_test
 async def test_streaming_to_actor_cluster() -> None:
-    teardown_trigger = trio.Event()
     async with (
         open_actor_cluster(modules=[__name__]) as portals,
         async_enter_all(
             mngrs=[p.open_context(worker) for p in portals.values()],
-            teardown_trigger=teardown_trigger,
         ) as contexts,
         async_enter_all(
             mngrs=[ctx[0].open_stream() for ctx in contexts],
-            teardown_trigger=teardown_trigger,
         ) as streams,
     ):
         with trio.move_on_after(1):
             for stream in itertools.cycle(streams):
                 await stream.send(MESSAGE)
-        teardown_trigger.set()
