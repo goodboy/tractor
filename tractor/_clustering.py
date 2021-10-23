@@ -20,8 +20,8 @@ async def open_actor_cluster(
     start_method: Optional[str] = None,
     hard_kill: bool = False,
 ) -> AsyncGenerator[
-    list[str],
-    dict[str, tractor.Portal]
+    dict[str, tractor.Portal],
+    None,
 ]:
 
     portals: dict[str, tractor.Portal] = {}
