@@ -4,6 +4,39 @@ Changelog
 
 .. towncrier release notes start
 
+tractor 0.1.0a2 (2021-10-23)tractor 0.1.0a2 (2021-10-23)
+============================
+
+Features
+--------
+
+- Switch to using the ``trio`` process spawner by default on windows.
+
+  This gets windows users debugger support (manually tested) and in
+  general a more resilient (nested) actor tree implementation. (#166)
+- Add optional `msgspec <https://jcristharif.com/msgspec/>`_ support over
+  TCP streams as an alernative, faster MessagePack codec.
+
+  This get's us moving toward typed messaging/IPC protocols. Further,
+  ``msgspec`` structs may be a valid tool to start for formalizing our "SC
+  dialog un-protocol" messages as described in `#36
+  <https://github.com/goodboy/tractor/issues/36>`_`. (#214)
+- Change the core message loop to handle task and actor-runtime cancel
+  requests immediately instead of scheduling them as is done for rpc-task
+  requests.
+
+  In order to obtain more reliable teardown mechanics for (complex) actor
+  trees it's important that we specially treat cancel requests as having
+  higher priority. Previously, it was possible that task cancel requests
+  could actually also themselves be cancelled if a "actor-runtime" cancel
+  request was received (can happen during messy multi actor crashes that
+  propagate). Instead cancels now block the msg loop until serviced and
+  a response is relayed back to the requester. This also allows for
+  improved debugger support since we have determinism guarantees about
+  which processes must wait before hard killing their children. (#245)
+- Drop Python 3.8 support in favor of rolling with two latest releases for the time being. (#248)
+
+
 tractor 0.1.0a2 (2021-09-07)
 ============================
 
