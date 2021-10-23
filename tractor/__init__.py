@@ -4,6 +4,7 @@ tractor: An actor model micro-framework built on
 """
 from trio import MultiError
 
+from ._clustering import open_actor_cluster
 from ._ipc import Channel
 from ._streaming import (
     Context,
@@ -39,6 +40,7 @@ __all__ = [
     'get_arbiter',
     'is_root_process',
     'msg',
+    'open_actor_cluster',
     'open_nursery',
     'open_root_actor',
     'Portal',
