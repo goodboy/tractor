@@ -558,6 +558,9 @@ async def acquire_debug_lock(
     Grab root's debug lock on entry, release on exit.
 
     '''
+    if not debug_mode():
+        return
+
     async with trio.open_nursery() as n:
         cs = await n.start(
             wait_for_parent_stdin_hijack,
