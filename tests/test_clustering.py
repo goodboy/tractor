@@ -3,7 +3,7 @@ import itertools
 import trio
 import tractor
 from tractor import open_actor_cluster
-from tractor.trionics import async_enter_all
+from tractor.trionics import gather_contexts
 
 from conftest import tractor_test
 
@@ -25,10 +25,10 @@ async def worker(ctx: tractor.Context) -> None:
 async def test_streaming_to_actor_cluster() -> None:
     async with (
         open_actor_cluster(modules=[__name__]) as portals,
-        async_enter_all(
+        gather_contexts(
             mngrs=[p.open_context(worker) for p in portals.values()],
         ) as contexts,
-        async_enter_all(
+        gather_contexts(
             mngrs=[ctx[0].open_stream() for ctx in contexts],
         ) as streams,
     ):

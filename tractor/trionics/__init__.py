@@ -2,12 +2,12 @@
 Sugary patterns for trio + tractor designs.
 
 '''
-from ._mngrs import async_enter_all
+from ._mngrs import gather_contexts
 from ._broadcast import broadcast_receiver, BroadcastReceiver, Lagged
 
 
 __all__ = [
-    'async_enter_all',
+    'gather_contexts',
     'broadcast_receiver',
     'BroadcastReceiver',
     'Lagged',
