@@ -19,8 +19,8 @@ import trio
 from ._ipc import Channel
 from ._exceptions import unpack_error, ContextCancelled
 from ._state import current_actor
-from ._broadcast import broadcast_receiver, BroadcastReceiver
 from .log import get_logger
+from .trionics import broadcast_receiver, BroadcastReceiver
 
 
 log = get_logger(__name__)

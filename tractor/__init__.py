@@ -4,6 +4,7 @@ tractor: An actor model micro-framework built on
 """
 from trio import MultiError
 
+from ._clustering import open_actor_cluster
 from ._ipc import Channel
 from ._streaming import (
     Context,
@@ -13,7 +14,7 @@ from ._streaming import (
     context,
 )
 from ._discovery import get_arbiter, find_actor, wait_for_actor
-from ._trionics import open_nursery
+from ._supervise import open_nursery
 from ._state import current_actor, is_root_process
 from ._exceptions import (
     RemoteActorError,
@@ -39,6 +40,7 @@ __all__ = [
     'get_arbiter',
     'is_root_process',
     'msg',
+    'open_actor_cluster',
     'open_nursery',
     'open_root_actor',
     'Portal',
