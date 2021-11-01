@@ -1,4 +1,0 @@
-Switch to using the ``trio`` process spawner by default on windows.
-
-This gets windows users debugger support (manually tested) and in
-general a more resilient (nested) actor tree implementation.

@@ -1,1 +1,0 @@
-Drop Python 3.8 support in favor of rolling with two latest releases for the time being.

@@ -4,6 +4,57 @@ Changelog
 
 .. towncrier release notes start
 
+tractor 0.1.0a3 (2021-11-01)
+============================
+
+Features
+--------
+
+- Switch to using the ``trio`` process spawner by default on windows. (#166)
+
+  This gets windows users debugger support (manually tested) and in
+  general a more resilient (nested) actor tree implementation.
+
+- Add optional `msgspec <https://jcristharif.com/msgspec/>`_ support
+  as an alernative, faster MessagePack codec. (#214)
+
+  Provides us with a path toward supporting typed IPC message contracts. Further,
+  ``msgspec`` structs may be a valid tool to start for formalizing our
+  "SC dialog un-protocol" messages as described in `#36
+  <https://github.com/goodboy/tractor/issues/36>`_`.
+
+- Introduce a new ``tractor.trionics`` `sub-package`_ that exposes
+  a selection of our relevant high(er) level trio primitives and
+  goodies. (#241)
+
+  At outset we offer a ``gather_contexts()`` context manager for
+  concurrently entering a sequence of async context managers (much like
+  a version of ``asyncio.gather()`` but for context managers) and use it
+  in a new ``tractor.open_actor_cluster()`` manager-helper that can be
+  entered to concurrently spawn a flat actor pool. We also now publicly
+  expose our "broadcast channel" APIs (``open_broadcast_receiver()``)
+  from here.
+
+.. _sub-package: ../tractor/trionics
+
+- Change the core message loop to handle task and actor-runtime cancel
+  requests immediately instead of scheduling them as is done for rpc-task
+  requests. (#245)
+
+  In order to obtain more reliable teardown mechanics for (complex) actor
+  trees it's important that we specially treat cancel requests as having
+  higher priority. Previously, it was possible that task cancel requests
+  could actually also themselves be cancelled if a "actor-runtime" cancel
+  request was received (can happen during messy multi actor crashes that
+  propagate). Instead cancels now block the msg loop until serviced and
+  a response is relayed back to the requester. This also allows for
+  improved debugger support since we have determinism guarantees about
+  which processes must wait before hard killing their children.
+
+- Drop Python 3.8 support in favor of rolling with two latest releases
+  for the time being. (#248)
+
+
 tractor 0.1.0a2 (2021-09-07)
 ============================
 
