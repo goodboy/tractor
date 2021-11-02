@@ -38,7 +38,7 @@ async def open_actor_cluster(
             uid = tractor.current_actor().uid
 
             async def _start(name: str) -> None:
-                name = f'{name}.{uid}'
+                name = f'{uid[0]}.{name}'
                 portals[name] = await an.start_actor(
                     enable_modules=modules,
                     name=name,
