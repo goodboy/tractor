@@ -4,7 +4,7 @@ Changelog
 
 .. towncrier release notes start
 
-tractor 0.1.0a3 (2021-11-01)
+tractor 0.1.0a3 (2021-11-02)
 ============================
 
 Features
