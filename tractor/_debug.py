@@ -557,8 +557,13 @@ async def acquire_debug_lock(
     '''
     Grab root's debug lock on entry, release on exit.
 
+    This helper is for actor's who don't actually need
+    to acquired the debugger but want to wait until the
+    lock is free in the tree root.
+
     '''
     if not debug_mode():
+        yield None
         return
 
     async with trio.open_nursery() as n:
@@ -627,4 +632,3 @@ async def maybe_wait_for_debugger(
             log.warning(
                     'Root acquired TTY LOCK'
             )
-            return
