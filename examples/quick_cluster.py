@@ -1,4 +1,3 @@
-from functools import partial
 
 import trio
 import tractor
@@ -30,12 +29,7 @@ async def main():
     ):
 
         for (name, portal) in portal_map.items():
-            n.start_soon(
-                partial(
-                    portal.run,
-                    sleepy_jane,
-                )
-            )
+            n.start_soon(portal.run, sleepy_jane)
 
         await trio.sleep(0.5)
 

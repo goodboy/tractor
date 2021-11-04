@@ -321,8 +321,6 @@ spawn a flat cluster:
 
 .. code:: python
 
-    from functools import partial
-
     import trio
     import tractor
 
@@ -353,12 +351,7 @@ spawn a flat cluster:
         ):
 
             for (name, portal) in portal_map.items():
-                n.start_soon(
-                    partial(
-                        portal.run,
-                        sleepy_jane,
-                    )
-                )
+                n.start_soon(portal.run, sleepy_jane)
 
             await trio.sleep(0.5)
 
