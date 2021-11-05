@@ -230,17 +230,19 @@ async def new_proc(
             ]
 
         cancelled_during_spawn: bool = False
+        proc: Optional[trio.Process] = None
         try:
-            proc = await trio.open_process(spawn_cmd)
-
-            log.runtime(f"Started {proc}")
-
-            # wait for actor to spawn and connect back to us
-            # channel should have handshake completed by the
-            # local actor by the time we get a ref to it
             try:
+                proc = await trio.open_process(spawn_cmd)
+
+                log.runtime(f"Started {proc}")
+
+                # wait for actor to spawn and connect back to us
+                # channel should have handshake completed by the
+                # local actor by the time we get a ref to it
                 event, chan = await actor_nursery._actor.wait_for_peer(
                     subactor.uid)
+
             except trio.Cancelled:
                 cancelled_during_spawn = True
                 # we may cancel before the child connects back in which
@@ -320,23 +322,26 @@ async def new_proc(
             # killing the process too early.
             log.cancel(f'Hard reap sequence starting for {uid}')
 
-            with trio.CancelScope(shield=True):
+            if proc:
+                with trio.CancelScope(shield=True):
 
-                # don't clobber an ongoing pdb
-                if cancelled_during_spawn:
-                    # Try again to avoid TTY clobbering.
-                    async with acquire_debug_lock(uid):
-                        with trio.move_on_after(0.5):
-                            await proc.wait()
+                    # don't clobber an ongoing pdb
+                    if cancelled_during_spawn:
+                        # Try again to avoid TTY clobbering.
+                        async with acquire_debug_lock(uid):
+                            with trio.move_on_after(0.5):
+                                await proc.wait()
 
-                if is_root_process():
-                    await maybe_wait_for_debugger()
+                    if is_root_process():
+                        await maybe_wait_for_debugger()
 
-                if proc.poll() is None:
-                    log.cancel(f"Attempting to hard kill {proc}")
-                    await do_hard_kill(proc)
+                    if proc.poll() is None:
+                        log.cancel(f"Attempting to hard kill {proc}")
+                        await do_hard_kill(proc)
 
-            log.debug(f"Joined {proc}")
+                    log.debug(f"Joined {proc}")
+            else:
+                log.warning(f'Nursery cancelled before sub-proc started')
 
             if not cancelled_during_spawn:
                 # pop child entry to indicate we no longer managing this
