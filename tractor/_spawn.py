@@ -22,10 +22,10 @@ import sys
 import multiprocessing as mp
 import platform
 from typing import (
-    Any, Dict, Optional, Union, Callable,
+    Any, Dict, Optional, Callable,
     TypeVar,
 )
-from collections.abc import Awaitable, Coroutine
+from collections.abc import Awaitable
 
 import trio
 from trio_typing import TaskStatus
