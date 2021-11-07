@@ -475,6 +475,7 @@ class Actor:
                 self._mods[modpath] = mod
                 if modpath == '__main__':
                     self._mods['__mp_main__'] = mod
+
         except ModuleNotFoundError:
             # it is expected the corresponding `ModuleNotExposed` error
             # will be raised later
