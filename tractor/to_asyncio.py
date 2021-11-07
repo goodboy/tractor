@@ -220,7 +220,9 @@ async def open_channel_from(
 
 
 def run_as_asyncio_guest(
+
     trio_main: Callable,
+
 ) -> None:
     '''
     Entry for an "infected ``asyncio`` actor".
@@ -242,8 +244,6 @@ def run_as_asyncio_guest(
     # Disable sigint handling in children? (nawp)
     # import signal
     # signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-    get_console_log('runtime')
 
     async def aio_main(trio_main):
 
@@ -273,4 +273,4 @@ def run_as_asyncio_guest(
     except ImportError:
         pass
 
-    asyncio.run(aio_main(trio_main))
+    return asyncio.run(aio_main(trio_main))
