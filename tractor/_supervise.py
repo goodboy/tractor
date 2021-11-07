@@ -45,8 +45,33 @@ _default_bind_addr: Tuple[str, int] = ('127.0.0.1', 0)
 
 
 class ActorNursery:
-    """Spawn scoped subprocess actors.
-    """
+    '''
+    The fundamental actor supervision construct: spawn and manage
+    explicit lifetime and capability restricted, bootstrapped,
+    ``trio.run()`` scheduled sub-processes.
+
+    Though the concept of a "process nursery" is different in complexity
+    and slightly different in semantics then a tradtional single
+    threaded task nursery, much of the interface is the same. New
+    processes each require a top level "parent" or "root" task which is
+    itself no different then any task started by a tradtional
+    ``trio.Nursery``. The main difference is that each "actor" (a
+    process + ``trio.run()``) contains a full, paralell executing
+    ``trio``-task-tree. The following super powers ensue:
+
+    - starting tasks in a child actor are completely independent of
+      tasks started in the current process. They execute in *parallel*
+      relative to tasks in the current process and are scheduled by their
+      own actor's ``trio`` run loop.
+    - tasks scheduled in a remote process still maintain an SC protocol
+      across memory boundaries using a so called "structured concurrency
+      dialogue protocol" which ensures task-hierarchy-lifetimes are linked.
+    - remote tasks (in another actor) can fail and relay failure back to
+      the caller task (in some other actor) via a seralized
+      ``RemoteActorError`` which means no zombie process or RPC
+      initiated task can ever go off on its own.
+
+    '''
     def __init__(
         self,
         actor: Actor,
@@ -141,15 +166,19 @@ class ActorNursery:
 
     async def run_in_actor(
         self,
+
         fn: typing.Callable,
         *,
+
         name: Optional[str] = None,
         bind_addr: Tuple[str, int] = _default_bind_addr,
         rpc_module_paths: Optional[List[str]] = None,
         enable_modules: List[str] = None,
         loglevel: str = None,  # set log level per subactor
         infect_asyncio: bool = False,
+
         **kwargs,  # explicit args to ``fn``
+
     ) -> Portal:
         """Spawn a new actor, run a lone task, then terminate the actor and
         return its result.
@@ -412,8 +441,10 @@ async def _open_and_supervise_one_cancels_all_nursery(
 @asynccontextmanager
 async def open_nursery(
     **kwargs,
+
 ) -> typing.AsyncGenerator[ActorNursery, None]:
-    """Create and yield a new ``ActorNursery`` to be used for spawning
+    '''
+    Create and yield a new ``ActorNursery`` to be used for spawning
     structured concurrent subactors.
 
     When an actor is spawned a new trio task is started which
@@ -425,7 +456,8 @@ async def open_nursery(
     close it. It turns out this approach is probably more correct
     anyway since it is more clear from the following nested nurseries
     which cancellation scopes correspond to each spawned subactor set.
-    """
+
+    '''
     implicit_runtime = False
 
     actor = current_actor(err_on_no_runtime=False)
