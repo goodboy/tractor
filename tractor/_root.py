@@ -4,6 +4,7 @@ Root actor runtime ignition(s).
 from contextlib import asynccontextmanager
 from functools import partial
 import importlib
+import logging
 import os
 from typing import Tuple, Optional, List, Any
 import typing
@@ -87,8 +88,17 @@ async def open_root_actor(
         # for use of ``await tractor.breakpoint()``
         enable_modules.append('tractor._debug')
 
+        # if debug mode get's enabled *at least* use that level of
+        # logging for some informative console prompts.
         if loglevel is None:
-            loglevel = 'pdb'
+            if (
+                logging.getLevelName(
+                    # lul, need the upper case for the -> int map?
+                    # sweet "dynamic function behaviour" stdlib...
+                    log.get_loglevel().upper()
+                ) > logging.getLevelName('PDB')
+            ):
+                loglevel = 'PDB'
 
     elif debug_mode:
         raise RuntimeError(
