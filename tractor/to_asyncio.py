@@ -72,6 +72,7 @@ def _run_asyncio_task(
     aio_err: Optional[BaseException] = None
 
     async def wait_on_coro_final_result(
+
         to_trio: trio.MemorySendChannel,
         coro: Awaitable,
         aio_task_complete: trio.Event,
@@ -89,6 +90,7 @@ def _run_asyncio_task(
             aio_err = err
             from_aio._err = aio_err
             raise
+
         finally:
             aio_task_complete.set()
             if result != orig and aio_err is None:
@@ -112,15 +114,17 @@ def _run_asyncio_task(
         try:
             aio_err = task.exception()
         except CancelledError as cerr:
-            log.exception("infected task was cancelled")
-            # raise
-            aio_err = cerr
-
-        if aio_err:
-            log.exception(f"infected task errorred with {type(aio_err)}")
-            from_aio._err = aio_err
+            log.cancel("infected task was cancelled")
+            from_aio._err = cerr
             from_aio.close()
             cancel_scope.cancel()
+        else:
+            if aio_err is not None:
+                log.exception(f"infected task errorred:")
+                from_aio._err = aio_err
+                # order is opposite here
+                cancel_scope.cancel()
+                from_aio.close()
 
     task.add_done_callback(cancel_trio)
 
