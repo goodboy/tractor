@@ -35,17 +35,20 @@ async def asyncio_actor(
     if '.' in expect_err:
         modpath, _, name = expect_err.rpartition('.')
         mod = importlib.import_module(modpath)
-        error = getattr(mod, name)
-    error = builtins.__dict__.get(expect_err)
+        error_type = getattr(mod, name)
+
+    else:  # toplevel builtin error type
+        error_type = builtins.__dict__.get(expect_err)
 
     try:
         # spawn an ``asyncio`` task to run a func and return result
         await tractor.to_asyncio.run_task(target)
-    except Exception as err:
-        if expect_err:
-            assert isinstance(err, error)
 
-        raise
+    except BaseException as err:
+        if expect_err:
+            assert isinstance(err, error_type)
+
+        raise err
 
 
 def test_aio_simple_error(arb_addr):
@@ -84,16 +87,43 @@ def test_tractor_cancels_aio(arb_addr):
             portal = await n.run_in_actor(
                 asyncio_actor,
                 target='sleep_forever',
-                expect_err='asyncio.CancelledError',
+                expect_err='trio.Cancelled',
                 infect_asyncio=True,
             )
+            # cancel the entire remote runtime
             await portal.cancel_actor()
 
     trio.run(main)
 
 
+async def aio_cancel():
+    ''''Cancel urself boi.
+
+    '''
+    await asyncio.sleep(0.5)
+    task = asyncio.current_task()
+
+    # cancel and enter sleep
+    task.cancel()
+    await sleep_forever()
+
+
 def test_aio_cancelled_from_aio_causes_trio_cancelled(arb_addr):
-    ...
+
+    async def main():
+        async with tractor.open_nursery() as n:
+            portal = await n.run_in_actor(
+                asyncio_actor,
+                target='aio_cancel',
+                expect_err='asyncio.CancelledError',
+                infect_asyncio=True,
+            )
+
+            # with trio.CancelScope(shield=True):
+            await portal.result()
+
+    with pytest.raises(RemoteActorError) as excinfo:
+        trio.run(main)
 
 
 def test_trio_cancels_aio(arb_addr):
