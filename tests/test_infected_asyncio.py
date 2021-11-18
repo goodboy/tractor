@@ -96,6 +96,31 @@ def test_tractor_cancels_aio(arb_addr):
     trio.run(main)
 
 
+def test_trio_cancels_aio(arb_addr):
+    '''
+    Much like the above test with ``tractor.Portal.cancel_actor()``
+    except we just use a standard ``trio`` cancellation api.
+
+    '''
+    async def main():
+
+        with trio.move_on_after(1):
+            # cancel the nursery shortly after boot
+
+            async with tractor.open_nursery() as n:
+                # debug_mode=True
+            # ) as n:
+                portal = await n.run_in_actor(
+                    asyncio_actor,
+                    target='sleep_forever',
+                    expect_err='trio.Cancelled',
+                    infect_asyncio=True,
+                )
+
+    trio.run(main)
+
+
+
 async def aio_cancel():
     ''''Cancel urself boi.
 
@@ -124,10 +149,6 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(arb_addr):
 
     with pytest.raises(RemoteActorError) as excinfo:
         trio.run(main)
-
-
-def test_trio_cancels_aio(arb_addr):
-    ...
 
 
 def test_trio_error_cancels_aio(arb_addr):
