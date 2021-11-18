@@ -22,6 +22,31 @@ async def sleep_forever():
     await asyncio.sleep(float('inf'))
 
 
+async def trio_cancels_single_aio_task():
+
+    # spawn an ``asyncio`` task to run a func and return result
+    with trio.move_on_after(.2):
+        await tractor.to_asyncio.run_task(sleep_forever)
+
+
+def test_trio_cancels_aio_on_actor_side(arb_addr):
+    '''
+    Spawn an infected actor that is cancelled by the ``trio`` side
+    task using std cancel scope apis.
+
+    '''
+    async def main():
+        async with tractor.open_nursery(
+            arbiter_addr=arb_addr
+        ) as n:
+            await n.run_in_actor(
+                trio_cancels_single_aio_task,
+                infect_asyncio=True,
+            )
+
+    trio.run(main)
+
+
 async def asyncio_actor(
 
     target: str,
