@@ -247,23 +247,24 @@ def run_as_asyncio_guest(
     '''
     Entry for an "infected ``asyncio`` actor".
 
-    Uh, oh. :o
-
-    It looks like your event loop has caught a case of the ``trio``s.
-
-    :()
-
-    Don't worry, we've heard you'll barely notice. You might hallucinate
-    a few more propagating errors and feel like your digestion has
-    slowed but if anything get's too bad your parents will know about
-    it.
-
-    :)
+    Entrypoint for a Python process which starts the ``asyncio`` event
+    loop and runs ``trio`` in guest mode resulting in a system where
+    ``trio`` tasks can control ``asyncio`` tasks whilst maintaining
+    SC semantics.
 
     '''
-    # Disable sigint handling in children? (nawp)
-    # import signal
-    # signal.signal(signal.SIGINT, signal.SIG_IGN)
+    # Uh, oh. :o
+
+    # It looks like your event loop has caught a case of the ``trio``s.
+
+    # :()
+
+    # Don't worry, we've heard you'll barely notice. You might hallucinate
+    # a few more propagating errors and feel like your digestion has
+    # slowed but if anything get's too bad your parents will know about
+    # it.
+
+    # :)
 
     async def aio_main(trio_main):
 
