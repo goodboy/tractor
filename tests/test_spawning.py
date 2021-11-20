@@ -110,7 +110,7 @@ async def test_most_beautiful_word(
     The main ``tractor`` routine.
 
     '''
-    with trio.fail_after(0.5):
+    with trio.fail_after(1):
         async with tractor.open_nursery() as n:
 
             portal = await n.run_in_actor(
