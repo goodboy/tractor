@@ -1,7 +1,7 @@
 """
 Spawning basics
 """
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 
 import pytest
 import trio
@@ -93,24 +93,38 @@ async def test_movie_theatre_convo(start_method):
         await portal.cancel_actor()
 
 
-async def cellar_door():
-    return "Dang that's beautiful"
+async def cellar_door(return_value: Optional[str]):
+    return return_value
 
 
+@pytest.mark.parametrize(
+    'return_value', ["Dang that's beautiful", None],
+    ids=['return_str', 'return_None'],
+)
 @tractor_test
-async def test_most_beautiful_word(start_method):
-    """The main ``tractor`` routine.
-    """
-    async with tractor.open_nursery() as n:
+async def test_most_beautiful_word(
+    start_method,
+    return_value
+):
+    '''
+    The main ``tractor`` routine.
 
-        portal = await n.run_in_actor(
-            cellar_door,
-            name='some_linguist',
-        )
+    '''
+    with trio.fail_after(0.5):
+        async with tractor.open_nursery() as n:
 
+            portal = await n.run_in_actor(
+                cellar_door,
+                return_value=return_value,
+                name='some_linguist',
+            )
+
+            print(await portal.result())
     # The ``async with`` will unblock here since the 'some_linguist'
     # actor has completed its main task ``cellar_door``.
 
+    # this should pull the cached final result already captured during
+    # the nursery block exit.
     print(await portal.result())
 
 
