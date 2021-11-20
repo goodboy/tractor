@@ -77,7 +77,7 @@ class Portal:
         # when this is set to a tuple returned from ``_submit()`` then
         # it is expected that ``result()`` will be awaited at some point
         # during the portal's lifetime
-        self._result: Optional[Any] = None
+        self._result: Optional[Any] = channel.uid
         # set when _submit_for_result is called
         self._expect_result: Optional[
             Tuple[str, Any, str, Dict[str, Any]]
@@ -128,6 +128,7 @@ class Portal:
         recv_chan: trio.abc.ReceiveChannel,
         resptype: str,
         first_msg: dict
+
     ) -> Any:
         assert resptype == 'asyncfunc'  # single response
 
@@ -158,7 +159,7 @@ class Portal:
 
         # expecting a "main" result
         assert self._expect_result
-        if self._result is None:
+        if self._result is self.channel.uid:
             try:
                 self._result = await self._return_once(*self._expect_result)
             except RemoteActorError as err:
