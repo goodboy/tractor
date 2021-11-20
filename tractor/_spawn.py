@@ -97,14 +97,17 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
 
 
 async def exhaust_portal(
+
     portal: Portal,
     actor: Actor
+
 ) -> Any:
-    """Pull final result from portal (assuming it has one).
+    '''
+    Pull final result from portal (assuming it has one).
 
     If the main task is an async generator do our best to consume
     what's left of it.
-    """
+    '''
     try:
         log.debug(f"Waiting on final result from {actor.uid}")
 
@@ -126,18 +129,19 @@ async def exhaust_portal(
 
 
 async def cancel_on_completion(
+
     portal: Portal,
     actor: Actor,
     errors: Dict[Tuple[str, str], Exception],
 
 ) -> None:
-    """
+    '''
     Cancel actor gracefully once it's "main" portal's
     result arrives.
 
     Should only be called for actors spawned with `run_in_actor()`.
 
-    """
+    '''
     # if this call errors we store the exception for later
     # in ``errors`` which will be reraised inside
     # a MultiError and we still send out a cancel request
