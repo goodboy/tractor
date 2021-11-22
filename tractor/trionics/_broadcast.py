@@ -47,8 +47,9 @@ class AsyncReceiver(
     Protocol,
     Generic[ReceiveType],
 ):
-    '''An async receivable duck-type that quacks much like trio's
-    ``trio.abc.ReceieveChannel``.
+    '''
+    An async receivable duck-type that quacks much like trio's
+    ``trio.abc.ReceiveChannel``.
 
     '''
     @abstractmethod
@@ -78,7 +79,8 @@ class AsyncReceiver(
 
 
 class Lagged(trio.TooSlowError):
-    '''Subscribed consumer task was too slow and was overrun
+    '''
+    Subscribed consumer task was too slow and was overrun
     by the fastest consumer-producer pair.
 
     '''
@@ -86,7 +88,8 @@ class Lagged(trio.TooSlowError):
 
 @dataclass
 class BroadcastState:
-    '''Common state to all receivers of a broadcast.
+    '''
+    Common state to all receivers of a broadcast.
 
     '''
     queue: deque
@@ -111,7 +114,8 @@ class BroadcastState:
 
 
 class BroadcastReceiver(ReceiveChannel):
-    '''A memory receive channel broadcaster which is non-lossy for the
+    '''
+    A memory receive channel broadcaster which is non-lossy for the
     fastest consumer.
 
     Additional consumer tasks can receive all produced values by registering
