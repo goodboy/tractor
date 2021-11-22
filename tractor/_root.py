@@ -1,6 +1,7 @@
-"""
+'''
 Root actor runtime ignition(s).
-"""
+
+'''
 from contextlib import asynccontextmanager
 from functools import partial
 import importlib
@@ -81,30 +82,6 @@ async def open_root_actor(
     if start_method is not None:
         _spawn.try_set_start_method(start_method)
 
-    if debug_mode and _spawn._spawn_method == 'trio':
-        _state._runtime_vars['_debug_mode'] = True
-
-        # expose internal debug module to every actor allowing
-        # for use of ``await tractor.breakpoint()``
-        enable_modules.append('tractor._debug')
-
-        # if debug mode get's enabled *at least* use that level of
-        # logging for some informative console prompts.
-        if loglevel is None:
-            if (
-                logging.getLevelName(
-                    # lul, need the upper case for the -> int map?
-                    # sweet "dynamic function behaviour" stdlib...
-                    log.get_loglevel().upper()
-                ) > logging.getLevelName('PDB')
-            ):
-                loglevel = 'PDB'
-
-    elif debug_mode:
-        raise RuntimeError(
-            "Debug mode is only supported for the `trio` backend!"
-        )
-
     arbiter_addr = (host, port) = arbiter_addr or (
         _default_arbiter_host,
         _default_arbiter_port,
@@ -114,6 +91,29 @@ async def open_root_actor(
     if loglevel is not None:
         log._default_loglevel = loglevel
         log.get_console_log(loglevel)
+
+    if debug_mode and _spawn._spawn_method == 'trio':
+        _state._runtime_vars['_debug_mode'] = True
+
+        # expose internal debug module to every actor allowing
+        # for use of ``await tractor.breakpoint()``
+        enable_modules.append('tractor._debug')
+
+        # if debug mode get's enabled *at least* use that level of
+        # logging for some informative console prompts.
+        if (
+            logging.getLevelName(
+                # lul, need the upper case for the -> int map?
+                # sweet "dynamic function behaviour" stdlib...
+                log.get_loglevel().upper()
+            ) > logging.getLevelName('PDB')
+        ):
+            loglevel = 'PDB'
+
+    elif debug_mode:
+        raise RuntimeError(
+            "Debug mode is only supported for the `trio` backend!"
+        )
 
     # make a temporary connection to see if an arbiter exists
     arbiter_found = False
@@ -248,18 +248,20 @@ def run(
 
 
 def run_daemon(
-    rpc_module_paths: List[str],
+    enable_modules: list[str],
     **kwargs
 ) -> None:
-    """Spawn daemon actor which will respond to RPC.
+    '''
+    Spawn daemon actor which will respond to RPC.
 
     This is a convenience wrapper around
     ``tractor.run(trio.sleep(float('inf')))`` such that the first actor spawned
     is meant to run forever responding to RPC requests.
-    """
-    kwargs['rpc_module_paths'] = list(rpc_module_paths)
 
-    for path in rpc_module_paths:
+    '''
+    kwargs['enable_modules'] = list(enable_modules)
+
+    for path in enable_modules:
         importlib.import_module(path)
 
     return run(partial(trio.sleep, float('inf')), **kwargs)
