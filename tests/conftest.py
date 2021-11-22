@@ -52,7 +52,7 @@ def repodir():
 def pytest_addoption(parser):
     parser.addoption(
         "--ll", action="store", dest='loglevel',
-        default=None, help="logging level to set when testing"
+        default='ERROR', help="logging level to set when testing"
     )
 
     parser.addoption(
