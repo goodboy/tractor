@@ -1,5 +1,5 @@
 '''
-The most hipster way to force SC onto the stdlib's "async".
+The hipster way to force SC onto the stdlib's "async": 'infection mode'.
 
 '''
 from typing import Optional, Iterable
@@ -74,7 +74,7 @@ async def asyncio_actor(
         if expect_err:
             assert isinstance(err, error_type)
 
-        raise err
+        raise
 
 
 def test_aio_simple_error(arb_addr):
@@ -134,7 +134,7 @@ def test_trio_cancels_aio(arb_addr):
             # cancel the nursery shortly after boot
 
             async with tractor.open_nursery() as n:
-                portal = await n.run_in_actor(
+                await n.run_in_actor(
                     asyncio_actor,
                     target='sleep_forever',
                     expect_err='trio.Cancelled',
@@ -144,9 +144,9 @@ def test_trio_cancels_aio(arb_addr):
     trio.run(main)
 
 
-
 async def aio_cancel():
-    ''''Cancel urself boi.
+    ''''
+    Cancel urself boi.
 
     '''
     await asyncio.sleep(0.5)
@@ -164,15 +164,15 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(arb_addr):
             portal = await n.run_in_actor(
                 asyncio_actor,
                 target='aio_cancel',
-                expect_err='asyncio.CancelledError',
+                expect_err='tractor.to_asyncio.AsyncioCancelled',
                 infect_asyncio=True,
             )
 
-            # with trio.CancelScope(shield=True):
-            await portal.result()
-
     with pytest.raises(RemoteActorError) as excinfo:
         trio.run(main)
+
+    # ensure boxed error is correct
+    assert excinfo.value.type == to_asyncio.AsyncioCancelled
 
 
 # TODO: verify open_channel_from will fail on this..
@@ -201,7 +201,7 @@ async def push_from_aio_task(
             if i == 50 and fail_early:
                 raise Exception
 
-        print(f'asyncio streamer complete!')
+        print('asyncio streamer complete!')
 
     except asyncio.CancelledError:
         if not expect_cancel:
