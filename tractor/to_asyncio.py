@@ -136,6 +136,13 @@ def _run_asyncio_task(
         nonlocal aio_err
         aio_err = from_aio._err
 
+        # only to avoid ``asyncio`` complaining about uncaptured
+        # task exceptions
+        try:
+            task.exception()
+        except BaseException as terr:
+            assert type(terr) is type(aio_err), 'Asyncio task error mismatch?'
+
         if aio_err is not None:
             if type(aio_err) is CancelledError:
                 log.cancel("infected task was cancelled")
