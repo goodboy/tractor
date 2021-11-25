@@ -167,7 +167,6 @@ async def translate_aio_errors(
 
     from_aio: trio.MemoryReceiveChannel,
     task: asyncio.Task,
-    trio_cs: trio.CancelScope,
 
 ) -> None:
     '''
@@ -242,7 +241,7 @@ async def run_task(
     )
     with from_aio:
         # try:
-        async with translate_aio_errors(from_aio, task, cs):
+        async with translate_aio_errors(from_aio, task):
             # return single value that is the output from the
             # ``asyncio`` function-as-task. Expect the mem chan api to
             # do the job of handling cross-framework cancellations
@@ -263,7 +262,6 @@ class LinkedTaskChannel(trio.abc.Channel):
     _to_aio: asyncio.Queue
     _from_aio: trio.MemoryReceiveChannel
     _aio_task_complete: trio.Event
-    _trio_cs: trio.CancelScope
 
     async def aclose(self) -> None:
         self._from_aio.close()
@@ -272,7 +270,6 @@ class LinkedTaskChannel(trio.abc.Channel):
         async with translate_aio_errors(
             self._from_aio,
             self._aio_task,
-            self._trio_cs,
         ):
             return await self._from_aio.receive()
 
@@ -312,10 +309,10 @@ async def open_channel_from(
     )
     chan = LinkedTaskChannel(
         task, aio_q, from_aio,
-        aio_task_complete, cs
+        aio_task_complete
     )
     async with from_aio:
-        async with translate_aio_errors(from_aio, task, cs):
+        async with translate_aio_errors(from_aio, task):
             # sync to a "started()"-like first delivered value from the
             # ``asyncio`` task.
             first = await from_aio.receive()
