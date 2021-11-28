@@ -256,7 +256,8 @@ async def new_proc(
                         # don't clobber an ongoing pdb
                         if is_root_process():
                             await maybe_wait_for_debugger()
-                        else:
+
+                        elif proc is not None:
                             async with acquire_debug_lock(uid):
                                 # soft wait on the proc to terminate
                                 with trio.move_on_after(0.5):
