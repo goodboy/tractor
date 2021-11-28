@@ -23,6 +23,7 @@ from typing import (
     Any,
     AsyncContextManager,
     AsyncGenerator,
+    AsyncIterator,
     Hashable,
     Optional,
     Sequence,
@@ -122,7 +123,7 @@ class cache:
     values: dict[Any,  Any] = {}
     resources: dict[
         int,
-        Optional[tuple[trio.Nursery, trio.Event]]
+        tuple[trio.Nursery, trio.Event]
     ] = {}
     no_more_users: Optional[trio.Event] = None
 
@@ -153,7 +154,7 @@ async def maybe_open_context(
     key: Hashable,
     mngr: AsyncContextManager[T],
 
-) -> (bool, T):
+) -> AsyncIterator[tuple[bool, T]]:
     '''
     Maybe open a context manager if there is not already a cached
     version for the provided ``key``. Return the cached instance on
@@ -186,9 +187,7 @@ async def maybe_open_context(
         service_n = current_actor()._service_n
 
         # TODO: does this need to be a tractor "root nursery"?
-        ln = cache.resources.get(ctx_key)
-        assert not ln
-
+        assert not cache.resources.get(ctx_key), f'Resource exists? {ctx_key}'
         ln, _ = cache.resources[ctx_key] = (service_n, trio.Event())
 
         value = await ln.start(cache.run_ctx, mngr, key)
