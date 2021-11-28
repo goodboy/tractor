@@ -87,10 +87,14 @@ async def open_root_actor(
         _default_arbiter_port,
     )
 
-    loglevel = loglevel or log.get_loglevel()
-    if loglevel is not None:
+
+    if loglevel is None:
+        loglevel = log.get_loglevel()
+    else:
         log._default_loglevel = loglevel
         log.get_console_log(loglevel)
+
+    assert loglevel
 
     if debug_mode and _spawn._spawn_method == 'trio':
         _state._runtime_vars['_debug_mode'] = True
@@ -105,7 +109,7 @@ async def open_root_actor(
             logging.getLevelName(
                 # lul, need the upper case for the -> int map?
                 # sweet "dynamic function behaviour" stdlib...
-                log.get_loglevel().upper()
+                loglevel.upper()
             ) > logging.getLevelName('PDB')
         ):
             loglevel = 'PDB'
