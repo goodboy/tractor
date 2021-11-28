@@ -371,7 +371,15 @@ async def trio_to_aio_echo_server(
                         raise RuntimeError('aio channel never stopped?')
 
 
-def test_echoserver_detailed_mechanics(arb_addr):
+@pytest.mark.parametrize(
+    'raise_error_mid_stream',
+    [False, Exception, KeyboardInterrupt],
+    ids='raise_error={}'.format,
+)
+def test_echoserver_detailed_mechanics(
+    arb_addr,
+    raise_error_mid_stream,
+):
 
     async def main():
         async with tractor.open_nursery() as n:
@@ -391,6 +399,9 @@ def test_echoserver_detailed_mechanics(arb_addr):
                         await stream.send(i)
                         out = await stream.receive()
                         assert i == out
+
+                        if raise_error_mid_stream and i == 50:
+                            raise raise_error_mid_stream
 
                     # send terminate msg
                     await stream.send(None)
@@ -412,4 +423,9 @@ def test_echoserver_detailed_mechanics(arb_addr):
             # is cancelled by kbi or out of task cancellation
             await p.cancel_actor()
 
-    trio.run(main)
+    if raise_error_mid_stream:
+        with pytest.raises(raise_error_mid_stream):
+            trio.run(main)
+
+    else:
+        trio.run(main)
