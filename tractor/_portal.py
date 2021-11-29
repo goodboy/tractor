@@ -77,7 +77,8 @@ class Portal:
         # when this is set to a tuple returned from ``_submit()`` then
         # it is expected that ``result()`` will be awaited at some point
         # during the portal's lifetime
-        self._result: Optional[Any] = channel.uid
+        self._result_msg: Optional[dict] = None
+
         # set when _submit_for_result is called
         self._expect_result: Optional[
             Tuple[str, Any, str, Dict[str, Any]]
@@ -129,12 +130,12 @@ class Portal:
         resptype: str,
         first_msg: dict
 
-    ) -> Any:
+    ) -> tuple[Any, dict[str, Any]]:
         assert resptype == 'asyncfunc'  # single response
 
         msg = await recv_chan.receive()
         try:
-            return msg['return']
+            return msg['return'], msg
         except KeyError:
             # internal error should never get here
             assert msg.get('cid'), "Received internal error at portal?"
@@ -159,17 +160,21 @@ class Portal:
 
         # expecting a "main" result
         assert self._expect_result
-        if self._result is self.channel.uid:
+
+        if self._result_msg is None:
             try:
-                self._result = await self._return_once(*self._expect_result)
+                result, self._result_msg = await self._return_once(
+                    *self._expect_result)
             except RemoteActorError as err:
-                self._result = err
+                result = err
+        else:
+            result = self._result_msg['return']
 
         # re-raise error on every call
-        if isinstance(self._result, RemoteActorError):
-            raise self._result
+        if isinstance(result, RemoteActorError):
+            raise result
 
-        return self._result
+        return result
 
     async def _cancel_streams(self):
         # terminate all locally running async generator
@@ -244,9 +249,10 @@ class Portal:
             instance methods in the remote runtime. Currently this should only
             be used for `tractor` internals.
         """
-        return await self._return_once(
+        value, _ = await self._return_once(
             *(await self._submit(namespace_path, function_name, kwargs))
         )
+        return value
 
     async def run(
         self,
@@ -254,12 +260,14 @@ class Portal:
         fn_name: Optional[str] = None,
         **kwargs
     ) -> Any:
-        """Submit a remote function to be scheduled and run by actor, in
+        '''
+        Submit a remote function to be scheduled and run by actor, in
         a new task, wrap and return its (stream of) result(s).
 
         This is a blocking call and returns either a value from the
         remote rpc task or a local async generator instance.
-        """
+
+        '''
         if isinstance(func, str):
             warnings.warn(
                 "`Portal.run(namespace: str, funcname: str)` is now"
@@ -285,9 +293,9 @@ class Portal:
 
             fn_mod_path, fn_name = func_deats(func)
 
-        return await self._return_once(
+        return (await self._return_once(
             *(await self._submit(fn_mod_path, fn_name, kwargs))
-        )
+        ))[0]
 
     @asynccontextmanager
     async def open_stream_from(
