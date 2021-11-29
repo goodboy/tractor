@@ -1,0 +1,8 @@
+Fix ``Portal.run_in_actor()`` returns ``None`` result.
+
+``None`` was being used as the cached result flag and obviously breaks
+on a ``None`` returned from the remote target task. This would cause an
+infinite hang if user code ever called ``Portal.result()`` *before* the
+nursery exit. The simple fix is to use the *return message* as the
+initial "no-result-received-yet" flag value and, once received, the
+return value is read from the message to avoid the cache logic error.
