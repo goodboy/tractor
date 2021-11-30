@@ -298,11 +298,11 @@ async def new_proc(
                 try:
                     await proc.wait()
                 except trio.Cancelled:
-                    # if cancelled during a soft wait cancel the child
-                    # actor before entering the hard reap
-                    # sequence below. This means we try to do a
-                    # graceful teardown before getting out zombie
-                    # killing tools.
+                    # if cancelled during a soft wait, cancel the child
+                    # actor before entering the hard reap sequence
+                    # below. This means we try to do a graceful teardown
+                    # via sending a cancel message before getting out
+                    # zombie killing tools.
                     with trio.CancelScope(shield=True):
                         await portal.cancel_actor()
                     raise
