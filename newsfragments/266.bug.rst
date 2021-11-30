@@ -1,0 +1,12 @@
+Fix graceful cancellation of daemon actors
+
+Previously, his was a bug where if the soft wait on a sub-process (the
+``await .proc.wait()``) in the reaper task teardown was cancelled we
+would fail over to the hard reaping sequence (meant for culling off any
+potential zombies via system kill signals). The hard reap has a timeout
+of 3s (currently though in theory we could make it shorter?) before
+system signalling kicks in. This means that any daemon actor still
+running during nursery exit would get hard reaped (3s later) instead of
+cancelled via IPC message. Now we catch the ``trio.Cancelled``, call
+``Portal.cancel_actor()`` on the daemon and expect the child to
+self-terminate after the runtime cancels and shuts down the process.

@@ -501,3 +501,53 @@ def test_cancel_while_childs_child_in_sync_sleep(
 
     with pytest.raises(AssertionError):
         trio.run(main)
+
+
+def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
+    start_method,
+):
+    '''
+    This is a very subtle test which demonstrates how cancellation
+    during process collection can result in non-optimal teardown
+    performance on daemon actors. The fix for this test was to handle
+    ``trio.Cancelled`` specially in the spawn task waiting in
+    `proc.wait()` such that ``Portal.cancel_actor()`` is called before
+    executing the "hard reap" sequence (which has an up to 3 second
+    delay currently).
+
+    In other words, if we can cancel the actor using a graceful remote
+    cancellation, and it's faster, we might as well do it.
+
+    '''
+    kbi_delay = 0.2
+
+    async def main():
+        start = time.time()
+        try:
+            async with trio.open_nursery() as nurse:
+                async with tractor.open_nursery() as tn:
+                    p = await tn.start_actor(
+                        'fast_boi',
+                        enable_modules=[__name__],
+                    )
+
+                    async def delayed_kbi():
+                        await trio.sleep(kbi_delay)
+                        print(f'RAISING KBI after {kbi_delay} s')
+                        raise KeyboardInterrupt
+
+                    # start task which raises a kbi **after**
+                    # the actor nursery ``__aexit__()`` has
+                    # been run.
+                    nurse.start_soon(delayed_kbi)
+
+                    await p.run(do_nuthin)
+        finally:
+            duration = time.time() - start
+            if duration > 2.9:
+                raise trio.TooSlowError(
+                    'daemon cancel was slower then necessary..'
+                )
+
+    with pytest.raises(KeyboardInterrupt):
+        trio.run(main)

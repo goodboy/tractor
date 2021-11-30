@@ -295,7 +295,17 @@ async def new_proc(
                 # ``trio.Process.__aexit__()`` (it tears down stdio
                 # which will kill any waiting remote pdb trace).
                 # This is a "soft" (cancellable) join/reap.
-                await proc.wait()
+                try:
+                    await proc.wait()
+                except trio.Cancelled:
+                    # if cancelled during a soft wait, cancel the child
+                    # actor before entering the hard reap sequence
+                    # below. This means we try to do a graceful teardown
+                    # via sending a cancel message before getting out
+                    # zombie killing tools.
+                    with trio.CancelScope(shield=True):
+                        await portal.cancel_actor()
+                    raise
 
                 # cancel result waiter that may have been spawned in
                 # tandem if not done already
