@@ -544,7 +544,7 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
                     await p.run(do_nuthin)
         finally:
             duration = time.time() - start
-            if duration > 1:
+            if duration > 2.9:
                 raise trio.TooSlowError(
                     'daemon cancel was slower then necessary..'
                 )
