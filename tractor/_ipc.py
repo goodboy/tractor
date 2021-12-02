@@ -6,9 +6,10 @@ from __future__ import annotations
 import platform
 import struct
 import typing
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import (
     Any, Tuple, Optional,
-    Type, Protocol, TypeVar
+    Type, Protocol, TypeVar,
 )
 
 from tricycle import BufferedReceiveStream
@@ -46,6 +47,7 @@ MsgType = TypeVar("MsgType")
 class MsgTransport(Protocol[MsgType]):
 
     stream: trio.SocketStream
+    drained: list[MsgType]
 
     def __init__(self, stream: trio.SocketStream) -> None:
         ...
@@ -61,6 +63,11 @@ class MsgTransport(Protocol[MsgType]):
         ...
 
     def connected(self) -> bool:
+        ...
+
+    # defining this sync otherwise it causes a mypy error because it
+    # can't figure out it's a generator i guess?..?
+    def drain(self) -> AsyncIterator[dict]:
         ...
 
     @property
@@ -94,9 +101,9 @@ class MsgpackTCPStream:
         self._send_lock = trio.StrictFIFOLock()
 
         # public i guess?
-        self.drained = []
+        self.drained: list[dict] = []
 
-    async def _iter_packets(self) -> typing.AsyncGenerator[dict, None]:
+    async def _iter_packets(self) -> AsyncGenerator[dict, None]:
         """Yield packets from the underlying stream.
         """
         unpacker = msgpack.Unpacker(
@@ -159,7 +166,13 @@ class MsgpackTCPStream:
     async def recv(self) -> Any:
         return await self._agen.asend(None)
 
-    async def drain(self):
+    async def drain(self) -> AsyncIterator[dict]:
+        '''
+        Drain the stream's remaining messages sent from
+        the far end until the connection is closed by
+        the peer.
+
+        '''
         try:
             async for msg in self._iter_packets():
                 self.drained.append(msg)
@@ -196,7 +209,7 @@ class MsgspecTCPStream(MsgpackTCPStream):
         self.encode = msgspec.Encoder().encode
         self.decode = msgspec.Decoder().decode  # dict[str, Any])
 
-    async def _iter_packets(self) -> typing.AsyncGenerator[dict, None]:
+    async def _iter_packets(self) -> AsyncGenerator[dict, None]:
         '''Yield packets from the underlying stream.
 
         '''
@@ -458,9 +471,11 @@ class Channel:
 
     async def _aiter_recv(
         self
-    ) -> typing.AsyncGenerator[Any, None]:
-        """Async iterate items from underlying stream.
-        """
+    ) -> AsyncGenerator[Any, None]:
+        '''
+        Async iterate items from underlying stream.
+
+        '''
         assert self.msgstream
         while True:
             try:
@@ -490,9 +505,11 @@ class Channel:
 async def _connect_chan(
     host: str, port: int
 ) -> typing.AsyncGenerator[Channel, None]:
-    """Create and connect a channel with disconnect on context manager
+    '''
+    Create and connect a channel with disconnect on context manager
     teardown.
-    """
+
+    '''
     chan = Channel((host, port))
     await chan.connect()
     yield chan

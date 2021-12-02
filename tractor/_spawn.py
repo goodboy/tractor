@@ -5,7 +5,11 @@ Machinery for actor process spawning using multiple backends.
 import sys
 import multiprocessing as mp
 import platform
-from typing import Any, Dict, Optional, Union, Callable
+from typing import (
+    Any, Dict, Optional, Union, Callable,
+    TypeVar,
+)
+from collections.abc import Awaitable, Coroutine
 
 import trio
 from trio_typing import TaskStatus
@@ -41,6 +45,7 @@ from ._exceptions import ActorFailure
 
 
 log = get_logger('tractor')
+ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
 
 # placeholder for an mp start context if so using that backend
 _ctx: Optional[mp.context.BaseContext] = None
@@ -185,10 +190,10 @@ async def do_hard_kill(
 
 async def soft_wait(
 
-    proc: Union[mp.Process, trio.Process],
+    proc: ProcessType,
     wait_func: Callable[
-        Union[mp.Process, trio.Process],
-        None,
+        [ProcessType],
+        Awaitable,
     ],
     portal: Portal,
 

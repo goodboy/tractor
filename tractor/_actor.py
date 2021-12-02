@@ -11,7 +11,7 @@ import importlib.util
 import inspect
 import uuid
 import typing
-from typing import Dict, List, Tuple, Any, Optional, Union
+from typing import List, Tuple, Any, Optional, Union
 from types import ModuleType
 import sys
 import os
@@ -49,7 +49,7 @@ async def _invoke(
     cid: str,
     chan: Channel,
     func: typing.Callable,
-    kwargs: Dict[str, Any],
+    kwargs: dict[str, Any],
     is_rpc: bool = True,
     task_status: TaskStatus[
         Union[trio.CancelScope, BaseException]
@@ -267,21 +267,21 @@ _lifetime_stack: ExitStack = ExitStack()
 
 
 async def try_ship_error_to_parent(
-    actor: Actor,
-    err: Exception,
+    channel: Channel,
+    err: Union[Exception, trio.MultiError],
 
 ) -> None:
     with trio.CancelScope(shield=True):
         try:
             # internal error so ship to parent without cid
-            await actor._parent_chan.send(pack_error(err))
+            await channel.send(pack_error(err))
         except (
             trio.ClosedResourceError,
             trio.BrokenResourceError,
         ):
             log.error(
                 f"Failed to ship error to parent "
-                f"{actor._parent_chan.uid}, channel was closed"
+                f"{channel.uid}, channel was closed"
             )
 
 
@@ -319,7 +319,7 @@ class Actor:
     _server_n: Optional[trio.Nursery] = None
 
     # Information about `__main__` from parent
-    _parent_main_data: Dict[str, str]
+    _parent_main_data: dict[str, str]
     _parent_chan_cs: Optional[trio.CancelScope] = None
 
     # syncs for setup/teardown sequences
@@ -357,7 +357,7 @@ class Actor:
             mods[name] = _get_mod_abspath(mod)
 
         self.enable_modules = mods
-        self._mods: Dict[str, ModuleType] = {}
+        self._mods: dict[str, ModuleType] = {}
 
         # TODO: consider making this a dynamically defined
         # @dataclass once we get py3.7
@@ -380,12 +380,12 @@ class Actor:
         self._ongoing_rpc_tasks = trio.Event()
         self._ongoing_rpc_tasks.set()
         # (chan, cid) -> (cancel_scope, func)
-        self._rpc_tasks: Dict[
+        self._rpc_tasks: dict[
             Tuple[Channel, str],
             Tuple[trio.CancelScope, typing.Callable, trio.Event]
         ] = {}
         # map {uids -> {callids -> waiter queues}}
-        self._cids2qs: Dict[
+        self._cids2qs: dict[
             Tuple[Tuple[str, str], str],
             Tuple[
                 trio.abc.SendChannel[Any],
@@ -396,7 +396,7 @@ class Actor:
         self._parent_chan: Optional[Channel] = None
         self._forkserver_info: Optional[
             Tuple[Any, Any, Any, Any, Any]] = None
-        self._actoruid2nursery: Dict[str, 'ActorNursery'] = {}  # type: ignore  # noqa
+        self._actoruid2nursery: dict[Optional[tuple[str, str]], 'ActorNursery'] = {}  # type: ignore  # noqa
 
     async def wait_for_peer(
         self, uid: Tuple[str, str]
@@ -550,6 +550,7 @@ class Actor:
                     cs.shield = True
                     # Attempt to wait for the far end to close the channel
                     # and bail after timeout (2-generals on closure).
+                    assert chan.msgstream
                     async for msg in chan.msgstream.drain():
                         # try to deliver any lingering msgs
                         # before we destroy the channel.
@@ -616,7 +617,7 @@ class Actor:
         self,
         chan: Channel,
         cid: str,
-        msg: Dict[str, Any],
+        msg: dict[str, Any],
     ) -> None:
         """Push an RPC result to the local consumer's queue.
         """
@@ -877,7 +878,7 @@ class Actor:
                 # machinery not from an rpc task) to parent
                 log.exception("Actor errored:")
                 if self._parent_chan:
-                    await try_ship_error_to_parent(self, err)
+                    await try_ship_error_to_parent(self._parent_chan, err)
 
             # if this is the `MainProcess` we expect the error broadcasting
             # above to trigger an error at consuming portal "checkpoints"
@@ -1078,7 +1079,7 @@ class Actor:
                 )
 
             if self._parent_chan:
-                await try_ship_error_to_parent(self, err)
+                await try_ship_error_to_parent(self._parent_chan, err)
 
             # always!
             log.exception("Actor errored:")
@@ -1360,7 +1361,7 @@ class Arbiter(Actor):
 
     def __init__(self, *args, **kwargs):
 
-        self._registry: Dict[
+        self._registry: dict[
             Tuple[str, str],
             Tuple[str, int],
         ] = {}
@@ -1377,7 +1378,7 @@ class Arbiter(Actor):
 
     async def get_registry(
         self
-    ) -> Dict[Tuple[str, str], Tuple[str, int]]:
+    ) -> dict[Tuple[str, str], Tuple[str, int]]:
         '''Return current name registry.
 
         This method is async to allow for cross-actor invocation.
