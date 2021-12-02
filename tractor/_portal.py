@@ -215,7 +215,7 @@ class Portal:
 
         '''
         if not self.channel.connected():
-            log.cancel("This portal is already closed can't cancel")
+            log.cancel("This channel is already closed can't cancel")
             return False
 
         log.cancel(
@@ -239,9 +239,12 @@ class Portal:
             # if we get here some weird cancellation case happened
             return False
 
-        except trio.ClosedResourceError:
+        except (
+            trio.ClosedResourceError,
+            trio.BrokenResourceError,
+        ):
             log.cancel(
-                f"{self.channel} for {self.channel.uid} was already closed?")
+                f"{self.channel} for {self.channel.uid} was already closed or broken?")
             return False
 
     async def run_from_ns(
