@@ -128,7 +128,11 @@ def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
 
     if len(exceptions) == 2:
         # sometimes oddly now there's an embedded BrokenResourceError ?
-        exceptions = exceptions[1].exceptions
+        for exc in exceptions:
+            excs = getattr(exc, 'exceptions', None)
+            if excs:
+                exceptions = excs
+                break
 
     assert len(exceptions) == num_subactors
 
