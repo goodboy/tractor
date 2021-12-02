@@ -218,8 +218,6 @@ class Portal:
             log.cancel("This portal is already closed can't cancel")
             return False
 
-        await self._cancel_streams()
-
         log.cancel(
             f"Sending actor cancel request to {self.channel.uid} on "
             f"{self.channel}")

@@ -203,7 +203,6 @@ async def soft_wait(
     # which will kill any waiting remote pdb trace).
     # This is a "soft" (cancellable) join/reap.
     try:
-        # await proc.wait()
         await wait_func(proc)
     except trio.Cancelled:
         # if cancelled during a soft wait, cancel the child
