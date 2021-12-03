@@ -50,6 +50,7 @@ async def _invoke(
     chan: Channel,
     func: typing.Callable,
     kwargs: dict[str, Any],
+
     is_rpc: bool = True,
     task_status: TaskStatus[
         Union[trio.CancelScope, BaseException]
@@ -68,9 +69,10 @@ async def _invoke(
     tb = None
 
     cancel_scope = trio.CancelScope()
+    # activated cancel scope ref
     cs: Optional[trio.CancelScope] = None
 
-    ctx = Context(chan, cid)
+    ctx = actor.get_context(chan, cid)
     context: bool = False
 
     if getattr(func, '_tractor_stream_function', False):
@@ -379,19 +381,19 @@ class Actor:
         self._no_more_peers.set()
         self._ongoing_rpc_tasks = trio.Event()
         self._ongoing_rpc_tasks.set()
+
         # (chan, cid) -> (cancel_scope, func)
         self._rpc_tasks: dict[
             Tuple[Channel, str],
             Tuple[trio.CancelScope, typing.Callable, trio.Event]
         ] = {}
-        # map {uids -> {callids -> waiter queues}}
-        self._cids2qs: dict[
+
+        # map {actor uids -> Context}
+        self._contexts: dict[
             Tuple[Tuple[str, str], str],
-            Tuple[
-                trio.abc.SendChannel[Any],
-                trio.abc.ReceiveChannel[Any]
-            ]
+            Context
         ] = {}
+
         self._listeners: List[trio.abc.Listener] = []
         self._parent_chan: Optional[Channel] = None
         self._forkserver_info: Optional[
@@ -567,17 +569,7 @@ class Actor:
 
                     await local_nursery.exited.wait()
 
-            # channel cleanup sequence
-
-            # for (channel, cid) in self._rpc_tasks.copy():
-            #     if channel is chan:
-            #         with trio.CancelScope(shield=True):
-            #             await self._cancel_task(cid, channel)
-
-            #             # close all consumer side task mem chans
-            #             send_chan, _ = self._cids2qs[(chan.uid, cid)]
-            #             assert send_chan.cid == cid  # type: ignore
-            #             await send_chan.aclose()
+            # ``Channel`` teardown and closure sequence
 
             # Drop ref to channel so it can be gc-ed and disconnected
             log.runtime(f"Releasing channel {chan} from {chan.uid}")
@@ -621,19 +613,15 @@ class Actor:
     ) -> None:
         """Push an RPC result to the local consumer's queue.
         """
-        # actorid = chan.uid
         assert chan.uid, f"`chan.uid` can't be {chan.uid}"
-        send_chan, recv_chan = self._cids2qs[(chan.uid, cid)]
-        assert send_chan.cid == cid  # type: ignore
+        ctx = self._contexts[(chan.uid, cid)]
+        send_chan = ctx._send_chan
 
+        # TODO: relaying far end context errors to the local
+        # context through nursery raising?
         # if 'error' in msg:
-        #     ctx = getattr(recv_chan, '_ctx', None)
-        #     if ctx:
-        #         ctx._error_from_remote_msg(msg)
-
+        #     ctx._error_from_remote_msg(msg)
         #     log.runtime(f"{send_chan} was terminated at remote end")
-        #     # indicate to consumer that far end has stopped
-        #     return await send_chan.aclose()
 
         try:
             log.runtime(f"Delivering {msg} from {chan.uid} to caller {cid}")
@@ -651,23 +639,35 @@ class Actor:
             # so cancel the far end streaming task
             log.warning(f"{send_chan} consumer is already closed")
 
-    def get_memchans(
+    def get_context(
         self,
-        actorid: Tuple[str, str],
-        cid: str
+        chan: Channel,
+        cid: str,
+        max_buffer_size: int = 2**6,
 
-    ) -> Tuple[trio.abc.SendChannel, trio.abc.ReceiveChannel]:
+    ) -> Context:
+        '''
+        Look up or create a new inter-actor-task-IPC-linked task
+        "context" which encapsulates the local task's scheduling
+        enviroment including a ``trio`` cancel scope, a pair of IPC
+        messaging "feeder" channels, and an RPC id unique to the
+        task-as-function invocation.
 
-        log.runtime(f"Getting result queue for {actorid} cid {cid}")
+        '''
+        log.runtime(f"Getting result queue for {chan.uid} cid {cid}")
         try:
-            send_chan, recv_chan = self._cids2qs[(actorid, cid)]
+            ctx = self._contexts[(chan.uid, cid)]
         except KeyError:
-            send_chan, recv_chan = trio.open_memory_channel(2**6)
-            send_chan.cid = cid  # type: ignore
-            recv_chan.cid = cid  # type: ignore
-            self._cids2qs[(actorid, cid)] = send_chan, recv_chan
+            send_chan, recv_chan = trio.open_memory_channel(max_buffer_size)
+            ctx = Context(
+                chan,
+                cid,
+                _send_chan=send_chan,
+                _recv_chan=recv_chan,
+            )
+            self._contexts[(chan.uid, cid)] = ctx
 
-        return send_chan, recv_chan
+        return ctx
 
     async def send_cmd(
         self,
@@ -675,19 +675,21 @@ class Actor:
         ns: str,
         func: str,
         kwargs: dict
-    ) -> Tuple[str, trio.abc.ReceiveChannel]:
+
+    ) -> Tuple[str, trio.abc.MemoryReceiveChannel]:
         '''
-        Send a ``'cmd'`` message to a remote actor and return a
-        caller id and a ``trio.Queue`` that can be used to wait for
-        responses delivered by the local message processing loop.
+        Send a ``'cmd'`` message to a remote actor and return a caller
+        id and a ``trio.MemoryReceiveChannel`` message "feeder" channel
+        that can be used to wait for responses delivered by the local
+        runtime's message processing loop.
 
         '''
         cid = str(uuid.uuid4())
         assert chan.uid
-        send_chan, recv_chan = self.get_memchans(chan.uid, cid)
+        ctx = self.get_context(chan, cid)
         log.runtime(f"Sending cmd to {chan.uid}: {ns}.{func}({kwargs})")
         await chan.send({'cmd': (ns, func, kwargs, self.uid, cid)})
-        return cid, recv_chan
+        return ctx.cid, ctx._recv_chan
 
     async def _process_messages(
         self,

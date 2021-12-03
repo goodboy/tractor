@@ -109,16 +109,20 @@ class Portal:
 
     async def _submit(
         self,
+
         ns: str,
         func: str,
         kwargs,
+
     ) -> Tuple[str, trio.MemoryReceiveChannel, str, Dict[str, Any]]:
-        """Submit a function to be scheduled and run by actor, return the
-        associated caller id, response queue, response type str,
-        first message packet as a tuple.
+        '''
+        Submit a function to be scheduled and run by actor, return the
+        associated caller id, response queue, response type str, first
+        message packet as a tuple.
 
         This is an async call.
-        """
+
+        '''
         # ship a function call request to the remote actor
         cid, recv_chan = await self.actor.send_cmd(
             self.channel, ns, func, kwargs)
@@ -244,7 +248,8 @@ class Portal:
             trio.BrokenResourceError,
         ):
             log.cancel(
-                f"{self.channel} for {self.channel.uid} was already closed or broken?")
+                f"{self.channel} for {self.channel.uid} was already "
+                "closed or broken?")
             return False
 
     async def run_from_ns(
@@ -392,7 +397,8 @@ class Portal:
         **kwargs,
 
     ) -> AsyncGenerator[Tuple[Context, Any], None]:
-        '''Open an inter-actor task context.
+        '''
+        Open an inter-actor task context.
 
         This is a synchronous API which allows for deterministic
         setup/teardown of a remote task. The yielded ``Context`` further
@@ -433,19 +439,20 @@ class Portal:
                 raise
 
         _err: Optional[BaseException] = None
+
+        # this should already have been created from the
+        # ``._submit()`` call above.
+        ctx = self.actor.get_context(self.channel, cid)
+        # pairs with handling in ``Actor._push_result()``
+        assert ctx._recv_chan is recv_chan
+        ctx._portal = self
+
         # deliver context instance and .started() msg value in open tuple.
         try:
             async with trio.open_nursery() as scope_nursery:
-                ctx = Context(
-                    self.channel,
-                    cid,
-                    _portal=self,
-                    _recv_chan=recv_chan,
-                    _scope_nursery=scope_nursery,
-                )
+                ctx._scope_nursery = scope_nursery
 
-                # pairs with handling in ``Actor._push_result()``
-                # recv_chan._ctx = ctx
+                # do we need this?
                 # await trio.lowlevel.checkpoint()
 
                 yield ctx, first
@@ -496,6 +503,7 @@ class Portal:
             # we tear down the runtime feeder chan last
             # to avoid premature stream clobbers.
             if recv_chan is not None:
+                # should we encapsulate this in the context api?
                 await recv_chan.aclose()
 
             if _err:

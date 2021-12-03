@@ -32,9 +32,10 @@ log = get_logger(__name__)
 
 
 class ReceiveMsgStream(trio.abc.ReceiveChannel):
-    '''A IPC message stream for receiving logically sequenced values
-    over an inter-actor ``Channel``. This is the type returned to
-    a local task which entered either ``Portal.open_stream_from()`` or
+    '''
+    A IPC message stream for receiving logically sequenced values over
+    an inter-actor ``Channel``. This is the type returned to a local
+    task which entered either ``Portal.open_stream_from()`` or
     ``Context.open_stream()``.
 
     Termination rules:
@@ -177,7 +178,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
 
         # In the bidirectional case, `Context.open_stream()` will create
         # the `Actor._cids2qs` entry from a call to
-        # `Actor.get_memchans()` and will send the stop message in
+        # `Actor.get_context()` and will send the stop message in
         # ``__aexit__()`` on teardown so it **does not** need to be
         # called here.
         if not self._ctx._portal:
@@ -302,29 +303,38 @@ class MsgStream(ReceiveMsgStream, trio.abc.Channel):
 
 @dataclass
 class Context:
-    '''An inter-actor task communication context.
+    '''
+    An inter-actor, ``trio`` task communication context.
 
     Allows maintaining task or protocol specific state between
     2 communicating actor tasks. A unique context is created on the
     callee side/end for every request to a remote actor from a portal.
 
     A context can be cancelled and (possibly eventually restarted) from
-    either side of the underlying IPC channel.
-
-    A context can be used to open task oriented message streams and can
-    be thought of as an IPC aware inter-actor cancel scope.
+    either side of the underlying IPC channel, open task oriented
+    message streams and acts as an IPC aware inter-actor-task cancel
+    scope.
 
     '''
     chan: Channel
     cid: str
 
+    # these are the "feeder" channels for delivering
+    # message values to the local task from the runtime
+    # msg processing loop.
+    _recv_chan: Optional[trio.MemoryReceiveChannel] = None
+    _send_chan: Optional[trio.MemorySendChannel] = None
+
     # only set on the caller side
     _portal: Optional['Portal'] = None    # type: ignore # noqa
-    _recv_chan: Optional[trio.MemoryReceiveChannel] = None
     _result: Optional[Any] = False
+    _remote_func_type: str = None
+
+    # status flags
     _cancel_called: bool = False
     _started_called: bool = False
     _started_received: bool = False
+    _stream_opened: bool = False
 
     # only set on the callee side
     _scope_nursery: Optional[trio.Nursery] = None
@@ -424,7 +434,8 @@ class Context:
         self,
 
     ) -> AsyncGenerator[MsgStream, None]:
-        '''Open a ``MsgStream``, a bi-directional stream connected to the
+        '''
+        Open a ``MsgStream``, a bi-directional stream connected to the
         cross-actor (far end) task for this ``Context``.
 
         This context manager must be entered on both the caller and
@@ -467,29 +478,32 @@ class Context:
         # to send a stop from the caller to the callee in the
         # single-direction-stream case you'll get a lookup error
         # currently.
-        _, recv_chan = actor.get_memchans(
-            self.chan.uid,
-            self.cid
+        ctx = actor.get_context(
+            self.chan,
+            self.cid,
         )
+        assert ctx is self
 
         # XXX: If the underlying channel feeder receive mem chan has
         # been closed then likely client code has already exited
         # a ``.open_stream()`` block prior or there was some other
         # unanticipated error or cancellation from ``trio``.
 
-        if recv_chan._closed:
+        if ctx._recv_chan._closed:
             raise trio.ClosedResourceError(
                 'The underlying channel for this stream was already closed!?')
 
         async with MsgStream(
             ctx=self,
-            rx_chan=recv_chan,
+            rx_chan=ctx._recv_chan,
         ) as rchan:
 
             if self._portal:
                 self._portal._streams.add(rchan)
 
             try:
+                self._stream_opened = True
+
                 # ensure we aren't cancelled before delivering
                 # the stream
                 # await trio.lowlevel.checkpoint()
