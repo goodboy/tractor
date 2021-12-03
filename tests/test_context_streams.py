@@ -79,4 +79,9 @@ def test_no_far_end_stream_opened():
                 # message which is sent from that call?
                 await stream.send('yo')
 
+                # without this we block waiting on the child side
+                await ctx.cancel()
+
+            await portal.cancel_actor()
+
     trio.run(main)
