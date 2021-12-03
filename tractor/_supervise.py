@@ -52,6 +52,7 @@ class ActorNursery:
         self.cancelled: bool = False
         self._join_procs = trio.Event()
         self.errors = errors
+        self.exited = trio.Event()
 
     async def start_actor(
         self,
@@ -207,7 +208,8 @@ class ActorNursery:
 
                         # spawn cancel tasks for each sub-actor
                         assert portal
-                        nursery.start_soon(portal.cancel_actor)
+                        if portal.channel.connected():
+                            nursery.start_soon(portal.cancel_actor)
 
         # if we cancelled the cancel (we hung cancelling remote actors)
         # then hard kill all sub-processes
@@ -401,18 +403,23 @@ async def open_nursery(
             async with open_root_actor(**kwargs) as actor:
                 assert actor is current_actor()
 
-                # try:
+                try:
+                    async with _open_and_supervise_one_cancels_all_nursery(
+                        actor
+                    ) as anursery:
+                        yield anursery
+                finally:
+                    anursery.exited.set()
+
+        else:  # sub-nursery case
+
+            try:
                 async with _open_and_supervise_one_cancels_all_nursery(
                     actor
                 ) as anursery:
                     yield anursery
-
-        else:  # sub-nursery case
-
-            async with _open_and_supervise_one_cancels_all_nursery(
-                actor
-            ) as anursery:
-                yield anursery
+            finally:
+                anursery.exited.set()
 
     finally:
         log.debug("Nursery teardown complete")
