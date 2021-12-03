@@ -616,6 +616,7 @@ class Actor:
         assert chan.uid, f"`chan.uid` can't be {chan.uid}"
         ctx = self._contexts[(chan.uid, cid)]
         send_chan = ctx._send_chan
+        assert send_chan
 
         # TODO: relaying far end context errors to the local
         # context through nursery raising?
@@ -655,9 +656,13 @@ class Actor:
 
         '''
         log.runtime(f"Getting result queue for {chan.uid} cid {cid}")
+        actor_uid = chan.uid
+        assert actor_uid
         try:
-            ctx = self._contexts[(chan.uid, cid)]
+            ctx = self._contexts[(actor_uid, cid)]
         except KeyError:
+            send_chan: trio.MemorySendChannel
+            recv_chan: trio.MemoryReceiveChannel
             send_chan, recv_chan = trio.open_memory_channel(max_buffer_size)
             ctx = Context(
                 chan,
@@ -665,23 +670,25 @@ class Actor:
                 _send_chan=send_chan,
                 _recv_chan=recv_chan,
             )
-            self._contexts[(chan.uid, cid)] = ctx
+            self._contexts[(actor_uid, cid)] = ctx
 
         return ctx
 
-    async def send_cmd(
+    async def start_remote_task(
         self,
         chan: Channel,
         ns: str,
         func: str,
         kwargs: dict
 
-    ) -> Tuple[str, trio.abc.MemoryReceiveChannel]:
+    ) -> Context:
         '''
-        Send a ``'cmd'`` message to a remote actor and return a caller
-        id and a ``trio.MemoryReceiveChannel`` message "feeder" channel
-        that can be used to wait for responses delivered by the local
-        runtime's message processing loop.
+        Send a ``'cmd'`` message to a remote actor, which starts
+        a remote task-as-function entrypoint.
+
+        Synchronously validates the endpoint type  and return a caller
+        side task ``Context`` that can be used to wait for responses
+        delivered by the local runtime's message processing loop.
 
         '''
         cid = str(uuid.uuid4())
@@ -689,7 +696,20 @@ class Actor:
         ctx = self.get_context(chan, cid)
         log.runtime(f"Sending cmd to {chan.uid}: {ns}.{func}({kwargs})")
         await chan.send({'cmd': (ns, func, kwargs, self.uid, cid)})
-        return ctx.cid, ctx._recv_chan
+
+        # Wait on first response msg and validate; this should be
+        # immediate.
+        first_msg = await ctx._recv_chan.receive()
+        functype = first_msg.get('functype')
+
+        if 'error' in first_msg:
+            raise unpack_error(first_msg, chan)
+
+        elif functype not in ('asyncfunc', 'asyncgen', 'context'):
+            raise ValueError(f"{first_msg} is an invalid response packet?")
+
+        ctx._remote_func_type = functype
+        return ctx
 
     async def _process_messages(
         self,

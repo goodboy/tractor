@@ -322,13 +322,14 @@ class Context:
     # these are the "feeder" channels for delivering
     # message values to the local task from the runtime
     # msg processing loop.
-    _recv_chan: Optional[trio.MemoryReceiveChannel] = None
-    _send_chan: Optional[trio.MemorySendChannel] = None
+    _recv_chan: trio.MemoryReceiveChannel
+    _send_chan: trio.MemorySendChannel
+
+    _remote_func_type: Optional[str] = None
 
     # only set on the caller side
     _portal: Optional['Portal'] = None    # type: ignore # noqa
     _result: Optional[Any] = False
-    _remote_func_type: str = None
 
     # status flags
     _cancel_called: bool = False
@@ -474,7 +475,7 @@ class Context:
             )
 
         # NOTE: in one way streaming this only happens on the
-        # caller side inside `Actor.send_cmd()` so if you try
+        # caller side inside `Actor.start_remote_task()` so if you try
         # to send a stop from the caller to the callee in the
         # single-direction-stream case you'll get a lookup error
         # currently.
