@@ -5,9 +5,37 @@ Verify the we raise errors when streams are opened prior to sync-opening
 a ``tractor.Context`` beforehand.
 
 '''
+import pytest
 import trio
 from trio.lowlevel import current_task
 import tractor
+
+
+@tractor.context
+async def really_started(
+    ctx: tractor.Context,
+) -> None:
+    await ctx.started()
+    try:
+        await ctx.started()
+    except RuntimeError as err:
+        raise
+
+
+def test_started_called_more_then_once():
+
+    async def main():
+        async with tractor.open_nursery() as n:
+            portal = await n.start_actor(
+                'too_much_starteds',
+                enable_modules=[__name__],
+            )
+
+            async with portal.open_context(really_started) as (ctx, sent):
+                pass
+
+    with pytest.raises(tractor.RemoteActorError) as excinfo:
+        trio.run(main)
 
 
 @tractor.context
