@@ -97,21 +97,27 @@ def test_one_end_stream_not_opened(overrun_by):
                 enable_modules=[__name__],
             )
 
-            async with portal.open_context(entrypoint) as (ctx, sent):
+            async with portal.open_context(
+                entrypoint,
+            ) as (ctx, sent):
                 assert sent is None
 
                 if overrunner in (None, 'caller'):
 
                     async with ctx.open_stream() as stream:
                         for i in range(buf_size - 1):
+                            await stream.send(i)
+
+                        if overrunner is None:
+                            # without this we block waiting on the child side
+                            await ctx.cancel()
+
+                        else:
                             await stream.send('yo')
 
                 else:
                     # callee overruns caller case so we do nothing here
                     await trio.sleep_forever()
-
-                # without this we block waiting on the child side
-                await ctx.cancel()
 
             await portal.cancel_actor()
 
