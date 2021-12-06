@@ -182,6 +182,7 @@ async def _invoke(
                 else:
                     raise
 
+            assert cs
             if cs.cancelled_caught or ctx._error:
 
                 # TODO: pack in ``trio.Cancelled.__traceback__`` here
@@ -706,7 +707,7 @@ class Actor:
             ctx = self._contexts[(actor_uid, cid)]
 
             # adjust buffer size if specified
-            state = ctx._send_chan._state
+            state = ctx._send_chan._state  # type: ignore
             if msg_buffer_size and state.max_buffer_size != msg_buffer_size:
                 state.max_buffer_size = msg_buffer_size
 
