@@ -180,6 +180,14 @@ async def _invoke(
 
                 raise
 
+            finally:
+                # XXX: only pop the context tracking if
+                # a ``@tractor.context`` entrypoint was called
+                assert chan.uid
+                ctx = actor._contexts.pop((chan.uid, cid))
+                if ctx:
+                    log.runtime(f'Context entrypoint for {func} was terminated:\n{ctx}')
+
             assert cs
             if cs.cancelled_caught:
 
@@ -255,15 +263,11 @@ async def _invoke(
             task_status.started(err)
 
     finally:
-        assert chan.uid
-        ctx = actor._contexts.pop((chan.uid, cid))
-        if ctx:
-            log.cancel(f'{ctx} was terminated')
-
         # RPC task bookeeping
         try:
             scope, func, is_complete = actor._rpc_tasks.pop((chan, cid))
             is_complete.set()
+
         except KeyError:
             if is_rpc:
                 # If we're cancelled before the task returns then the
@@ -696,7 +700,7 @@ class Actor:
                 if not ctx._stream_opened:
                     lines.insert(
                         1,
-                        f'\n*** No stream open on {self.uid[0]} side! ***\n'
+                        f'\n*** No stream open on `{self.uid[0]}` side! ***\n'
                     )
 
                 text = '\n'.join(lines)
