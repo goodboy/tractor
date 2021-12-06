@@ -395,12 +395,14 @@ class Portal:
         __tracebackhide__ = True
 
         fn_mod_path, fn_name = func_deats(func)
+
         ctx = await self.actor.start_remote_task(
             self.channel,
             fn_mod_path,
             fn_name,
             kwargs
         )
+
         assert ctx._remote_func_type == 'context'
         msg = await ctx._recv_chan.receive()
 
@@ -496,6 +498,9 @@ class Portal:
                     f'Context {fn_name} returned '
                     f'value from callee `{result}`'
                 )
+
+            # remove the context from runtime tracking
+            self.actor._contexts.pop((self.channel.uid, ctx.cid))
 
 
 @dataclass
