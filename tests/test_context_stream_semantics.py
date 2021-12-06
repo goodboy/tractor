@@ -588,6 +588,7 @@ async def echo_back_sequence(
         msg_buffer_size=msg_buffer_size,
     ) as stream:
 
+        seq = list(seq)  # bleh, `msgpack`...
         count = 0
         while count < 3:
             batch = []
