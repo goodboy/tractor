@@ -71,7 +71,7 @@ def test_simple_context(
     pointlessly_open_stream,
 ):
 
-    timeout = 1.5 if not platform.system() == 'Windows' else 3
+    timeout = 1.5 if not platform.system() == 'Windows' else 4
 
     async def main():
 
