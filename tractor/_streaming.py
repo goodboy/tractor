@@ -364,33 +364,55 @@ class Context:
     async def send_stop(self) -> None:
         await self.chan.send({'stop': True, 'cid': self.cid})
 
-    def _maybe_error_from_remote_msg(
+    async def _maybe_raise_from_remote_msg(
         self,
         msg: Dict[str, Any],
 
     ) -> None:
         '''
-        Unpack and raise a msg error into the local scope
+        (Maybe) unpack and raise a msg error into the local scope
         nursery for this context.
 
         Acts as a form of "relay" for a remote error raised
         in the corresponding remote callee task.
 
         '''
-        self._error = unpack_error(msg, self.chan)
+        error = msg.get('error')
+        if error:
+            # If this is an error message from a context opened by
+            # ``Portal.open_context()`` we want to interrupt any ongoing
+            # (child) tasks within that context to be notified of the remote
+            # error relayed here.
+            #
+            # The reason we may want to raise the remote error immediately
+            # is that there is no guarantee the associated local task(s)
+            # will attempt to read from any locally opened stream any time
+            # soon.
+            #
+            # NOTE: this only applies when
+            # ``Portal.open_context()`` has been called since it is assumed
+            # (currently) that other portal APIs (``Portal.run()``,
+            # ``.run_in_actor()``) do their own error checking at the point
+            # of the call and result processing.
+            log.error(
+                f'Remote context error for {self.chan.uid}:{self.cid}:\n'
+                f'{msg["error"]["tb_str"]}'
+            )
+            # await ctx._maybe_error_from_remote_msg(msg)
+            self._error = unpack_error(msg, self.chan)
 
-        # TODO: tempted to **not** do this by-reraising in a
-        # nursery and instead cancel a surrounding scope, detect
-        # the cancellation, then lookup the error that was set?
-        if self._scope_nursery:
+            # TODO: tempted to **not** do this by-reraising in a
+            # nursery and instead cancel a surrounding scope, detect
+            # the cancellation, then lookup the error that was set?
+            if self._scope_nursery:
 
-            async def raiser():
-                raise self._error from None
+                async def raiser():
+                    raise self._error from None
 
-            # from trio.testing import wait_all_tasks_blocked
-            # await wait_all_tasks_blocked()
-            if not self._scope_nursery._closed:  # type: ignore
-                self._scope_nursery.start_soon(raiser)
+                # from trio.testing import wait_all_tasks_blocked
+                # await wait_all_tasks_blocked()
+                if not self._scope_nursery._closed:  # type: ignore
+                    self._scope_nursery.start_soon(raiser)
 
     async def cancel(self) -> None:
         '''
