@@ -10,6 +10,7 @@ from itertools import count
 import pytest
 import trio
 import tractor
+from tractor._exceptions import StreamOverrun
 
 
 @tractor.context
@@ -74,11 +75,11 @@ async def keep_sending_from_callee(
 @pytest.mark.parametrize(
     'overrun_by',
     [
-        (None, 0, never_open_stream),  # use default settings
         ('caller', 1, never_open_stream),
+        ('cancel_caller_during_overrun', 1, never_open_stream),
         ('callee', 0, keep_sending_from_callee),
     ],
-    ids='overrun_condition_by={}'.format,
+    ids='overrun_condition={}'.format,
 )
 def test_one_end_stream_not_opened(overrun_by):
     '''
@@ -102,18 +103,21 @@ def test_one_end_stream_not_opened(overrun_by):
             ) as (ctx, sent):
                 assert sent is None
 
-                if overrunner in (None, 'caller'):
+                if 'caller' in overrunner:
 
                     async with ctx.open_stream() as stream:
-                        for i in range(buf_size - 1):
+                        for i in range(buf_size):
+                            print(f'sending {i}')
                             await stream.send(i)
 
-                        if overrunner is None:
+                        if 'cancel' in  overrunner:
                             # without this we block waiting on the child side
                             await ctx.cancel()
 
                         else:
-                            await stream.send('yo')
+                            # expect overrun error to be relayed back
+                            # and this sleep interrupted
+                            await trio.sleep_forever()
 
                 else:
                     # callee overruns caller case so we do nothing here
@@ -127,12 +131,29 @@ def test_one_end_stream_not_opened(overrun_by):
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
-        assert excinfo.value.type == tractor._exceptions.StreamOverrun
+        assert excinfo.value.type == StreamOverrun
+
+    elif 'cancel' in overrunner:
+        with pytest.raises(trio.MultiError) as excinfo:
+            trio.run(main)
+
+        multierr = excinfo.value
+
+        for exc in multierr.exceptions:
+            etype = type(exc)
+            if etype == tractor.RemoteActorError:
+                assert exc.type == StreamOverrun
+            else:
+                assert etype == tractor.ContextCancelled
 
     elif overrunner == 'callee':
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
+        # TODO: embedded remote errors so that we can verify the source
+        # error?
+        # the callee delivers an error which is an overrun wrapped
+        # in a remote actor error.
         assert excinfo.value.type == tractor.RemoteActorError
 
     else:
