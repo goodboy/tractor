@@ -249,14 +249,14 @@ class Portal:
             internals.
 
         '''
-        msg = await self._return_once(
-            await self.actor.start_remote_task(
-                self.channel,
-                namespace_path,
-                function_name,
-                kwargs,
-            )
+        ctx = await self.actor.start_remote_task(
+            self.channel,
+            namespace_path,
+            function_name,
+            kwargs,
         )
+        ctx._portal = self
+        msg = await self._return_once(ctx)
         return _unwrap_msg(msg, self.channel)
 
     async def run(
@@ -298,15 +298,15 @@ class Portal:
 
             fn_mod_path, fn_name = func_deats(func)
 
+        ctx = await self.actor.start_remote_task(
+            self.channel,
+            fn_mod_path,
+            fn_name,
+            kwargs,
+        )
+        ctx._portal = self
         return _unwrap_msg(
-            await self._return_once(
-                await self.actor.start_remote_task(
-                    self.channel,
-                    fn_mod_path,
-                    fn_name,
-                    kwargs,
-                )
-            ),
+            await self._return_once(ctx),
             self.channel,
         )
 
@@ -385,13 +385,14 @@ class Portal:
         and synchronized final result collection. See ``tractor.Context``.
 
         '''
-
         # conduct target func method structural checks
         if not inspect.iscoroutinefunction(func) and (
             getattr(func, '_tractor_contex_function', False)
         ):
             raise TypeError(
                 f'{func} must be an async generator function!')
+
+        __tracebackhide__ = True
 
         fn_mod_path, fn_name = func_deats(func)
         ctx = await self.actor.start_remote_task(
@@ -407,6 +408,7 @@ class Portal:
             # the "first" value here is delivered by the callee's
             # ``Context.started()`` call.
             first = msg['started']
+            ctx._started_called = True
 
         except KeyError:
             assert msg.get('cid'), ("Received internal error at context?")
@@ -458,9 +460,10 @@ class Portal:
             _err = err
             # the context cancels itself on any cancel
             # causing error.
-            log.cancel(f'Context {ctx} sending cancel to far end')
-            with trio.CancelScope(shield=True):
-                await ctx.cancel()
+            log.cancel(
+                f'Context to {self.channel.uid} sending cancel request..')
+
+            await ctx.cancel()
             raise
 
         finally:
