@@ -646,7 +646,8 @@ class Actor:
             ctx = self._contexts[(uid, cid)]
         except KeyError:
             log.warning(
-                f'Ignoring {msg} for unknwon context with {uid}')
+                    f'Ignoring msg from [no-longer/un]known context with {uid}:'
+                    f'\n{msg}')
             return
 
         send_chan = ctx._send_chan
