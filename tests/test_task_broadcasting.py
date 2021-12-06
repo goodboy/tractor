@@ -334,7 +334,7 @@ def test_ensure_slow_consumers_lag_out(
 
                             if task.name == 'sub_1':
                                 # trigger checkpoint to clean out other subs
-                                await trio.sleep(0)
+                                await trio.sleep(0.01)
 
                                 # the non-lagger got
                                 # a ``trio.EndOfChannel``
@@ -401,7 +401,7 @@ def test_ensure_slow_consumers_lag_out(
                 assert not tx._state.open_send_channels
 
                 # check that "first" bcaster that we created
-                # above, never wass iterated and is thus overrun
+                # above, never was iterated and is thus overrun
                 try:
                     await brx.receive()
                 except Lagged:
