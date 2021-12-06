@@ -7,7 +7,7 @@ import tractor
 async def stream_data(seed):
     for i in range(seed):
         yield i
-        await trio.sleep(0)  # trigger scheduler
+        await trio.sleep(0.0001)  # trigger scheduler
 
 
 # this is the third actor; the aggregator

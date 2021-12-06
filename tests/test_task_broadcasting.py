@@ -83,7 +83,7 @@ async def open_sequence_streamer(
         ) as (ctx, first):
 
             assert first is None
-            async with ctx.open_stream() as stream:
+            async with ctx.open_stream(backpressure=True) as stream:
                 yield stream
 
         await portal.cancel_actor()

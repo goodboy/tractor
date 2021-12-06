@@ -386,7 +386,8 @@ async def cancel_self(
 
 @tractor_test
 async def test_callee_cancels_before_started():
-    '''callee calls `Context.cancel()` while streaming and caller
+    '''
+    Callee calls `Context.cancel()` while streaming and caller
     sees stream terminated in `ContextCancelled`.
 
     '''
@@ -420,9 +421,10 @@ async def simple_rpc(
     data: int,
 
 ) -> None:
-    """Test a small ping-pong server.
+    '''
+    Test a small ping-pong server.
 
-    """
+    '''
     # signal to parent that we're up
     await ctx.started(data + 1)
 
@@ -480,9 +482,10 @@ async def simple_rpc_with_forloop(
     [simple_rpc, simple_rpc_with_forloop],
 )
 def test_simple_rpc(server_func, use_async_for):
-    """The simplest request response pattern.
+    '''
+    The simplest request response pattern.
 
-    """
+    '''
     async def main():
         async with tractor.open_nursery() as n:
 
