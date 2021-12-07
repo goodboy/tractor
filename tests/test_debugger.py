@@ -279,8 +279,10 @@ def test_multi_subactors(spawn):
     assert "Attaching pdb to actor: ('breakpoint_forever'" in before
 
     # wait for spawn error to show up
-    while 'breakpoint_forever' in before:
+    spawn_err = "Attaching to pdb in crashed actor: ('spawn_error'"
+    while spawn_err not in before:
         child.sendline('c')
+        time.sleep(0.1)
         child.expect(r"\(Pdb\+\+\)")
         before = str(child.before.decode())
 
@@ -288,7 +290,7 @@ def test_multi_subactors(spawn):
     # child.sendline('c')
     # child.expect(r"\(Pdb\+\+\)")
     # before = str(child.before.decode())
-    assert "Attaching to pdb in crashed actor: ('spawn_error'" in before
+    assert spawn_err in before
     assert "RemoteActorError: ('name_error_1'" in before
 
     # now run some "continues" to show re-entries
