@@ -14,7 +14,7 @@ MESSAGE = 'tractoring at full speed'
 @tractor.context
 async def worker(ctx: tractor.Context) -> None:
     await ctx.started()
-    async with ctx.open_stream() as stream:
+    async with ctx.open_stream(backpressure=True) as stream:
         async for msg in stream:
             # do something with msg
             print(msg)

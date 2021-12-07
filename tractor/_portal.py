@@ -6,7 +6,7 @@ concurrency linked tasks running in disparate memory domains.
 import importlib
 import inspect
 from typing import (
-    Tuple, Any, Dict, Optional, Set,
+    Any, Optional,
     Callable, AsyncGenerator
 )
 from functools import partial
@@ -49,7 +49,7 @@ async def maybe_open_nursery(
             yield nursery
 
 
-def func_deats(func: Callable) -> Tuple[str, str]:
+def func_deats(func: Callable) -> tuple[str, str]:
     return (
         func.__module__,
         func.__name__,
@@ -98,68 +98,45 @@ class Portal:
         # during the portal's lifetime
         self._result_msg: Optional[dict] = None
 
-        # When this is set to a tuple returned from ``_submit()`` then
+        # When set to a ``Context`` (when _submit_for_result is called)
         # it is expected that ``result()`` will be awaited at some
-        # point. Set when _submit_for_result is called
-        self._expect_result: Optional[
-            Tuple[str, Any, str, Dict[str, Any]]
-        ] = None
-        self._streams: Set[ReceiveMsgStream] = set()
+        # point.
+        self._expect_result: Optional[Context] = None
+        self._streams: set[ReceiveMsgStream] = set()
         self.actor = current_actor()
 
-    async def _submit(
+    async def _submit_for_result(
         self,
         ns: str,
         func: str,
-        kwargs,
-    ) -> Tuple[str, trio.MemoryReceiveChannel, str, Dict[str, Any]]:
-        """Submit a function to be scheduled and run by actor, return the
-        associated caller id, response queue, response type str,
-        first message packet as a tuple.
-
-        This is an async call.
-        """
-        # ship a function call request to the remote actor
-        cid, recv_chan = await self.actor.send_cmd(
-            self.channel, ns, func, kwargs)
-
-        # wait on first response msg and handle (this should be
-        # in an immediate response)
-
-        first_msg = await recv_chan.receive()
-        functype = first_msg.get('functype')
-
-        if 'error' in first_msg:
-            raise unpack_error(first_msg, self.channel)
-
-        elif functype not in ('asyncfunc', 'asyncgen', 'context'):
-            raise ValueError(f"{first_msg} is an invalid response packet?")
-
-        return cid, recv_chan, functype, first_msg
-
-    async def _submit_for_result(self, ns: str, func: str, **kwargs) -> None:
+        **kwargs
+    ) -> None:
 
         assert self._expect_result is None, \
                 "A pending main result has already been submitted"
 
-        self._expect_result = await self._submit(ns, func, kwargs)
+        self._expect_result = await self.actor.start_remote_task(
+            self.channel,
+            ns,
+            func,
+            kwargs
+        )
 
     async def _return_once(
         self,
-        cid: str,
-        recv_chan: trio.abc.ReceiveChannel,
-        resptype: str,
-        first_msg: dict
+        ctx: Context,
 
     ) -> dict[str, Any]:
 
-        assert resptype == 'asyncfunc'  # single response
-        msg = await recv_chan.receive()
+        assert ctx._remote_func_type == 'asyncfunc'  # single response
+        msg = await ctx._recv_chan.receive()
         return msg
 
     async def result(self) -> Any:
-        """Return the result(s) from the remote actor's "main" task.
-        """
+        '''
+        Return the result(s) from the remote actor's "main" task.
+
+        '''
         # Check for non-rpc errors slapped on the
         # channel for which we always raise
         exc = self.channel._exc
@@ -178,7 +155,9 @@ class Portal:
         assert self._expect_result
 
         if self._result_msg is None:
-            self._result_msg = await self._return_once(*self._expect_result)
+            self._result_msg = await self._return_once(
+                self._expect_result
+            )
 
         return _unwrap_msg(self._result_msg, self.channel)
 
@@ -244,7 +223,8 @@ class Portal:
             trio.BrokenResourceError,
         ):
             log.cancel(
-                f"{self.channel} for {self.channel.uid} was already closed or broken?")
+                f"{self.channel} for {self.channel.uid} was already "
+                "closed or broken?")
             return False
 
     async def run_from_ns(
@@ -269,9 +249,14 @@ class Portal:
             internals.
 
         '''
-        msg = await self._return_once(
-            *(await self._submit(namespace_path, function_name, kwargs))
+        ctx = await self.actor.start_remote_task(
+            self.channel,
+            namespace_path,
+            function_name,
+            kwargs,
         )
+        ctx._portal = self
+        msg = await self._return_once(ctx)
         return _unwrap_msg(msg, self.channel)
 
     async def run(
@@ -313,10 +298,15 @@ class Portal:
 
             fn_mod_path, fn_name = func_deats(func)
 
+        ctx = await self.actor.start_remote_task(
+            self.channel,
+            fn_mod_path,
+            fn_name,
+            kwargs,
+        )
+        ctx._portal = self
         return _unwrap_msg(
-            await self._return_once(
-                *(await self._submit(fn_mod_path, fn_name, kwargs)),
-            ),
+            await self._return_once(ctx),
             self.channel,
         )
 
@@ -337,27 +327,21 @@ class Portal:
                     f'{async_gen_func} must be an async generator function!')
 
         fn_mod_path, fn_name = func_deats(async_gen_func)
-        (
-            cid,
-            recv_chan,
-            functype,
-            first_msg
-        ) = await self._submit(fn_mod_path, fn_name, kwargs)
-
-        # receive only stream
-        assert functype == 'asyncgen'
-
-        ctx = Context(
+        ctx = await self.actor.start_remote_task(
             self.channel,
-            cid,
-            # do we need this to be closed implicitly?
-            # _recv_chan=recv_chan,
-            _portal=self
+            fn_mod_path,
+            fn_name,
+            kwargs
         )
+        ctx._portal = self
+
+        # ensure receive-only stream entrypoint
+        assert ctx._remote_func_type == 'asyncgen'
+
         try:
             # deliver receive only stream
             async with ReceiveMsgStream(
-                ctx, recv_chan,
+                ctx, ctx._recv_chan,
             ) as rchan:
                 self._streams.add(rchan)
                 yield rchan
@@ -391,8 +375,9 @@ class Portal:
         func: Callable,
         **kwargs,
 
-    ) -> AsyncGenerator[Tuple[Context, Any], None]:
-        '''Open an inter-actor task context.
+    ) -> AsyncGenerator[tuple[Context, Any], None]:
+        '''
+        Open an inter-actor task context.
 
         This is a synchronous API which allows for deterministic
         setup/teardown of a remote task. The yielded ``Context`` further
@@ -400,7 +385,6 @@ class Portal:
         and synchronized final result collection. See ``tractor.Context``.
 
         '''
-
         # conduct target func method structural checks
         if not inspect.iscoroutinefunction(func) and (
             getattr(func, '_tractor_contex_function', False)
@@ -408,20 +392,25 @@ class Portal:
             raise TypeError(
                 f'{func} must be an async generator function!')
 
+        __tracebackhide__ = True
+
         fn_mod_path, fn_name = func_deats(func)
 
-        recv_chan: Optional[trio.MemoryReceiveChannel] = None
+        ctx = await self.actor.start_remote_task(
+            self.channel,
+            fn_mod_path,
+            fn_name,
+            kwargs
+        )
 
-        cid, recv_chan, functype, first_msg = await self._submit(
-            fn_mod_path, fn_name, kwargs)
-
-        assert functype == 'context'
-        msg = await recv_chan.receive()
+        assert ctx._remote_func_type == 'context'
+        msg = await ctx._recv_chan.receive()
 
         try:
             # the "first" value here is delivered by the callee's
             # ``Context.started()`` call.
             first = msg['started']
+            ctx._started_called = True
 
         except KeyError:
             assert msg.get('cid'), ("Received internal error at context?")
@@ -433,19 +422,14 @@ class Portal:
                 raise
 
         _err: Optional[BaseException] = None
+        ctx._portal = self
+
         # deliver context instance and .started() msg value in open tuple.
         try:
             async with trio.open_nursery() as scope_nursery:
-                ctx = Context(
-                    self.channel,
-                    cid,
-                    _portal=self,
-                    _recv_chan=recv_chan,
-                    _scope_nursery=scope_nursery,
-                )
+                ctx._scope_nursery = scope_nursery
 
-                # pairs with handling in ``Actor._push_result()``
-                # recv_chan._ctx = ctx
+                # do we need this?
                 # await trio.lowlevel.checkpoint()
 
                 yield ctx, first
@@ -478,9 +462,10 @@ class Portal:
             _err = err
             # the context cancels itself on any cancel
             # causing error.
-            log.cancel(f'Context {ctx} sending cancel to far end')
-            with trio.CancelScope(shield=True):
-                await ctx.cancel()
+            log.cancel(
+                f'Context to {self.channel.uid} sending cancel request..')
+
+            await ctx.cancel()
             raise
 
         finally:
@@ -495,8 +480,9 @@ class Portal:
             # operating *in* this scope to have survived
             # we tear down the runtime feeder chan last
             # to avoid premature stream clobbers.
-            if recv_chan is not None:
-                await recv_chan.aclose()
+            if ctx._recv_chan is not None:
+                # should we encapsulate this in the context api?
+                await ctx._recv_chan.aclose()
 
             if _err:
                 if ctx._cancel_called:
@@ -512,6 +498,9 @@ class Portal:
                     f'Context {fn_name} returned '
                     f'value from callee `{result}`'
                 )
+
+            # remove the context from runtime tracking
+            self.actor._contexts.pop((self.channel.uid, ctx.cid))
 
 
 @dataclass

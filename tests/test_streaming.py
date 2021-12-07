@@ -132,7 +132,7 @@ async def stream_data(seed):
         yield i
 
         # trigger scheduler to simulate practical usage
-        await trio.sleep(0)
+        await trio.sleep(0.0001)
 
 
 # this is the third actor; the aggregator

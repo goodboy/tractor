@@ -61,6 +61,10 @@ class NoRuntime(RuntimeError):
     "The root actor has not been initialized yet"
 
 
+class StreamOverrun(trio.TooSlowError):
+    "This stream was overrun by sender"
+
+
 def pack_error(
     exc: BaseException,
     tb=None,

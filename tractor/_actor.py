@@ -32,6 +32,7 @@ from ._exceptions import (
     is_multi_cancelled,
     ContextCancelled,
     TransportClosed,
+    StreamOverrun,
 )
 from . import _debug
 from ._discovery import get_arbiter
@@ -50,6 +51,7 @@ async def _invoke(
     chan: Channel,
     func: typing.Callable,
     kwargs: dict[str, Any],
+
     is_rpc: bool = True,
     task_status: TaskStatus[
         Union[trio.CancelScope, BaseException]
@@ -68,9 +70,10 @@ async def _invoke(
     tb = None
 
     cancel_scope = trio.CancelScope()
+    # activated cancel scope ref
     cs: Optional[trio.CancelScope] = None
 
-    ctx = Context(chan, cid)
+    ctx = actor.get_context(chan, cid)
     context: bool = False
 
     if getattr(func, '_tractor_stream_function', False):
@@ -159,15 +162,33 @@ async def _invoke(
             # context func with support for bi-dir streaming
             await chan.send({'functype': 'context', 'cid': cid})
 
-            async with trio.open_nursery() as scope_nursery:
-                ctx._scope_nursery = scope_nursery
-                cs = scope_nursery.cancel_scope
-                task_status.started(cs)
-                try:
+            try:
+                async with trio.open_nursery() as scope_nursery:
+                    ctx._scope_nursery = scope_nursery
+                    cs = scope_nursery.cancel_scope
+                    task_status.started(cs)
                     await chan.send({'return': await coro, 'cid': cid})
-                except trio.Cancelled as err:
-                    tb = err.__traceback__
 
+            except trio.Cancelled as err:
+                tb = err.__traceback__
+
+            except trio.MultiError:
+                # if a context error was set then likely
+                # thei multierror was raised due to that
+                if ctx._error is not None:
+                    raise ctx._error from None
+
+                raise
+
+            finally:
+                # XXX: only pop the context tracking if
+                # a ``@tractor.context`` entrypoint was called
+                assert chan.uid
+                ctx = actor._contexts.pop((chan.uid, cid))
+                if ctx:
+                    log.runtime(f'Context entrypoint for {func} was terminated:\n{ctx}')
+
+            assert cs
             if cs.cancelled_caught:
 
                 # TODO: pack in ``trio.Cancelled.__traceback__`` here
@@ -246,6 +267,7 @@ async def _invoke(
         try:
             scope, func, is_complete = actor._rpc_tasks.pop((chan, cid))
             is_complete.set()
+
         except KeyError:
             if is_rpc:
                 # If we're cancelled before the task returns then the
@@ -312,6 +334,7 @@ class Actor:
     # ugh, we need to get rid of this and replace with a "registry" sys
     # https://github.com/goodboy/tractor/issues/216
     is_arbiter: bool = False
+    msg_buffer_size: int = 2**6
 
     # nursery placeholders filled in by `_async_main()` after fork
     _root_n: Optional[trio.Nursery] = None
@@ -379,19 +402,19 @@ class Actor:
         self._no_more_peers.set()
         self._ongoing_rpc_tasks = trio.Event()
         self._ongoing_rpc_tasks.set()
+
         # (chan, cid) -> (cancel_scope, func)
         self._rpc_tasks: dict[
             Tuple[Channel, str],
             Tuple[trio.CancelScope, typing.Callable, trio.Event]
         ] = {}
-        # map {uids -> {callids -> waiter queues}}
-        self._cids2qs: dict[
+
+        # map {actor uids -> Context}
+        self._contexts: dict[
             Tuple[Tuple[str, str], str],
-            Tuple[
-                trio.abc.SendChannel[Any],
-                trio.abc.ReceiveChannel[Any]
-            ]
+            Context
         ] = {}
+
         self._listeners: List[trio.abc.Listener] = []
         self._parent_chan: Optional[Channel] = None
         self._forkserver_info: Optional[
@@ -546,7 +569,7 @@ class Actor:
                 # now in a cancelled condition) when the local runtime here
                 # is now cancelled while (presumably) in the middle of msg
                 # loop processing.
-                with trio.move_on_after(0.1) as cs:
+                with trio.move_on_after(0.5) as cs:
                     cs.shield = True
                     # Attempt to wait for the far end to close the channel
                     # and bail after timeout (2-generals on closure).
@@ -567,17 +590,7 @@ class Actor:
 
                     await local_nursery.exited.wait()
 
-            # channel cleanup sequence
-
-            # for (channel, cid) in self._rpc_tasks.copy():
-            #     if channel is chan:
-            #         with trio.CancelScope(shield=True):
-            #             await self._cancel_task(cid, channel)
-
-            #             # close all consumer side task mem chans
-            #             send_chan, _ = self._cids2qs[(chan.uid, cid)]
-            #             assert send_chan.cid == cid  # type: ignore
-            #             await send_chan.aclose()
+            # ``Channel`` teardown and closure sequence
 
             # Drop ref to channel so it can be gc-ed and disconnected
             log.runtime(f"Releasing channel {chan} from {chan.uid}")
@@ -587,6 +600,10 @@ class Actor:
             if not chans:
                 log.runtime(f"No more channels for {chan.uid}")
                 self._peers.pop(chan.uid, None)
+
+                # for (uid, cid) in self._contexts.copy():
+                #     if chan.uid == uid:
+                #         self._contexts.pop((uid, cid))
 
             log.runtime(f"Peers is {self._peers}")
 
@@ -619,26 +636,32 @@ class Actor:
         cid: str,
         msg: dict[str, Any],
     ) -> None:
-        """Push an RPC result to the local consumer's queue.
-        """
-        # actorid = chan.uid
-        assert chan.uid, f"`chan.uid` can't be {chan.uid}"
-        send_chan, recv_chan = self._cids2qs[(chan.uid, cid)]
-        assert send_chan.cid == cid  # type: ignore
+        '''
+        Push an RPC result to the local consumer's queue.
 
-        # if 'error' in msg:
-        #     ctx = getattr(recv_chan, '_ctx', None)
-        #     if ctx:
-        #         ctx._error_from_remote_msg(msg)
-
-        #     log.runtime(f"{send_chan} was terminated at remote end")
-        #     # indicate to consumer that far end has stopped
-        #     return await send_chan.aclose()
-
+        '''
+        uid = chan.uid
+        assert uid, f"`chan.uid` can't be {uid}"
         try:
-            log.runtime(f"Delivering {msg} from {chan.uid} to caller {cid}")
-            # maintain backpressure
-            await send_chan.send(msg)
+            ctx = self._contexts[(uid, cid)]
+        except KeyError:
+            log.warning(
+                    f'Ignoring msg from [no-longer/un]known context with {uid}:'
+                    f'\n{msg}')
+            return
+
+        send_chan = ctx._send_chan
+
+        log.runtime(f"Delivering {msg} from {chan.uid} to caller {cid}")
+
+        # XXX: we do **not** maintain backpressure and instead
+        # opt to relay stream overrun errors to the sender.
+        try:
+            send_chan.send_nowait(msg)
+            # if an error is deteced we should always
+            # expect it to be raised by any context (stream)
+            # consumer task
+            await ctx._maybe_raise_from_remote_msg(msg)
 
         except trio.BrokenResourceError:
             # TODO: what is the right way to handle the case where the
@@ -650,44 +673,120 @@ class Actor:
             # XXX: local consumer has closed their side
             # so cancel the far end streaming task
             log.warning(f"{send_chan} consumer is already closed")
+            return
 
-    def get_memchans(
+        except trio.WouldBlock:
+            # XXX: always push an error even if the local
+            # receiver is in overrun state.
+            await ctx._maybe_raise_from_remote_msg(msg)
+
+            uid = chan.uid
+            lines = [
+                'Task context stream was overrun',
+                f'local task: {cid} @ {self.uid}',
+                f'remote sender: {uid}',
+            ]
+            if not ctx._stream_opened:
+                lines.insert(
+                    1,
+                    f'\n*** No stream open on `{self.uid[0]}` side! ***\n'
+                )
+            text = '\n'.join(lines)
+
+            if ctx._backpressure:
+                log.warning(text)
+                await send_chan.send(msg)
+            else:
+                try:
+                    raise StreamOverrun(text) from None
+                except StreamOverrun as err:
+                    err_msg = pack_error(err)
+                    err_msg['cid'] = cid
+                    try:
+                        await chan.send(err_msg)
+                    except trio.BrokenResourceError:
+                        # XXX: local consumer has closed their side
+                        # so cancel the far end streaming task
+                        log.warning(f"{chan} is already closed")
+
+    def get_context(
         self,
-        actorid: Tuple[str, str],
-        cid: str
+        chan: Channel,
+        cid: str,
+        msg_buffer_size: Optional[int] = None,
 
-    ) -> Tuple[trio.abc.SendChannel, trio.abc.ReceiveChannel]:
+    ) -> Context:
+        '''
+        Look up or create a new inter-actor-task-IPC-linked task
+        "context" which encapsulates the local task's scheduling
+        enviroment including a ``trio`` cancel scope, a pair of IPC
+        messaging "feeder" channels, and an RPC id unique to the
+        task-as-function invocation.
 
-        log.runtime(f"Getting result queue for {actorid} cid {cid}")
+        '''
+        log.runtime(f"Getting result queue for {chan.uid} cid {cid}")
+        actor_uid = chan.uid
+        assert actor_uid
         try:
-            send_chan, recv_chan = self._cids2qs[(actorid, cid)]
+            ctx = self._contexts[(actor_uid, cid)]
+
+            # adjust buffer size if specified
+            state = ctx._send_chan._state  # type: ignore
+            if msg_buffer_size and state.max_buffer_size != msg_buffer_size:
+                state.max_buffer_size = msg_buffer_size
+
         except KeyError:
-            send_chan, recv_chan = trio.open_memory_channel(2**6)
-            send_chan.cid = cid  # type: ignore
-            recv_chan.cid = cid  # type: ignore
-            self._cids2qs[(actorid, cid)] = send_chan, recv_chan
+            send_chan: trio.MemorySendChannel
+            recv_chan: trio.MemoryReceiveChannel
+            send_chan, recv_chan = trio.open_memory_channel(
+                msg_buffer_size or self.msg_buffer_size)
+            ctx = Context(
+                chan,
+                cid,
+                _send_chan=send_chan,
+                _recv_chan=recv_chan,
+            )
+            self._contexts[(actor_uid, cid)] = ctx
 
-        return send_chan, recv_chan
+        return ctx
 
-    async def send_cmd(
+    async def start_remote_task(
         self,
         chan: Channel,
         ns: str,
         func: str,
-        kwargs: dict
-    ) -> Tuple[str, trio.abc.ReceiveChannel]:
+        kwargs: dict,
+        msg_buffer_size: Optional[int] = None,
+
+    ) -> Context:
         '''
-        Send a ``'cmd'`` message to a remote actor and return a
-        caller id and a ``trio.Queue`` that can be used to wait for
-        responses delivered by the local message processing loop.
+        Send a ``'cmd'`` message to a remote actor, which starts
+        a remote task-as-function entrypoint.
+
+        Synchronously validates the endpoint type  and return a caller
+        side task ``Context`` that can be used to wait for responses
+        delivered by the local runtime's message processing loop.
 
         '''
         cid = str(uuid.uuid4())
         assert chan.uid
-        send_chan, recv_chan = self.get_memchans(chan.uid, cid)
+        ctx = self.get_context(chan, cid, msg_buffer_size=msg_buffer_size)
         log.runtime(f"Sending cmd to {chan.uid}: {ns}.{func}({kwargs})")
         await chan.send({'cmd': (ns, func, kwargs, self.uid, cid)})
-        return cid, recv_chan
+
+        # Wait on first response msg and validate; this should be
+        # immediate.
+        first_msg = await ctx._recv_chan.receive()
+        functype = first_msg.get('functype')
+
+        if 'error' in first_msg:
+            raise unpack_error(first_msg, chan)
+
+        elif functype not in ('asyncfunc', 'asyncgen', 'context'):
+            raise ValueError(f"{first_msg} is an invalid response packet?")
+
+        ctx._remote_func_type = functype
+        return ctx
 
     async def _process_messages(
         self,
@@ -721,7 +820,8 @@ class Actor:
                     if msg is None:  # loop terminate sentinel
 
                         log.cancel(
-                            f"Cancelling all tasks for {chan} from {chan.uid}")
+                            f"Channerl to {chan.uid} terminated?\n"
+                            "Cancelling all associated tasks..")
 
                         for (channel, cid) in self._rpc_tasks.copy():
                             if channel is chan:
