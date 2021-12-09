@@ -4,7 +4,11 @@ That native debug better work!
 All these tests can be understood (somewhat) by running the equivalent
 `examples/debugging/` scripts manually.
 
-TODO: None of these tests have been run successfully on windows yet.
+TODO:
+    - none of these tests have been run successfully on windows yet but
+      there's been manual testing that verified it works.
+    - wonder if any of it'll work on OS X?
+
 """
 import time
 from os import path
@@ -561,3 +565,32 @@ def test_root_cancels_child_context_during_startup(
 
     child.sendline('c')
     child.expect(pexpect.EOF)
+
+
+def test_different_debug_mode_per_actor(
+    spawn,
+):
+    child = spawn('per_actor_debug')
+    child.expect(r"\(Pdb\+\+\)")
+
+    # only one actor should enter the debugger
+    before = str(child.before.decode())
+    assert "Attaching to pdb in crashed actor: ('debugged_boi'" in before
+    assert "RuntimeError" in before
+
+    # the crash boi should not have made a debugger request but
+    # instead crashed completely
+    assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
+
+    child.sendline('c')
+    child.expect(pexpect.EOF)
+
+    before = str(child.before.decode())
+
+    # NOTE: this debugged actor error currently WON'T show up since the
+    # root will actually cancel and terminate the nursery before the error
+    # msg reported back from the debug mode actor is processed.
+    # assert "tractor._exceptions.RemoteActorError: ('debugged_boi'" in before
+
+    assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
+    assert "RuntimeError" in before
