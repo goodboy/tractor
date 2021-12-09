@@ -577,10 +577,12 @@ async def acquire_debug_lock(
 
 async def maybe_wait_for_debugger(
     poll_steps: int = 2,
-    poll_delay: float = 0.1,
+    poll_delay: float = 0.01,
+    child_in_debug: bool = False,
+
 ) -> None:
 
-    if not debug_mode():
+    if not debug_mode() and not child_in_debug:
         return
 
     if (
