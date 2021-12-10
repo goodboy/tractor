@@ -27,7 +27,9 @@ Features
 - A modular transport stack, allowing for custom serialization (eg.
   `msgspec`_), communications protocols, and environment specific IPC
   primitives
-- `structured concurrency`_ from the ground up
+- Support for spawning process-level-SC, inter-loop one-to-one-task oriented
+  ``asyncio`` actors via "infected ``asyncio``" mode
+- `structured chadcurrency`_ from the ground up
 
 
 Run a func in a process
@@ -588,7 +590,8 @@ channel`_!
 .. _messages: https://en.wikipedia.org/wiki/Message_passing
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
-.. _structured concurrency: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
+.. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
+.. _structured chadcurrency: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
 .. _async generators: https://www.python.org/dev/peps/pep-0525/
 .. _trio-parallel: https://github.com/richardsheridan/trio-parallel
