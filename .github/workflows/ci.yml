@@ -25,7 +25,7 @@ jobs:
 
   testing-linux:
     name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
-    timeout-minutes: 9
+    timeout-minutes: 10
     runs-on: ${{ matrix.os }}
 
     strategy:
