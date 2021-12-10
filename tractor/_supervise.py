@@ -350,9 +350,12 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
         ) as err:
 
+            # XXX: yet another guard before allowing the cancel
+            # sequence in case a (single) child is in debug.
             await maybe_wait_for_debugger(
                 child_in_debug=anursery._at_least_one_child_in_debug
             )
+
             # If actor-local error was raised while waiting on
             # ".run_in_actor()" actors then we also want to cancel all
             # remaining sub-actors (due to our lone strategy:

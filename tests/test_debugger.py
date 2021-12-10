@@ -405,9 +405,11 @@ def test_multi_daemon_subactors(spawn, loglevel):
 
 
 def test_multi_subactors_root_errors(spawn):
-    """Multiple subactors, both erroring and breakpointing as well as
+    '''
+    Multiple subactors, both erroring and breakpointing as well as
     a nested subactor erroring.
-    """
+
+    '''
     child = spawn('multi_subactor_root_errors')
 
     # scan for the pdbpp prompt
@@ -578,10 +580,6 @@ def test_different_debug_mode_per_actor(
     assert "Attaching to pdb in crashed actor: ('debugged_boi'" in before
     assert "RuntimeError" in before
 
-    # the crash boi should not have made a debugger request but
-    # instead crashed completely
-    assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
-
     child.sendline('c')
     child.expect(pexpect.EOF)
 
@@ -592,5 +590,9 @@ def test_different_debug_mode_per_actor(
     # msg reported back from the debug mode actor is processed.
     # assert "tractor._exceptions.RemoteActorError: ('debugged_boi'" in before
 
+    assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
+
+    # the crash boi should not have made a debugger request but
+    # instead crashed completely
     assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
     assert "RuntimeError" in before
