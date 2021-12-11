@@ -25,6 +25,7 @@ async def aio_echo_server(
     while True:
         # echo the msg back
         to_trio.send_nowait(await from_trio.get())
+        await asyncio.sleep(0)
 
 
 @tractor.context

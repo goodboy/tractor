@@ -347,6 +347,7 @@ Check out our experimental system for `guest-mode`_ controlled
         while True:
             # echo the msg back
             to_trio.send_nowait(await from_trio.get())
+            await asyncio.sleep(0)
 
 
     @tractor.context
