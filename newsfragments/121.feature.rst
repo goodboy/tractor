@@ -1,0 +1,28 @@
+Add "infected ``asyncio`` mode; a sub-system to spawn and control
+``asyncio`` actors using ``trio``'s guest-mode.
+
+This gets us the following very interesting functionality:
+
+- ability to spawn an actor that has a process entry point of
+  ``asyncio.run()`` by passing ``infect_asyncio=True`` to
+  ``Portal.start_actor()`` (and friends).
+- the ``asyncio`` actor embeds ``trio`` using guest-mode and starts
+  a main ``trio`` task which runs the ``tractor.Actor._async_main()``
+  entry point engages all the normal ``tractor`` runtime IPC/messaging
+  machinery; for all purposes the actor is now running normally on
+  a ``trio.run()``.
+- the actor can now make one-to-one task spawning requests to the
+  underlying ``asyncio`` event loop using either of:
+  * ``to_asyncio.run_task()`` to spawn and run an ``asyncio`` task to
+    completion and block until a return value is delivered.
+  * ``async with to_asyncio.open_channel_from():`` which spawns a task
+    and hands it a pair of "memory channels" to allow for bi-directional
+    streaming between the now SC-linked ``trio`` and ``asyncio`` tasks.
+
+The output from any call(s) to ``asyncio`` can be handled as normal in
+``trio``/``tractor`` task operation with the caveat of the overhead due
+to guest-mode use.
+
+For more details see the `original PR
+<https://github.com/goodboy/tractor/pull/121>`_ and `issue
+<https://github.com/goodboy/tractor/issues/120>`_.
