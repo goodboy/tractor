@@ -417,6 +417,12 @@ Yes, we spawn a python process, run ``asyncio``, start ``trio`` on the
 ``asyncio`` loop, then send commands to the ``trio`` scheduled tasks to
 tell ``asyncio`` tasks what to do XD
 
+We need help refining the `asyncio`-side channel API to be more
+`trio`-like. Feel free to sling your opinion in `#273`_!
+
+
+.. _#273: https://github.com/goodboy/tractor/issues/273
+
 
 Higher level "cluster" APIs
 ---------------------------
@@ -594,6 +600,7 @@ channel`_!
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
 .. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _structured chadcurrency: https://en.wikipedia.org/wiki/Structured_concurrency
+.. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
 .. _async generators: https://www.python.org/dev/peps/pep-0525/
 .. _trio-parallel: https://github.com/richardsheridan/trio-parallel
