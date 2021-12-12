@@ -366,7 +366,9 @@ async def new_proc(
                                 await proc.wait()
 
                     if is_root_process():
-                        await maybe_wait_for_debugger()
+                        await maybe_wait_for_debugger(
+                            child_in_debug=_runtime_vars.get('_debug_mode', False),
+                        )
 
                     if proc.poll() is None:
                         log.cancel(f"Attempting to hard kill {proc}")

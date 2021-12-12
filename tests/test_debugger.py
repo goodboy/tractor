@@ -4,7 +4,11 @@ That native debug better work!
 All these tests can be understood (somewhat) by running the equivalent
 `examples/debugging/` scripts manually.
 
-TODO: None of these tests have been run successfully on windows yet.
+TODO:
+    - none of these tests have been run successfully on windows yet but
+      there's been manual testing that verified it works.
+    - wonder if any of it'll work on OS X?
+
 """
 import time
 from os import path
@@ -279,8 +283,10 @@ def test_multi_subactors(spawn):
     assert "Attaching pdb to actor: ('breakpoint_forever'" in before
 
     # wait for spawn error to show up
-    while 'breakpoint_forever' in before:
+    spawn_err = "Attaching to pdb in crashed actor: ('spawn_error'"
+    while spawn_err not in before:
         child.sendline('c')
+        time.sleep(0.1)
         child.expect(r"\(Pdb\+\+\)")
         before = str(child.before.decode())
 
@@ -288,7 +294,7 @@ def test_multi_subactors(spawn):
     # child.sendline('c')
     # child.expect(r"\(Pdb\+\+\)")
     # before = str(child.before.decode())
-    assert "Attaching to pdb in crashed actor: ('spawn_error'" in before
+    assert spawn_err in before
     assert "RemoteActorError: ('name_error_1'" in before
 
     # now run some "continues" to show re-entries
@@ -399,9 +405,11 @@ def test_multi_daemon_subactors(spawn, loglevel):
 
 
 def test_multi_subactors_root_errors(spawn):
-    """Multiple subactors, both erroring and breakpointing as well as
+    '''
+    Multiple subactors, both erroring and breakpointing as well as
     a nested subactor erroring.
-    """
+
+    '''
     child = spawn('multi_subactor_root_errors')
 
     # scan for the pdbpp prompt
@@ -559,3 +567,32 @@ def test_root_cancels_child_context_during_startup(
 
     child.sendline('c')
     child.expect(pexpect.EOF)
+
+
+def test_different_debug_mode_per_actor(
+    spawn,
+):
+    child = spawn('per_actor_debug')
+    child.expect(r"\(Pdb\+\+\)")
+
+    # only one actor should enter the debugger
+    before = str(child.before.decode())
+    assert "Attaching to pdb in crashed actor: ('debugged_boi'" in before
+    assert "RuntimeError" in before
+
+    child.sendline('c')
+    child.expect(pexpect.EOF)
+
+    before = str(child.before.decode())
+
+    # NOTE: this debugged actor error currently WON'T show up since the
+    # root will actually cancel and terminate the nursery before the error
+    # msg reported back from the debug mode actor is processed.
+    # assert "tractor._exceptions.RemoteActorError: ('debugged_boi'" in before
+
+    assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
+
+    # the crash boi should not have made a debugger request but
+    # instead crashed completely
+    assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
+    assert "RuntimeError" in before

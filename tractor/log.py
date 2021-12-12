@@ -9,8 +9,8 @@ from typing import Optional
 from ._state import ActorContextInfo
 
 
-_proj_name = 'tractor'
-_default_loglevel = 'ERROR'
+_proj_name: str = 'tractor'
+_default_loglevel: str = 'ERROR'
 
 # Super sexy formatting thanks to ``colorlog``.
 # (NOTE: we use the '{' format style)
@@ -189,5 +189,5 @@ def get_console_log(
     return log
 
 
-def get_loglevel() -> Optional[str]:
+def get_loglevel() -> str:
     return _default_loglevel

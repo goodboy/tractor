@@ -52,7 +52,7 @@ def repodir():
 def pytest_addoption(parser):
     parser.addoption(
         "--ll", action="store", dest='loglevel',
-        default=None, help="logging level to set when testing"
+        default='ERROR', help="logging level to set when testing"
     )
 
     parser.addoption(
@@ -75,6 +75,7 @@ def pytest_configure(config):
 def loglevel(request):
     orig = tractor.log._default_loglevel
     level = tractor.log._default_loglevel = request.config.option.loglevel
+    tractor.log.get_console_log(level)
     yield level
     tractor.log._default_loglevel = orig
 

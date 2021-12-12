@@ -252,7 +252,7 @@ async def _hijack_stdin_for_child(
 
                 # indicate to child that we've locked stdio
                 await ctx.started('Locked')
-                log.pdb(f"Actor {subactor_uid} ACQUIRED stdin hijack lock")
+                log.debug(f"Actor {subactor_uid} acquired stdin hijack lock")
 
                 # wait for unlock pdb by child
                 async with ctx.open_stream() as stream:
@@ -578,9 +578,11 @@ async def acquire_debug_lock(
 async def maybe_wait_for_debugger(
     poll_steps: int = 2,
     poll_delay: float = 0.1,
+    child_in_debug: bool = False,
+
 ) -> None:
 
-    if not debug_mode():
+    if not debug_mode() and not child_in_debug:
         return
 
     if (
@@ -602,7 +604,7 @@ async def maybe_wait_for_debugger(
             if _global_actor_in_debug:
                 sub_in_debug = tuple(_global_actor_in_debug)
 
-            log.warning(
+            log.debug(
                 'Root polling for debug')
 
             with trio.CancelScope(shield=True):
@@ -619,7 +621,7 @@ async def maybe_wait_for_debugger(
                     (debug_complete and
                      not debug_complete.is_set())
                 ):
-                    log.warning(
+                    log.debug(
                         'Root has errored but pdb is in use by '
                         f'child {sub_in_debug}\n'
                         'Waiting on tty lock to release..')
@@ -629,6 +631,6 @@ async def maybe_wait_for_debugger(
                 await trio.sleep(poll_delay)
                 continue
         else:
-            log.warning(
+            log.debug(
                     'Root acquired TTY LOCK'
             )

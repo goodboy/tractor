@@ -11,9 +11,8 @@ import warnings
 import trio
 from async_generator import asynccontextmanager
 
-from . import _debug
 from ._debug import maybe_wait_for_debugger
-from ._state import current_actor, is_main_process, is_root_process
+from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
 from ._actor import Actor
 from ._portal import Portal
@@ -51,6 +50,7 @@ class ActorNursery:
         self._cancel_after_result_on_exit: set = set()
         self.cancelled: bool = False
         self._join_procs = trio.Event()
+        self._at_least_one_child_in_debug: bool = False
         self.errors = errors
         self.exited = trio.Event()
 
@@ -63,12 +63,23 @@ class ActorNursery:
         enable_modules: List[str] = None,
         loglevel: str = None,  # set log level per subactor
         nursery: trio.Nursery = None,
+        debug_mode: Optional[bool] = None,
     ) -> Portal:
+        '''
+        Start a (daemon) actor: an process that has no designated
+        "main task" besides the runtime.
+
+        '''
         loglevel = loglevel or self._actor.loglevel or get_loglevel()
 
         # configure and pass runtime state
         _rtv = _state._runtime_vars.copy()
         _rtv['_is_root'] = False
+
+        # allow setting debug policy per actor
+        if debug_mode is not None:
+            _rtv['_debug_mode'] = debug_mode
+            self._at_least_one_child_in_debug = True
 
         enable_modules = enable_modules or []
 
@@ -283,7 +294,9 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # will make the pdb repl unusable.
                     # Instead try to wait for pdb to be released before
                     # tearing down.
-                    await maybe_wait_for_debugger()
+                    await maybe_wait_for_debugger(
+                        child_in_debug=anursery._at_least_one_child_in_debug
+                    )
 
                     # if the caller's scope errored then we activate our
                     # one-cancels-all supervisor strategy (don't
@@ -336,6 +349,12 @@ async def _open_and_supervise_one_cancels_all_nursery(
             trio.Cancelled
 
         ) as err:
+
+            # XXX: yet another guard before allowing the cancel
+            # sequence in case a (single) child is in debug.
+            await maybe_wait_for_debugger(
+                child_in_debug=anursery._at_least_one_child_in_debug
+            )
 
             # If actor-local error was raised while waiting on
             # ".run_in_actor()" actors then we also want to cancel all

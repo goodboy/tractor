@@ -1,0 +1,9 @@
+Add a per actor ``debug_mode: bool`` control to our nursery.
+
+This allows spawning actors via ``ActorNursery.start_actor()`` (and
+other dependent methods) with a ``debug_mode=True`` flag much like
+``tractor.open_nursery():`` such that per process crash handling
+can be toggled for cases where a user does not need/want all child actors
+to drop into the debugger on error. This is often useful when you have
+actor-tasks which are expected to error often (and be re-run) but want
+to specifically interact with some (problematic) child.
