@@ -161,19 +161,15 @@ async def maybe_open_context(
     a _Cache hit.
 
     '''
+    # lock resource acquisition around task racing  / ``trio``'s
+    # scheduler protocol
     await _Cache.lock.acquire()
 
     ctx_key = id(mngr)
-
     value = None
+
     try:
-        # lock feed acquisition around task racing  / ``trio``'s
-        # scheduler protocol
         value = _Cache.values[key]
-        log.info(f'Reusing _Cached resource for {key}')
-        _Cache.users += 1
-        _Cache.lock.release()
-        yield True, value
 
     except KeyError:
         log.info(f'Allocating new resource for {key}')
@@ -195,6 +191,12 @@ async def maybe_open_context(
         _Cache.lock.release()
 
         yield False, value
+
+    else:
+        log.info(f'Reusing _Cached resource for {key}')
+        _Cache.users += 1
+        _Cache.lock.release()
+        yield True, value
 
     finally:
         _Cache.users -= 1
