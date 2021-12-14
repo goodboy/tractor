@@ -59,6 +59,33 @@ _state: bool = False
 
 
 @tractor.context
+async def error_before_started(
+    ctx: tractor.Context,
+) -> None:
+    # send an unserializable type
+    await ctx.started(object())
+
+
+def test_error_before_started():
+    async def main():
+        async with tractor.open_nursery() as n:
+            portal = await n.start_actor(
+                'errorer',
+                enable_modules=[__name__],
+            )
+
+            async with portal.open_context(
+                error_before_started
+            ) as (ctx, sent):
+                await trio.sleep(1)
+
+    with pytest.raises(tractor.RemoteActorError) as excinfo:
+        trio.run(main)
+
+    assert excinfo.value.type == TypeError
+
+
+@tractor.context
 async def too_many_starteds(
     ctx: tractor.Context,
 ) -> None:
@@ -466,7 +493,7 @@ async def cancel_self(
     try:
         async with ctx.open_stream():
             pass
-    except ContextCancelled:
+    except tractor.ContextCancelled:
         pass
 
     # check a real ``trio.Cancelled`` is raised on a checkpoint
