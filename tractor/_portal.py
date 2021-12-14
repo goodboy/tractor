@@ -428,12 +428,12 @@ class Portal:
             first = msg['started']
             ctx._started_called = True
 
-        except KeyError:
+        except KeyError as kerr:
             assert msg.get('cid'), ("Received internal error at context?")
 
             if msg.get('error'):
-                # raise the error message
-                raise unpack_error(msg, self.channel)
+                # raise kerr from unpack_error(msg, self.channel)
+                raise unpack_error(msg, self.channel) from None
             else:
                 raise
 

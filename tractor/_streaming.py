@@ -425,7 +425,6 @@ class Context:
                 f'Remote context error for {self.chan.uid}:{self.cid}:\n'
                 f'{msg["error"]["tb_str"]}'
             )
-            # await ctx._maybe_error_from_remote_msg(msg)
             self._error = unpack_error(msg, self.chan)
 
             # TODO: tempted to **not** do this by-reraising in a
