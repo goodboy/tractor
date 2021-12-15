@@ -21,6 +21,8 @@ async def streamer(
             await stream.send(val)
             await trio.sleep(0.001)
 
+    print('producer finished')
+
 
 @acm
 async def open_stream() -> Awaitable[tractor.MsgStream]:
@@ -32,18 +34,16 @@ async def open_stream() -> Awaitable[tractor.MsgStream]:
             ctx.open_stream() as stream,
         ):
             yield stream
-            breakpoint()
 
-        print('CANCELLING STREAMER')
         await portal.cancel_actor()
+    print('CANCELLED STREAMER')
 
 
 @acm
 async def maybe_open_stream(taskname: str):
     async with tractor.trionics.maybe_open_context(
         # NOTE: all secondary tasks should cache hit on the same key
-        key='stream',
-        mngr=open_stream(),
+        acm_func=open_stream,
     ) as (cache_hit, stream):
 
         if cache_hit:
@@ -86,19 +86,21 @@ def test_open_local_sub_to_stream():
                 seq = []
                 async for msg in stream:
                     seq.append(msg)
-                    print(f'{taskname} received {msg}')
 
                 assert set(seq).issubset(set(full))
-                print(f'{taskname} finished')
+            print(f'{taskname} finished')
 
         # TODO: turns out this isn't multi-task entrant XD
         # We probably need an indepotent entry semantic?
-        async with tractor.open_root_actor():
-            async with (
-                trio.open_nursery() as nurse,
-            ):
-                for i in range(10):
-                    nurse.start_soon(get_sub_and_pull, f'task_{i}')
-                    await trio.sleep(0.001)
+        with trio.fail_after(3):
+            async with tractor.open_root_actor():
+                async with (
+                    trio.open_nursery() as nurse,
+                ):
+                    for i in range(10):
+                        nurse.start_soon(get_sub_and_pull, f'task_{i}')
+                        await trio.sleep(0.001)
+
+                print('all consumer tasks finished')
 
     trio.run(main)
