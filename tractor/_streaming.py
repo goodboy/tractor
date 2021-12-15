@@ -186,6 +186,7 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
             # https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
             return
 
+        self._eoc = True
         self._closed = True
 
         # NOTE: this is super subtle IPC messaging stuff:
