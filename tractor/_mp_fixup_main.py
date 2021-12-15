@@ -1,3 +1,19 @@
+# tractor: structured concurrent "actors".
+# Copyright 2018-eternity Tyler Goodlet.
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 Helpers pulled mostly verbatim from ``multiprocessing.spawn``
 to aid with "fixing up" the ``__main__`` module in subprocesses.
@@ -5,6 +21,7 @@ to aid with "fixing up" the ``__main__`` module in subprocesses.
 These helpers are needed for any spawing backend that doesn't already handle this.
 For example when using ``trio_run_in_process`` it is needed but obviously not when
 we're already using ``multiprocessing``.
+
 """
 import os
 import sys
