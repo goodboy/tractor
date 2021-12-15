@@ -608,33 +608,19 @@ def test_one_end_stream_not_opened(overrun_by):
 
     # 2 overrun cases and the no overrun case (which pushes right up to
     # the msg limit)
-    if overrunner == 'caller':
+    if overrunner == 'caller' or 'cance' in overrunner:
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
         assert excinfo.value.type == StreamOverrun
-
-    elif 'cancel' in overrunner:
-        with pytest.raises(trio.MultiError) as excinfo:
-            trio.run(main)
-
-        multierr = excinfo.value
-
-        for exc in multierr.exceptions:
-            etype = type(exc)
-            if etype == tractor.RemoteActorError:
-                assert exc.type == StreamOverrun
-            else:
-                assert etype == tractor.ContextCancelled
 
     elif overrunner == 'callee':
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
         # TODO: embedded remote errors so that we can verify the source
-        # error?
-        # the callee delivers an error which is an overrun wrapped
-        # in a remote actor error.
+        # error? the callee delivers an error which is an overrun
+        # wrapped in a remote actor error.
         assert excinfo.value.type == tractor.RemoteActorError
 
     else:
