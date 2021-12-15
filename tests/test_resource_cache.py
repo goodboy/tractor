@@ -3,6 +3,7 @@ Async context manager cache api testing: ``trionics.maybe_open_context():``
 
 '''
 from contextlib import asynccontextmanager as acm
+import platform
 from typing import Awaitable
 
 import trio
@@ -65,6 +66,8 @@ def test_open_local_sub_to_stream():
     N local tasks using ``trionics.maybe_open_context():``.
 
     '''
+    timeout = 3 if platform.system() != "Windows" else 10
+
     async def main():
 
         full = list(range(1000))
@@ -92,7 +95,7 @@ def test_open_local_sub_to_stream():
 
         # TODO: turns out this isn't multi-task entrant XD
         # We probably need an indepotent entry semantic?
-        with trio.fail_after(3):
+        with trio.fail_after(timeout):
             async with tractor.open_root_actor():
                 async with (
                     trio.open_nursery() as nurse,
