@@ -123,7 +123,7 @@ class _Cache:
     users: int = 0
     values: dict[Any,  Any] = {}
     resources: dict[
-        int,
+        Hashable,
         tuple[trio.Nursery, trio.Event]
     ] = {}
     no_more_users: Optional[trio.Event] = None
@@ -155,7 +155,7 @@ async def maybe_open_context(
 
     # XXX: used as cache key after conversion to tuple
     # and all embedded values must also be hashable
-    kwargs: Optional[dict] = {},
+    kwargs: dict = {},
     key: Hashable = None,
 
 ) -> AsyncIterator[tuple[bool, T]]:
