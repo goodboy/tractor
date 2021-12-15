@@ -27,6 +27,7 @@ from typing import (
 )
 from functools import partial
 from dataclasses import dataclass
+from pprint import pformat
 import warnings
 
 import trio
@@ -84,6 +85,9 @@ def _unwrap_msg(
         # internal error should never get here
         assert msg.get('cid'), "Received internal error at portal?"
         raise unpack_error(msg, channel)
+
+class MessagingError(Exception):
+    'Some kind of unexpected SC messaging dialog issue'
 
 
 class Portal:
@@ -408,8 +412,6 @@ class Portal:
             raise TypeError(
                 f'{func} must be an async generator function!')
 
-        __tracebackhide__ = True
-
         fn_mod_path, fn_name = func_deats(func)
 
         ctx = await self.actor.start_remote_task(
@@ -435,7 +437,10 @@ class Portal:
                 # raise kerr from unpack_error(msg, self.channel)
                 raise unpack_error(msg, self.channel) from None
             else:
-                raise
+                raise MessagingError(
+                    f'Context for {ctx.cid} was expecting a `started` message'
+                    f' but received a non-error msg:\n{pformat(msg)}'
+                )
 
         _err: Optional[BaseException] = None
         ctx._portal = self
