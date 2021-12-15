@@ -185,9 +185,6 @@ async def _invoke(
                     task_status.started(cs)
                     await chan.send({'return': await coro, 'cid': cid})
 
-            except trio.Cancelled as err:
-                tb = err.__traceback__
-
             except trio.MultiError:
                 # if a context error was set then likely
                 # thei multierror was raised due to that
@@ -916,8 +913,9 @@ class Actor:
                                 # ``_async_main()``
                                 kwargs['chan'] = chan
                                 log.cancel(
-                                    f"Actor {self.uid} was remotely cancelled;"
-                                    " waiting on cancellation completion..")
+                                    f'{self.uid} was remotely cancelled by\n'
+                                    f'{chan.uid}!'
+                                )
                                 await _invoke(
                                     self, cid, chan, func, kwargs, is_rpc=False
                                 )
