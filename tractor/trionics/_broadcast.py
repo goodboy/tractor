@@ -222,7 +222,10 @@ class BroadcastReceiver(ReceiveChannel):
                 event.set()
                 return value
 
-            except trio.Cancelled:
+            except (
+                trio.Cancelled,
+                trio.EndOfChannel,
+            ):
                 # handle cancelled specially otherwise sibling
                 # consumers will be awoken with a sequence of -1
                 # state.recv_ready = trio.Cancelled
@@ -274,11 +277,12 @@ class BroadcastReceiver(ReceiveChannel):
     async def subscribe(
         self,
     ) -> AsyncIterator[BroadcastReceiver]:
-        '''Subscribe for values from this broadcast receiver.
+        '''
+        Subscribe for values from this broadcast receiver.
 
         Returns a new ``BroadCastReceiver`` which is registered for and
-        pulls data from a clone of the original ``trio.abc.ReceiveChannel``
-        provided at creation.
+        pulls data from a clone of the original
+        ``trio.abc.ReceiveChannel`` provided at creation.
 
         '''
         if self._closed:
