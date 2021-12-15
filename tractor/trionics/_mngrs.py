@@ -112,10 +112,10 @@ async def gather_contexts(
 # Further potential examples of interest:
 # https://gist.github.com/njsmith/cf6fc0a97f53865f2c671659c88c1798#file-cache-py-L8
 
-class cache:
+class _Cache:
     '''
-    Globally (processs wide) cached, task access to a
-    kept-alive-while-in-use async resource.
+    Globally (actor-processs scoped) cached, task access to
+    a kept-alive-while-in-use async resource.
 
     '''
     lock = trio.Lock()
@@ -156,12 +156,12 @@ async def maybe_open_context(
 
 ) -> AsyncIterator[tuple[bool, T]]:
     '''
-    Maybe open a context manager if there is not already a cached
-    version for the provided ``key``. Return the cached instance on
-    a cache hit.
+    Maybe open a context manager if there is not already a _Cached
+    version for the provided ``key``. Return the _Cached instance on
+    a _Cache hit.
 
     '''
-    await cache.lock.acquire()
+    await _Cache.lock.acquire()
 
     ctx_key = id(mngr)
 
@@ -169,17 +169,17 @@ async def maybe_open_context(
     try:
         # lock feed acquisition around task racing  / ``trio``'s
         # scheduler protocol
-        value = cache.values[key]
-        log.info(f'Reusing cached resource for {key}')
-        cache.users += 1
-        cache.lock.release()
+        value = _Cache.values[key]
+        log.info(f'Reusing _Cached resource for {key}')
+        _Cache.users += 1
+        _Cache.lock.release()
         yield True, value
 
     except KeyError:
         log.info(f'Allocating new resource for {key}')
 
         # **critical section** that should prevent other tasks from
-        # checking the cache until complete otherwise the scheduler
+        # checking the _Cache until complete otherwise the scheduler
         # may switch and by accident we create more then one feed.
 
         # TODO: avoid pulling from ``tractor`` internals and
@@ -187,28 +187,28 @@ async def maybe_open_context(
         service_n = current_actor()._service_n
 
         # TODO: does this need to be a tractor "root nursery"?
-        assert not cache.resources.get(ctx_key), f'Resource exists? {ctx_key}'
-        ln, _ = cache.resources[ctx_key] = (service_n, trio.Event())
+        assert not _Cache.resources.get(ctx_key), f'Resource exists? {ctx_key}'
+        ln, _ = _Cache.resources[ctx_key] = (service_n, trio.Event())
 
-        value = await ln.start(cache.run_ctx, mngr, key)
-        cache.users += 1
-        cache.lock.release()
+        value = await ln.start(_Cache.run_ctx, mngr, key)
+        _Cache.users += 1
+        _Cache.lock.release()
 
         yield False, value
 
     finally:
-        cache.users -= 1
-
-        if cache.lock.locked():
-            cache.lock.release()
+        _Cache.users -= 1
 
         if value is not None:
             # if no more consumers, teardown the client
-            if cache.users <= 0:
+            if _Cache.users <= 0:
                 log.info(f'De-allocating resource for {key}')
 
+                if _Cache.lock.locked():
+                    _Cache.lock.release()
+
                 # terminate mngr nursery
-                entry = cache.resources.get(ctx_key)
+                entry = _Cache.resources.get(ctx_key)
                 if entry:
                     _, no_more_users = entry
                     no_more_users.set()
