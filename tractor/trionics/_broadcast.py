@@ -100,6 +100,15 @@ class BroadcastState:
     # on a newly produced value from the sender.
     recv_ready: Optional[tuple[int, trio.Event]] = None
 
+    # if a ``trio.EndOfChannel`` is received on any
+    # consumer all consumers should be placed in this state
+    # such that the group is notified of the end-of-broadcast.
+    # For now, this is solely for testing/debugging purposes.
+    eoc: bool = False
+
+    # If the broadcaster was cancelled, we might as well track it
+    cancelled: bool = False
+
 
 class BroadcastReceiver(ReceiveChannel):
     '''A memory receive channel broadcaster which is non-lossy for the
@@ -222,10 +231,23 @@ class BroadcastReceiver(ReceiveChannel):
                 event.set()
                 return value
 
-            except trio.Cancelled:
+            except trio.EndOfChannel:
+                # if any one consumer gets an EOC from the underlying
+                # receiver we need to unblock and send that signal to
+                # all other consumers.
+                self._state.eoc = True
+                if event.statistics().tasks_waiting:
+                    event.set()
+                raise
+
+            except (
+                trio.Cancelled,
+            ):
                 # handle cancelled specially otherwise sibling
                 # consumers will be awoken with a sequence of -1
-                # state.recv_ready = trio.Cancelled
+                # and will potentially try to rewait the underlying
+                # receiver instead of just cancelling immediately.
+                self._state.cancelled = True
                 if event.statistics().tasks_waiting:
                     event.set()
                 raise
@@ -274,11 +296,12 @@ class BroadcastReceiver(ReceiveChannel):
     async def subscribe(
         self,
     ) -> AsyncIterator[BroadcastReceiver]:
-        '''Subscribe for values from this broadcast receiver.
+        '''
+        Subscribe for values from this broadcast receiver.
 
         Returns a new ``BroadCastReceiver`` which is registered for and
-        pulls data from a clone of the original ``trio.abc.ReceiveChannel``
-        provided at creation.
+        pulls data from a clone of the original
+        ``trio.abc.ReceiveChannel`` provided at creation.
 
         '''
         if self._closed:
@@ -301,7 +324,10 @@ class BroadcastReceiver(ReceiveChannel):
     async def aclose(
         self,
     ) -> None:
+        '''
+        Close this receiver without affecting other consumers.
 
+        '''
         if self._closed:
             return
 
