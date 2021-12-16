@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager as acm
 import platform
 from typing import Awaitable
 
+import pytest
 import trio
 import tractor
 
@@ -24,19 +25,38 @@ async def maybe_increment_counter(task_name: str):
     _resource -= 1
 
 
-def test_resource_only_entered_once():
+@pytest.mark.parametrize(
+    'key_on',
+    ['key_value', 'kwargs'],
+    ids="key_on={}".format,
+)
+def test_resource_only_entered_once(key_on):
+    global _resource
+    _resource = 0
+
+    kwargs = {}
+    key = None
+    if key_on == 'key_value':
+        key = 'some_common_key'
 
     async def main():
-        global _resource
         cache_active: bool = False
 
         async def enter_cached_mngr(name: str):
             nonlocal cache_active
 
+            if key_on == 'kwargs':
+                # make a common kwargs input to key on it
+                kwargs = {'task_name': 'same_task_name'}
+                assert key is None
+            else:
+                # different task names per task will be used
+                kwargs = {'task_name': name}
+
             async with tractor.trionics.maybe_open_context(
                 maybe_increment_counter,
-                kwargs={'task_name': name},
-                key='same_key'
+                kwargs=kwargs,
+                key=key,
 
             ) as (cache_hit, resource):
                 if cache_hit:
@@ -51,8 +71,6 @@ def test_resource_only_entered_once():
                     await trio.sleep_forever()
 
         with trio.move_on_after(0.5):
-            # TODO: turns out this isn't multi-task entrant XD
-            # We probably need an indepotent entry semantic?
             async with (
                 tractor.open_root_actor(),
                 trio.open_nursery() as n,
@@ -148,9 +166,9 @@ def test_open_local_sub_to_stream():
                 assert set(seq).issubset(set(full))
             print(f'{taskname} finished')
 
-        # TODO: turns out this isn't multi-task entrant XD
-        # We probably need an indepotent entry semantic?
         with trio.fail_after(timeout):
+            # TODO: turns out this isn't multi-task entrant XD
+            # We probably need an indepotent entry semantic?
             async with tractor.open_root_actor():
                 async with (
                     trio.open_nursery() as nurse,
