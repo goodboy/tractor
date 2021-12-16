@@ -10,6 +10,61 @@ import trio
 import tractor
 
 
+_resource: int = 0
+
+
+@acm
+async def maybe_increment_counter(task_name: str):
+    global _resource
+
+    _resource += 1
+    await trio.lowlevel.checkpoint()
+    yield _resource
+    await trio.lowlevel.checkpoint()
+    _resource -= 1
+
+
+def test_resource_only_entered_once():
+
+    async def main():
+        global _resource
+        cache_active: bool = False
+
+        async def enter_cached_mngr(name: str):
+            nonlocal cache_active
+
+            async with tractor.trionics.maybe_open_context(
+                maybe_increment_counter,
+                kwargs={'task_name': name},
+                key='same_key'
+
+            ) as (cache_hit, resource):
+                if cache_hit:
+                    try:
+                        cache_active = True
+                        assert resource == 1
+                        await trio.sleep_forever()
+                    finally:
+                        cache_active = False
+                else:
+                    assert resource == 1
+                    await trio.sleep_forever()
+
+        with trio.move_on_after(0.5):
+            # TODO: turns out this isn't multi-task entrant XD
+            # We probably need an indepotent entry semantic?
+            async with (
+                tractor.open_root_actor(),
+                trio.open_nursery() as n,
+            ):
+
+                for i in range(10):
+                    n.start_soon(enter_cached_mngr, f'task_{i}')
+                    await trio.sleep(0.001)
+
+    trio.run(main)
+
+
 @tractor.context
 async def streamer(
     ctx: tractor.Context,
