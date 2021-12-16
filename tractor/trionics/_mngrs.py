@@ -170,6 +170,7 @@ async def maybe_open_context(
     await _Cache.lock.acquire()
 
     ctx_key = (id(acm_func), key or tuple(kwargs.items()))
+    print(ctx_key)
     value = None
 
     try:
@@ -214,6 +215,10 @@ async def maybe_open_context(
             if _Cache.users <= 0:
                 log.info(f'De-allocating resource for {ctx_key}')
 
-                # terminate mngr nursery
-                _, no_more_users = _Cache.resources[ctx_key]
-                no_more_users.set()
+                # XXX: if we're cancelled we the entry may have never
+                # been entered since the nursery task was killed.
+                # _, no_more_users = _Cache.resources[ctx_key]
+                entry = _Cache.resources.get(ctx_key)
+                if entry:
+                    _, no_more_users = entry
+                    no_more_users.set()
