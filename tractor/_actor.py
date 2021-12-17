@@ -361,6 +361,9 @@ class Actor:
     # syncs for setup/teardown sequences
     _server_down: Optional[trio.Event] = None
 
+    # if started on ``asycio`` running ``trio`` in guest mode
+    _infected_aio: bool = False
+
     def __init__(
         self,
         name: str,
@@ -472,6 +475,7 @@ class Actor:
                 self._mods[modpath] = mod
                 if modpath == '__main__':
                     self._mods['__mp_main__'] = mod
+
         except ModuleNotFoundError:
             # it is expected the corresponding `ModuleNotExposed` error
             # will be raised later
@@ -1458,6 +1462,9 @@ class Actor:
         chan.uid = str(uid[0]), str(uid[1])
         log.runtime(f"Handshake with actor {uid}@{chan.raddr} complete")
         return uid
+
+    def is_infected_aio(self) -> bool:
+        return self._infected_aio
 
 
 class Arbiter(Actor):

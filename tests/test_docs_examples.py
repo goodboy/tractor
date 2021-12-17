@@ -1,6 +1,7 @@
-"""
+'''
 Let's make sure them docs work yah?
-"""
+
+'''
 from contextlib import contextmanager
 import itertools
 import os

@@ -82,6 +82,15 @@ class StreamOverrun(trio.TooSlowError):
     "This stream was overrun by sender"
 
 
+class AsyncioCancelled(Exception):
+    '''
+    Asyncio cancelled translation (non-base) error
+    for use with the ``to_asyncio`` module
+    to be raised in the ``trio`` side task
+
+    '''
+
+
 def pack_error(
     exc: BaseException,
     tb=None,

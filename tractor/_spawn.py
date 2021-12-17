@@ -22,10 +22,10 @@ import sys
 import multiprocessing as mp
 import platform
 from typing import (
-    Any, Dict, Optional, Union, Callable,
+    Any, Dict, Optional, Callable,
     TypeVar,
 )
-from collections.abc import Awaitable, Coroutine
+from collections.abc import Awaitable
 
 import trio
 from trio_typing import TaskStatus
@@ -244,6 +244,8 @@ async def new_proc(
     _runtime_vars: Dict[str, Any],  # serialized and sent to _child
 
     *,
+
+    infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
@@ -260,7 +262,6 @@ async def new_proc(
     uid = subactor.uid
 
     if _spawn_method == 'trio':
-
         spawn_cmd = [
             sys.executable,
             "-m",
@@ -283,6 +284,9 @@ async def new_proc(
                 "--loglevel",
                 subactor.loglevel
             ]
+        # Tell child to run in guest mode on top of ``asyncio`` loop
+        if infect_asyncio:
+            spawn_cmd.append("--asyncio")
 
         cancelled_during_spawn: bool = False
         proc: Optional[trio.Process] = None
@@ -412,6 +416,7 @@ async def new_proc(
             bind_addr=bind_addr,
             parent_addr=parent_addr,
             _runtime_vars=_runtime_vars,
+            infect_asyncio=infect_asyncio,
             task_status=task_status,
         )
 
@@ -427,6 +432,7 @@ async def mp_new_proc(
     parent_addr: Tuple[str, int],
     _runtime_vars: Dict[str, Any],  # serialized and sent to _child
     *,
+    infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
@@ -472,6 +478,7 @@ async def mp_new_proc(
             fs_info,
             start_method,
             parent_addr,
+            infect_asyncio,
         ),
         # daemon=True,
         name=name,

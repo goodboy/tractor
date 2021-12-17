@@ -26,20 +26,26 @@ import trio  # type: ignore
 
 from .log import get_console_log, get_logger
 from . import _state
+from .to_asyncio import run_as_asyncio_guest
 
 
 log = get_logger(__name__)
 
 
 def _mp_main(
+
     actor: 'Actor',  # type: ignore
     accept_addr: Tuple[str, int],
     forkserver_info: Tuple[Any, Any, Any, Any, Any],
     start_method: str,
     parent_addr: Tuple[str, int] = None,
+    infect_asyncio: bool = False,
+
 ) -> None:
-    """The routine called *after fork* which invokes a fresh ``trio.run``
-    """
+    '''
+    The routine called *after fork* which invokes a fresh ``trio.run``
+
+    '''
     actor._forkserver_info = forkserver_info
     from ._spawn import try_set_start_method
     spawn_ctx = try_set_start_method(start_method)
@@ -62,7 +68,11 @@ def _mp_main(
         parent_addr=parent_addr
     )
     try:
-        trio.run(trio_main)
+        if infect_asyncio:
+            actor._infected_aio = True
+            run_as_asyncio_guest(trio_main)
+        else:
+            trio.run(trio_main)
     except KeyboardInterrupt:
         pass  # handle it the same way trio does?
 
@@ -71,16 +81,17 @@ def _mp_main(
 
 
 def _trio_main(
+
     actor: 'Actor',  # type: ignore
     *,
     parent_addr: Tuple[str, int] = None,
-) -> None:
-    """Entry point for a `trio_run_in_process` subactor.
-    """
-    # Disable sigint handling in children;
-    # we don't need it thanks to our cancellation machinery.
-    # signal.signal(signal.SIGINT, signal.SIG_IGN)
+    infect_asyncio: bool = False,
 
+) -> None:
+    '''
+    Entry point for a `trio_run_in_process` subactor.
+
+    '''
     log.info(f"Started new trio process for {actor.uid}")
 
     if actor.loglevel is not None:
@@ -100,7 +111,11 @@ def _trio_main(
     )
 
     try:
-        trio.run(trio_main)
+        if infect_asyncio:
+            actor._infected_aio = True
+            run_as_asyncio_guest(trio_main)
+        else:
+            trio.run(trio_main)
     except KeyboardInterrupt:
         log.warning(f"Actor {actor.uid} received KBI")
 

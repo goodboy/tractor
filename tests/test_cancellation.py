@@ -523,7 +523,7 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
     cancellation, and it's faster, we might as well do it.
 
     '''
-    kbi_delay = 0.2
+    kbi_delay = 0.5
 
     async def main():
         start = time.time()
