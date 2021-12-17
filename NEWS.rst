@@ -9,12 +9,12 @@ tractor 0.1.0a4 (2021-12-17)
 
 Features
 --------
+- `#275 <https://github.com/goodboy/tractor/issues/275>`_: Re-license
+  code base under AGPLv3. Also see `#274
+  <https://github.com/goodboy/tractor/pull/274>`_ for majority
+  contributor consensus on this decision.
 
-- `#121 <https://github.com/pytest-dev/pluggy/issues/121>`_: Add
-  "infected ``asyncio`` mode; a sub-system to spawn and control
-  ``asyncio`` actors using ``trio``'s guest-mode.
-
-- `#121 <https://github.com/pytest-dev/pluggy/issues/121>`_: Add
+- `#121 <https://github.com/goodboy/tractor/issues/121>`_: Add
   "infected ``asyncio`` mode; a sub-system to spawn and control
   ``asyncio`` actors using ``trio``'s guest-mode.
 
@@ -44,7 +44,7 @@ Features
   <https://github.com/goodboy/tractor/pull/121>`_ and `issue
   <https://github.com/goodboy/tractor/issues/120>`_.
 
-- `#257 <https://github.com/pytest-dev/pluggy/issues/257>`_: Add
+- `#257 <https://github.com/goodboy/tractor/issues/257>`_: Add
   ``trionics.maybe_open_context()`` an actor-scoped async multi-task
   context manager resource caching API.
 
@@ -55,7 +55,7 @@ Features
   hashable ``kwargs`` dict (will be converted to a ``list[tuple]``) which
   is passed to the underlying manager function as input.
 
-- `#261 <https://github.com/pytest-dev/pluggy/issues/261>`_: Add
+- `#261 <https://github.com/goodboy/tractor/issues/261>`_: Add
   cross-actor-task ``Context`` oriented error relay, a new stream
   overrun error-signal ``StreamOverrun``, and support disabling
   ``MsgStream`` backpressure as the default before a stream is opened or
@@ -94,7 +94,7 @@ Features
     a simple ``trio.Nursery.start_soon()`` to raise the error via closure
     in the local scope.
 
-- `#267 <https://github.com/pytest-dev/pluggy/issues/267>`_: This
+- `#267 <https://github.com/goodboy/tractor/issues/267>`_: This
   (finally) adds fully acknowledged remote cancellation messaging
   support for both explicit ``Portal.cancel_actor()`` calls as well as
   when there is a "runtime-wide" cancellations (eg. during KBI or
@@ -112,7 +112,7 @@ Features
   hosts, we still rely on a simple timeout approach until such a time
   where we prefer to get "fancier".
 
-- `#271 <https://github.com/pytest-dev/pluggy/issues/271>`_: Add a per
+- `#271 <https://github.com/goodboy/tractor/issues/271>`_: Add a per
   actor ``debug_mode: bool`` control to our nursery.
 
   This allows spawning actors via ``ActorNursery.start_actor()`` (and
@@ -127,7 +127,7 @@ Features
 Bugfixes
 --------
 
-- `#239 <https://github.com/pytest-dev/pluggy/issues/239>`_: Fix
+- `#239 <https://github.com/goodboy/tractor/issues/239>`_: Fix
   keyboard interrupt handling in ``Portal.open_context()`` blocks.
 
   Previously this not triggering cancellation of the remote task context
@@ -135,7 +135,7 @@ Bugfixes
   accept `BaseException` since it is likely any other top level exception
   other then kbi (even though not expected) should also get this result.
 
-- `#264 <https://github.com/pytest-dev/pluggy/issues/264>`_: Fix
+- `#264 <https://github.com/goodboy/tractor/issues/264>`_: Fix
   ``Portal.run_in_actor()`` returns ``None`` result.
 
   ``None`` was being used as the cached result flag and obviously breaks
@@ -145,7 +145,7 @@ Bugfixes
   initial "no-result-received-yet" flag value and, once received, the
   return value is read from the message to avoid the cache logic error.
 
-- `#266 <https://github.com/pytest-dev/pluggy/issues/266>`_: Fix
+- `#266 <https://github.com/goodboy/tractor/issues/266>`_: Fix
   graceful cancellation of daemon actors
 
   Previously, his was a bug where if the soft wait on a sub-process (the
@@ -159,7 +159,7 @@ Bugfixes
   ``Portal.cancel_actor()`` on the daemon and expect the child to
   self-terminate after the runtime cancels and shuts down the process.
 
-- `#278 <https://github.com/pytest-dev/pluggy/issues/278>`_: Repair
+- `#278 <https://github.com/goodboy/tractor/issues/278>`_: Repair
   inter-actor stream closure semantics to work correctly with
   ``tractor.trionics.BroadcastReceiver`` task fan out usage.
 
