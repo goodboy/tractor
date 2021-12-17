@@ -1,7 +1,7 @@
 [tool.towncrier]
 package = "tractor"
 filename = "NEWS.rst"
-directory = "newsfragments/"
+directory = "nooz/"
 title_format = "tractor {version} ({project_date})"
-version = "0.1.0a2"
+version = "0.1.0a4"
 #template = "changelog/_template.rst"
