@@ -425,8 +425,17 @@ class Context:
                 f'Remote context error for {self.chan.uid}:{self.cid}:\n'
                 f'{msg["error"]["tb_str"]}'
             )
-            # await ctx._maybe_error_from_remote_msg(msg)
-            self._error = unpack_error(msg, self.chan)
+            error = unpack_error(msg, self.chan)
+            if (
+                isinstance(error, ContextCancelled) and
+                self._cancel_called
+            ):
+                # this is an expected cancel request response message
+                # and we don't need to raise it in scope since it will
+                # potentially override a real error
+                return
+
+            self._error = error
 
             # TODO: tempted to **not** do this by-reraising in a
             # nursery and instead cancel a surrounding scope, detect
