@@ -2,6 +2,6 @@ pytest
 pytest-trio
 pdbpp
 mypy<0.920
-trio_typing
+trio_typing<0.7.0
 pexpect
 towncrier
