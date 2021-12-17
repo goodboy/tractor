@@ -215,6 +215,14 @@ async def open_root_actor(
                 raise
 
             finally:
+                # NOTE: not sure if we'll ever need this but it's
+                # possibly better for even more determinism?
+                # logger.cancel(f'Waiting on {len(nurseries)} nurseries in root..')
+                # nurseries = actor._actoruid2nursery.values()
+                # async with trio.open_nursery() as tempn:
+                #     for an in nurseries:
+                #         tempn.start_soon(an.exited.wait)
+
                 logger.cancel("Shutting down root actor")
                 await actor.cancel()
     finally:

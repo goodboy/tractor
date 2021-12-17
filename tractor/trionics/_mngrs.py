@@ -18,12 +18,27 @@
 Async context manager primitives with hard ``trio``-aware semantics
 
 '''
-from typing import AsyncContextManager, AsyncGenerator
-from typing import TypeVar, Sequence
 from contextlib import asynccontextmanager as acm
+from typing import (
+    Any,
+    AsyncContextManager,
+    AsyncGenerator,
+    AsyncIterator,
+    Callable,
+    Hashable,
+    Optional,
+    Sequence,
+    TypeVar,
+)
 
 import trio
+from trio_typing import TaskStatus
 
+from ..log import get_logger
+from .._state import current_actor
+
+
+log = get_logger(__name__)
 
 # A regular invariant generic type
 T = TypeVar("T")
@@ -92,3 +107,118 @@ async def gather_contexts(
         # we don't need a try/finally since cancellation will be triggered
         # by the surrounding nursery on error.
         parent_exit.set()
+
+
+# Per actor task caching helpers.
+# Further potential examples of interest:
+# https://gist.github.com/njsmith/cf6fc0a97f53865f2c671659c88c1798#file-cache-py-L8
+
+class _Cache:
+    '''
+    Globally (actor-processs scoped) cached, task access to
+    a kept-alive-while-in-use async resource.
+
+    '''
+    lock = trio.Lock()
+    users: int = 0
+    values: dict[Any,  Any] = {}
+    resources: dict[
+        Hashable,
+        tuple[trio.Nursery, trio.Event]
+    ] = {}
+    no_more_users: Optional[trio.Event] = None
+
+    @classmethod
+    async def run_ctx(
+        cls,
+        mng,
+        ctx_key: tuple,
+        task_status: TaskStatus[T] = trio.TASK_STATUS_IGNORED,
+
+    ) -> None:
+        async with mng as value:
+            _, no_more_users = cls.resources[ctx_key]
+            cls.values[ctx_key] = value
+            task_status.started(value)
+            try:
+                await no_more_users.wait()
+            finally:
+                # discard nursery ref so it won't be re-used (an error)?
+                value = cls.values.pop(ctx_key)
+                cls.resources.pop(ctx_key)
+
+
+@acm
+async def maybe_open_context(
+
+    acm_func: Callable[..., AsyncContextManager[T]],
+
+    # XXX: used as cache key after conversion to tuple
+    # and all embedded values must also be hashable
+    kwargs: dict = {},
+    key: Hashable = None,
+
+) -> AsyncIterator[tuple[bool, T]]:
+    '''
+    Maybe open a context manager if there is not already a _Cached
+    version for the provided ``key`` for *this* actor. Return the
+    _Cached instance on a _Cache hit.
+
+    '''
+    # lock resource acquisition around task racing  / ``trio``'s
+    # scheduler protocol
+    await _Cache.lock.acquire()
+
+    ctx_key = (id(acm_func), key or tuple(kwargs.items()))
+    print(ctx_key)
+    value = None
+
+    try:
+        # **critical section** that should prevent other tasks from
+        # checking the _Cache until complete otherwise the scheduler
+        # may switch and by accident we create more then one resource.
+        value = _Cache.values[ctx_key]
+
+    except KeyError:
+        log.info(f'Allocating new resource for {ctx_key}')
+
+        mngr = acm_func(**kwargs)
+        # TODO: avoid pulling from ``tractor`` internals and
+        # instead offer a "root nursery" in piker actors?
+        service_n = current_actor()._service_n
+
+        # TODO: does this need to be a tractor "root nursery"?
+        resources = _Cache.resources
+        assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
+        ln, _ = resources[ctx_key] = (service_n, trio.Event())
+
+        value = await ln.start(
+            _Cache.run_ctx,
+            mngr,
+            ctx_key,
+        )
+        _Cache.users += 1
+        _Cache.lock.release()
+        yield False, value
+
+    else:
+        log.info(f'Reusing _Cached resource for {ctx_key}')
+        _Cache.users += 1
+        _Cache.lock.release()
+        yield True, value
+
+    finally:
+        _Cache.users -= 1
+
+        if value is not None:
+            # if no more consumers, teardown the client
+            if _Cache.users <= 0:
+                log.info(f'De-allocating resource for {ctx_key}')
+
+                # XXX: if we're cancelled we the entry may have never
+                # been entered since the nursery task was killed.
+                # _, no_more_users = _Cache.resources[ctx_key]
+                entry = _Cache.resources.get(ctx_key)
+                if entry:
+                    _, no_more_users = entry
+                    no_more_users.set()

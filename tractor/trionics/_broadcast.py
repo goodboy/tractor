@@ -331,10 +331,16 @@ class BroadcastReceiver(ReceiveChannel):
         if self._closed:
             return
 
+        # if there are sleeping consumers wake
+        # them on closure.
+        rr = self._state.recv_ready
+        if rr:
+            _, event = rr
+            event.set()
+
         # XXX: leaving it like this consumers can still get values
         # up to the last received that still reside in the queue.
         self._state.subs.pop(self.key)
-
         self._closed = True
 
 
