@@ -4,7 +4,7 @@ Changelog
 
 .. towncrier release notes start
 
-tractor 0.1.0a4 (2021-12-17)
+tractor 0.1.0a4 (2021-12-18)
 ============================
 
 Features
@@ -30,6 +30,7 @@ Features
     a ``trio.run()``.
   - the actor can now make one-to-one task spawning requests to the
     underlying ``asyncio`` event loop using either of:
+
     * ``to_asyncio.run_task()`` to spawn and run an ``asyncio`` task to
       completion and block until a return value is delivered.
     * ``async with to_asyncio.open_channel_from():`` which spawns a task
@@ -85,6 +86,7 @@ Features
   can be specified with a kwarg ``msg_buffer_size: int``.
 
   Further bug fixes and enhancements in this changeset include:
+
   - fix a race we were ignoring where if the callee task opened a context
     it could enter ``Context.open_stream()`` before calling
     ``.started()``.
@@ -130,10 +132,11 @@ Bugfixes
 - `#239 <https://github.com/goodboy/tractor/issues/239>`_: Fix
   keyboard interrupt handling in ``Portal.open_context()`` blocks.
 
-  Previously this not triggering cancellation of the remote task context
-  and could result in hangs if a stream was also opened. This fix is to
-  accept `BaseException` since it is likely any other top level exception
-  other then kbi (even though not expected) should also get this result.
+  Previously this was not triggering cancellation of the remote task
+  context and could result in hangs if a stream was also opened. This
+  fix is to accept `BaseException` since it is likely any other top
+  level exception other then KBI (even though not expected) should also
+  get this result.
 
 - `#264 <https://github.com/goodboy/tractor/issues/264>`_: Fix
   ``Portal.run_in_actor()`` returns ``None`` result.
@@ -163,7 +166,7 @@ Bugfixes
   inter-actor stream closure semantics to work correctly with
   ``tractor.trionics.BroadcastReceiver`` task fan out usage.
 
-  A set of previously unknown bugs discovered in `257
+  A set of previously unknown bugs discovered in `#257
   <https://github.com/goodboy/tractor/pull/257>`_ let graceful stream
   closure result in hanging consumer tasks that use the broadcast APIs.
   This adds better internal closure state tracking to the broadcast
@@ -191,7 +194,7 @@ Features
   Provides us with a path toward supporting typed IPC message contracts. Further,
   ``msgspec`` structs may be a valid tool to start for formalizing our
   "SC dialog un-protocol" messages as described in `#36
-  <https://github.com/goodboy/tractor/issues/36>`_`.
+  <https://github.com/goodboy/tractor/issues/36>`_.
 
 - Introduce a new ``tractor.trionics`` `sub-package`_ that exposes
   a selection of our relevant high(er) level trio primitives and
@@ -221,15 +224,17 @@ Features
   improved debugger support since we have determinism guarantees about
   which processes must wait before hard killing their children.
 
-- Drop Python 3.8 support in favor of rolling with two latest releases
-  for the time being. (#248)
+- (`#248 <https://github.com/goodboy/tractor/pull/248>`_) Drop Python
+  3.8 support in favour of rolling with two latest releases for the time
+  being.
 
 
 Misc
 ----
 
-- #243 add a discint ``'CANCEL'`` log level to allow the runtime to
-  emit details about cancellation machinery statuses.
+- (`#243 <https://github.com/goodboy/tractor/pull/243>`_) add a distinct
+  ``'CANCEL'`` log level to allow the runtime to emit details about
+  cancellation machinery statuses.
 
 
 tractor 0.1.0a2 (2021-09-07)
