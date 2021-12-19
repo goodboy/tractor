@@ -22,6 +22,17 @@ release name such as `alpha3/` when there's been a sequence of
 releases I've made, but it really is up to you how you like to
 organize generated sdists locally.
 
+The resulting build cmds are approximately:
+
+.. code:: bash
+
+    python setup.py sdist -d ./dist/XXX.X/
+
+    twine upload -r testpypi dist/XXX.X/*
+
+    twine upload dist/XXX.X/*
+
+
 
 .. _documented by twine: https://twine.readthedocs.io/en/latest/#using-twine
 
