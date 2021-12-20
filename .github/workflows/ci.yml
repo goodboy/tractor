@@ -91,7 +91,7 @@ jobs:
   # - https://docs.github.com/en/actions/learn-github-actions/workflow-syntax-for-github-actions#jobsjob_idif
   testing-windows:
     name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
-    timeout-minutes: 9
+    timeout-minutes: 12
     runs-on: ${{ matrix.os }}
 
     strategy:
