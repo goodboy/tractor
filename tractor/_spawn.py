@@ -82,14 +82,16 @@ else:
 
 
 def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
-    """Attempt to set the method for process starting, aka the "actor
+    '''
+    Attempt to set the method for process starting, aka the "actor
     spawning backend".
 
     If the desired method is not supported this function will error.
     On Windows only the ``multiprocessing`` "spawn" method is offered
     besides the default ``trio`` which uses async wrapping around
     ``subprocess.Popen``.
-    """
+
+    '''
     global _ctx
     global _spawn_method
 
@@ -243,7 +245,7 @@ async def soft_wait(
             n.start_soon(cancel_on_proc_deth)
             await portal.cancel_actor()
 
-            if proc.poll() is None:
+            if proc.poll() is None:  # type: ignore
                 log.warning(
                     f'Process still alive after cancel request:\n{uid}')
 
@@ -502,6 +504,7 @@ async def mp_new_proc(
         # daemon=True,
         name=name,
     )
+
     # `multiprocessing` only (since no async interface):
     # register the process before start in case we get a cancel
     # request before the actor has fully spawned - then we can wait
@@ -520,6 +523,11 @@ async def mp_new_proc(
         # local actor by the time we get a ref to it
         event, chan = await actor_nursery._actor.wait_for_peer(
             subactor.uid)
+
+        # XXX: monkey patch poll API to match the ``subprocess`` API..
+        # not sure why they don't expose this but kk.
+        proc.poll = proc._popen.poll  # type: ignore
+
     # except:
         # TODO: in the case we were cancelled before the sub-proc
         # registered itself back we must be sure to try and clean
