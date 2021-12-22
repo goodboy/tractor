@@ -218,7 +218,9 @@ async def soft_wait(
     # ``trio.Process.__aexit__()`` (it tears down stdio
     # which will kill any waiting remote pdb trace).
     # This is a "soft" (cancellable) join/reap.
+    uid = portal.channel.uid
     try:
+        log.cancel(f'Soft waiting on actor:\n{uid}')
         await wait_func(proc)
     except trio.Cancelled:
         # if cancelled during a soft wait, cancel the child
@@ -226,8 +228,26 @@ async def soft_wait(
         # below. This means we try to do a graceful teardown
         # via sending a cancel message before getting out
         # zombie killing tools.
-        with trio.CancelScope(shield=True):
+        async with trio.open_nursery() as n:
+            n.cancel_scope.shield = True
+
+            async def cancel_on_proc_deth():
+                '''
+                Cancel the actor cancel request if we detect that
+                that the process terminated.
+
+                '''
+                await wait_func(proc)
+                n.cancel_scope.cancel()
+
+            n.start_soon(cancel_on_proc_deth)
             await portal.cancel_actor()
+
+            if proc.poll() is None:
+                log.warning(
+                    f'Process still alive after cancel request:\n{uid}')
+
+                n.cancel_scope.cancel()
         raise
 
 
@@ -373,9 +393,8 @@ async def new_proc(
             # The "hard" reap since no actor zombies are allowed!
             # XXX: do this **after** cancellation/tearfown to avoid
             # killing the process too early.
-            log.cancel(f'Hard reap sequence starting for {uid}')
-
             if proc:
+                log.cancel(f'Hard reap sequence starting for {uid}')
                 with trio.CancelScope(shield=True):
 
                     # don't clobber an ongoing pdb
