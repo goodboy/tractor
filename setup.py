@@ -65,7 +65,7 @@ setup(
 
     },
     tests_require=['pytest'],
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     keywords=[
         'trio',
         "async",
