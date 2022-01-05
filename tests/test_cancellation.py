@@ -326,16 +326,19 @@ async def spawn_and_error(breadth, depth) -> None:
                 )
                 kwargs = {
                     'name': f'{name}_errorer_{i}',
+                    # 'delay': 1,
                 }
             await nursery.run_in_actor(*args, **kwargs)
 
 
 @tractor_test
 async def test_nested_multierrors(loglevel, start_method):
-    """Test that failed actor sets are wrapped in `trio.MultiError`s.
+    '''
+    Test that failed actor sets are wrapped in `trio.MultiError`s.
     This test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
-    """
+
+    '''
     if start_method == 'trio':
         depth = 3
         subactor_breadth = 2
@@ -359,6 +362,7 @@ async def test_nested_multierrors(loglevel, start_method):
                         breadth=subactor_breadth,
                         depth=depth,
                     )
+
         except trio.MultiError as err:
             assert len(err.exceptions) == subactor_breadth
             for subexc in err.exceptions:
@@ -394,16 +398,13 @@ async def test_nested_multierrors(loglevel, start_method):
                     assert isinstance(subexc, tractor.RemoteActorError)
 
                 if depth > 0 and subactor_breadth > 1:
-                    # XXX not sure what's up with this..
-                    # on windows sometimes spawning is just too slow and
-                    # we get back the (sent) cancel signal instead
-                    if platform.system() == 'Windows':
-                        if isinstance(subexc, tractor.RemoteActorError):
-                            assert subexc.type in (trio.MultiError, tractor.RemoteActorError)
-                        else:
-                            assert isinstance(subexc, trio.MultiError)
+                    # XXX it's race whether or not a parent containing
+                    # a nursery *may* get multiple child failures before
+                    # it cancels and tears down.
+                    if isinstance(subexc, tractor.RemoteActorError):
+                        assert subexc.type in (trio.MultiError, tractor.RemoteActorError)
                     else:
-                        assert subexc.type is trio.MultiError
+                        assert isinstance(subexc, trio.MultiError)
                 else:
                     assert subexc.type in (tractor.RemoteActorError, trio.Cancelled)
 
@@ -486,9 +487,11 @@ def test_cancel_while_childs_child_in_sync_sleep(
     start_method,
     spawn_backend,
 ):
-    """Verify that a child cancelled while executing sync code is torn
-    down even when that cancellation is triggered by the parent
+    """
+    Verify that a child cancelled while executing sync code is torn down
+    even when that cancellation is triggered by the parent
     2 nurseries "up".
+
     """
     if start_method == 'forkserver':
         pytest.skip("Forksever sux hard at resuming from sync sleep...")
@@ -500,7 +503,7 @@ def test_cancel_while_childs_child_in_sync_sleep(
                     spawn,
                     name='spawn',
                 )
-                await trio.sleep(1)
+                await trio.sleep(0.5)
                 assert 0
 
     with pytest.raises(AssertionError):
