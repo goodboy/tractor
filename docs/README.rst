@@ -565,8 +565,6 @@ What's on the TODO:
 -------------------
 Help us push toward the future.
 
-- (Soon to land) ``asyncio`` support allowing for "infected" actors where
-  `trio` drives the `asyncio` scheduler via the astounding "`guest mode`_"
 - Typed messaging protocols (ex. via ``msgspec``, see `#36
   <https://github.com/goodboy/tractor/issues/36>`_)
 - Erlang-style supervisors via composed context managers
