@@ -29,8 +29,6 @@ Features
   primitives
 - Support for spawning process-level-SC, inter-loop one-to-one-task oriented
   ``asyncio`` actors via "infected ``asyncio``" mode
-- ``asyncio`` support for "infected" actors where
-  `trio` drives the `asyncio` scheduler via ``trio``'s "`guest mode`_"
 - `structured chadcurrency`_ from the ground up
 
 
