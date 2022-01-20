@@ -15,6 +15,10 @@ import tractor
 from conftest import tractor_test, no_windows
 
 
+def is_win():
+    return platform.system() == 'Windows'
+
+
 async def assert_err(delay=0):
     await trio.sleep(delay)
     assert 0
@@ -332,10 +336,12 @@ async def spawn_and_error(breadth, depth) -> None:
 
 @tractor_test
 async def test_nested_multierrors(loglevel, start_method):
-    """Test that failed actor sets are wrapped in `trio.MultiError`s.
-    This test goes only 2 nurseries deep but we should eventually have tests
+    '''
+    Test that failed actor sets are wrapped in `trio.MultiError`s. This
+    test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
-    """
+
+    '''
     if start_method == 'trio':
         depth = 3
         subactor_breadth = 2
@@ -364,7 +370,7 @@ async def test_nested_multierrors(loglevel, start_method):
             for subexc in err.exceptions:
 
                 # verify first level actor errors are wrapped as remote
-                if platform.system() == 'Windows':
+                if is_win():
 
                     # windows is often too slow and cancellation seems
                     # to happen before an actor is spawned
@@ -397,15 +403,21 @@ async def test_nested_multierrors(loglevel, start_method):
                     # XXX not sure what's up with this..
                     # on windows sometimes spawning is just too slow and
                     # we get back the (sent) cancel signal instead
-                    if platform.system() == 'Windows':
+                    if is_win():
                         if isinstance(subexc, tractor.RemoteActorError):
-                            assert subexc.type in (trio.MultiError, tractor.RemoteActorError)
+                            assert subexc.type in (
+                                trio.MultiError,
+                                tractor.RemoteActorError
+                            )
                         else:
                             assert isinstance(subexc, trio.MultiError)
                     else:
                         assert subexc.type is trio.MultiError
                 else:
-                    assert subexc.type in (tractor.RemoteActorError, trio.Cancelled)
+                    assert subexc.type in (
+                        tractor.RemoteActorError,
+                        trio.Cancelled
+                    )
 
 
 @no_windows
@@ -443,6 +455,9 @@ def test_cancel_via_SIGINT_other_task(
     from a seperate ``trio`` child  task.
     """
     pid = os.getpid()
+    timeout: float = 2
+    if is_win():  # smh
+        timeout += 1
 
     async def spawn_and_sleep_forever(task_status=trio.TASK_STATUS_IGNORED):
         async with tractor.open_nursery() as tn:
@@ -456,7 +471,7 @@ def test_cancel_via_SIGINT_other_task(
 
     async def main():
         # should never timeout since SIGINT should cancel the current program
-        with trio.fail_after(2):
+        with trio.fail_after(timeout):
             async with trio.open_nursery() as n:
                 await n.start(spawn_and_sleep_forever)
                 if spawn_backend == 'mp':
@@ -524,6 +539,10 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
 
     '''
     kbi_delay = 0.5
+    timeout: float = 2.9
+
+    if is_win():  # smh
+        timeout += 1
 
     async def main():
         start = time.time()
@@ -548,7 +567,7 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
                     await p.run(do_nuthin)
         finally:
             duration = time.time() - start
-            if duration > 2.9:
+            if duration > timeout:
                 raise trio.TooSlowError(
                     'daemon cancel was slower then necessary..'
                 )
