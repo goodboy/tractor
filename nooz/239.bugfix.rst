@@ -1,6 +1,0 @@
-Fix keyboard interrupt handling in ``Portal.open_context()`` blocks.
-
-Previously this not triggering cancellation of the remote task context
-and could result in hangs if a stream was also opened. This fix is to
-accept `BaseException` since it is likely any other top level exception
-other then kbi (even though not expected) should also get this result.

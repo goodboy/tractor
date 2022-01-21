@@ -1,9 +1,0 @@
-Add a custom 'CANCEL' log level and use through runtime.
-
-In order to reduce log messages and also start toying with the idea of
-"application layer" oriented tracing, we added this new level just above
-'runtime' but just below 'info'. It is intended to be used solely for
-cancellation and teardown related messages. Included are some small
-overrides to the stdlib's ``logging.LoggerAdapter`` to passthrough the
-correct stack frame to show when one of the custom level methods is
-used.
