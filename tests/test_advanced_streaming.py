@@ -4,10 +4,15 @@ Advanced streaming patterns using bidirectional streams and contexts.
 '''
 from collections import Counter
 import itertools
+import platform
 from typing import Set, Dict, List
 
 import trio
 import tractor
+
+
+def is_win():
+    return platform.system() == 'Windows'
 
 
 _registry: Dict[str, Set[tractor.ReceiveMsgStream]] = {
@@ -173,14 +178,22 @@ async def one_task_streams_and_one_handles_reqresp(
 
 
 def test_reqresp_ontopof_streaming():
-    '''Test a subactor that both streams with one task and
+    '''
+    Test a subactor that both streams with one task and
     spawns another which handles a small requests-response
     dialogue over the same bidir-stream.
 
     '''
     async def main():
 
-        with trio.move_on_after(2):
+        # flat to make sure we get at least one pong
+        got_pong: bool = False
+        timeout: int = 2
+
+        if is_win():  # smh
+            timeout = 4
+
+        with trio.move_on_after(timeout):
             async with tractor.open_nursery() as n:
 
                 # name of this actor will be same as target func
@@ -188,9 +201,6 @@ def test_reqresp_ontopof_streaming():
                     'dual_tasks',
                     enable_modules=[__name__]
                 )
-
-                # flat to make sure we get at least one pong
-                got_pong: bool = False
 
                 async with portal.open_context(
                     one_task_streams_and_one_handles_reqresp,
@@ -243,8 +253,12 @@ def test_sigint_both_stream_types():
     side-by-side will cancel correctly from SIGINT.
 
     '''
+    timeout: float = 2
+    if is_win():  # smh
+        timeout += 1
+
     async def main():
-        with trio.fail_after(2):
+        with trio.fail_after(timeout):
             async with tractor.open_nursery() as n:
                 # name of this actor will be same as target func
                 portal = await n.start_actor(
