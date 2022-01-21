@@ -170,7 +170,6 @@ async def maybe_open_context(
     await _Cache.lock.acquire()
 
     ctx_key = (id(acm_func), key or tuple(kwargs.items()))
-    print(ctx_key)
     value = None
 
     try:
@@ -180,7 +179,7 @@ async def maybe_open_context(
         value = _Cache.values[ctx_key]
 
     except KeyError:
-        log.info(f'Allocating new resource for {ctx_key}')
+        log.info(f'Allocating new {acm_func} for {ctx_key}')
 
         mngr = acm_func(**kwargs)
         # TODO: avoid pulling from ``tractor`` internals and
