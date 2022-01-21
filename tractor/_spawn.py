@@ -526,7 +526,7 @@ async def mp_new_proc(
 
         # XXX: monkey patch poll API to match the ``subprocess`` API..
         # not sure why they don't expose this but kk.
-        proc.poll = proc._popen.poll  # type: ignore
+        proc.poll = lambda: proc.exitcode  # type: ignore
 
     # except:
         # TODO: in the case we were cancelled before the sub-proc
