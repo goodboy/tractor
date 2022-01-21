@@ -1,9 +1,0 @@
-Add ``trionics.maybe_open_context()`` an actor-scoped async multi-task
-context manager resource caching API.
-
-Adds an SC-safe cacheing async context manager api that only enters on
-the *first* task entry and only exits on the *last* task exit while in
-between delivering the same cached value per input key. Keys can be
-either an explicit ``key`` named arg provided by the user or a
-hashable ``kwargs`` dict (will be converted to a ``list[tuple]``) which
-is passed to the underlying manager function as input.
