@@ -454,7 +454,16 @@ async def _breakpoint(
             global _local_pdb_complete, _debug_lock
             global _global_actor_in_debug, _local_task_in_debug
 
-            _debug_lock.release()
+            try:
+                _debug_lock.release()
+            except RuntimeError:
+                # uhhh makes no sense but been seeing the non-owner
+                # release error even though this is definitely the task
+                # that locked?
+                owner = _debug_lock.statistics().owner
+                if owner:
+                   raise
+
             _global_actor_in_debug = None
             _local_task_in_debug = None
             _local_pdb_complete.set()
@@ -483,9 +492,9 @@ def _open_pdb() -> PdbwTeardown:
 
     try:
         yield pdb
-    except:
-    # finally:
+    except bdb.BdbQuit:
         _pdb_release_hook()
+        raise
 
 
 def disable_sigint_in_pdb(signum, frame, *args):
