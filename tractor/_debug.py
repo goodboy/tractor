@@ -22,6 +22,7 @@ import bdb
 import sys
 from functools import partial
 from contextlib import asynccontextmanager as acm
+from contextlib import contextmanager as cm
 from typing import (
     Tuple,
     Optional,
@@ -35,7 +36,6 @@ import trio
 from trio_typing import TaskStatus
 
 from .log import get_logger
-from . import _state
 from ._discovery import get_root
 from ._state import is_root_process, debug_mode
 from ._exceptions import is_multi_cancelled
@@ -81,6 +81,7 @@ class TractorConfig(pdbpp.DefaultConfig):
     """Custom ``pdbpp`` goodness.
     """
     # sticky_by_default = True
+    enable_hidden_frames = False
 
 
 class PdbwTeardown(pdbpp.Pdb):
@@ -219,22 +220,6 @@ async def _acquire_debug_lock(
         log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
 
 
-def handler(signum, frame, *args):
-    """Specialized debugger compatible SIGINT handler.
-
-    In childred we always ignore to avoid deadlocks since cancellation
-    should always be managed by the parent supervising actor. The root
-    is always cancelled on ctrl-c.
-    """
-    if is_root_process():
-        tractor.current_actor().cancel_soon()
-    else:
-        print(
-            "tractor ignores SIGINT while in debug mode\n"
-            "If you have a special need for it please open an issue.\n"
-        )
-
-
 @tractor.context
 async def _hijack_stdin_for_child(
 
@@ -260,7 +245,10 @@ async def _hijack_stdin_for_child(
 
     log.debug(f"Actor {subactor_uid} is WAITING on stdin hijack lock")
 
-    with trio.CancelScope(shield=True):
+    with (
+        trio.CancelScope(shield=True),
+        disable_sigint(),
+    ):
 
         try:
             lock = None
@@ -374,6 +362,8 @@ async def _breakpoint(
     in the root or a subactor.
 
     '''
+    __tracebackhide__ = True
+
     # TODO: is it possible to debug a trio.Cancelled except block?
     # right now it seems like we can kinda do with by shielding
     # around ``tractor.breakpoint()`` but not if we move the shielded
@@ -474,10 +464,12 @@ async def _breakpoint(
     # block here one (at the appropriate frame *up*) where
     # ``breakpoint()`` was awaited and begin handling stdio.
     log.debug("Entering the synchronous world of pdb")
+
     debug_func(actor)
 
 
-def _mk_pdb() -> PdbwTeardown:
+@cm
+def _open_pdb() -> PdbwTeardown:
 
     # XXX: setting these flags on the pdb instance are absolutely
     # critical to having ctrl-c work in the ``trio`` standard way!  The
@@ -489,34 +481,107 @@ def _mk_pdb() -> PdbwTeardown:
     pdb.allow_kbdint = True
     pdb.nosigint = True
 
-    return pdb
+    try:
+        yield pdb
+    except:
+    # finally:
+        _pdb_release_hook()
+
+
+def disable_sigint_in_pdb(signum, frame, *args):
+    '''
+    Specialized debugger compatible SIGINT handler.
+
+    In childred we always ignore to avoid deadlocks since cancellation
+    should always be managed by the parent supervising actor. The root
+    is always cancelled on ctrl-c.
+
+    '''
+    actor = tractor.current_actor()
+    if not actor._cancel_called:
+        log.pdb(
+            f"{actor.uid} is in debug and has not been cancelled, "
+            "ignoring SIGINT\n"
+        )
+    else:
+        log.pdb(
+            f"{actor.uid} is already cancelling.."
+        )
+
+    global _global_actor_in_debug
+    in_debug = _global_actor_in_debug
+    if (
+        is_root_process()
+        and in_debug
+    ):
+        log.pdb(f'Root SIGINT disabled while {_global_actor_in_debug} is debugging')
+
+        if in_debug[0] != 'root':
+            pass
+        else:
+            # actor.cancel_soon()
+            raise KeyboardInterrupt
+
+
+@cm
+def disable_sigint():
+    __tracebackhide__ = True
+
+    # ensure the ``contextlib.contextmanager`` frame inside the wrapping
+    # ``.__exit__()`` method isn't shown either.
+    import sys
+    frame = sys._getframe()
+    frame.f_back.f_globals['__tracebackhide__'] = True
+    # NOTE: this seems like a form of cpython bug wherein
+    # it's likely that ``functools.WRAPPER_ASSIGNMENTS`` should
+    # probably contain this attr name?
+
+    # for manual debugging if necessary
+    # pdb.set_trace()
+
+    import signal
+    orig_handler = signal.signal(
+        signal.SIGINT,
+        disable_sigint_in_pdb
+    )
+    try:
+        yield
+    finally:
+        signal.signal(
+            signal.SIGINT,
+            orig_handler
+        )
 
 
 def _set_trace(actor=None):
-    pdb = _mk_pdb()
+    __tracebackhide__ = True
+    # pdb = _open_pdb()
+    with (
+        _open_pdb() as pdb,
+        disable_sigint(),
+    ):
+        if actor is not None:
+            log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
 
-    if actor is not None:
-        log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
+            pdb.set_trace(
+                # start 2 levels up in user code
+                frame=sys._getframe().f_back.f_back,
+            )
 
-        pdb.set_trace(
-            # start 2 levels up in user code
-            frame=sys._getframe().f_back.f_back,
-        )
+        else:
+            # we entered the global ``breakpoint()`` built-in from sync code
+            global _local_task_in_debug, _pdb_release_hook
+            _local_task_in_debug = 'sync'
 
-    else:
-        # we entered the global ``breakpoint()`` built-in from sync code
-        global _local_task_in_debug, _pdb_release_hook
-        _local_task_in_debug = 'sync'
+            def nuttin():
+                pass
 
-        def nuttin():
-            pass
+            _pdb_release_hook = nuttin
 
-        _pdb_release_hook = nuttin
-
-        pdb.set_trace(
-            # start 2 levels up in user code
-            frame=sys._getframe().f_back,
-        )
+            pdb.set_trace(
+                # start 2 levels up in user code
+                frame=sys._getframe().f_back,
+            )
 
 
 breakpoint = partial(
@@ -526,11 +591,16 @@ breakpoint = partial(
 
 
 def _post_mortem(actor):
-    log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
-    pdb = _mk_pdb()
+    __tracebackhide__ = True
+    # pdb = _mk_pdb()
+    with (
+        _open_pdb() as pdb,
+        disable_sigint(),
+    ):
+        log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
 
-    # custom Pdb post-mortem entry
-    pdbpp.xpm(Pdb=lambda: pdb)
+        # custom Pdb post-mortem entry
+        pdbpp.xpm(Pdb=lambda: pdb)
 
 
 post_mortem = partial(
