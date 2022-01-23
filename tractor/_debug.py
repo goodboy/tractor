@@ -30,6 +30,7 @@ from typing import (
     Callable,
     AsyncIterator,
     AsyncGenerator,
+    Iterator,
 )
 
 import tractor
@@ -483,7 +484,7 @@ async def _breakpoint(
 
 
 @cm
-def _open_pdb() -> PdbwTeardown:
+def _open_pdb() -> Iterator[PdbwTeardown]:
 
     # XXX: setting these flags on the pdb instance are absolutely
     # critical to having ctrl-c work in the ``trio`` standard way!  The
@@ -498,7 +499,8 @@ def _open_pdb() -> PdbwTeardown:
     try:
         yield pdb
     except bdb.BdbQuit:
-        _pdb_release_hook()
+        if _pdb_release_hook:
+            _pdb_release_hook()
         raise
 
 
@@ -592,13 +594,16 @@ def shield_sigint(
 def disable_sigint(
     pdb: Optional[PdbwTeardown] = None
 
-) -> None:
+) -> Iterator[None]:
+
     __tracebackhide__ = True
 
     # ensure the ``contextlib.contextmanager`` frame inside the wrapping
     # ``.__exit__()`` method isn't shown either.
     frame = sys._getframe()
-    frame.f_back.f_globals['__tracebackhide__'] = True
+    last_f = frame.f_back
+    if last_f:
+        last_f.f_globals['__tracebackhide__'] = True
     # NOTE: this seems like a form of cpython bug wherein
     # it's likely that ``functools.WRAPPER_ASSIGNMENTS`` should
     # probably contain this attr name?
