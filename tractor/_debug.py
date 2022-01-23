@@ -20,6 +20,7 @@ Multi-core debugging for da peeps!
 """
 import bdb
 import sys
+import signal
 from functools import partial
 from contextlib import asynccontextmanager as acm
 from contextlib import contextmanager as cm
@@ -163,7 +164,7 @@ async def _acquire_debug_lock(
 
     task_name = trio.lowlevel.current_task().name
 
-    log.debug(
+    log.runtime(
         f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}"
     )
 
@@ -176,14 +177,14 @@ async def _acquire_debug_lock(
         _no_remote_has_tty = trio.Event()
 
     try:
-        log.debug(
+        log.runtime(
             f"entering lock checkpoint, remote task: {task_name}:{uid}"
         )
         we_acquired = True
         await _debug_lock.acquire()
 
         _global_actor_in_debug = uid
-        log.debug(f"TTY lock acquired, remote task: {task_name}:{uid}")
+        log.runtime(f"TTY lock acquired, remote task: {task_name}:{uid}")
 
         # NOTE: critical section: this yield is unshielded!
 
@@ -199,7 +200,10 @@ async def _acquire_debug_lock(
 
     finally:
         # if _global_actor_in_debug == uid:
-        if we_acquired and _debug_lock.locked():
+        if (
+            we_acquired
+            and _debug_lock.locked()
+        ):
             _debug_lock.release()
 
         # IFF there are no more requesting tasks queued up fire, the
@@ -211,13 +215,13 @@ async def _acquire_debug_lock(
         if (
             not stats.owner
         ):
-            log.debug(f"No more tasks waiting on tty lock! says {uid}")
+            log.runtime(f"No more tasks waiting on tty lock! says {uid}")
             _no_remote_has_tty.set()
             _no_remote_has_tty = None
 
         _global_actor_in_debug = None
 
-        log.debug(f"TTY lock released, remote task: {task_name}:{uid}")
+        log.runtime(f"TTY lock released, remote task: {task_name}:{uid}")
 
 
 @tractor.context
@@ -262,9 +266,6 @@ async def _hijack_stdin_for_child(
                 async with ctx.open_stream() as stream:
                     assert await stream.receive() == 'pdb_unlock'
 
-                # try:
-                #     assert await stream.receive() == 'pdb_unlock'
-
         except (
             # BaseException,
             trio.MultiError,
@@ -272,6 +273,7 @@ async def _hijack_stdin_for_child(
             trio.Cancelled,  # by local cancellation
             trio.ClosedResourceError,  # by self._rx_chan
         ) as err:
+
             # XXX: there may be a race with the portal teardown
             # with the calling actor which we can safely ignore.
             # The alternative would be sending an ack message
@@ -282,10 +284,12 @@ async def _hijack_stdin_for_child(
 
             if isinstance(err, trio.Cancelled):
                 raise
+
         finally:
-            log.debug(
+            log.runtime(
                 "TTY lock released, remote task:"
-                f"{task_name}:{subactor_uid}")
+                f"{task_name}:{subactor_uid}"
+            )
 
     return "pdb_unlock_complete"
 
@@ -358,8 +362,9 @@ async def _breakpoint(
     # shield: bool = False
 
 ) -> None:
-    '''``tractor`` breakpoint entry for engaging pdb machinery
-    in the root or a subactor.
+    '''
+    breakpoint entry for engaging pdb machinery in the root or
+    a subactor.
 
     '''
     __tracebackhide__ = True
@@ -462,7 +467,7 @@ async def _breakpoint(
                 # that locked?
                 owner = _debug_lock.statistics().owner
                 if owner:
-                   raise
+                    raise
 
             _global_actor_in_debug = None
             _local_task_in_debug = None
@@ -497,7 +502,13 @@ def _open_pdb() -> PdbwTeardown:
         raise
 
 
-def disable_sigint_in_pdb(signum, frame, *args):
+def shield_sigint(
+    signum: int,
+    frame: 'frame',  # type: ignore # noqa
+    pdb: Optional[PdbwTeardown] = None,
+    *args,
+
+) -> None:
     '''
     Specialized debugger compatible SIGINT handler.
 
@@ -506,39 +517,86 @@ def disable_sigint_in_pdb(signum, frame, *args):
     is always cancelled on ctrl-c.
 
     '''
-    actor = tractor.current_actor()
-    if not actor._cancel_called:
-        log.pdb(
-            f"{actor.uid} is in debug and has not been cancelled, "
-            "ignoring SIGINT\n"
-        )
-    else:
-        log.pdb(
-            f"{actor.uid} is already cancelling.."
-        )
-
-    global _global_actor_in_debug
+    global _local_task_in_debug, _global_actor_in_debug
     in_debug = _global_actor_in_debug
+
+    actor = tractor.current_actor()
+
+    # root actor branch that reports whether or not a child
+    # has locked debugger.
     if (
         is_root_process()
         and in_debug
     ):
-        log.pdb(f'Root SIGINT disabled while {_global_actor_in_debug} is debugging')
-
-        if in_debug[0] != 'root':
-            pass
+        name = in_debug[0]
+        if name != 'root':
+            log.pdb(
+                f"Ignoring SIGINT while child in debug mode: `{in_debug}`"
+            )
         else:
-            # actor.cancel_soon()
+            log.pdb(
+                "Ignoring SIGINT while in debug mode"
+            )
+
+    # child actor that has locked the debugger
+    elif (
+        not is_root_process()
+    ):
+        task = _local_task_in_debug
+        if task:
+            log.pdb(
+                f"Ignoring SIGINT while task in debug mode: `{task}`"
+            )
+
+        # TODO: how to handle the case of an intermediary-child actor
+        # that **is not** marked in debug mode?
+        # elif debug_mode():
+
+        else:
+            log.pdb(
+                "Ignoring SIGINT since debug mode is enabled"
+            )
+
+    # noone has the debugger so raise KBI
+    else:
+        # If we haven't tried to cancel the runtime then do that instead
+        # of raising a KBI (which may non-gracefully destroy
+        # a ``trio.run()``). 
+        if not actor._cancel_called:
+            actor.cancel_soon()
+
+        # If the runtime is already cancelled it likely means the user
+        # hit ctrl-c again because teardown didn't full take place in
+        # which case we do the "hard" raising of a local KBI.
+        else:
             raise KeyboardInterrupt
+
+    # maybe redraw/print last REPL output to console
+    if pdb:
+
+        # TODO: make this work like sticky mode where if there is output
+        # detected as written to the tty we redraw this part underneath
+        # and erase the past draw of this same bit above?
+        # pdb.sticky = True
+        # pdb._print_if_sticky()
+
+        # also see these links for an approach from ``ptk``:
+        # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
+        # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
+
+        pdb.do_longlist(None)
+        print(pdb.prompt, end='', flush=True)
 
 
 @cm
-def disable_sigint():
+def disable_sigint(
+    pdb: Optional[PdbwTeardown] = None
+
+) -> None:
     __tracebackhide__ = True
 
     # ensure the ``contextlib.contextmanager`` frame inside the wrapping
     # ``.__exit__()`` method isn't shown either.
-    import sys
     frame = sys._getframe()
     frame.f_back.f_globals['__tracebackhide__'] = True
     # NOTE: this seems like a form of cpython bug wherein
@@ -548,10 +606,9 @@ def disable_sigint():
     # for manual debugging if necessary
     # pdb.set_trace()
 
-    import signal
     orig_handler = signal.signal(
         signal.SIGINT,
-        disable_sigint_in_pdb
+        partial(shield_sigint, pdb=pdb),
     )
     try:
         yield
@@ -564,10 +621,9 @@ def disable_sigint():
 
 def _set_trace(actor=None):
     __tracebackhide__ = True
-    # pdb = _open_pdb()
     with (
         _open_pdb() as pdb,
-        disable_sigint(),
+        disable_sigint(pdb=pdb),
     ):
         if actor is not None:
             log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
@@ -601,10 +657,9 @@ breakpoint = partial(
 
 def _post_mortem(actor):
     __tracebackhide__ = True
-    # pdb = _mk_pdb()
     with (
         _open_pdb() as pdb,
-        disable_sigint(),
+        disable_sigint(pdb=pdb),
     ):
         log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
 
