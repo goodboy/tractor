@@ -82,7 +82,7 @@ class NamespacePath(str):
 
     ) -> tuple[str, str]:
         ref = self.load_ref()
-        return ref.__module__, ref.__name__
+        return ref.__module__, getattr(ref, '__name__', '')
 
     @classmethod
     def from_ref(
