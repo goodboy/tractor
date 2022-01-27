@@ -20,8 +20,8 @@ concurrency linked tasks running in disparate memory domains.
 
 '''
 from __future__ import annotations
-from typing import NamedTuple
 import importlib
+from pkgutil import resolve_name
 import inspect
 from typing import (
     Any, Optional,
@@ -68,20 +68,21 @@ async def maybe_open_nursery(
             yield nursery
 
 
-class NamespacePath(NamedTuple):
+class NamespacePath(str):
     '''
-    A serializeable description of a (function) object location
+    A serializeable description of a (function) Python object location
     described by the target's module path and its namespace key.
 
     '''
-    mod: str
-    key: str
+    def load_ref(self) -> object:
+        return resolve_name(self)
 
-    def load(self) -> Callable:
-        return getattr(
-            importlib.import_module(self.mod),
-            self.key
-        )
+    def to_tuple(
+        self,
+
+    ) -> tuple[str, str]:
+        ref = self.load_ref()
+        return ref.__module__, ref.__name__
 
     @classmethod
     def from_ref(
@@ -89,17 +90,10 @@ class NamespacePath(NamedTuple):
         obj,
 
     ) -> NamespacePath:
-        return cls(
-            obj.__module__,
-            obj.__name__,
-        )
-
-
-# def func_deats(func: Callable) -> NamespacePath[str, str]:
-#     return NamespacePath(
-#         func.__module__,
-#         func.__name__,
-#     )
+        return cls(':'.join(
+            (obj.__module__,
+             obj.__name__,)
+        ))
 
 
 def _unwrap_msg(
@@ -346,8 +340,7 @@ class Portal:
                 raise TypeError(
                     f'{func} must be a non-streaming async function!')
 
-            # fn_mod_path, fn_name = func_deats(func)
-            fn_mod_path, fn_name = NamespacePath.from_ref(func)
+            fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
 
         ctx = await self.actor.start_remote_task(
             self.channel,
@@ -377,8 +370,8 @@ class Portal:
                 raise TypeError(
                     f'{async_gen_func} must be an async generator function!')
 
-        # fn_mod_path, fn_name = func_deats(async_gen_func)
-        fn_mod_path, fn_name = NamespacePath.from_ref(async_gen_func)
+        fn_mod_path, fn_name = NamespacePath.from_ref(
+            async_gen_func).to_tuple()
         ctx = await self.actor.start_remote_task(
             self.channel,
             fn_mod_path,
@@ -444,8 +437,7 @@ class Portal:
             raise TypeError(
                 f'{func} must be an async generator function!')
 
-        # fn_mod_path, fn_name = func_deats(func)
-        fn_mod_path, fn_name = NamespacePath.from_ref(func)
+        fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
 
         ctx = await self.actor.start_remote_task(
             self.channel,
