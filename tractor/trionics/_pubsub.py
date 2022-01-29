@@ -15,7 +15,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Messaging pattern APIs and helpers.
+Single target entrypoint, remote-task, dynamic (no push if no consumer)
+pubsub API using async an generator which muli-plexes to consumers by
+key.
 
 NOTE: this module is likely deprecated by the new bi-directional streaming
 support provided by ``tractor.Context.open_stream()`` and friends.
