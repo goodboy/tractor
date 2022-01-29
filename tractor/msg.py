@@ -15,6 +15,55 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Coming soon!
+Built-in messaging patterns, types, APIs and helpers.
 
 '''
+
+# TODO: integration with our ``enable_modules: list[str]`` caps sys.
+
+# ``pkgutil.resolve_name()`` internally uses
+# ``importlib.import_module()`` which can be filtered by inserting
+# a ``MetaPathFinder`` into ``sys.meta_path`` (which we could do before
+# entering the ``Actor._process_messages()`` loop).
+# - https://github.com/python/cpython/blob/main/Lib/pkgutil.py#L645
+# - https://stackoverflow.com/questions/1350466/preventing-python-code-from-importing-certain-modules
+#   - https://stackoverflow.com/a/63320902
+#   - https://docs.python.org/3/library/sys.html#sys.meta_path
+
+# the new "Implicit Namespace Packages" might be relevant?
+# - https://www.python.org/dev/peps/pep-0420/
+
+from __future__ import annotations
+from pkgutil import resolve_name
+
+
+class NamespacePath(str):
+    '''
+    A serializeable description of a (function) Python object location
+    described by the target's module path and its namespace key.
+
+    '''
+    _ref: object = None
+
+    def load_ref(self) -> object:
+        if self._ref is None:
+            self._ref = resolve_name(self)
+        return self._ref
+
+    def to_tuple(
+        self,
+
+    ) -> tuple[str, str]:
+        ref = self.load_ref()
+        return ref.__module__, getattr(ref, '__name__', '')
+
+    @classmethod
+    def from_ref(
+        cls,
+        ref,
+
+    ) -> NamespacePath:
+        return cls(':'.join(
+            (ref.__module__,
+             getattr(ref, '__name__', ''))
+        ))
