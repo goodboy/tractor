@@ -21,7 +21,6 @@ concurrency linked tasks running in disparate memory domains.
 '''
 from __future__ import annotations
 import importlib
-from pkgutil import resolve_name
 import inspect
 from typing import (
     Any, Optional,
@@ -38,6 +37,7 @@ from async_generator import asynccontextmanager
 from ._state import current_actor
 from ._ipc import Channel
 from .log import get_logger
+from .msg import NamespacePath
 from ._exceptions import (
     unpack_error,
     NoResult,
@@ -66,34 +66,6 @@ async def maybe_open_nursery(
         async with trio.open_nursery() as nursery:
             nursery.cancel_scope.shield = shield
             yield nursery
-
-
-class NamespacePath(str):
-    '''
-    A serializeable description of a (function) Python object location
-    described by the target's module path and its namespace key.
-
-    '''
-    def load_ref(self) -> object:
-        return resolve_name(self)
-
-    def to_tuple(
-        self,
-
-    ) -> tuple[str, str]:
-        ref = self.load_ref()
-        return ref.__module__, getattr(ref, '__name__', '')
-
-    @classmethod
-    def from_ref(
-        cls,
-        obj,
-
-    ) -> NamespacePath:
-        return cls(':'.join(
-            (obj.__module__,
-             obj.__name__,)
-        ))
 
 
 def _unwrap_msg(
