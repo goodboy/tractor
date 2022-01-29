@@ -23,6 +23,7 @@ NOTE: this module is likely deprecated by the new bi-directional streaming
 support provided by ``tractor.Context.open_stream()`` and friends.
 
 """
+from __future__ import annotations
 import inspect
 import typing
 from typing import Dict, Any, Set, Callable, List, Tuple
@@ -32,8 +33,9 @@ from async_generator import aclosing
 import trio
 import wrapt
 
-from .log import get_logger
-from ._streaming import Context
+from ..log import get_logger
+from .._streaming import Context
+
 
 __all__ = ['pub']
 
@@ -45,8 +47,11 @@ async def fan_out_to_ctxs(
     topics2ctxs: Dict[str, list],
     packetizer: typing.Callable = None,
 ) -> None:
-    """Request and fan out quotes to each subscribed actor channel.
-    """
+    '''
+    Request and fan out quotes to each subscribed actor channel.
+
+    '''
+
     def get_topics():
         return tuple(topics2ctxs.keys())
 

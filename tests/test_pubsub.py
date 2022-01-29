@@ -5,19 +5,20 @@ import pytest
 import trio
 import tractor
 from tractor.testing import tractor_test
+from tractor.experimental import msgpub
 
 
 def test_type_checks():
 
     with pytest.raises(TypeError) as err:
-        @tractor.msg.pub
+        @msgpub
         async def no_get_topics(yo):
             yield
 
     assert "must define a `get_topics`" in str(err.value)
 
     with pytest.raises(TypeError) as err:
-        @tractor.msg.pub
+        @msgpub
         def not_async_gen(yo):
             pass
 
@@ -32,7 +33,7 @@ def is_even(i):
 _get_topics = None
 
 
-@tractor.msg.pub
+@msgpub
 async def pubber(get_topics, seed=10):
 
     # ensure topic subscriptions are as expected
@@ -103,7 +104,7 @@ async def subs(
                 await stream.aclose()
 
 
-@tractor.msg.pub(tasks=['one', 'two'])
+@msgpub(tasks=['one', 'two'])
 async def multilock_pubber(get_topics):
     yield {'doggy': 10}
 
