@@ -33,6 +33,15 @@ Built-in messaging patterns, types, APIs and helpers.
 # the new "Implicit Namespace Packages" might be relevant?
 # - https://www.python.org/dev/peps/pep-0420/
 
+# add implicit serialized message type support so that paths can be
+# handed directly to IPC primitives such as streams and `Portal.run()`
+# calls:
+# - via ``msgspec``:
+#   - https://jcristharif.com/msgspec/api.html#struct
+#   - https://jcristharif.com/msgspec/extending.html
+# via ``msgpack-python``:
+# - https://github.com/msgpack/msgpack-python#packingunpacking-of-custom-data-type
+
 from __future__ import annotations
 from pkgutil import resolve_name
 
