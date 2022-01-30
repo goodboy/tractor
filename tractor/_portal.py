@@ -14,11 +14,12 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""
+'''
 Memory boundary "Portals": an API for structured
 concurrency linked tasks running in disparate memory domains.
 
-"""
+'''
+from __future__ import annotations
 import importlib
 import inspect
 from typing import (
@@ -36,6 +37,7 @@ from async_generator import asynccontextmanager
 from ._state import current_actor
 from ._ipc import Channel
 from .log import get_logger
+from .msg import NamespacePath
 from ._exceptions import (
     unpack_error,
     NoResult,
@@ -66,13 +68,6 @@ async def maybe_open_nursery(
             yield nursery
 
 
-def func_deats(func: Callable) -> tuple[str, str]:
-    return (
-        func.__module__,
-        func.__name__,
-    )
-
-
 def _unwrap_msg(
 
     msg: dict[str, Any],
@@ -85,6 +80,7 @@ def _unwrap_msg(
         # internal error should never get here
         assert msg.get('cid'), "Received internal error at portal?"
         raise unpack_error(msg, channel)
+
 
 class MessagingError(Exception):
     'Some kind of unexpected SC messaging dialog issue'
@@ -316,7 +312,7 @@ class Portal:
                 raise TypeError(
                     f'{func} must be a non-streaming async function!')
 
-            fn_mod_path, fn_name = func_deats(func)
+            fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
 
         ctx = await self.actor.start_remote_task(
             self.channel,
@@ -346,7 +342,8 @@ class Portal:
                 raise TypeError(
                     f'{async_gen_func} must be an async generator function!')
 
-        fn_mod_path, fn_name = func_deats(async_gen_func)
+        fn_mod_path, fn_name = NamespacePath.from_ref(
+            async_gen_func).to_tuple()
         ctx = await self.actor.start_remote_task(
             self.channel,
             fn_mod_path,
@@ -412,7 +409,7 @@ class Portal:
             raise TypeError(
                 f'{func} must be an async generator function!')
 
-        fn_mod_path, fn_name = func_deats(func)
+        fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
 
         ctx = await self.actor.start_remote_task(
             self.channel,
@@ -430,7 +427,7 @@ class Portal:
             first = msg['started']
             ctx._started_called = True
 
-        except KeyError as kerr:
+        except KeyError:
             assert msg.get('cid'), ("Received internal error at context?")
 
             if msg.get('error'):
