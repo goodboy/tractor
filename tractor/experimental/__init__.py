@@ -15,6 +15,15 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Coming soon!
+Experimental APIs and subsystems not yet validated to be included as
+built-ins.
+
+This is a staging area for ``tractor.builtin``.
 
 '''
+from ._pubsub import pub as msgpub
+
+
+__all__ = [
+    'msgpub',
+]
