@@ -49,7 +49,9 @@ from pkgutil import resolve_name
 class NamespacePath(str):
     '''
     A serializeable description of a (function) Python object location
-    described by the target's module path and its namespace key.
+    described by the target's module path and namespace key meant as
+    a message-native "packet" to allows actors to point-and-load objects
+    by absolute reference.
 
     '''
     _ref: object = None
