@@ -40,7 +40,7 @@ from trio_typing import TaskStatus
 from .log import get_logger
 from ._discovery import get_root
 from ._state import is_root_process, debug_mode
-from ._exceptions import is_multi_cancelled
+from ._exceptions import is_multi_cancelled, ContextCancelled
 
 try:
     # wtf: only exported when installed in dev mode?
@@ -273,6 +273,7 @@ async def _hijack_stdin_for_child(
             trio.BrokenResourceError,
             trio.Cancelled,  # by local cancellation
             trio.ClosedResourceError,  # by self._rx_chan
+            ContextCancelled,
         ) as err:
 
             # XXX: there may be a race with the portal teardown
