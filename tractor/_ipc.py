@@ -96,7 +96,8 @@ class MsgTransport(Protocol[MsgType]):
 
 
 class MsgpackTCPStream:
-    '''A ``trio.SocketStream`` delivering ``msgpack`` formatted data
+    '''
+    A ``trio.SocketStream`` delivering ``msgpack`` formatted data
     using ``msgpack-python``.
 
     '''
@@ -124,7 +125,6 @@ class MsgpackTCPStream:
         """
         unpacker = msgpack.Unpacker(
             raw=False,
-            use_list=False,
             strict_map_key=False
         )
         while True:
