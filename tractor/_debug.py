@@ -18,12 +18,15 @@
 Multi-core debugging for da peeps!
 
 """
+from __future__ import annotations
 import bdb
 import sys
 import signal
 from functools import partial
 from contextlib import asynccontextmanager as acm
 from contextlib import contextmanager as cm
+from contextlib import _GeneratorContextManager
+import contextlib
 from typing import (
     Tuple,
     Optional,
@@ -40,7 +43,8 @@ from trio_typing import TaskStatus
 from .log import get_logger
 from ._discovery import get_root
 from ._state import is_root_process, debug_mode
-from ._exceptions import is_multi_cancelled, ContextCancelled
+from ._exceptions import is_multi_cancelled
+
 
 try:
     # wtf: only exported when installed in dev mode?
@@ -52,6 +56,19 @@ except ImportError:
     pdbpp = pdb
 
 log = get_logger(__name__)
+
+
+class noexittbGCM(_GeneratorContextManager):
+    # @pdb.hideframe
+    def __exit__(self, type, value, traceback):
+        __tracebackhide__ = True
+        # try:
+        return super().__exit__(type, value, traceback)
+        # except:
+        #     print('EXITED')
+
+
+contextlib._GeneratorContextManager = noexittbGCM
 
 
 __all__ = ['breakpoint', 'post_mortem']
@@ -98,17 +115,19 @@ class PdbwTeardown(pdbpp.Pdb):
         try:
             super().set_continue()
         finally:
-            global _local_task_in_debug
+            global _local_task_in_debug, _pdb_release_hook
             _local_task_in_debug = None
-            _pdb_release_hook()
+            if _pdb_release_hook:
+                _pdb_release_hook()
 
     def set_quit(self):
         try:
             super().set_quit()
         finally:
-            global _local_task_in_debug
+            global _local_task_in_debug, _pdb_release_hook
             _local_task_in_debug = None
-            _pdb_release_hook()
+            if _pdb_release_hook:
+                _pdb_release_hook()
 
 
 # TODO: will be needed whenever we get to true remote debugging.
@@ -252,7 +271,7 @@ async def _hijack_stdin_for_child(
 
     with (
         trio.CancelScope(shield=True),
-        disable_sigint(),
+        # disable_sigint(),
     ):
 
         try:
@@ -270,10 +289,12 @@ async def _hijack_stdin_for_child(
         except (
             # BaseException,
             trio.MultiError,
-            trio.BrokenResourceError,
-            trio.Cancelled,  # by local cancellation
-            trio.ClosedResourceError,  # by self._rx_chan
-            ContextCancelled,
+            Exception,
+            # trio.BrokenResourceError,
+            # trio.Cancelled,  # by local cancellation
+            # trio.ClosedResourceError,  # by self._rx_chan
+            # ContextCancelled,
+            # ConnectionResetError,
         ) as err:
 
             # XXX: there may be a race with the portal teardown
@@ -485,6 +506,7 @@ async def _breakpoint(
 
 
 @cm
+@pdb.hideframe
 def _open_pdb() -> Iterator[PdbwTeardown]:
 
     # XXX: setting these flags on the pdb instance are absolutely
@@ -492,6 +514,7 @@ def _open_pdb() -> Iterator[PdbwTeardown]:
     # stdlib's pdb supports entering the current sync frame on a SIGINT,
     # with ``trio`` we pretty much never want this and if we did we can
     # handle it in the ``tractor`` task runtime.
+    __tracebackhide__ = True
 
     pdb = PdbwTeardown()
     pdb.allow_kbdint = True
@@ -564,7 +587,7 @@ def shield_sigint(
     else:
         # If we haven't tried to cancel the runtime then do that instead
         # of raising a KBI (which may non-gracefully destroy
-        # a ``trio.run()``). 
+        # a ``trio.run()``).
         if not actor._cancel_called:
             actor.cancel_soon()
 
@@ -591,6 +614,7 @@ def shield_sigint(
         print(pdb.prompt, end='', flush=True)
 
 
+@pdb.hideframe
 @cm
 def disable_sigint(
     pdb: Optional[PdbwTeardown] = None
@@ -601,10 +625,10 @@ def disable_sigint(
 
     # ensure the ``contextlib.contextmanager`` frame inside the wrapping
     # ``.__exit__()`` method isn't shown either.
-    frame = sys._getframe()
-    last_f = frame.f_back
-    if last_f:
-        last_f.f_globals['__tracebackhide__'] = True
+    # frame = sys._getframe()
+    # last_f = frame.f_back
+    # last_f.f_globals['__tracebackhide__'] = True
+
     # NOTE: this seems like a form of cpython bug wherein
     # it's likely that ``functools.WRAPPER_ASSIGNMENTS`` should
     # probably contain this attr name?
@@ -625,8 +649,13 @@ def disable_sigint(
         )
 
 
-def _set_trace(actor=None):
+@pdb.hideframe
+def _set_trace(
+    actor: Optional[tractor.Actor] = None
+):
     __tracebackhide__ = True
+    actor = actor or tractor.current_actor()
+
     with (
         _open_pdb() as pdb,
         disable_sigint(pdb=pdb),
@@ -640,7 +669,8 @@ def _set_trace(actor=None):
             )
 
         else:
-            # we entered the global ``breakpoint()`` built-in from sync code
+            # we entered the global ``breakpoint()`` built-in from sync code?
+            assert 0, 'Woa this path finally triggered?'
             global _local_task_in_debug, _pdb_release_hook
             _local_task_in_debug = 'sync'
 
@@ -651,7 +681,7 @@ def _set_trace(actor=None):
 
             pdb.set_trace(
                 # start 2 levels up in user code
-                frame=sys._getframe().f_back,
+                frame=sys._getframe().f_back.f_back,
             )
 
 
@@ -661,11 +691,15 @@ breakpoint = partial(
 )
 
 
+@pdb.hideframe
 def _post_mortem(actor):
+
     __tracebackhide__ = True
+
     with (
+        # noop()
         _open_pdb() as pdb,
-        disable_sigint(pdb=pdb),
+        # disable_sigint(pdb=pdb),
     ):
         log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
 
