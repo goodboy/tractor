@@ -71,7 +71,7 @@ async def gather_contexts(
 
     mngrs: Sequence[AsyncContextManager[T]],
 
-) -> AsyncGenerator[tuple[T, ...], None]:
+) -> AsyncGenerator[tuple[Optional[T], ...], None]:
     '''
     Concurrently enter a sequence of async context managers, each in
     a separate ``trio`` task and deliver the unwrapped values in the
@@ -84,7 +84,7 @@ async def gather_contexts(
     entered and exited cancellation just works.
 
     '''
-    unwrapped = {}.fromkeys(id(mngr) for mngr in mngrs)
+    unwrapped: dict[int, Optional[T]] = {}.fromkeys(id(mngr) for mngr in mngrs)
 
     all_entered = trio.Event()
     parent_exit = trio.Event()
