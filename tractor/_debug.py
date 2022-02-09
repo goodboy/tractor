@@ -283,9 +283,9 @@ async def _hijack_stdin_for_child(
                         assert await stream.receive() == 'pdb_unlock'
 
             except (
-                # BaseException,
-                trio.MultiError,
-                Exception,
+                BaseException,
+                # trio.MultiError,
+                # Exception,
                 # trio.BrokenResourceError,
                 # trio.Cancelled,  # by local cancellation
                 # trio.ClosedResourceError,  # by self._rx_chan
@@ -301,8 +301,8 @@ async def _hijack_stdin_for_child(
                 if lock and lock.locked():
                     lock.release()
 
-                if isinstance(err, trio.Cancelled):
-                    raise
+                # if isinstance(err, trio.Cancelled):
+                raise
 
             finally:
                 log.runtime(
@@ -381,6 +381,28 @@ async def wait_for_parent_stdin_hijack(
             log.debug(f"Child {actor_uid} released parent stdio lock")
 
 
+def mk_mpdb() -> (MultiActorPdb, Callable):
+
+    pdb = MultiActorPdb()
+    signal.signal = pdbpp.hideframe(signal.signal)
+    orig_handler = signal.signal(
+        signal.SIGINT,
+        partial(shield_sigint, pdb_obj=pdb),
+    )
+    pdb.allow_kbdint = True
+    pdb.nosigint = True
+
+    # TODO: add this as method on our pdb obj?
+    def undo_sigint():
+        # restore original sigint handler
+        signal.signal(
+            signal.SIGINT,
+            orig_handler
+        )
+
+    return pdb, undo_sigint
+
+
 async def _breakpoint(
 
     debug_func,
@@ -402,15 +424,7 @@ async def _breakpoint(
     # scope here???
     # with trio.CancelScope(shield=shield):
 
-    pdb = MultiActorPdb()
-    signal.signal = pdbpp.hideframe(signal.signal)
-    orig_handler = signal.signal(
-        signal.SIGINT,
-        partial(shield_sigint, pdb_obj=pdb),
-    )
-    pdb.allow_kbdint = True
-    pdb.nosigint = True
-
+    pdb, undo_sigint = mk_mpdb()
     actor = tractor.current_actor()
     task_name = trio.lowlevel.current_task().name
 
@@ -449,11 +463,9 @@ async def _breakpoint(
         def child_release_hook():
             # _local_task_in_debug = None
             _local_pdb_complete.set()
+
             # restore original sigint handler
-            signal.signal(
-                signal.SIGINT,
-                orig_handler
-            )
+            undo_sigint()
 
         # assign unlock callback for debugger teardown hooks
         # _pdb_release_hook = _local_pdb_complete.set
@@ -523,10 +535,7 @@ async def _breakpoint(
             _local_pdb_complete.set()
 
             # restore original sigint handler
-            signal.signal(
-                signal.SIGINT,
-                orig_handler
-            )
+            undo_sigint()
 
         _pdb_release_hook = teardown
 
@@ -664,7 +673,7 @@ def _set_trace(
     # last_f = frame.f_back
     # last_f.f_globals['__tracebackhide__'] = True
 
-    if actor is not None:
+    if pdb and actor is not None:
         log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
 
         pdb.set_trace(
@@ -673,15 +682,13 @@ def _set_trace(
         )
 
     else:
+        pdb, undo_sigint = mk_mpdb()
+
         # we entered the global ``breakpoint()`` built-in from sync code?
-        assert 0, 'Woa this path finally triggered?'
         global _local_task_in_debug, _pdb_release_hook
         _local_task_in_debug = 'sync'
 
-        def nuttin():
-            pass
-
-        _pdb_release_hook = nuttin
+        _pdb_release_hook = undo_sigint
 
         pdb.set_trace(
             # start 2 levels up in user code
