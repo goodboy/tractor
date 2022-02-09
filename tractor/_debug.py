@@ -31,6 +31,7 @@ from typing import (
     AsyncIterator,
     AsyncGenerator,
 )
+from types import FrameType
 
 import tractor
 import trio
@@ -380,7 +381,7 @@ async def wait_for_parent_stdin_hijack(
             log.debug(f"Child {actor_uid} released parent stdio lock")
 
 
-def mk_mpdb() -> (MultiActorPdb, Callable):
+def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
 
     pdb = MultiActorPdb()
     signal.signal = pdbpp.hideframe(signal.signal)
@@ -534,9 +535,10 @@ async def _breakpoint(
 
         _pdb_release_hook = teardown
 
-    frame = sys._getframe()
-    last_f = frame.f_back
-    last_f.f_globals['__tracebackhide__'] = True
+    # frame = sys._getframe()
+    # last_f = frame.f_back
+    # last_f.f_globals['__tracebackhide__'] = True
+
     try:
         # block here one (at the appropriate frame *up*) where
         # ``breakpoint()`` was awaited and begin handling stdio.
@@ -658,23 +660,24 @@ def shield_sigint(
 
 
 def _set_trace(
-    actor: Optional[tractor.Actor] = None,
+    actor: Optional[tractor._actor.Actor] = None,
     pdb: Optional[MultiActorPdb] = None,
 ):
     __tracebackhide__ = True
     actor = actor or tractor.current_actor()
 
+    # XXX: on latest ``pdbpp`` i guess we don't need this?
     # frame = sys._getframe()
     # last_f = frame.f_back
     # last_f.f_globals['__tracebackhide__'] = True
 
+    # start 2 levels up in user code
+    frame: FrameType = sys._getframe()
+    if frame:
+        frame = frame.f_back.f_back  # type: ignore
+
     if pdb and actor is not None:
         log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
-
-        pdb.set_trace(
-            # start 2 levels up in user code
-            frame=sys._getframe().f_back.f_back,
-        )
 
     else:
         pdb, undo_sigint = mk_mpdb()
@@ -683,12 +686,7 @@ def _set_trace(
         global _local_task_in_debug, _pdb_release_hook
         _local_task_in_debug = 'sync'
 
-        _pdb_release_hook = undo_sigint
-
-        pdb.set_trace(
-            # start 2 levels up in user code
-            frame=sys._getframe().f_back.f_back,
-        )
+    pdb.set_trace(frame=frame)
 
 
 breakpoint = partial(
@@ -698,7 +696,7 @@ breakpoint = partial(
 
 
 def _post_mortem(
-    actor: tractor.Actor,
+    actor: tractor._actor.Actor,
     pdb: MultiActorPdb,
 
 ) -> None:
