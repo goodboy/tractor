@@ -16,19 +16,21 @@ async def just_bp(
     await ctx.started('yo bpin here')
     await tractor.breakpoint()
 
+    # TODO: bps and errors in this call..
     # async for val in gen():
     #     print(val)
 
     await trio.sleep(0.5)
 
-    # THIS CAUSES AN UNRECOVERABLE HANG!?
+    # THIS CAUSES AN UNRECOVERABLE HANG
+    # without latest ``pdbpp``:
     assert 0
 
 
 
 async def main():
     async with tractor.open_nursery(
-        loglevel='transport',
+        # loglevel='transport',
         debug_mode=True,
     ) as n:
         p = await n.start_actor(
