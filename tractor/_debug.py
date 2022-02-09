@@ -291,8 +291,7 @@ async def _hijack_stdin_for_child(
                 # trio.ClosedResourceError,  # by self._rx_chan
                 # ContextCancelled,
                 # ConnectionResetError,
-            ) as err:
-
+            ):
                 # XXX: there may be a race with the portal teardown
                 # with the calling actor which we can safely ignore.
                 # The alternative would be sending an ack message
@@ -355,10 +354,10 @@ async def wait_for_parent_stdin_hijack(
 
                     async with ctx.open_stream() as stream:
                         # unblock local caller
-                        task_status.started(cs)
 
                         try:
                             assert _local_pdb_complete
+                            task_status.started(cs)
                             await _local_pdb_complete.wait()
 
                         finally:
@@ -418,12 +417,6 @@ async def _breakpoint(
     '''
     __tracebackhide__ = True
 
-    # TODO: is it possible to debug a trio.Cancelled except block?
-    # right now it seems like we can kinda do with by shielding
-    # around ``tractor.breakpoint()`` but not if we move the shielded
-    # scope here???
-    # with trio.CancelScope(shield=shield):
-
     pdb, undo_sigint = mk_mpdb()
     actor = tractor.current_actor()
     task_name = trio.lowlevel.current_task().name
@@ -431,7 +424,12 @@ async def _breakpoint(
     global _local_pdb_complete, _pdb_release_hook
     global _local_task_in_debug, _global_actor_in_debug
 
-    await trio.lowlevel.checkpoint()
+    # TODO: is it possible to debug a trio.Cancelled except block?
+    # right now it seems like we can kinda do with by shielding
+    # around ``tractor.breakpoint()`` but not if we move the shielded
+    # scope here???
+    # with trio.CancelScope(shield=shield):
+    #     await trio.lowlevel.checkpoint()
 
     if not _local_pdb_complete or _local_pdb_complete.is_set():
         _local_pdb_complete = trio.Event()
@@ -441,12 +439,9 @@ async def _breakpoint(
 
         if _local_task_in_debug:
             if _local_task_in_debug == task_name:
-                print("LOCAL TASK ALREADY IN DEBUG")
                 # this task already has the lock and is
                 # likely recurrently entering a breakpoint
                 return
-            else:
-                print("NOT LOCAL TASK ALREADY IN DEBUG")
 
             # if **this** actor is already in debug mode block here
             # waiting for the control to be released - this allows
@@ -713,6 +708,29 @@ def _post_mortem(
 
     '''
     log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
+
+    # XXX: on py3.10 if you don't have latest ``pdbpp`` installed.
+    # The exception looks something like:
+    # Traceback (most recent call last):
+    # File ".../tractor/_debug.py", line 729, in _post_mortem
+    #   for _ in range(100):
+    # File "../site-packages/pdb.py", line 1227, in xpm
+    #   post_mortem(info[2], Pdb)
+    # File "../site-packages/pdb.py", line 1175, in post_mortem
+    #   p.interaction(None, t)
+    # File "../site-packages/pdb.py", line 216, in interaction
+    #   ret = self.setup(frame, traceback)
+    # File "../site-packages/pdb.py", line 259, in setup
+    #   ret = super(Pdb, self).setup(frame, tb)
+    # File "/usr/lib/python3.10/pdb.py", line 217, in setup
+    #   self.curframe = self.stack[self.curindex][0]
+    # IndexError: list index out of range
+
+    # NOTE: you need ``pdbpp`` master (at least this commit
+    # https://github.com/pdbpp/pdbpp/commit/b757794857f98d53e3ebbe70879663d7d843a6c2)
+    # to fix this and avoid the hang it causes XD.
+    # see also: https://github.com/pdbpp/pdbpp/issues/480
+
     pdbpp.xpm(Pdb=lambda: pdb)
 
 
