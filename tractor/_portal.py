@@ -442,6 +442,10 @@ class Portal:
         _err: Optional[BaseException] = None
         ctx._portal = self
 
+        uid = self.channel.uid
+        cid = ctx.cid
+        etype: Optional[Exception] = None
+
         # deliver context instance and .started() msg value in open tuple.
         try:
             async with trio.open_nursery() as scope_nursery:
@@ -477,13 +481,24 @@ class Portal:
             # KeyboardInterrupt,
 
         ) as err:
-            _err = err
+            etype = type(err)
             # the context cancels itself on any cancel
             # causing error.
-            log.cancel(
-                f'Context to {self.channel.uid} sending cancel request..')
 
-            await ctx.cancel()
+            if ctx.chan.connected():
+                log.cancel(
+                    'Context cancelled for task, sending cancel request..\n'
+                    f'task:{cid}\n'
+                    f'actor:{uid}'
+                )
+                await ctx.cancel()
+            else:
+                log.warning(
+                    'IPC connection for context is broken?\n'
+                    f'task:{cid}\n'
+                    f'actor:{uid}'
+                )
+
             raise
 
         finally:
@@ -492,7 +507,13 @@ class Portal:
             # sure we get the error the underlying feeder mem chan.
             # if it's not raised here it *should* be raised from the
             # msg loop nursery right?
-            result = await ctx.result()
+            if ctx.chan.connected():
+                log.info(
+                    'Waiting on final context-task result for\n'
+                    f'task:{cid}\n'
+                    f'actor:{uid}'
+                )
+                result = await ctx.result()
 
             # though it should be impossible for any tasks
             # operating *in* this scope to have survived
@@ -502,14 +523,17 @@ class Portal:
                 # should we encapsulate this in the context api?
                 await ctx._recv_chan.aclose()
 
-            if _err:
+            if etype:
                 if ctx._cancel_called:
                     log.cancel(
-                        f'Context {fn_name} cancelled by caller with\n{_err}'
+                        f'Context {fn_name} cancelled by caller with\n{etype}'
                     )
                 elif _err is not None:
                     log.cancel(
-                        f'Context {fn_name} cancelled by callee with\n{_err}'
+                        f'Context for task cancelled by callee with {etype}\n'
+                        f'target: `{fn_name}`\n'
+                        f'task:{cid}\n'
+                        f'actor:{uid}'
                     )
             else:
                 log.runtime(
