@@ -24,7 +24,8 @@ import importlib
 import inspect
 from typing import (
     Any, Optional,
-    Callable, AsyncGenerator
+    Callable, AsyncGenerator,
+    Type,
 )
 from functools import partial
 from dataclasses import dataclass
@@ -444,7 +445,7 @@ class Portal:
 
         uid = self.channel.uid
         cid = ctx.cid
-        etype: Optional[Exception] = None
+        etype: Optional[Type[BaseException]] = None
 
         # deliver context instance and .started() msg value in open tuple.
         try:
