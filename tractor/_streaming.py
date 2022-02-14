@@ -604,7 +604,8 @@ class Context:
                     self._portal._streams.remove(rchan)
 
     async def result(self) -> Any:
-        '''From a caller side, wait for and return the final result from
+        '''
+        From a caller side, wait for and return the final result from
         the callee side task.
 
         '''
