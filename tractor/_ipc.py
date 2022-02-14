@@ -222,8 +222,8 @@ class MsgspecTCPStream(MsgpackTCPStream):
         self.prefix_size = prefix_size
 
         # TODO: struct aware messaging coders
-        self.encode = msgspec.Encoder().encode
-        self.decode = msgspec.Decoder().decode  # dict[str, Any])
+        self.encode = msgspec.msgpack.Encoder().encode
+        self.decode = msgspec.msgpack.Decoder().decode  # dict[str, Any])
 
     async def _iter_packets(self) -> AsyncGenerator[dict, None]:
         '''Yield packets from the underlying stream.
