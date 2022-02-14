@@ -259,16 +259,11 @@ async def _hijack_stdin_for_child(
     orig_handler = signal.signal(
         signal.SIGINT,
         shield_sigint,
-        # partial(shield_sigint, pdb=pdb),
     )
-#     try:
-#         yield
     try:
         with (
             trio.CancelScope(shield=True),
-            # disable_sigint(),
         ):
-
             try:
                 lock = None
                 async with _acquire_debug_lock(subactor_uid) as lock:
@@ -584,10 +579,6 @@ def shield_sigint(
     '''
     __tracebackhide__ = True
 
-    frame = sys._getframe()
-    last_f = frame.f_back
-    last_f.f_globals['__tracebackhide__'] = True
-
     global _local_task_in_debug, _global_actor_in_debug
     in_debug = _global_actor_in_debug
 
@@ -604,6 +595,7 @@ def shield_sigint(
             log.pdb(
                 f"Ignoring SIGINT while child in debug mode: `{in_debug}`"
             )
+
         else:
             log.pdb(
                 "Ignoring SIGINT while in debug mode"
