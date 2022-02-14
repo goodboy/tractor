@@ -56,7 +56,7 @@ setup(
         'pdbpp',
 
         # serialization
-        'msgpack',
+        'msgpack>=1.0.3',
 
     ],
     extras_require={
