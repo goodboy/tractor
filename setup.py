@@ -56,13 +56,13 @@ setup(
         'pdbpp',
 
         # serialization
-        'msgpack',
+        'msgpack>=1.0.3',
 
     ],
     extras_require={
 
         # serialization
-        'msgspec': ["msgspec >= 0.3.2'; python_version >= '3.9'"],
+        'msgspec': ['msgspec >= "0.4.0"'],
 
     },
     tests_require=['pytest'],

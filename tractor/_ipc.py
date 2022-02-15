@@ -96,7 +96,8 @@ class MsgTransport(Protocol[MsgType]):
 
 
 class MsgpackTCPStream:
-    '''A ``trio.SocketStream`` delivering ``msgpack`` formatted data
+    '''
+    A ``trio.SocketStream`` delivering ``msgpack`` formatted data
     using ``msgpack-python``.
 
     '''
@@ -120,12 +121,12 @@ class MsgpackTCPStream:
         self.drained: list[dict] = []
 
     async def _iter_packets(self) -> AsyncGenerator[dict, None]:
-        """Yield packets from the underlying stream.
-        """
+        '''
+        Yield packets from the underlying stream.
+
+        '''
         unpacker = msgpack.Unpacker(
             raw=False,
-            use_list=False,
-            strict_map_key=False
         )
         while True:
             try:
@@ -222,8 +223,8 @@ class MsgspecTCPStream(MsgpackTCPStream):
         self.prefix_size = prefix_size
 
         # TODO: struct aware messaging coders
-        self.encode = msgspec.Encoder().encode
-        self.decode = msgspec.Decoder().decode  # dict[str, Any])
+        self.encode = msgspec.msgpack.Encoder().encode
+        self.decode = msgspec.msgpack.Decoder().decode  # dict[str, Any])
 
     async def _iter_packets(self) -> AsyncGenerator[dict, None]:
         '''Yield packets from the underlying stream.
