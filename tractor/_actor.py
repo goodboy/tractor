@@ -1502,7 +1502,7 @@ class Arbiter(Actor):
     async def get_registry(
         self
 
-    ) -> dict[tuple[str, str], tuple[str, int]]:
+    ) -> dict[str, tuple[str, int]]:
         '''
         Return current name registry.
 
