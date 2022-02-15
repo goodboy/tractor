@@ -116,11 +116,26 @@ async def stream_from(portal):
             print(value)
 
 
+async def unpack_reg(actor_or_portal):
+    '''
+    Get and unpack a "registry" RPC request from the "arbiter" registry
+    system.
+
+    '''
+    if getattr(actor_or_portal, 'get_registry', None):
+        msg = await actor_or_portal.get_registry()
+    else:
+        msg = await actor_or_portal.run_from_ns('self', 'get_registry')
+
+    return {tuple(key.split('.')): val for key, val in msg.items()}
+
+
 async def spawn_and_check_registry(
     arb_addr: tuple,
     use_signal: bool,
     remote_arbiter: bool = False,
     with_streaming: bool = False,
+
 ) -> None:
 
     async with tractor.open_root_actor(
@@ -134,13 +149,11 @@ async def spawn_and_check_registry(
                 assert not actor.is_arbiter
 
             if actor.is_arbiter:
-
-                async def get_reg():
-                    return await actor.get_registry()
-
                 extra = 1  # arbiter is local root actor
+                get_reg = partial(unpack_reg, actor)
+
             else:
-                get_reg = partial(portal.run_from_ns, 'self', 'get_registry')
+                get_reg = partial(unpack_reg, portal)
                 extra = 2  # local root actor + remote arbiter
 
             # ensure current actor is registered
@@ -266,7 +279,7 @@ async def close_chans_before_nursery(
     ):
         async with tractor.get_arbiter(*arb_addr) as aportal:
             try:
-                get_reg = partial(aportal.run_from_ns, 'self', 'get_registry')
+                get_reg = partial(unpack_reg, aportal)
 
                 async with tractor.open_nursery() as tn:
                     portal1 = await tn.start_actor(
