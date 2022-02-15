@@ -121,11 +121,12 @@ class MsgpackTCPStream:
         self.drained: list[dict] = []
 
     async def _iter_packets(self) -> AsyncGenerator[dict, None]:
-        """Yield packets from the underlying stream.
-        """
+        '''
+        Yield packets from the underlying stream.
+
+        '''
         unpacker = msgpack.Unpacker(
             raw=False,
-            strict_map_key=False
         )
         while True:
             try:
