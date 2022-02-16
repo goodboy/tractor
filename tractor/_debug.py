@@ -49,7 +49,8 @@ try:
 except ImportError:
     # pdbpp is installed in regular mode...it monkey patches stuff
     import pdb
-    assert pdb.xpm, "pdbpp is not installed?"  # type: ignore
+    xpm = getattr(pdb, 'xpm', None)
+    assert xpm, "pdbpp is not installed?"  # type: ignore
     pdbpp = pdb
 
 log = get_logger(__name__)
