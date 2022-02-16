@@ -571,13 +571,16 @@ class Actor:
         self._peers[uid].append(chan)
 
         local_nursery: Optional[ActorNursery] = None  # noqa
+        disconnected: bool = False
 
         # Begin channel management - respond to remote requests and
         # process received reponses.
         try:
             disconnected = await self._process_messages(chan)
 
-        except trio.Cancelled:
+        except (
+            trio.Cancelled,
+        ):
             log.cancel(f"Msg loop was cancelled for {chan}")
             raise
 
