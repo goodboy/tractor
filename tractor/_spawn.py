@@ -18,30 +18,17 @@
 Machinery for actor process spawning using multiple backends.
 
 """
+from __future__ import annotations
 import sys
-import multiprocessing as mp
 import platform
 from typing import (
-    Any, Dict, Optional, Callable,
-    TypeVar,
+    Any, Optional, Callable, TypeVar, TYPE_CHECKING
 )
 from collections.abc import Awaitable
 
 import trio
 from trio_typing import TaskStatus
 
-try:
-    from multiprocessing import semaphore_tracker  # type: ignore
-    resource_tracker = semaphore_tracker
-    resource_tracker._resource_tracker = resource_tracker._semaphore_tracker
-except ImportError:
-    # 3.8 introduces a more general version that also tracks shared mems
-    from multiprocessing import resource_tracker  # type: ignore
-
-from multiprocessing import forkserver  # type: ignore
-from typing import Tuple
-
-from . import _forkserver_override
 from ._debug import (
     maybe_wait_for_debugger,
     acquire_debug_lock,
@@ -60,8 +47,11 @@ from ._entry import _mp_main
 from ._exceptions import ActorFailure
 
 
+if TYPE_CHECKING:
+    import multiprocessing as mp
+    ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
+
 log = get_logger('tractor')
-ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
 
 # placeholder for an mp start context if so using that backend
 _ctx: Optional[mp.context.BaseContext] = None
@@ -92,6 +82,7 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     ``subprocess.Popen``.
 
     '''
+    import multiprocessing as mp
     global _ctx
     global _spawn_method
 
@@ -108,6 +99,7 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
             f"Spawn method `{name}` is invalid please choose one of {methods}"
         )
     elif name == 'forkserver':
+        from . import _forkserver_override
         _forkserver_override.override_stdlib()
         _ctx = mp.get_context(name)
     elif name == 'trio':
@@ -155,7 +147,7 @@ async def cancel_on_completion(
 
     portal: Portal,
     actor: Actor,
-    errors: Dict[Tuple[str, str], Exception],
+    errors: dict[tuple[str, str], Exception],
 
 ) -> None:
     '''
@@ -258,12 +250,12 @@ async def new_proc(
     name: str,
     actor_nursery: 'ActorNursery',  # type: ignore  # noqa
     subactor: Actor,
-    errors: Dict[Tuple[str, str], Exception],
+    errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addr: Tuple[str, int],
-    parent_addr: Tuple[str, int],
-    _runtime_vars: Dict[str, Any],  # serialized and sent to _child
+    bind_addr: tuple[str, int],
+    parent_addr: tuple[str, int],
+    _runtime_vars: dict[str, Any],  # serialized and sent to _child
 
     *,
 
@@ -447,20 +439,30 @@ async def mp_new_proc(
     name: str,
     actor_nursery: 'ActorNursery',  # type: ignore  # noqa
     subactor: Actor,
-    errors: Dict[Tuple[str, str], Exception],
+    errors: dict[tuple[str, str], Exception],
     # passed through to actor main
-    bind_addr: Tuple[str, int],
-    parent_addr: Tuple[str, int],
-    _runtime_vars: Dict[str, Any],  # serialized and sent to _child
+    bind_addr: tuple[str, int],
+    parent_addr: tuple[str, int],
+    _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
 
+    # uggh zone
+    try:
+        from multiprocessing import semaphore_tracker  # type: ignore
+        resource_tracker = semaphore_tracker
+        resource_tracker._resource_tracker = resource_tracker._semaphore_tracker  # noqa
+    except ImportError:
+        # 3.8 introduces a more general version that also tracks shared mems
+        from multiprocessing import resource_tracker  # type: ignore
+
     assert _ctx
     start_method = _ctx.get_start_method()
     if start_method == 'forkserver':
+        from multiprocessing import forkserver  # type: ignore
         # XXX do our hackery on the stdlib to avoid multiple
         # forkservers (one at each subproc layer).
         fs = forkserver._forkserver

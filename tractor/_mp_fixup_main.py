@@ -18,9 +18,9 @@
 Helpers pulled mostly verbatim from ``multiprocessing.spawn``
 to aid with "fixing up" the ``__main__`` module in subprocesses.
 
-These helpers are needed for any spawing backend that doesn't already handle this.
-For example when using ``trio_run_in_process`` it is needed but obviously not when
-we're already using ``multiprocessing``.
+These helpers are needed for any spawing backend that doesn't already
+handle this. For example when using ``trio_run_in_process`` it is needed
+but obviously not when we're already using ``multiprocessing``.
 
 """
 import os
@@ -28,13 +28,12 @@ import sys
 import platform
 import types
 import runpy
-from typing import Dict
 
 
 ORIGINAL_DIR = os.path.abspath(os.getcwd())
 
 
-def _mp_figure_out_main() -> Dict[str, str]:
+def _mp_figure_out_main() -> dict[str, str]:
     """Taken from ``multiprocessing.spawn.get_preparation_data()``.
 
     Retrieve parent actor `__main__` module data.
