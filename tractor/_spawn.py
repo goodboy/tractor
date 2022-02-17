@@ -60,6 +60,7 @@ _spawn_method: str = "trio"
 
 if platform.system() == 'Windows':
 
+    import multiprocessing as mp
     _ctx = mp.get_context("spawn")
 
     async def proc_waiter(proc: mp.Process) -> None:
@@ -400,7 +401,8 @@ async def new_proc(
 
                     if is_root_process():
                         await maybe_wait_for_debugger(
-                            child_in_debug=_runtime_vars.get('_debug_mode', False),
+                            child_in_debug=_runtime_vars.get(
+                                '_debug_mode', False),
                         )
 
                     if proc.poll() is None:
