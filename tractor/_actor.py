@@ -240,7 +240,10 @@ async def _invoke(
                 task_status.started(cs)
                 await chan.send({'return': await coro, 'cid': cid})
 
-    except (Exception, trio.MultiError) as err:
+    except (
+        Exception,
+        trio.MultiError
+    ) as err:
 
         if not is_multi_cancelled(err):
 
@@ -274,7 +277,13 @@ async def _invoke(
         try:
             await chan.send(err_msg)
 
-        except trio.ClosedResourceError:
+        # TODO: tests for this scenario:
+        # - RPC caller closes connection before getting a response
+        # should **not** crash this actor..
+        except (
+            trio.ClosedResourceError,
+            trio.BrokenResourceError,
+        ):
             # if we can't propagate the error that's a big boo boo
             log.error(
                 f"Failed to ship error to caller @ {chan.uid} !?"
