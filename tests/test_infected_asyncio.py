@@ -14,8 +14,8 @@ from tractor import to_asyncio
 from tractor import RemoteActorError
 
 
-async def sleep_and_err():
-    await asyncio.sleep(0.1)
+async def sleep_and_err(sleep_for: float = 0.1):
+    await asyncio.sleep(sleep_for)
     assert 0
 
 
