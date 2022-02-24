@@ -611,7 +611,7 @@ class Actor:
                     entry = local_nursery._children.get(uid)
                     if entry:
                         _, proc, _ = entry
-                        log.error(f'Actor {uid}@{proc} IPC connection broke!?')
+                        log.warning(f'Actor {uid}@{proc} IPC connection broke!?')
                         # if proc.poll() is not None:
                         #     log.error('Actor {uid} proc died and IPC broke?')
 
