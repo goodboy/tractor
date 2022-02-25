@@ -170,3 +170,66 @@ def test_actor_managed_trio_nursery_task_error_cancels_aio(
     # verify boxed error
     err = excinfo.value
     assert isinstance(err.type(), NameError)
+
+
+from trio_typing import TaskStatus
+
+
+def test_nursery():
+
+    _cn = None
+
+    async def task_name_errors_and_never_startedz(
+        task_status: TaskStatus = trio.TASK_STATUS_IGNORED,
+    ):
+        await trio.sleep(0.5)
+
+        # pet pet
+        doggy()
+
+        # we never get here due to name error
+        task_status.started()
+
+    async def waits_on_signal(
+        ev: trio.Event(),
+        task_status: TaskStatus[trio.Nursery] = trio.TASK_STATUS_IGNORED,
+    ):
+        await ev.wait()
+        task_status.started()
+
+    async def start_cn_tasks(
+        # pn: trio.Nursery,
+        task_status: TaskStatus[trio.Nursery] = trio.TASK_STATUS_IGNORED,
+    ):
+        nonlocal _cn
+        assert _cn
+
+        ev = trio.Event()
+
+        _cn.start_soon(task_never_starteds)
+        await _cn.start(waits_on_signal, ev)
+        task_status.started()
+
+    async def mk_cn(
+        task_status: TaskStatus = trio.TASK_STATUS_IGNORED,
+    ):
+        nonlocal _cn
+
+        async with trio.open_nursery() as cn:
+            _cn = cn
+
+            task_status.started(cn)
+            await trio.sleep_forever()
+
+    async def main():
+        async with (
+            trio.open_nursery() as pn,
+        ):
+            cn = await pn.start(mk_cn)
+            assert cn
+
+            # start a parent level task which starts a task
+            pn.start_soon(start_cn_tasks)
+            await trio.sleep_forever()
+
+    trio.run(main)
