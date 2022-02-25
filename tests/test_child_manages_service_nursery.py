@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager as acm
 
 import pytest
 import trio
+from trio_typing import TaskStatus
 import tractor
 from tractor import RemoteActorError
 from async_generator import aclosing
@@ -172,64 +173,58 @@ def test_actor_managed_trio_nursery_task_error_cancels_aio(
     assert isinstance(err.type(), NameError)
 
 
-from trio_typing import TaskStatus
+def test_stashed_child_nursery():
 
-
-def test_nursery():
-
-    _cn = None
-
-    async def task_name_errors_and_never_startedz(
-        task_status: TaskStatus = trio.TASK_STATUS_IGNORED,
-    ):
-        await trio.sleep(0.5)
-
-        # pet pet
-        doggy()
-
-        # we never get here due to name error
-        task_status.started()
+    _child_nursery = None
 
     async def waits_on_signal(
         ev: trio.Event(),
         task_status: TaskStatus[trio.Nursery] = trio.TASK_STATUS_IGNORED,
     ):
+        '''
+        Do some stuf, then signal other tasks, then yield back to "starter".
+
+        '''
         await ev.wait()
         task_status.started()
 
-    async def start_cn_tasks(
-        # pn: trio.Nursery,
-        task_status: TaskStatus[trio.Nursery] = trio.TASK_STATUS_IGNORED,
-    ):
-        nonlocal _cn
-        assert _cn
-
-        ev = trio.Event()
-
-        _cn.start_soon(task_never_starteds)
-        await _cn.start(waits_on_signal, ev)
-        task_status.started()
-
-    async def mk_cn(
+    async def mk_child_nursery(
         task_status: TaskStatus = trio.TASK_STATUS_IGNORED,
     ):
-        nonlocal _cn
+        '''
+        Allocate a child sub-nursery and stash it as a global.
+
+        '''
+        nonlocal _child_nursery
 
         async with trio.open_nursery() as cn:
-            _cn = cn
-
+            _child_nursery = cn
             task_status.started(cn)
+
+            # block until cancelled by parent.
             await trio.sleep_forever()
 
+    async def sleep_and_err(ev: trio.Event):
+        await trio.sleep(0.5)
+        doggy()  # noqa
+        ev.set()
+
     async def main():
+
         async with (
             trio.open_nursery() as pn,
         ):
-            cn = await pn.start(mk_cn)
+            cn = await pn.start(mk_child_nursery)
             assert cn
 
-            # start a parent level task which starts a task
-            pn.start_soon(start_cn_tasks)
-            await trio.sleep_forever()
+            ev = trio.Event()
+            cn.start_soon(sleep_and_err, ev)
 
-    trio.run(main)
+            # this causes inf hang
+            await cn.start(waits_on_signal, ev)
+
+            # this does not.
+            # cn.start_soon(waits_on_signal, ev)
+
+    with pytest.raises(NameError):
+        trio.run(main)
