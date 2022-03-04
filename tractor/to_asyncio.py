@@ -271,7 +271,12 @@ def _run_asyncio_task(
             task.exception()
         except BaseException as terr:
             task_err = terr
-            log.exception(f'`asyncio` task: {task.get_name()} errored')
+
+            if isinstance(terr, CancelledError):
+                log.cancel(f'`asyncio` task cancelled: {task.get_name()}')
+            else:
+                log.exception(f'`asyncio` task: {task.get_name()} errored')
+
             assert type(terr) is type(aio_err), 'Asyncio task error mismatch?'
 
         if aio_err is not None:
