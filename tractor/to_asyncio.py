@@ -109,6 +109,7 @@ def _run_asyncio_task(
     or stream the result back to ``trio``.
 
     '''
+    __tracebackhide__ = True
     if not current_actor().is_infected_aio():
         raise RuntimeError("`infect_asyncio` mode is not enabled!?")
 
@@ -167,6 +168,9 @@ def _run_asyncio_task(
         orig = result = id(coro)
         try:
             result = await coro
+        except GeneratorExit:
+            # no need to relay error
+            raise
         except BaseException as aio_err:
             chan._aio_err = aio_err
             raise
@@ -295,7 +299,7 @@ async def translate_aio_errors(
     ):
         # relay cancel through to called ``asyncio`` task
         chan._aio_task.cancel(
-            msg=f'the `trio` caller task was cancelled:\n{trio_task.name}'
+            msg=f'the `trio` caller task was cancelled: {trio_task.name}'
         )
         raise
 
