@@ -152,6 +152,7 @@ class MsgpackTCPStream(MsgTransport):
 
             except (
                 ValueError,
+                ConnectionResetError,
 
                 # not sure entirely why we need this but without it we
                 # seem to be getting racy failures here on
