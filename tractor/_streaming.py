@@ -444,19 +444,24 @@ class Context:
             # (currently) that other portal APIs (``Portal.run()``,
             # ``.run_in_actor()``) do their own error checking at the point
             # of the call and result processing.
-            log.error(
-                f'Remote context error for {self.chan.uid}:{self.cid}:\n'
-                f'{msg["error"]["tb_str"]}'
-            )
             error = unpack_error(msg, self.chan)
             if (
-                isinstance(error, ContextCancelled) and
-                self._cancel_called
+                isinstance(error, ContextCancelled)
             ):
-                # this is an expected cancel request response message
-                # and we don't need to raise it in scope since it will
-                # potentially override a real error
-                return
+                log.cancel(
+                    f'Remote context error for {self.chan.uid}:{self.cid}:\n'
+                    f'{msg["error"]["tb_str"]}'
+                )
+                if self._cancel_called:
+                    # this is an expected cancel request response message
+                    # and we don't need to raise it in scope since it will
+                    # potentially override a real error
+                    return
+            else:
+                log.error(
+                    f'Remote context error for {self.chan.uid}:{self.cid}:\n'
+                    f'{msg["error"]["tb_str"]}'
+                )
 
             self._error = error
 
