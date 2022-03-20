@@ -28,6 +28,7 @@ from ._broadcast import (
     BroadcastReceiver,
     Lagged,
 )
+from ._ipython import ipython_embed
 
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     'Lagged',
     'maybe_open_context',
     'maybe_open_nursery',
+    'ipython_embed',
 ]
