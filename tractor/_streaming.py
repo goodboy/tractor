@@ -286,7 +286,6 @@ class MsgStream(trio.abc.Channel):
     @asynccontextmanager
     async def subscribe(
         self,
-
     ) -> AsyncIterator[BroadcastReceiver]:
         '''
         Allocate and return a ``BroadcastReceiver`` which delegates
@@ -705,6 +704,7 @@ class Context:
                             result = consume(msg)
                             if result:
                                 self._result = result
+                                break
 
                 if not self._result:
                     while True:
