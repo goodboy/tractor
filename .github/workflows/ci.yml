@@ -1,6 +1,11 @@
 name: CI
 
-on: push
+on:
+  # any time someone pushes a new branch to origin
+  push:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
 
