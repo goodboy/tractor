@@ -471,11 +471,15 @@ async def _breakpoint(
         # we have to figure out how to avoid having the service nursery
         # cancel on this task start? I *think* this works below?
         # actor._service_n.cancel_scope.shield = shield
-        with trio.CancelScope(shield=True):
-            await actor._service_n.start(
-                wait_for_parent_stdin_hijack,
-                actor.uid,
-            )
+        try:
+            with trio.CancelScope(shield=True):
+                await actor._service_n.start(
+                    wait_for_parent_stdin_hijack,
+                    actor.uid,
+                )
+        except RuntimeError:
+            child_release_hook()
+            raise
 
     elif is_root_process():
 
