@@ -280,14 +280,19 @@ async def stream_from_aio(
                 # we get double the pulled values in the
                 # ``.subscribe()`` fan out case.
                 doubled = list(itertools.chain(*zip(expect, expect)))
-                if pulled != doubled[:len(pulled)]:
-                    print(f'uhhh pulled is {pulled}')
-                    assert pulled == doubled[:len(pulled)]
+                expect = doubled[:len(pulled)]
+                if list(sorted(pulled)) != expect:
+                    print(
+                        f'uhhh pulled is {pulled}\n',
+                        f'uhhh expect is {expect}\n',
+                    )
+
+                assert pulled == expect
 
             else:
                 assert pulled == expect
         else:
-            # if fan_out:
+            assert not fan_out
             assert pulled == expect[:51]
 
         print('trio guest mode task completed!')
