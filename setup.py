@@ -1,21 +1,22 @@
 #!/usr/bin/env python
 #
-# tractor: a trionic actor model built on `multiprocessing` and `trio`
+# tractor: structured concurrent "actors".
 #
-# Copyright (C) 2018-2020  Tyler Goodlet
+# Copyright 2018-eternity Tyler Goodlet.
 
 # This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
+# it under the terms of the GNU Affero General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# GNU Affero General Public License for more details.
 
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 from setuptools import setup
 
 with open('docs/README.rst', encoding='utf-8') as f:
@@ -27,7 +28,7 @@ setup(
     version='0.1.0a5.dev',  # alpha zone
     description='structured concurrrent "actors"',
     long_description=readme,
-    license='GPLv3',
+    license='AGPLv3',
     author='Tyler Goodlet',
     maintainer='Tyler Goodlet',
     maintainer_email='jgbt@protonmail.com',
@@ -80,7 +81,7 @@ setup(
         "Operating System :: POSIX :: Linux",
         "Operating System :: Microsoft :: Windows",
         "Framework :: Trio",
-        "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+        "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: 3 :: Only",
         "Programming Language :: Python :: 3.8",
