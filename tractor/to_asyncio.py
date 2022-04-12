@@ -100,7 +100,7 @@ class LinkedTaskChannel(trio.abc.Channel):
         self._to_aio.put_nowait(item)
 
     def closed(self) -> bool:
-        return self._from_aio._closed
+        return self._from_aio._closed  # type: ignore
 
     # TODO: shoud we consider some kind of "decorator" system
     # that checks for structural-typing compatibliity and then
@@ -289,8 +289,9 @@ def _run_asyncio_task(
                 #     raise aio_err from err
 
             elif task_err is None:
+                assert aio_err
                 aio_err.with_traceback(aio_err.__traceback__)
-                msg = ''.join(traceback.format_exception(aio_err))
+                msg = ''.join(traceback.format_exception(type(aio_err)))
                 log.error(
                     f'infected task errorred:\n{msg}'
                 )
@@ -340,6 +341,7 @@ async def translate_aio_errors(
         trio.Cancelled,
     ):
         # relay cancel through to called ``asyncio`` task
+        assert chan._aio_task
         chan._aio_task.cancel(
             msg=f'the `trio` caller task was cancelled: {trio_task.name}'
         )
