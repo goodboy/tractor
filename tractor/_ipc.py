@@ -264,7 +264,7 @@ class MsgspecTCPStream(MsgpackTCPStream):
             try:
                 yield self.decode(msg_bytes)
             except (
-                msgspec.DecodingError,
+                msgspec.DecodeError,
                 UnicodeDecodeError,
             ):
                 if not last_decode_failed:

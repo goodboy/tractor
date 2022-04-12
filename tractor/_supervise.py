@@ -20,8 +20,7 @@
 """
 from functools import partial
 import inspect
-import multiprocessing as mp
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, TYPE_CHECKING
 import typing
 import warnings
 
@@ -38,6 +37,9 @@ from ._root import open_root_actor
 from . import _state
 from . import _spawn
 
+
+if TYPE_CHECKING:
+    import multiprocessing as mp
 
 log = get_logger(__name__)
 

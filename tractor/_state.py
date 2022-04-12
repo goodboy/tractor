@@ -20,7 +20,6 @@ Per process state
 """
 from typing import Optional, Dict, Any
 from collections.abc import Mapping
-import multiprocessing as mp
 
 import trio
 
@@ -71,6 +70,7 @@ class ActorContextInfo(Mapping):
 def is_main_process() -> bool:
     """Bool determining if this actor is running in the top-most process.
     """
+    import multiprocessing as mp
     return mp.current_process().name == 'MainProcess'
 
 

@@ -1,0 +1,4 @@
+Fence off ``multiprocessing`` imports until absolutely necessary in an
+effort to avoid "resource tracker" spawning side effects that seem to
+have varying degrees of unreliability per Python release. Port to new
+``msgspec.DecodeError``.
