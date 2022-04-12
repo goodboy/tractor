@@ -281,12 +281,7 @@ async def stream_from_aio(
                 # ``.subscribe()`` fan out case.
                 doubled = list(itertools.chain(*zip(expect, expect)))
                 expect = doubled[:len(pulled)]
-                if pulled != expect:
-                    print(
-                        f'uhhh pulled is {pulled}\n',
-                        f'uhhh expect is {expect}\n',
-                    )
-                    assert pulled == expect
+                assert list(sorted(pulled)) == expect
 
             else:
                 assert pulled == expect
