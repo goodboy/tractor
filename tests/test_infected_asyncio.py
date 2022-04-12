@@ -256,8 +256,13 @@ async def stream_from_aio(
             if fan_out:
                 # start second task that get's the same stream value set.
                 async with (
-                    trio.open_nursery() as n,
+
+                    # NOTE: this has to come first to avoid
+                    # the channel being closed before the nursery
+                    # tasks are joined..
                     chan.subscribe() as br,
+
+                    trio.open_nursery() as n,
                 ):
                     n.start_soon(consume, br)
                     await consume(chan)
