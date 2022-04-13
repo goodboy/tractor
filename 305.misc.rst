@@ -1,0 +1,7 @@
+Add ``tractor.query_actor()`` an addr looker-upper which doesn't deliver
+a ``Portal`` instance and instead just a socket address ``tuple``.
+
+Sometimes it's handy to just have a simple way to figure out if
+a "service" actor is up, so add this discovery helper for that. We'll
+prolly just leave it undocumented for now until we figure out
+a longer-term/better discovery system.

@@ -29,7 +29,12 @@ from ._streaming import (
     stream,
     context,
 )
-from ._discovery import get_arbiter, find_actor, wait_for_actor
+from ._discovery import (
+    get_arbiter,
+    find_actor,
+    wait_for_actor,
+    query_actor,
+)
 from ._supervise import open_nursery
 from ._state import current_actor, is_root_process
 from ._exceptions import (
@@ -46,11 +51,15 @@ from ._portal import Portal
 __all__ = [
     'Channel',
     'Context',
-    'ModuleNotExposed',
-    'MultiError',
-    'RemoteActorError',
     'ContextCancelled',
+    'ModuleNotExposed',
+    'MsgStream',
+    'MultiError',
+    'Portal',
+    'ReceiveMsgStream',
+    'RemoteActorError',
     'breakpoint',
+    'context',
     'current_actor',
     'find_actor',
     'get_arbiter',
@@ -59,14 +68,11 @@ __all__ = [
     'open_actor_cluster',
     'open_nursery',
     'open_root_actor',
-    'Portal',
     'post_mortem',
+    'query_actor',
     'run',
     'run_daemon',
     'stream',
-    'context',
-    'ReceiveMsgStream',
-    'MsgStream',
     'to_asyncio',
     'wait_for_actor',
 ]
