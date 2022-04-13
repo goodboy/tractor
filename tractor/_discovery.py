@@ -18,8 +18,7 @@
 Actor discovery API.
 
 """
-import typing
-from typing import Tuple, Optional, Union
+from typing import Tuple, Optional, Union, AsyncGenerator
 from contextlib import asynccontextmanager as acm
 
 from ._ipc import _connect_chan, Channel
@@ -37,7 +36,7 @@ async def get_arbiter(
     host: str,
     port: int,
 
-) -> typing.AsyncGenerator[Union[Portal, LocalPortal], None]:
+) -> AsyncGenerator[Union[Portal, LocalPortal], None]:
     '''Return a portal instance connected to a local or remote
     arbiter.
     '''
@@ -61,7 +60,7 @@ async def get_arbiter(
 @acm
 async def get_root(
     **kwargs,
-) -> typing.AsyncGenerator[Portal, None]:
+) -> AsyncGenerator[Portal, None]:
 
     host, port = _runtime_vars['_root_mailbox']
     assert host is not None
@@ -74,9 +73,9 @@ async def get_root(
 @acm
 async def query_actor(
     name: str,
-    arbiter_sockaddr: Tuple[str, int] = None,
+    arbiter_sockaddr: Optional[tuple[str, int]] = None,
 
-) -> tuple[str, int]:
+) -> AsyncGenerator[tuple[str, int], None]:
     '''
     Simple address lookup for a given actor name.
 
@@ -107,7 +106,7 @@ async def find_actor(
     name: str,
     arbiter_sockaddr: Tuple[str, int] = None
 
-) -> typing.AsyncGenerator[Optional[Portal], None]:
+) -> AsyncGenerator[Optional[Portal], None]:
     '''
     Ask the arbiter to find actor(s) by name.
 
@@ -132,7 +131,7 @@ async def find_actor(
 async def wait_for_actor(
     name: str,
     arbiter_sockaddr: Tuple[str, int] = None
-) -> typing.AsyncGenerator[Portal, None]:
+) -> AsyncGenerator[Portal, None]:
     """Wait on an actor to register with the arbiter.
 
     A portal to the first registered actor is returned.
