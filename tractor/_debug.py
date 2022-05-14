@@ -178,18 +178,18 @@ async def _acquire_debug_lock(
 
     we_acquired = False
 
-    if _no_remote_has_tty is None:
-        # mark the tty lock as being in use so that the runtime
-        # can try to avoid clobbering any connection from a child
-        # that's currently relying on it.
-        _no_remote_has_tty = trio.Event()
-
     try:
         log.runtime(
             f"entering lock checkpoint, remote task: {task_name}:{uid}"
         )
         we_acquired = True
         await _debug_lock.acquire()
+
+        if _no_remote_has_tty is None:
+            # mark the tty lock as being in use so that the runtime
+            # can try to avoid clobbering any connection from a child
+            # that's currently relying on it.
+            _no_remote_has_tty = trio.Event()
 
         _global_actor_in_debug = uid
         log.runtime(f"TTY lock acquired, remote task: {task_name}:{uid}")
@@ -208,6 +208,7 @@ async def _acquire_debug_lock(
 
     finally:
         # if _global_actor_in_debug == uid:
+
         if (
             we_acquired
             and _debug_lock.locked()
@@ -224,12 +225,15 @@ async def _acquire_debug_lock(
             not stats.owner
         ):
             log.runtime(f"No more tasks waiting on tty lock! says {uid}")
-            _no_remote_has_tty.set()
-            _no_remote_has_tty = None
+            if _no_remote_has_tty is not None:
+                _no_remote_has_tty.set()
+                _no_remote_has_tty = None
 
         _global_actor_in_debug = None
 
-        log.runtime(f"TTY lock released, remote task: {task_name}:{uid}")
+        log.runtime(
+            f"TTY lock released, remote task: {task_name}:{uid}"
+        )
 
 
 @tractor.context
@@ -243,6 +247,10 @@ async def _hijack_stdin_for_child(
     Hijack the tty in the root process of an actor tree such that
     the pdbpp debugger console can be allocated to a sub-actor for repl
     bossing.
+
+    NOTE: this task is invoked in the root actor-process of the actor
+    tree. It is meant to be invoked as an rpc-task which should be
+    highly reliable at cleaning out the tty-lock state when complete!
 
     '''
     task_name = trio.lowlevel.current_task().name
@@ -265,46 +273,49 @@ async def _hijack_stdin_for_child(
         with (
             trio.CancelScope(shield=True),
         ):
-            try:
-                lock = None
-                async with _acquire_debug_lock(subactor_uid) as lock:
+            # try:
+            # lock = None
+            async with _acquire_debug_lock(subactor_uid):  # as lock:
 
-                    # indicate to child that we've locked stdio
-                    await ctx.started('Locked')
-                    log.debug(
-                        f"Actor {subactor_uid} acquired stdin hijack lock"
-                    )
-
-                    # wait for unlock pdb by child
-                    async with ctx.open_stream() as stream:
-                        assert await stream.receive() == 'pdb_unlock'
-
-            except (
-                BaseException,
-                # trio.MultiError,
-                # Exception,
-                # trio.BrokenResourceError,
-                # trio.Cancelled,  # by local cancellation
-                # trio.ClosedResourceError,  # by self._rx_chan
-                # ContextCancelled,
-                # ConnectionResetError,
-            ):
-                # XXX: there may be a race with the portal teardown
-                # with the calling actor which we can safely ignore.
-                # The alternative would be sending an ack message
-                # and allowing the client to wait for us to teardown
-                # first?
-                if lock and lock.locked():
-                    lock.release()
-
-                # if isinstance(err, trio.Cancelled):
-                raise
-
-            finally:
-                log.runtime(
-                    "TTY lock released, remote task:"
-                    f"{task_name}:{subactor_uid}"
+                # indicate to child that we've locked stdio
+                await ctx.started('Locked')
+                log.debug(
+                    f"Actor {subactor_uid} acquired stdin hijack lock"
                 )
+
+                # wait for unlock pdb by child
+                async with ctx.open_stream() as stream:
+                    assert await stream.receive() == 'pdb_unlock'
+
+            # except (
+            #     BaseException,
+            #     # trio.MultiError,
+            #     # Exception,
+            #     # trio.BrokenResourceError,
+            #     # trio.Cancelled,  # by local cancellation
+            #     # trio.ClosedResourceError,  # by self._rx_chan
+            #     # ContextCancelled,
+            #     # ConnectionResetError,
+            # ):
+            #     # XXX: there may be a race with the portal teardown
+            #     # with the calling actor which we can safely ignore.
+            #     # The alternative would be sending an ack message
+            #     # and allowing the client to wait for us to teardown
+            #     # first?
+            #     if lock and lock.locked():
+            #         try:
+            #             lock.release()
+            #         except RuntimeError:
+            #             log.exception(f"we don't own the tty lock?")
+
+            #     # if isinstance(err, trio.Cancelled):
+            #     raise
+
+            # finally:
+            #     log.runtime(
+            #         "TTY lock released, remote task:"
+            #         f"{task_name}:{subactor_uid}"
+            #     )
 
         return "pdb_unlock_complete"
 
@@ -585,20 +596,43 @@ def shield_sigint(
     __tracebackhide__ = True
 
     global _local_task_in_debug, _global_actor_in_debug
-    in_debug = _global_actor_in_debug
+    uid_in_debug = _global_actor_in_debug
 
     actor = tractor.current_actor()
+
+    any_connected = False
+    if uid_in_debug is not None:
+        # try to see if the supposed (sub)actor in debug still
+        # has an active connection to *this* actor, and if not
+        # it's likely they aren't using the TTY lock / debugger
+        # and we should propagate SIGINT normally.
+        chans = actor._peers.get(tuple(uid_in_debug))
+        if chans:
+            any_connected = any(chan.connected() for chan in chans)
+            if not any_connected:
+                log.warning(
+                    'A global actor reported to be in debug '
+                    'but no connection exists for this child:\n'
+                    f'{uid_in_debug}\n'
+                    'Allowing SIGINT propagation..'
+                )
 
     # root actor branch that reports whether or not a child
     # has locked debugger.
     if (
         is_root_process()
-        and in_debug
+        and uid_in_debug is not None
+
+        # XXX: only if there is an existing connection to the
+        # (sub-)actor in debug do we ignore SIGINT in this
+        # parent! Otherwise we may hang waiting for an actor
+        # which has already terminated to unlock.
+        and any_connected
     ):
-        name = in_debug[0]
+        name = uid_in_debug[0]
         if name != 'root':
             log.pdb(
-                f"Ignoring SIGINT while child in debug mode: `{in_debug}`"
+                f"Ignoring SIGINT while child in debug mode: `{uid_in_debug}`"
             )
 
         else:
@@ -652,8 +686,12 @@ def shield_sigint(
         # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
-        pdb_obj.do_longlist(None)
-        print(pdb_obj.prompt, end='', flush=True)
+        try:
+            pdb_obj.do_longlist(None)
+            print(pdb_obj.prompt, end='', flush=True)
+        except AttributeError:
+            log.exception('pdbpp longlist failed...')
+            raise KeyboardInterrupt
 
 
 def _set_trace(
