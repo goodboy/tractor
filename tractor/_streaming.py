@@ -601,7 +601,14 @@ class Context:
 
             finally:
                 if self._portal:
-                    self._portal._streams.remove(rchan)
+                    try:
+                        self._portal._streams.remove(stream)
+                    except KeyError:
+                        log.warning(
+                            f'Stream was already destroyed?\n'
+                            f'actor: {self.chan.uid}\n'
+                            f'ctx id: {self.cid}'
+                        )
 
     async def result(self) -> Any:
         '''
