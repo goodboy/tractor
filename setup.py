@@ -54,11 +54,15 @@ setup(
         # tooling
         'colorlog',
         'wrapt',
-        'pdbpp',
         # windows deps workaround for ``pdbpp``
         # https://github.com/pdbpp/pdbpp/issues/498
         # https://github.com/pdbpp/fancycompleter/issues/37
         'pyreadline3 ; platform_system == "Windows"',
+
+        'pdbpp',
+        # 3.10 has an outstanding unreleased issue and `pdbpp` itself
+        # pins to patched forks of its own dependencies as well.
+        "pdbpp @ git+https://github.com/pdbpp/pdbpp@master#egg=pdbpp",  # noqa: E501
 
         # serialization
         'msgspec >= "0.4.0"'
