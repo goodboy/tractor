@@ -144,7 +144,7 @@ class MsgpackTCPStream(MsgTransport):
 
         '''
         import msgspec  # noqa
-        last_decode_failed: bool = False
+        decodes_failed: int = 0
 
         while True:
             try:
@@ -181,12 +181,16 @@ class MsgpackTCPStream(MsgTransport):
                 msgspec.DecodeError,
                 UnicodeDecodeError,
             ):
-                if not last_decode_failed:
+                if decodes_failed < 4:
                     # ignore decoding errors for now and assume they have to
                     # do with a channel drop - hope that receiving from the
                     # channel will raise an expected error and bubble up.
-                    log.error('`msgspec` failed to decode!?')
-                    last_decode_failed = True
+                    log.error(
+                        '`msgspec` failed to decode!?\n'
+                        'dumping bytes:\n'
+                        f'{msg_bytes}'
+                    )
+                    decodes_failed += 1
                 else:
                     raise
 
