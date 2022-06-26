@@ -41,6 +41,7 @@ from .log import get_logger
 from ._discovery import get_root
 from ._state import is_root_process, debug_mode
 from ._exceptions import is_multi_cancelled
+from ._ipc import Channel
 
 
 try:
@@ -396,6 +397,10 @@ def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
         signal.SIGINT,
         partial(shield_sigint, pdb_obj=pdb),
     )
+
+    # XXX: These are the important flags mentioned in
+    # https://github.com/python-trio/trio/issues/1155
+    # which resolve the traceback spews to console.
     pdb.allow_kbdint = True
     pdb.nosigint = True
 
@@ -464,11 +469,15 @@ async def _breakpoint(
         _local_task_in_debug = task_name
 
         def child_release_hook():
-            # _local_task_in_debug = None
-            _local_pdb_complete.set()
-
-            # restore original sigint handler
-            undo_sigint()
+            try:
+                # sometimes the ``trio`` might already be termianated in
+                # which case this call will raise.
+                _local_pdb_complete.set()
+            finally:
+                # restore original sigint handler
+                undo_sigint()
+                # should always be cleared in the hijack hook aboved right?
+                # _local_task_in_debug = None
 
         # assign unlock callback for debugger teardown hooks
         # _pdb_release_hook = _local_pdb_complete.set
@@ -539,10 +548,14 @@ async def _breakpoint(
 
             _global_actor_in_debug = None
             _local_task_in_debug = None
-            _local_pdb_complete.set()
 
-            # restore original sigint handler
-            undo_sigint()
+            try:
+                # sometimes the ``trio`` might already be termianated in
+                # which case this call will raise.
+                _local_pdb_complete.set()
+            finally:
+                # restore original sigint handler
+                undo_sigint()
 
         _pdb_release_hook = teardown
 
@@ -600,7 +613,21 @@ def shield_sigint(
 
     actor = tractor.current_actor()
 
+    def do_cancel():
+        # If we haven't tried to cancel the runtime then do that instead
+        # of raising a KBI (which may non-gracefully destroy
+        # a ``trio.run()``).
+        if not actor._cancel_called:
+            actor.cancel_soon()
+
+        # If the runtime is already cancelled it likely means the user
+        # hit ctrl-c again because teardown didn't full take place in
+        # which case we do the "hard" raising of a local KBI.
+        else:
+            raise KeyboardInterrupt
+
     any_connected = False
+
     if uid_in_debug is not None:
         # try to see if the supposed (sub)actor in debug still
         # has an active connection to *this* actor, and if not
@@ -616,6 +643,7 @@ def shield_sigint(
                     f'{uid_in_debug}\n'
                     'Allowing SIGINT propagation..'
                 )
+                return do_cancel()
 
     # root actor branch that reports whether or not a child
     # has locked debugger.
@@ -644,6 +672,16 @@ def shield_sigint(
     elif (
         not is_root_process()
     ):
+        chan: Channel = actor._parent_chan
+        if not chan or not chan.connected():
+            log.warning(
+                'A global actor reported to be in debug '
+                'but no connection exists for its parent:\n'
+                f'{uid_in_debug}\n'
+                'Allowing SIGINT propagation..'
+            )
+            return do_cancel()
+
         task = _local_task_in_debug
         if task:
             log.pdb(
@@ -658,20 +696,6 @@ def shield_sigint(
             log.pdb(
                 "Ignoring SIGINT since debug mode is enabled"
             )
-
-    # noone has the debugger so raise KBI
-    else:
-        # If we haven't tried to cancel the runtime then do that instead
-        # of raising a KBI (which may non-gracefully destroy
-        # a ``trio.run()``).
-        if not actor._cancel_called:
-            actor.cancel_soon()
-
-        # If the runtime is already cancelled it likely means the user
-        # hit ctrl-c again because teardown didn't full take place in
-        # which case we do the "hard" raising of a local KBI.
-        else:
-            raise KeyboardInterrupt
 
     # maybe redraw/print last REPL output to console
     if pdb_obj:
@@ -709,7 +733,7 @@ def _set_trace(
     # start 2 levels up in user code
     frame: FrameType = sys._getframe()
     if frame:
-        frame = frame.f_back.f_back  # type: ignore
+        frame = frame.f_back  # type: ignore
 
     if pdb and actor is not None:
         log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
