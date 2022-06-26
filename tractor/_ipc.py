@@ -185,10 +185,11 @@ class MsgpackTCPStream(MsgTransport):
                     # ignore decoding errors for now and assume they have to
                     # do with a channel drop - hope that receiving from the
                     # channel will raise an expected error and bubble up.
+                    decoded_bytes = msg_bytes.decode()
                     log.error(
                         '`msgspec` failed to decode!?\n'
                         'dumping bytes:\n'
-                        f'{msg_bytes}'
+                        f'{decoded_bytes}'
                     )
                     decodes_failed += 1
                 else:
