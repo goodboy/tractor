@@ -511,8 +511,8 @@ class Portal:
             if ctx.chan.connected():
                 log.info(
                     'Waiting on final context-task result for\n'
-                    f'task:{cid}\n'
-                    f'actor:{uid}'
+                    f'task: {cid}\n'
+                    f'actor: {uid}'
                 )
                 result = await ctx.result()
 
