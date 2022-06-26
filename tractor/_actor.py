@@ -611,7 +611,8 @@ class Actor:
                     entry = local_nursery._children.get(uid)
                     if entry:
                         _, proc, _ = entry
-                        log.warning(f'Actor {uid}@{proc} IPC connection broke!?')
+                        log.warning(
+                            f'Actor {uid}@{proc} IPC connection broke!?')
                         # if proc.poll() is not None:
                         #     log.error('Actor {uid} proc died and IPC broke?')
 
@@ -630,6 +631,11 @@ class Actor:
                     # Attempt to wait for the far end to close the channel
                     # and bail after timeout (2-generals on closure).
                     assert chan.msgstream
+
+                    log.runtime(
+                        f'Draining lingering msgs from stream {chan.msgstream}'
+                    )
+
                     async for msg in chan.msgstream.drain():
                         # try to deliver any lingering msgs
                         # before we destroy the channel.
