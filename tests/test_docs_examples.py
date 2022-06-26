@@ -81,11 +81,14 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
     'example_script',
 
     # walk yields: (dirpath, dirnames, filenames)
-    [(p[0], f) for p in os.walk(examples_dir()) for f in p[2]
+    [
+        (p[0], f) for p in os.walk(examples_dir()) for f in p[2]
 
         if '__' not in f
         and f[0] != '_'
-        and 'debugging' not in p[0]],
+        and 'debugging' not in p[0]
+        and 'integration' not in p[0]
+    ],
 
     ids=lambda t: t[1],
 )
