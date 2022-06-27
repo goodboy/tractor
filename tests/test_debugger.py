@@ -1,5 +1,5 @@
 """
-That native debug better work!
+That "native" debug mode better work!
 
 All these tests can be understood (somewhat) by running the equivalent
 `examples/debugging/` scripts manually.
@@ -13,6 +13,7 @@ TODO:
 import time
 from os import path
 import platform
+from typing import Optional
 
 import pytest
 import pexpect
@@ -71,6 +72,14 @@ def spawn(
         )
 
     return _spawn
+
+
+@pytest.fixture(
+    params=[False, True],
+    ids='ctl-c={}'.format,
+)
+def ctlc(request) -> bool:
+    yield request.param
 
 
 @pytest.mark.parametrize(
@@ -137,19 +146,49 @@ def test_root_actor_bp(spawn, user_in_out):
         assert expect_err_str in str(child.before)
 
 
-def test_root_actor_bp_forever(spawn):
+def do_ctlc(
+    child,
+    count: int = 3,
+    patt: Optional[str] = None,
+
+) -> None:
+
+    # make sure ctl-c sends don't do anything but repeat output
+    for _ in range(count):
+        child.sendcontrol('c')
+        child.expect(r"\(Pdb\+\+\)")
+
+        if patt:
+            # should see the last line on console
+            before = str(child.before.decode())
+            assert patt in before
+
+
+def test_root_actor_bp_forever(
+    spawn,
+    ctlc: bool,
+):
     "Re-enter a breakpoint from the root actor-task."
     child = spawn('root_actor_breakpoint_forever')
 
     # do some "next" commands to demonstrate recurrent breakpoint
     # entries
     for _ in range(10):
-        child.sendline('next')
+
         child.expect(r"\(Pdb\+\+\)")
 
-    # do one continue which should trigger a new task to lock the tty
+        if ctlc:
+            do_ctlc(child)
+
+        child.sendline('next')
+
+    # do one continue which should trigger a
+    # new task to lock the tty
     child.sendline('continue')
     child.expect(r"\(Pdb\+\+\)")
+
+    if ctlc:
+        do_ctlc(child)
 
     # XXX: this previously caused a bug!
     child.sendline('n')
@@ -158,8 +197,15 @@ def test_root_actor_bp_forever(spawn):
     child.sendline('n')
     child.expect(r"\(Pdb\+\+\)")
 
+    # quit out of the loop
+    child.sendline('q')
+    child.expect(pexpect.EOF)
 
-def test_subactor_error(spawn):
+
+def test_subactor_error(
+    spawn,
+    ctlc: bool,
+):
     "Single subactor raising an error"
 
     child = spawn('subactor_error')
@@ -170,22 +216,28 @@ def test_subactor_error(spawn):
     before = str(child.before.decode())
     assert "Attaching to pdb in crashed actor: ('name_error'" in before
 
-    # send user command
-    # (in this case it's the same for 'continue' vs. 'quit')
-    child.sendline('continue')
+    # make sure ctl-c sends don't do anything but repeat output
+    if ctlc:
+        do_ctlc(
+            child,
+            patt='(doggypants)',
+        )
 
-    # the debugger should enter a second time in the nursery
+    # send user command and (in this case it's the same for 'continue'
+    # vs. 'quit') the debugger should enter a second time in the nursery
     # creating actor
-
+    child.sendline('continue')
     child.expect(r"\(Pdb\+\+\)")
 
     before = str(child.before.decode())
-
     # root actor gets debugger engaged
     assert "Attaching to pdb in crashed actor: ('root'" in before
-
     # error is a remote error propagated from the subactor
     assert "RemoteActorError: ('name_error'" in before
+
+    # another round
+    if ctlc:
+        do_ctlc(child)
 
     child.sendline('c')
     child.expect('\r\n')
