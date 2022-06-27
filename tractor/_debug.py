@@ -711,8 +711,13 @@ def shield_sigint(
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
         try:
-            pdb_obj.do_longlist(None)
-            print(pdb_obj.prompt, end='', flush=True)
+            # XXX: lol, see ``pdbpp`` issue:
+            # https://github.com/pdbpp/pdbpp/issues/496
+            # pdb_obj.do_longlist(None)
+            # pdb_obj.lastcmd = 'longlist'
+            pdb_obj._printlonglist(max_lines=False)
+            # print(pdb_obj.prompt, end='', flush=True)
+
         except AttributeError:
             log.exception('pdbpp longlist failed...')
             raise KeyboardInterrupt
