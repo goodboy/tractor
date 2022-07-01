@@ -103,13 +103,8 @@ async def open_root_actor(
         _default_arbiter_port,
     )
 
-    if loglevel is None:
-        loglevel = log.get_loglevel()
-    else:
-        log._default_loglevel = loglevel
-        log.get_console_log(loglevel)
 
-    assert loglevel
+    loglevel = (loglevel or log._default_loglevel).upper()
 
     if debug_mode and _spawn._spawn_method == 'trio':
         _state._runtime_vars['_debug_mode'] = True
@@ -124,7 +119,7 @@ async def open_root_actor(
             logging.getLevelName(
                 # lul, need the upper case for the -> int map?
                 # sweet "dynamic function behaviour" stdlib...
-                loglevel.upper()
+                loglevel,
             ) > logging.getLevelName('PDB')
         ):
             loglevel = 'PDB'
@@ -133,6 +128,8 @@ async def open_root_actor(
         raise RuntimeError(
             "Debug mode is only supported for the `trio` backend!"
         )
+
+    log.get_console_log(loglevel)
 
     # make a temporary connection to see if an arbiter exists
     arbiter_found = False
