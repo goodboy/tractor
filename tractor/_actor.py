@@ -509,13 +509,20 @@ class Actor:
             mne = ModuleNotExposed(*err.args)
 
             if ns == '__main__':
-                msg = (
-                    "\n\nMake sure you exposed the current module using:\n\n"
-                    "ActorNursery.start_actor(<name>, enable_modules="
-                    "[__name__])"
-                )
+                modpath = '__name__'
+            else:
+                modpath = f"'{ns}'"
 
-                mne.msg += msg
+            msg = (
+                "\n\nMake sure you exposed the target module, `{ns}`, "
+                "using:\n"
+                "ActorNursery.start_actor(<name>, enable_modules=[{mod}])"
+            ).format(
+                ns=ns,
+                mod=modpath,
+            )
+
+            mne.msg += msg
 
             raise mne
 
