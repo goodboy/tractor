@@ -165,7 +165,9 @@ class MsgpackTCPStream(MsgTransport):
         self.codec: MsgCodec = codec or MsgCodec()
 
     async def _iter_packets(self) -> AsyncGenerator[dict, None]:
-        '''Yield packets from the underlying stream.
+        '''
+        Yield `bytes`-blob decoded packets from the underlying TCP
+        stream using the current task's `MsgCodec`.
 
         '''
         import msgspec  # noqa
