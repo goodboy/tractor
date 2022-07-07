@@ -699,6 +699,18 @@ class Context:
         await self.chan.send({'started': value, 'cid': self.cid})
         self._started_called = True
 
+
+    # TODO: msg capability context api1
+    # @acm
+    # async def enable_msg_caps(
+    #     self,
+    #     msg_subtypes: Union[
+    #         list[list[Struct]],
+    #         Protocol,   # hypothetical type that wraps a msg set
+    #     ],
+    # ) -> tuple[Callable, Callable]:  # payload enc, dec pair
+    #     ...
+
     # TODO: do we need a restart api?
     # async def restart(self) -> None:
     #     pass
