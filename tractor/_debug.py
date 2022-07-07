@@ -742,6 +742,8 @@ def _set_trace(
 
     if pdb and actor is not None:
         log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
+        # no f!#$&* idea!
+        frame = frame.f_back
 
     else:
         pdb, undo_sigint = mk_mpdb()
