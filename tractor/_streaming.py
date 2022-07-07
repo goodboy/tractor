@@ -533,6 +533,17 @@ class MsgStream(trio.abc.Channel):
             else:
                 raise
 
+    # TODO: msg capability context api1
+    # @acm
+    # async def enable_msg_caps(
+    #     self,
+    #     msg_subtypes: Union[
+    #         list[list[Struct]],
+    #         Protocol,   # hypothetical type that wraps a msg set
+    #     ],
+    # ) -> tuple[Callable, Callable]:  # payload enc, dec pair
+    #     ...
+
 
 def stream(func: Callable) -> Callable:
     '''
