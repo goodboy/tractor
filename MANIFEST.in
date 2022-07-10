@@ -1,0 +1,2 @@
+# https://packaging.python.org/en/latest/guides/using-manifest-in/#using-manifest-in
+include docs/README.rst
