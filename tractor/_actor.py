@@ -610,18 +610,6 @@ class Actor:
             if (
                 local_nursery
             ):
-                if disconnected:
-                    # if the transport died and this actor is still
-                    # registered within a local nursery, we report that the
-                    # IPC layer may have failed unexpectedly since it may be
-                    # the cause of other downstream errors.
-                    entry = local_nursery._children.get(uid)
-                    if entry:
-                        _, proc, _ = entry
-                        log.warning(
-                            f'Actor {uid}@{proc} IPC connection broke!?')
-                        # if proc.poll() is not None:
-                        #     log.error('Actor {uid} proc died and IPC broke?')
 
                 log.cancel(f"Waiting on cancel request to peer {chan.uid}")
                 # XXX: this is a soft wait on the channel (and its
@@ -659,7 +647,22 @@ class Actor:
 
                     await local_nursery.exited.wait()
 
-                # if local_nursery._children
+                if disconnected:
+                    # if the transport died and this actor is still
+                    # registered within a local nursery, we report that the
+                    # IPC layer may have failed unexpectedly since it may be
+                    # the cause of other downstream errors.
+                    entry = local_nursery._children.get(uid)
+                    if entry:
+                        _, proc, _ = entry
+                        # if proc.poll() is not None:
+                        #     log.error('Actor {uid} proc died and IPC broke?')
+
+                        if proc.poll() is None:
+                            log.cancel(
+                                f'Actor {uid} IPC terminated but proc is alive?!'
+                            )
+                                # f'Actor {uid}@{proc} IPC connection broke!?'
 
             # ``Channel`` teardown and closure sequence
 
@@ -701,7 +704,7 @@ class Actor:
                     # await chan.aclose()
 
                 except trio.BrokenResourceError:
-                    log.warning(f"Channel for {chan.uid} was already closed")
+                    log.runtime(f"Channel {chan.uid} was already closed")
 
     async def _push_result(
         self,
