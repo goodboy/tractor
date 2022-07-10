@@ -54,15 +54,22 @@ setup(
         # tooling
         'colorlog',
         'wrapt',
+
+        # pip ref docs on these specs:
+        # https://pip.pypa.io/en/stable/reference/requirement-specifiers/#examples
+        # and pep:
+        # https://peps.python.org/pep-0440/#version-specifiers
+
+        'pdbpp <= 0.10.1; python_version < "3.10"',
+
+        # 3.10 has an outstanding unreleased issue and `pdbpp` itself
+        # pins to patched forks of its own dependencies as well.
+        "pdbpp @ git+https://github.com/pdbpp/pdbpp@master#egg=pdbpp ; python_version >= '3.10'",  # noqa: E501
+
         # windows deps workaround for ``pdbpp``
         # https://github.com/pdbpp/pdbpp/issues/498
         # https://github.com/pdbpp/fancycompleter/issues/37
         'pyreadline3 ; platform_system == "Windows"',
-
-        'pdbpp',
-        # 3.10 has an outstanding unreleased issue and `pdbpp` itself
-        # pins to patched forks of its own dependencies as well.
-        "pdbpp @ git+https://github.com/pdbpp/pdbpp@master#egg=pdbpp",  # noqa: E501
 
         # serialization
         'msgspec >= "0.4.0"'
