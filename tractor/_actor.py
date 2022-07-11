@@ -655,14 +655,12 @@ class Actor:
                     entry = local_nursery._children.get(uid)
                     if entry:
                         _, proc, _ = entry
-                        # if proc.poll() is not None:
-                        #     log.error('Actor {uid} proc died and IPC broke?')
 
-                        if proc.poll() is None:
+                        poll = getattr(proc, 'poll', None)
+                        if poll and poll() is None:
                             log.cancel(
-                                f'Actor {uid} IPC terminated but proc is alive?!'
+                                f'Actor {uid} IPC broke but proc is alive?'
                             )
-                                # f'Actor {uid}@{proc} IPC connection broke!?'
 
             # ``Channel`` teardown and closure sequence
 
