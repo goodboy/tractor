@@ -187,6 +187,10 @@ def test_root_actor_bp_forever(
     child.sendline('continue')
     child.expect(r"\(Pdb\+\+\)")
 
+    # seems that if we hit ctrl-c too fast the
+    # sigint guard machinery might not kick in..
+    time.sleep(0.001)
+
     if ctlc:
         do_ctlc(child)
 
