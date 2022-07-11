@@ -150,13 +150,13 @@ def test_loglevel_propagated_to_subactor(
     async def main():
         async with tractor.open_nursery(
             name='arbiter',
-            loglevel=level,
             start_method=start_method,
             arbiter_addr=arb_addr,
 
         ) as tn:
             await tn.run_in_actor(
                 check_loglevel,
+                loglevel=level,
                 level=level,
             )
 
