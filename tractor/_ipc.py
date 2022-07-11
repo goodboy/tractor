@@ -186,14 +186,14 @@ class MsgpackTCPStream(MsgTransport):
                     # do with a channel drop - hope that receiving from the
                     # channel will raise an expected error and bubble up.
                     try:
-                        data = msg_bytes.decode()
+                        msg_str: str | bytes = msg_bytes.decode()
                     except UnicodeDecodeError:
-                        data = msg_bytes
+                        msg_str = msg_bytes
 
                     log.error(
                         '`msgspec` failed to decode!?\n'
                         'dumping bytes:\n'
-                        f'{data}'
+                        f'{msg_str!r}'
                     )
                     decodes_failed += 1
                 else:
