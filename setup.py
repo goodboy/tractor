@@ -43,7 +43,7 @@ setup(
     install_requires=[
 
         # trio related
-        'trio>0.8',
+        'trio >= 0.20',
         'async_generator',
         'trio_typing',
 
