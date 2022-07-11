@@ -739,13 +739,14 @@ def _set_trace(
     # last_f.f_globals['__tracebackhide__'] = True
 
     # start 2 levels up in user code
-    frame: FrameType = sys._getframe()
+    frame: Optional[FrameType] = sys._getframe()
     if frame:
         frame = frame.f_back  # type: ignore
 
-    if pdb and actor is not None:
+    if frame and pdb and actor is not None:
         log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
-        # no f!#$&* idea!
+        # no f!#$&* idea, but when we're in async land
+        # we need 2x frames up?
         frame = frame.f_back
 
     else:
