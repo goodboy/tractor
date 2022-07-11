@@ -149,15 +149,17 @@ def test_root_actor_bp(spawn, user_in_out):
 def do_ctlc(
     child,
     count: int = 3,
+    delay: float = 0.1,
     patt: Optional[str] = None,
 
 ) -> None:
 
     # make sure ctl-c sends don't do anything but repeat output
     for _ in range(count):
-        time.sleep(0.001)
+        time.sleep(delay)
         child.sendcontrol('c')
         child.expect(r"\(Pdb\+\+\)")
+        time.sleep(delay)
 
         if patt:
             # should see the last line on console
@@ -225,7 +227,6 @@ def test_subactor_error(
     if ctlc:
         do_ctlc(
             child,
-            patt='(doggypants)',
         )
 
     # send user command and (in this case it's the same for 'continue'
