@@ -698,7 +698,7 @@ def shield_sigint(
         )
 
     # maybe redraw/print last REPL output to console
-    if pdb_obj:
+    # if pdb_obj:
 
         # TODO: make this work like sticky mode where if there is output
         # detected as written to the tty we redraw this part underneath
@@ -710,23 +710,16 @@ def shield_sigint(
         # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
-        try:
-            # XXX: lol, see ``pdbpp`` issue:
-            # https://github.com/pdbpp/pdbpp/issues/496
-            # pdb_obj.lastcmd = 'longlist'
-            # if sys.version_info >= (3, 10):
-            #     pass
-            #     # print('--KeyboardInterrupt--')
-            #     # pdb_obj.do_longlist(None)
-            #     # pdb_obj._printlonglist(False)
+        # XXX: lol, see ``pdbpp`` issue:
+        # https://github.com/pdbpp/pdbpp/issues/496
 
-            # else:
-            pdb_obj.do_longlist(None)
-            print(pdb_obj.prompt, end='', flush=True)
+        # TODO: pretty sure this is what we should expect to have to run
+        # in total but for now we're just going to wait until `pdbpp`
+        # figures out it's own stuff on 3.10 (and maybe we'll help).
+        # pdb_obj.do_longlist(None)
 
-        except AttributeError:
-            log.exception('pdbpp longlist failed...')
-            raise KeyboardInterrupt
+        # XXX: we were doing this but it shouldn't be required..
+        # print(pdb_obj.prompt, end='', flush=True)
 
 
 def _set_trace(
