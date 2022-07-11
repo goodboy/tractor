@@ -714,15 +714,15 @@ def shield_sigint(
             # XXX: lol, see ``pdbpp`` issue:
             # https://github.com/pdbpp/pdbpp/issues/496
             # pdb_obj.lastcmd = 'longlist'
-            if sys.version_info >= (3, 10):
-                pass
-                # print('--KeyboardInterrupt--')
-                # pdb_obj.do_longlist(None)
-                # pdb_obj._printlonglist(False)
+            # if sys.version_info >= (3, 10):
+            #     pass
+            #     # print('--KeyboardInterrupt--')
+            #     # pdb_obj.do_longlist(None)
+            #     # pdb_obj._printlonglist(False)
 
-            else:
-                pdb_obj.do_longlist(None)
-                print(pdb_obj.prompt, end='', flush=True)
+            # else:
+            pdb_obj.do_longlist(None)
+            print(pdb_obj.prompt, end='', flush=True)
 
         except AttributeError:
             log.exception('pdbpp longlist failed...')
