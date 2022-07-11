@@ -155,6 +155,7 @@ def do_ctlc(
 
     # make sure ctl-c sends don't do anything but repeat output
     for _ in range(count):
+        time.sleep(0.001)
         child.sendcontrol('c')
         child.expect(r"\(Pdb\+\+\)")
 
