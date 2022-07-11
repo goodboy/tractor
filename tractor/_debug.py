@@ -692,10 +692,10 @@ def shield_sigint(
         # that **is not** marked in debug mode?
         # elif debug_mode():
 
-        else:
-            log.pdb(
-                "Ignoring SIGINT since debug mode is enabled"
-            )
+    else:
+        log.pdb(
+            "Ignoring SIGINT since debug mode is enabled"
+        )
 
     # maybe redraw/print last REPL output to console
     if pdb_obj:
@@ -715,7 +715,10 @@ def shield_sigint(
             # https://github.com/pdbpp/pdbpp/issues/496
             # pdb_obj.lastcmd = 'longlist'
             if sys.version_info >= (3, 10):
-                pdb_obj._printlonglist(False)
+                pass
+                # print('--KeyboardInterrupt--')
+                # pdb_obj.do_longlist(None)
+                # pdb_obj._printlonglist(False)
 
             else:
                 pdb_obj.do_longlist(None)
