@@ -307,7 +307,7 @@ async def new_proc(
         proc: Optional[trio.Process] = None
         try:
             try:
-                proc = await trio.open_process(spawn_cmd)
+                proc = await trio.lowlevel.open_process(spawn_cmd)
 
                 log.runtime(f"Started {proc}")
 
