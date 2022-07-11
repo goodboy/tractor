@@ -392,7 +392,7 @@ async def wait_for_parent_stdin_hijack(
 def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
 
     pdb = MultiActorPdb()
-    signal.signal = pdbpp.hideframe(signal.signal)
+    # signal.signal = pdbpp.hideframe(signal.signal)
     orig_handler = signal.signal(
         signal.SIGINT,
         partial(shield_sigint, pdb_obj=pdb),
@@ -713,10 +713,13 @@ def shield_sigint(
         try:
             # XXX: lol, see ``pdbpp`` issue:
             # https://github.com/pdbpp/pdbpp/issues/496
-            # pdb_obj.do_longlist(None)
             # pdb_obj.lastcmd = 'longlist'
-            pdb_obj._printlonglist(max_lines=False)
-            # print(pdb_obj.prompt, end='', flush=True)
+            if sys.version_info >= (3, 10):
+                pdb_obj._printlonglist(False)
+
+            else:
+                pdb_obj.do_longlist(None)
+                print(pdb_obj.prompt, end='', flush=True)
 
         except AttributeError:
             log.exception('pdbpp longlist failed...')
