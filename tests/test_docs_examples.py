@@ -116,9 +116,19 @@ def test_example(run_example_in_subproc, example_script):
             # print(f'STDOUT: {out}')
 
             # if we get some gnarly output let's aggregate and raise
-            errmsg = err.decode()
-            errlines = errmsg.splitlines()
-            if err and 'Error' in errlines[-1]:
-                raise Exception(errmsg)
+            if err:
+                errmsg = err.decode()
+                errlines = errmsg.splitlines()
+                last_error = errlines[-1]
+                if (
+                    'Error' in last_error
+
+                    # XXX: currently we print this to console, but maybe
+                    # shouldn't eventually once we figure out what's
+                    # a better way to be explicit about aio side
+                    # cancels?
+                    and 'asyncio.exceptions.CancelledError' not in last_error
+                ):
+                    raise Exception(errmsg)
 
             assert proc.returncode == 0
