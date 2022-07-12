@@ -123,7 +123,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest]
-        python: ['3.9']
+        python: ['3.9', '3.10']
         spawn_backend: ['trio', 'mp']
 
     steps:

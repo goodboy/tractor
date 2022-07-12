@@ -51,13 +51,17 @@ setup(
         'tricycle',
         'trio_typing',
 
+        # serialization
+        'msgpack>=1.0.3',
+
         # tooling
         'colorlog',
         'wrapt',
         'pdbpp',
-
-        # serialization
-        'msgpack>=1.0.3',
+        # windows deps workaround for ``pdbpp``
+        # https://github.com/pdbpp/pdbpp/issues/498
+        # https://github.com/pdbpp/fancycompleter/issues/37
+        'pyreadline3 ; platform_system == "Windows"',
 
     ],
     extras_require={
