@@ -150,7 +150,7 @@ def do_ctlc(
     child,
     count: int = 3,
     delay: float = 0.1,
-    expect_prompt: bool = True,
+    expect_prompt: bool = False,
     patt: Optional[str] = None,
 
 ) -> None:
