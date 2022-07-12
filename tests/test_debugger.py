@@ -150,6 +150,7 @@ def do_ctlc(
     child,
     count: int = 3,
     delay: float = 0.1,
+    expect_prompt: bool = True,
     patt: Optional[str] = None,
 
 ) -> None:
@@ -161,13 +162,14 @@ def do_ctlc(
 
         # TODO: figure out why this makes CI fail..
         # if you run this test manually it works just fine..
-        # time.sleep(delay)
-        # child.expect(r"\(Pdb\+\+\)")
-        # time.sleep(delay)
+        if expect_prompt:
+            time.sleep(delay)
+            child.expect(r"\(Pdb\+\+\)")
+            time.sleep(delay)
 
+        before = str(child.before.decode())
         if patt:
             # should see the last line on console
-            before = str(child.before.decode())
             assert patt in before
 
 
@@ -238,8 +240,8 @@ def test_subactor_error(
     # creating actor
     child.sendline('continue')
     child.expect(r"\(Pdb\+\+\)")
-
     before = str(child.before.decode())
+
     # root actor gets debugger engaged
     assert "Attaching to pdb in crashed actor: ('root'" in before
     # error is a remote error propagated from the subactor
