@@ -24,7 +24,7 @@ Features
 - Builtin IPC streaming APIs with task fan-out broadcasting
 - A (first ever?) "native" multi-core debugger UX for Python using `pdb++`_
 - Support for a swappable, OS specific, process spawning layer
-- A modular transport stack, allowing for custom serialization (eg.
+- A modular transport stack, allowing for custom serialization (eg. with
   `msgspec`_), communications protocols, and environment specific IPC
   primitives
 - Support for spawning process-level-SC, inter-loop one-to-one-task oriented
@@ -489,12 +489,6 @@ From PyPi::
     pip install tractor
 
 
-To try out the (optionally) faster `msgspec`_ codec instead of the
-default ``msgpack`` lib::
-
-    pip install tractor[msgspec]
-
-
 From git::
 
     pip install git+git://github.com/goodboy/tractor.git
@@ -563,11 +557,15 @@ properties of the system.
 
 What's on the TODO:
 -------------------
-Help us push toward the future.
+Help us push toward the future of distributed `Python`.
 
-- Typed messaging protocols (ex. via ``msgspec``, see `#36
+- Erlang-style supervisors via composed context managers (see `#22
+  <https://github.com/goodboy/tractor/issues/22>`_)
+- Typed messaging protocols (ex. via ``msgspec.Struct``, see `#36
   <https://github.com/goodboy/tractor/issues/36>`_)
-- Erlang-style supervisors via composed context managers
+- Typed capability-based (dialog) protocols ( see `#196
+  <https://github.com/goodboy/tractor/issues/196>`_ with draft work
+  started in `#311 <https://github.com/goodboy/tractor/pull/311>`_)
 
 
 Feel like saying hi?
