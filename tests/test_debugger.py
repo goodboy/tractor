@@ -150,7 +150,7 @@ def do_ctlc(
     child,
     count: int = 3,
     delay: float = 0.1,
-    expect_prompt: bool = False,
+    expect_prompt: bool = True,
     patt: Optional[str] = None,
 
 ) -> None:
@@ -166,11 +166,11 @@ def do_ctlc(
             time.sleep(delay)
             child.expect(r"\(Pdb\+\+\)")
             time.sleep(delay)
+            before = str(child.before.decode())
 
-        before = str(child.before.decode())
-        if patt:
-            # should see the last line on console
-            assert patt in before
+            if patt:
+                # should see the last line on console
+                assert patt in before
 
 
 def test_root_actor_bp_forever(
@@ -258,7 +258,10 @@ def test_subactor_error(
     child.expect(pexpect.EOF)
 
 
-def test_subactor_breakpoint(spawn):
+def test_subactor_breakpoint(
+    spawn,
+    ctlc: bool,
+):
     "Single subactor with an infinite breakpoint loop"
 
     child = spawn('subactor_breakpoint')
@@ -275,12 +278,18 @@ def test_subactor_breakpoint(spawn):
         child.sendline('next')
         child.expect(r"\(Pdb\+\+\)")
 
+        if ctlc:
+            do_ctlc(child)
+
     # now run some "continues" to show re-entries
     for _ in range(5):
         child.sendline('continue')
         child.expect(r"\(Pdb\+\+\)")
         before = str(child.before.decode())
         assert "Attaching pdb to actor: ('breakpoint_forever'" in before
+
+        if ctlc:
+            do_ctlc(child)
 
     # finally quit the loop
     child.sendline('q')
@@ -291,6 +300,9 @@ def test_subactor_breakpoint(spawn):
     before = str(child.before.decode())
     assert "RemoteActorError: ('breakpoint_forever'" in before
     assert 'bdb.BdbQuit' in before
+
+    if ctlc:
+        do_ctlc(child)
 
     # quit the parent
     child.sendline('c')
