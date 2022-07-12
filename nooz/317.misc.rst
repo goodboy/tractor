@@ -1,0 +1,8 @@
+Drop use of the ``msgpack`` package and instead move fully to the
+``msgspec`` codec library.
+
+We've now used ``msgspec`` extensively in production and there's no
+reason to not use it as default. Further this change preps us for the up
+and coming typed messaging semantics (#196), dialog-unprotocol system
+(#297), and caps-based messaging-protocols (#299) planned before our
+first beta.

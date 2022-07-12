@@ -51,9 +51,6 @@ setup(
         'tricycle',
         'trio_typing',
 
-        # serialization
-        'msgpack>=1.0.3',
-
         # tooling
         'colorlog',
         'wrapt',
@@ -63,21 +60,19 @@ setup(
         # https://github.com/pdbpp/fancycompleter/issues/37
         'pyreadline3 ; platform_system == "Windows"',
 
-    ],
-    extras_require={
-
         # serialization
-        'msgspec': ['msgspec >= "0.4.0"'],
+        'msgspec >= "0.4.0"'
 
-    },
+    ],
     tests_require=['pytest'],
     python_requires=">=3.9",
     keywords=[
         'trio',
-        "async",
-        "concurrency",
-        "actor model",
-        "distributed",
+        'async',
+        'concurrency',
+        'structured concurrency',
+        'actor model',
+        'distributed',
         'multiprocessing'
     ],
     classifiers=[
@@ -88,7 +83,7 @@ setup(
         "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.9",
         "Intended Audience :: Science/Research",
         "Intended Audience :: Developers",
