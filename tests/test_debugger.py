@@ -18,7 +18,7 @@ from typing import Optional
 import pytest
 import pexpect
 
-from conftest import repodir
+from conftest import repodir, _ci_env
 
 
 # TODO: The next great debugger audit could be done by you!
@@ -150,8 +150,12 @@ def do_ctlc(
     child,
     count: int = 3,
     delay: float = 0.1,
-    expect_prompt: bool = True,
     patt: Optional[str] = None,
+
+    # XXX: literally no idea why this is an issue in CI
+    # but likely will flush out (hopefully) with proper 3.10
+    # release of `pdbpp`...
+    expect_prompt: bool = True,
 
 ) -> None:
 
@@ -162,7 +166,8 @@ def do_ctlc(
 
         # TODO: figure out why this makes CI fail..
         # if you run this test manually it works just fine..
-        if expect_prompt:
+        from conftest import _ci_env
+        if expect_prompt and not _ci_env:
             time.sleep(delay)
             child.expect(r"\(Pdb\+\+\)")
             time.sleep(delay)
@@ -315,7 +320,10 @@ def test_subactor_breakpoint(
     assert 'bdb.BdbQuit' in before
 
 
-def test_multi_subactors(spawn):
+def test_multi_subactors(
+    spawn,
+    ctlc: bool,
+):
     """
     Multiple subactors, both erroring and breakpointing as well as
     a nested subactor erroring.
@@ -328,11 +336,17 @@ def test_multi_subactors(spawn):
     before = str(child.before.decode())
     assert "Attaching pdb to actor: ('breakpoint_forever'" in before
 
+    if ctlc:
+        do_ctlc(child)
+
     # do some "next" commands to demonstrate recurrent breakpoint
     # entries
     for _ in range(10):
         child.sendline('next')
         child.expect(r"\(Pdb\+\+\)")
+
+        if ctlc:
+            do_ctlc(child)
 
     # continue to next error
     child.sendline('c')
@@ -343,6 +357,9 @@ def test_multi_subactors(spawn):
     assert "Attaching to pdb in crashed actor: ('name_error'" in before
     assert "NameError" in before
 
+    if ctlc:
+        do_ctlc(child)
+
     # continue again
     child.sendline('c')
 
@@ -352,11 +369,17 @@ def test_multi_subactors(spawn):
     assert "Attaching to pdb in crashed actor: ('name_error_1'" in before
     assert "NameError" in before
 
+    if ctlc:
+        do_ctlc(child)
+
     # breakpoint loop should re-engage
     child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
     assert "Attaching pdb to actor: ('breakpoint_forever'" in before
+
+    if ctlc:
+        do_ctlc(child)
 
     # wait for spawn error to show up
     spawn_err = "Attaching to pdb in crashed actor: ('spawn_error'"
@@ -365,6 +388,9 @@ def test_multi_subactors(spawn):
         time.sleep(0.1)
         child.expect(r"\(Pdb\+\+\)")
         before = str(child.before.decode())
+
+        if ctlc:
+            do_ctlc(child)
 
     # 2nd depth nursery should trigger
     # child.sendline('c')
@@ -382,6 +408,7 @@ def test_multi_subactors(spawn):
     child.sendline('q')
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
+
     # debugger attaches to root
     assert "Attaching to pdb in crashed actor: ('root'" in before
     # expect a multierror with exceptions for each sub-actor
@@ -390,6 +417,9 @@ def test_multi_subactors(spawn):
     assert "RemoteActorError: ('spawn_error'" in before
     assert "RemoteActorError: ('name_error_1'" in before
     assert 'bdb.BdbQuit' in before
+
+    if ctlc:
+        do_ctlc(child)
 
     # process should exit
     child.sendline('c')
@@ -403,10 +433,16 @@ def test_multi_subactors(spawn):
     assert 'bdb.BdbQuit' in before
 
 
-def test_multi_daemon_subactors(spawn, loglevel):
-    """Multiple daemon subactors, both erroring and breakpointing within a
+def test_multi_daemon_subactors(
+    spawn,
+    loglevel: str,
+    ctlc: bool
+):
+    '''
+    Multiple daemon subactors, both erroring and breakpointing within a
     stream.
-    """
+
+    '''
     child = spawn('multi_daemon_subactors')
 
     child.expect(r"\(Pdb\+\+\)")
@@ -427,6 +463,9 @@ def test_multi_daemon_subactors(spawn, loglevel):
 
     else:
         raise ValueError("Neither log msg was found !?")
+
+    if ctlc:
+        do_ctlc(child)
 
     # NOTE: previously since we did not have clobber prevention
     # in the root actor this final resume could result in the debugger
@@ -455,6 +494,9 @@ def test_multi_daemon_subactors(spawn, loglevel):
     # it seems unreliable in testing here to gnab it:
     # assert "in use by child ('bp_forever'," in before
 
+    if ctlc:
+        do_ctlc(child)
+
     # wait for final error in root
     while True:
 
@@ -470,6 +512,9 @@ def test_multi_daemon_subactors(spawn, loglevel):
         except AssertionError:
             assert bp_forever_msg in before
 
+        if ctlc:
+            do_ctlc(child)
+
     try:
         child.sendline('c')
         child.expect(pexpect.EOF)
@@ -480,7 +525,10 @@ def test_multi_daemon_subactors(spawn, loglevel):
         child.expect(pexpect.EOF)
 
 
-def test_multi_subactors_root_errors(spawn):
+def test_multi_subactors_root_errors(
+    spawn,
+    ctlc: bool
+):
     '''
     Multiple subactors, both erroring and breakpointing as well as
     a nested subactor erroring.
@@ -495,6 +543,9 @@ def test_multi_subactors_root_errors(spawn):
     before = str(child.before.decode())
     assert "NameError: name 'doggypants' is not defined" in before
 
+    if ctlc:
+        do_ctlc(child)
+
     # continue again to catch 2nd name error from
     # actor 'name_error_1' (which is 2nd depth).
     child.sendline('c')
@@ -503,6 +554,9 @@ def test_multi_subactors_root_errors(spawn):
     assert "Attaching to pdb in crashed actor: ('name_error_1'" in before
     assert "NameError" in before
 
+    if ctlc:
+        do_ctlc(child)
+
     child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
     before = str(child.before.decode())
@@ -510,6 +564,9 @@ def test_multi_subactors_root_errors(spawn):
     # boxed error from previous step
     assert "RemoteActorError: ('name_error_1'" in before
     assert "NameError" in before
+
+    if ctlc:
+        do_ctlc(child)
 
     child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
@@ -522,6 +579,9 @@ def test_multi_subactors_root_errors(spawn):
     # warnings assert we probably don't need
     # assert "Cancelling nursery in ('spawn_error'," in before
 
+    if ctlc:
+        do_ctlc(child)
+
     # continue again
     child.sendline('c')
     child.expect(pexpect.EOF)
@@ -531,7 +591,13 @@ def test_multi_subactors_root_errors(spawn):
     assert "AssertionError" in before
 
 
-def test_multi_nested_subactors_error_through_nurseries(spawn):
+def test_multi_nested_subactors_error_through_nurseries(
+    spawn,
+
+    # TODO: address debugger issue for nested tree:
+    # <issuelink>
+    # ctlc: bool,
+):
     """Verify deeply nested actors that error trigger debugger entries
     at each actor nurserly (level) all the way up the tree.
 
@@ -568,7 +634,8 @@ def test_multi_nested_subactors_error_through_nurseries(spawn):
 
 def test_root_nursery_cancels_before_child_releases_tty_lock(
     spawn,
-    start_method
+    start_method,
+    ctlc: bool,
 ):
     """Test that when the root sends a cancel message before a nested
     child has unblocked (which can happen when it has the tty lock and
@@ -584,6 +651,9 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
     assert "NameError: name 'doggypants' is not defined" in before
     assert "tractor._exceptions.RemoteActorError: ('name_error'" not in before
     time.sleep(0.5)
+
+    if ctlc:
+        do_ctlc(child)
 
     child.sendline('c')
 
@@ -609,6 +679,9 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
         before = str(child.before.decode())
         assert "NameError: name 'doggypants' is not defined" in before
 
+        if ctlc:
+            do_ctlc(child)
+
         child.sendline('c')
 
     while True:
@@ -629,6 +702,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
 
 def test_root_cancels_child_context_during_startup(
     spawn,
+    ctlc: bool,
 ):
     '''Verify a fast fail in the root doesn't lock up the child reaping
     and all while using the new context api.
@@ -641,12 +715,16 @@ def test_root_cancels_child_context_during_startup(
     before = str(child.before.decode())
     assert "AssertionError" in before
 
+    if ctlc:
+        do_ctlc(child)
+
     child.sendline('c')
     child.expect(pexpect.EOF)
 
 
 def test_different_debug_mode_per_actor(
     spawn,
+    ctlc: bool,
 ):
     child = spawn('per_actor_debug')
     child.expect(r"\(Pdb\+\+\)")
@@ -655,6 +733,9 @@ def test_different_debug_mode_per_actor(
     before = str(child.before.decode())
     assert "Attaching to pdb in crashed actor: ('debugged_boi'" in before
     assert "RuntimeError" in before
+
+    if ctlc:
+        do_ctlc(child)
 
     child.sendline('c')
     child.expect(pexpect.EOF)
