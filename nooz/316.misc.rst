@@ -1,0 +1,5 @@
+Run windows CI jobs on python 3.10 after some
+hacks for ``pdbpp`` dependency issues.
+
+Issue was to do with the now deprecated `pyreadline` project which
+should be changed over to `pyreadline3`.
