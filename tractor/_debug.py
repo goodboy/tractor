@@ -697,7 +697,11 @@ def shield_sigint(
             "Ignoring SIGINT since debug mode is enabled"
         )
 
-    # maybe redraw/print last REPL output to console
+    # NOTE: currently (at least on ``fancycompleter`` 0.9.2)
+    # it lookks to be that the last command that was run (eg. ll)
+    # will be repeated by default.
+
+    # TODO: maybe redraw/print last REPL output to console
     # if pdb_obj:
 
         # TODO: make this work like sticky mode where if there is output
