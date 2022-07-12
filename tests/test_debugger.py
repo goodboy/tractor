@@ -18,8 +18,7 @@ from typing import Optional
 import pytest
 import pexpect
 
-from conftest import repodir, _ci_env
-
+from conftest import repodir
 
 # TODO: The next great debugger audit could be done by you!
 # - recurrent entry to breakpoint() from single actor *after* and an
@@ -171,11 +170,12 @@ def do_ctlc(
             time.sleep(delay)
             child.expect(r"\(Pdb\+\+\)")
             time.sleep(delay)
-            before = str(child.before.decode())
 
             if patt:
                 # should see the last line on console
                 assert patt in before
+
+        before = str(child.before.decode())
 
 
 def test_root_actor_bp_forever(
