@@ -22,10 +22,17 @@ from __future__ import annotations
 import platform
 import struct
 import typing
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+)
 from typing import (
-    Any, Tuple, Optional,
-    Type, Protocol, TypeVar,
+    Any,
+    runtime_checkable,
+    Optional,
+    Protocol,
+    Type,
+    TypeVar,
 )
 
 from tricycle import BufferedReceiveStream
@@ -42,7 +49,7 @@ _is_windows = platform.system() == 'Windows'
 log = get_logger(__name__)
 
 
-def get_stream_addrs(stream: trio.SocketStream) -> Tuple:
+def get_stream_addrs(stream: trio.SocketStream) -> tuple:
     # should both be IP sockets
     lsockname = stream.socket.getsockname()
     rsockname = stream.socket.getpeername()
@@ -60,6 +67,7 @@ MsgType = TypeVar("MsgType")
 # - https://jcristharif.com/msgspec/usage.html#structs
 
 
+@runtime_checkable
 class MsgTransport(Protocol[MsgType]):
 
     stream: trio.SocketStream
@@ -87,15 +95,18 @@ class MsgTransport(Protocol[MsgType]):
         ...
 
     @property
-    def laddr(self) -> Tuple[str, int]:
+    def laddr(self) -> tuple[str, int]:
         ...
 
     @property
-    def raddr(self) -> Tuple[str, int]:
+    def raddr(self) -> tuple[str, int]:
         ...
 
 
-class MsgpackTCPStream:
+# TODO: not sure why we have to inherit here, but it seems to be an
+# issue with ``get_msg_transport()`` returning a ``Type[Protocol]``;
+# probably should make a `mypy` issue?
+class MsgpackTCPStream(MsgTransport):
     '''
     A ``trio.SocketStream`` delivering ``msgpack`` formatted data
     using the ``msgspec`` codec lib.
@@ -190,11 +201,11 @@ class MsgpackTCPStream:
             return await self.stream.send_all(size + bytes_data)
 
     @property
-    def laddr(self) -> Tuple[Any, ...]:
+    def laddr(self) -> tuple[str, int]:
         return self._laddr
 
     @property
-    def raddr(self) -> Tuple[Any, ...]:
+    def raddr(self) -> tuple[str, int]:
         return self._raddr
 
     async def recv(self) -> Any:
@@ -223,7 +234,7 @@ class MsgpackTCPStream:
 
 def get_msg_transport(
 
-    key: Tuple[str, str],
+    key: tuple[str, str],
 
 ) -> Type[MsgTransport]:
 
@@ -237,16 +248,18 @@ class Channel:
     An inter-process channel for communication between (remote) actors.
 
     Wraps a ``MsgStream``: transport + encoding IPC connection.
+
     Currently we only support ``trio.SocketStream`` for transport
-    (aka TCP).
+    (aka TCP) and the ``msgpack`` interchange format via the ``msgspec``
+    codec libary.
 
     '''
     def __init__(
 
         self,
-        destaddr: Optional[Tuple[str, int]],
+        destaddr: Optional[tuple[str, int]],
 
-        msg_transport_type_key: Tuple[str, str] = ('msgpack', 'tcp'),
+        msg_transport_type_key: tuple[str, str] = ('msgpack', 'tcp'),
 
         # TODO: optional reconnection support?
         # auto_reconnect: bool = False,
@@ -266,7 +279,7 @@ class Channel:
         self.msgstream: Optional[MsgTransport] = None
 
         # set after handshake - always uid of far end
-        self.uid: Optional[Tuple[str, str]] = None
+        self.uid: Optional[tuple[str, str]] = None
 
         self._agen = self._aiter_recv()
         self._exc: Optional[Exception] = None  # set if far end actor errors
@@ -294,7 +307,7 @@ class Channel:
     def set_msg_transport(
         self,
         stream: trio.SocketStream,
-        type_key: Optional[Tuple[str, str]] = None,
+        type_key: Optional[tuple[str, str]] = None,
 
     ) -> MsgTransport:
         type_key = type_key or self._transport_key
@@ -309,16 +322,16 @@ class Channel:
         return object.__repr__(self)
 
     @property
-    def laddr(self) -> Optional[Tuple[str, int]]:
+    def laddr(self) -> Optional[tuple[str, int]]:
         return self.msgstream.laddr if self.msgstream else None
 
     @property
-    def raddr(self) -> Optional[Tuple[str, int]]:
+    def raddr(self) -> Optional[tuple[str, int]]:
         return self.msgstream.raddr if self.msgstream else None
 
     async def connect(
         self,
-        destaddr: Tuple[Any, ...] = None,
+        destaddr: tuple[Any, ...] = None,
         **kwargs
 
     ) -> MsgTransport:
