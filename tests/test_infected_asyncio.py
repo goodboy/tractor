@@ -185,7 +185,7 @@ async def trio_ctx(
                 tractor.to_asyncio.run_task,
                 sleep_forever,
             )
-            # await trio.sleep_forever()
+            await trio.sleep_forever()
 
 
 @pytest.mark.parametrize(
