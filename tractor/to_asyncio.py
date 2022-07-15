@@ -23,7 +23,6 @@ from asyncio.exceptions import CancelledError
 from contextlib import asynccontextmanager as acm
 from dataclasses import dataclass
 import inspect
-import traceback
 from typing import (
     Any,
     Callable,
@@ -63,6 +62,7 @@ class LinkedTaskChannel(trio.abc.Channel):
 
     _trio_cs: trio.CancelScope
     _aio_task_complete: trio.Event
+    _trio_exited: bool = False
 
     # set after ``asyncio.create_task()``
     _aio_task: Optional[asyncio.Task] = None
@@ -73,7 +73,13 @@ class LinkedTaskChannel(trio.abc.Channel):
         await self._from_aio.aclose()
 
     async def receive(self) -> Any:
-        async with translate_aio_errors(self):
+        async with translate_aio_errors(
+            self,
+
+            # XXX: obviously this will deadlock if an on-going stream is
+            # being procesed.
+            # wait_on_aio_task=False,
+        ):
 
             # TODO: do we need this to guarantee asyncio code get's
             # cancelled in the case where the trio side somehow creates
@@ -210,10 +216,8 @@ def _run_asyncio_task(
         orig = result = id(coro)
         try:
             result = await coro
-        except GeneratorExit:
-            # no need to relay error
-            raise
         except BaseException as aio_err:
+            log.exception('asyncio task errored')
             chan._aio_err = aio_err
             raise
 
@@ -237,6 +241,7 @@ def _run_asyncio_task(
                 to_trio.close()
 
             aio_task_complete.set()
+            log.runtime(f'`asyncio` task: {task.get_name()} is complete')
 
     # start the asyncio task we submitted from trio
     if not inspect.isawaitable(coro):
@@ -291,10 +296,12 @@ def _run_asyncio_task(
             elif task_err is None:
                 assert aio_err
                 aio_err.with_traceback(aio_err.__traceback__)
-                msg = ''.join(traceback.format_exception(type(aio_err)))
-                log.error(
-                    f'infected task errorred:\n{msg}'
-                )
+                log.error('infected task errorred')
+
+            # XXX: alway cancel the scope on error
+            # in case the trio task is blocking
+            # on a checkpoint.
+            cancel_scope.cancel()
 
             # raise any ``asyncio`` side error.
             raise aio_err
@@ -307,6 +314,7 @@ def _run_asyncio_task(
 async def translate_aio_errors(
 
     chan: LinkedTaskChannel,
+    wait_on_aio_task: bool = False,
 
 ) -> AsyncIterator[None]:
     '''
@@ -318,6 +326,7 @@ async def translate_aio_errors(
 
     aio_err: Optional[BaseException] = None
 
+    # TODO: make thisi a channel method?
     def maybe_raise_aio_err(
         err: Optional[Exception] = None
     ) -> None:
@@ -367,13 +376,30 @@ async def translate_aio_errors(
             raise
 
     finally:
-        # always cancel the ``asyncio`` task if we've made it this far
-        # and it's not done.
-        if not task.done() and aio_err:
+        if (
+            # NOTE: always cancel the ``asyncio`` task if we've made it
+            # this far and it's not done.
+            not task.done() and aio_err
+
+            # or the trio side has exited it's surrounding cancel scope
+            # indicating the lifetime of the ``asyncio``-side task
+            # should also be terminated.
+            or chan._trio_exited
+        ):
+            log.runtime(
+                f'Cancelling `asyncio`-task: {task.get_name()}'
+            )
             # assert not aio_err, 'WTF how did asyncio do this?!'
             task.cancel()
 
-        # if any ``asyncio`` error was caught, raise it here inline
+        # Required to sync with the far end ``asyncio``-task to ensure
+        # any error is captured (via monkeypatching the
+        # ``channel._aio_err``) before calling ``maybe_raise_aio_err()``
+        # below!
+        if wait_on_aio_task:
+            await chan._aio_task_complete.wait()
+
+        # NOTE: if any ``asyncio`` error was caught, raise it here inline
         # here in the ``trio`` task
         maybe_raise_aio_err()
 
@@ -398,7 +424,10 @@ async def run_task(
         **kwargs,
     )
     with chan._from_aio:
-        async with translate_aio_errors(chan):
+        async with translate_aio_errors(
+            chan,
+            wait_on_aio_task=True,
+        ):
             # return single value that is the output from the
             # ``asyncio`` function-as-task. Expect the mem chan api to
             # do the job of handling cross-framework cancellations
@@ -426,13 +455,21 @@ async def open_channel_from(
         **kwargs,
     )
     async with chan._from_aio:
-        async with translate_aio_errors(chan):
+        async with translate_aio_errors(
+            chan,
+            wait_on_aio_task=True,
+        ):
             # sync to a "started()"-like first delivered value from the
             # ``asyncio`` task.
             first = await chan.receive()
 
             # deliver stream handle upward
-            yield first, chan
+            try:
+                with chan._trio_cs:
+                    yield first, chan
+            finally:
+                chan._trio_exited = True
+                chan._to_trio.close()
 
 
 def run_as_asyncio_guest(
@@ -482,7 +519,7 @@ def run_as_asyncio_guest(
                 main_outcome.unwrap()
             else:
                 trio_done_fut.set_result(main_outcome)
-                print(f"trio_main finished: {main_outcome!r}")
+                log.runtime(f"trio_main finished: {main_outcome!r}")
 
         # start the infection: run trio on the asyncio loop in "guest mode"
         log.info(f"Infecting asyncio process with {trio_main}")

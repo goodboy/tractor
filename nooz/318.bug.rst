@@ -1,0 +1,13 @@
+Fix a previously undetected ``trio``-``asyncio`` task lifetime linking
+issue with the ``to_asyncio.open_channel_from()`` api where both sides
+where not properly waiting/signalling termination and it was possible
+for ``asyncio``-side errors to not propagate due to a race condition.
+
+The implementation fix summary is:
+- add state to signal the end of the ``trio`` side task to be
+  read by the ``asyncio`` side and always cancel any ongoing
+  task in such cases.
+- always wait on the ``asyncio`` task termination from the ``trio``
+  side on error before maybe raising said error.
+- always close the ``trio`` mem chan on exit to ensure the other
+  side can detect it and follow.
