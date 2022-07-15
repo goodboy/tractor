@@ -297,10 +297,7 @@ def _run_asyncio_task(
             elif task_err is None:
                 assert aio_err
                 aio_err.with_traceback(aio_err.__traceback__)
-                msg = ''.join(traceback.format_exception(type(aio_err)))
-                log.error(
-                    f'infected task errorred:\n{msg}'
-                )
+                log.error(f'infected task errorred')
 
             # XXX: alway cancel the scope on error
             # in case the trio task is blocking
@@ -391,7 +388,7 @@ async def translate_aio_errors(
             or chan._trio_exited
         ):
             log.runtime(
-                f'Cancelling `asyncio`-task: {chan._aio_taskget_name()}'
+                f'Cancelling `asyncio`-task: {chan._aio_task.get_name()}'
             )
             # assert not aio_err, 'WTF how did asyncio do this?!'
             task.cancel()
