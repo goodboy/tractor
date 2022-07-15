@@ -73,6 +73,22 @@ def spawn(
     return _spawn
 
 
+def assert_before(
+    child,
+    patts: list[str],
+
+) -> None:
+
+    before = str(child.before.decode())
+
+    for patt in patts:
+        try:
+            assert patt in before
+        except AssertionError:
+            print(before)
+            raise
+
+
 @pytest.fixture(
     params=[False, True],
     ids='ctl-c={}'.format,
@@ -163,6 +179,8 @@ def do_ctlc(
         time.sleep(delay)
         child.sendcontrol('c')
 
+        before = str(child.before.decode())
+
         # TODO: figure out why this makes CI fail..
         # if you run this test manually it works just fine..
         from conftest import _ci_env
@@ -174,8 +192,6 @@ def do_ctlc(
             if patt:
                 # should see the last line on console
                 assert patt in before
-
-        before = str(child.before.decode())
 
 
 def test_root_actor_bp_forever(
@@ -365,9 +381,15 @@ def test_multi_subactors(
 
     # 2nd name_error failure
     child.expect(r"\(Pdb\+\+\)")
-    before = str(child.before.decode())
-    assert "Attaching to pdb in crashed actor: ('name_error_1'" in before
-    assert "NameError" in before
+
+    assert_before(child, [
+        "Attaching to pdb in crashed actor: ('name_error_1'",
+        "NameError",
+    ])
+
+    # before = str(child.before.decode())
+    # assert "Attaching to pdb in crashed actor: ('name_error_1'" in before
+    # assert "NameError" in before
 
     if ctlc:
         do_ctlc(child)
