@@ -14,7 +14,6 @@ import tractor
 from tractor import (
     to_asyncio,
     RemoteActorError,
-    ContextCancelled
 )
 from tractor.trionics import BroadcastReceiver
 
@@ -199,7 +198,7 @@ def test_context_spawns_aio_task_that_errors(
     '''
     Verify that spawning a task via an intertask channel ctx mngr that
     errors correctly propagates the error back from the `asyncio`-side
-    taksk.
+    task.
 
     '''
     async def main():
@@ -222,7 +221,6 @@ def test_context_spawns_aio_task_that_errors(
                     await p.cancel_actor()
 
                 await trio.sleep_forever()
-
 
     with pytest.raises(RemoteActorError) as excinfo:
         trio.run(main)

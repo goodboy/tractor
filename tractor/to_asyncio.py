@@ -23,7 +23,6 @@ from asyncio.exceptions import CancelledError
 from contextlib import asynccontextmanager as acm
 from dataclasses import dataclass
 import inspect
-import traceback
 from typing import (
     Any,
     Callable,
@@ -297,7 +296,7 @@ def _run_asyncio_task(
             elif task_err is None:
                 assert aio_err
                 aio_err.with_traceback(aio_err.__traceback__)
-                log.error(f'infected task errorred')
+                log.error('infected task errorred')
 
             # XXX: alway cancel the scope on error
             # in case the trio task is blocking
