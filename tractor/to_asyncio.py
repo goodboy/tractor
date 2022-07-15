@@ -388,7 +388,7 @@ async def translate_aio_errors(
             or chan._trio_exited
         ):
             log.runtime(
-                f'Cancelling `asyncio`-task: {chan._aio_task.get_name()}'
+                f'Cancelling `asyncio`-task: {task.get_name()}'
             )
             # assert not aio_err, 'WTF how did asyncio do this?!'
             task.cancel()
