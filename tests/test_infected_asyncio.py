@@ -169,7 +169,7 @@ async def trio_ctx(
 
     # this will block until the ``asyncio`` task sends a "first"
     # message.
-    with trio.fail_after(0.5):
+    with trio.fail_after(2):
         async with (
             tractor.to_asyncio.open_channel_from(
                 sleep_and_err,
