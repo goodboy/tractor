@@ -542,6 +542,17 @@ class Portal:
                     f'value from callee `{result}`'
                 )
 
+            # XXX: (MEGA IMPORTANT) if this is a root opened process we
+            # wait for any immediate child in debug before popping the
+            # context from the runtime msg loop otherwise inside
+            # ``Actor._push_result()`` the msg will be discarded and in
+            # the case where that msg is global debugger unlock (via
+            # a "stop" msg for a stream), this can result in a deadlock
+            # where the root is waiting on the lock to clear but the
+            # child has already cleared it and clobbered IPC.
+            from ._debug import maybe_wait_for_debugger
+            await maybe_wait_for_debugger()
+
             # remove the context from runtime tracking
             self.actor._contexts.pop((self.channel.uid, ctx.cid))
 
