@@ -342,8 +342,8 @@ class MsgStream(trio.abc.Channel):
         Send a message over this stream to the far end.
 
         '''
-        if self._ctx._error:
-            raise self._ctx._error  # from None
+        if self._ctx._remote_ctx_error:
+            raise self._ctx._remote_ctx_error  # from None
 
         if self._closed:
             raise trio.ClosedResourceError('This stream was already closed')
@@ -385,7 +385,7 @@ class Context:
     _portal: Optional[Portal] = None    # type: ignore # noqa
     _stream: Optional[MsgStream] = None
     _result: Optional[Any] = False
-    _error: Optional[BaseException] = None
+    _remote_ctx_error: Optional[BaseException] = None
 
     # status flags
     _cancel_called: bool = False
@@ -462,7 +462,7 @@ class Context:
                     f'{msg["error"]["tb_str"]}'
                 )
 
-            self._error = error
+            self._remote_ctx_error = error
 
             # TODO: tempted to **not** do this by-reraising in a
             # nursery and instead cancel a surrounding scope, detect
@@ -470,7 +470,7 @@ class Context:
             if self._scope_nursery:
 
                 async def raiser():
-                    raise self._error from None
+                    raise self._remote_ctx_error from None
 
                 # from trio.testing import wait_all_tasks_blocked
                 # await wait_all_tasks_blocked()
