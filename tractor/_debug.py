@@ -117,6 +117,15 @@ class MultiActorPdb(pdbpp.Pdb):
             if _pdb_release_hook:
                 _pdb_release_hook()
 
+    def set_next(self, frame):
+        try:
+            super().set_next(frame)
+        finally:
+            global _local_task_in_debug, _pdb_release_hook
+            _local_task_in_debug = None
+            if _pdb_release_hook:
+                _pdb_release_hook()
+
 
 # TODO: will be needed whenever we get to true remote debugging.
 # XXX see https://github.com/goodboy/tractor/issues/130
