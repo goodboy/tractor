@@ -97,34 +97,23 @@ class MultiActorPdb(pdbpp.Pdb):
     # override the pdbpp config with our coolio one
     DefaultConfig = TractorConfig
 
+    # def preloop(self):
+    #     print('IN PRELOOP')
+    #     super().preloop()
+
     # TODO: figure out how to disallow recursive .set_trace() entry
     # since that'll cause deadlock for us.
     def set_continue(self):
         try:
             super().set_continue()
         finally:
-            global _local_task_in_debug, _pdb_release_hook
-            _local_task_in_debug = None
-            if _pdb_release_hook:
-                _pdb_release_hook()
+            maybe_release()
 
     def set_quit(self):
         try:
             super().set_quit()
         finally:
-            global _local_task_in_debug, _pdb_release_hook
-            _local_task_in_debug = None
-            if _pdb_release_hook:
-                _pdb_release_hook()
-
-    def set_next(self, frame):
-        try:
-            super().set_next(frame)
-        finally:
-            global _local_task_in_debug, _pdb_release_hook
-            _local_task_in_debug = None
-            if _pdb_release_hook:
-                _pdb_release_hook()
+            maybe_release()
 
 
 # TODO: will be needed whenever we get to true remote debugging.
@@ -162,6 +151,13 @@ class MultiActorPdb(pdbpp.Pdb):
 #             if bmsg in _pdb_exit_patterns:
 #                 log.info("Closing stdin hijack")
 #                 break
+
+# TODO: make this method on a global lock type!
+def maybe_release():
+    global _local_task_in_debug, _pdb_release_hook
+    _local_task_in_debug = None
+    if _pdb_release_hook:
+        _pdb_release_hook()
 
 
 @acm
@@ -392,10 +388,10 @@ async def wait_for_parent_stdin_hijack(
             log.warning('Root actor cancelled debug lock')
 
         finally:
-            log.debug(f"Exiting debugger for actor {actor_uid}")
+            log.pdb(f"Exiting debugger for actor {actor_uid}")
             global _local_task_in_debug
             _local_task_in_debug = None
-            log.debug(f"Child {actor_uid} released parent stdio lock")
+            log.pdb(f"Child {actor_uid} released parent stdio lock")
 
 
 def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
@@ -477,7 +473,7 @@ async def _breakpoint(
         # entries/requests to the root process
         _local_task_in_debug = task_name
 
-        def child_release_hook():
+        def child_release():
             try:
                 # sometimes the ``trio`` might already be termianated in
                 # which case this call will raise.
@@ -489,8 +485,7 @@ async def _breakpoint(
                 # _local_task_in_debug = None
 
         # assign unlock callback for debugger teardown hooks
-        # _pdb_release_hook = _local_pdb_complete.set
-        _pdb_release_hook = child_release_hook
+        _pdb_release_hook = child_release
 
         # this **must** be awaited by the caller and is done using the
         # root nursery so that the debugger can continue to run without
@@ -507,7 +502,7 @@ async def _breakpoint(
                     actor.uid,
                 )
         except RuntimeError:
-            child_release_hook()
+            _pdb_release_hook()
             raise
 
     elif is_root_process():
@@ -541,7 +536,7 @@ async def _breakpoint(
         _local_task_in_debug = task_name
 
         # the lock must be released on pdb completion
-        def teardown():
+        def root_release():
             global _local_pdb_complete, _debug_lock
             global _global_actor_in_debug, _local_task_in_debug
 
@@ -566,11 +561,7 @@ async def _breakpoint(
                 # restore original sigint handler
                 undo_sigint()
 
-        _pdb_release_hook = teardown
-
-    # frame = sys._getframe()
-    # last_f = frame.f_back
-    # last_f.f_globals['__tracebackhide__'] = True
+        _pdb_release_hook = root_release
 
     try:
         # block here one (at the appropriate frame *up*) where
@@ -579,15 +570,13 @@ async def _breakpoint(
         debug_func(actor, pdb)
 
     except bdb.BdbQuit:
-        if _pdb_release_hook:
-            _pdb_release_hook()
+        maybe_release()
         raise
 
     # XXX: apparently we can't do this without showing this frame
     # in the backtrace on first entry to the REPL? Seems like an odd
     # behaviour that should have been fixed by now. This is also why
     # we scrapped all the @cm approaches that were tried previously.
-
     # finally:
     #     __tracebackhide__ = True
     #     # frame = sys._getframe()
@@ -711,8 +700,10 @@ def shield_sigint(
     # will be repeated by default.
 
     # TODO: maybe redraw/print last REPL output to console
-    # if pdb_obj:
-
+    if (
+        pdb_obj
+        and sys.version_info <= (3, 10)
+    ):
         # TODO: make this work like sticky mode where if there is output
         # detected as written to the tty we redraw this part underneath
         # and erase the past draw of this same bit above?
@@ -732,7 +723,7 @@ def shield_sigint(
         # pdb_obj.do_longlist(None)
 
         # XXX: we were doing this but it shouldn't be required..
-        # print(pdb_obj.prompt, end='', flush=True)
+        print(pdb_obj.prompt, end='', flush=True)
 
 
 def _set_trace(
@@ -838,6 +829,7 @@ async def _maybe_enter_pm(err):
     ):
         log.debug("Actor crashed, entering debug mode")
         await post_mortem()
+        maybe_release()
         return True
 
     else:
@@ -897,9 +889,11 @@ async def maybe_wait_for_debugger(
 
             if _global_actor_in_debug:
                 sub_in_debug = tuple(_global_actor_in_debug)
+                # alive = tractor.current_actor().child_alive(sub_in_debug)
+                # if not alive:
+                #     break
 
-            log.debug(
-                'Root polling for debug')
+            log.debug('Root polling for debug')
 
             with trio.CancelScope(shield=True):
                 await trio.sleep(poll_delay)
