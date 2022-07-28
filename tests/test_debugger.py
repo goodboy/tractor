@@ -167,10 +167,9 @@ def do_ctlc(
     delay: float = 0.1,
     patt: Optional[str] = None,
 
-    # XXX: literally no idea why this is an issue in CI
-    # but likely will flush out (hopefully) with proper 3.10
-    # release of `pdbpp`...
-    expect_prompt: bool = True,
+    # XXX: literally no idea why this is an issue in CI but likely will
+    # flush out (hopefully) with proper 3.10 release of `pdbpp`...
+    expect_prompt: bool = False,
 
 ) -> None:
 
@@ -179,7 +178,7 @@ def do_ctlc(
         time.sleep(delay)
         child.sendcontrol('c')
 
-        before = str(child.before.decode())
+        # before = str(child.before.decode())
 
         # TODO: figure out why this makes CI fail..
         # if you run this test manually it works just fine..
@@ -256,6 +255,7 @@ def test_subactor_error(
             child,
         )
 
+    child.expect(r"\(Pdb\+\+\)")
     # send user command and (in this case it's the same for 'continue'
     # vs. 'quit') the debugger should enter a second time in the nursery
     # creating actor
@@ -578,6 +578,7 @@ def test_multi_subactors_root_errors(
 
     if ctlc:
         do_ctlc(child)
+        child.expect(r"\(Pdb\+\+\)")
 
     child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
