@@ -103,7 +103,6 @@ async def open_root_actor(
         _default_arbiter_port,
     )
 
-
     loglevel = (loglevel or log._default_loglevel).upper()
 
     if debug_mode and _spawn._spawn_method == 'trio':
@@ -131,19 +130,22 @@ async def open_root_actor(
 
     log.get_console_log(loglevel)
 
-    # make a temporary connection to see if an arbiter exists
-    arbiter_found = False
-
     try:
+        # make a temporary connection to see if an arbiter exists,
+        # if one can't be made quickly we assume none exists.
+        arbiter_found = False
+
         # TODO: this connect-and-bail forces us to have to carefully
         # rewrap TCP 104-connection-reset errors as EOF so as to avoid
         # propagating cancel-causing errors to the channel-msg loop
         # machinery.  Likely it would be better to eventually have
         # a "discovery" protocol with basic handshake instead.
-        async with _connect_chan(host, port):
-            arbiter_found = True
+        with trio.move_on_after(1):
+            async with _connect_chan(host, port):
+                arbiter_found = True
 
     except OSError:
+        # TODO: make this a "discovery" log level?
         logger.warning(f"No actor could be found @ {host}:{port}")
 
     # create a local actor and start up its main routine/task
@@ -213,7 +215,8 @@ async def open_root_actor(
             finally:
                 # NOTE: not sure if we'll ever need this but it's
                 # possibly better for even more determinism?
-                # logger.cancel(f'Waiting on {len(nurseries)} nurseries in root..')
+                # logger.cancel(
+                #     f'Waiting on {len(nurseries)} nurseries in root..')
                 # nurseries = actor._actoruid2nursery.values()
                 # async with trio.open_nursery() as tempn:
                 #     for an in nurseries:
