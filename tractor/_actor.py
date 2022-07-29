@@ -967,7 +967,7 @@ class Actor:
                             # don't start entire actor runtime
                             # cancellation if this actor is in debug
                             # mode
-                            pdb_complete = _debug._local_pdb_complete
+                            pdb_complete = _debug.Lock.local_pdb_complete
                             if pdb_complete:
                                 await pdb_complete.wait()
 
@@ -1413,7 +1413,7 @@ class Actor:
 
             # kill any debugger request task to avoid deadlock
             # with the root actor in this tree
-            dbcs = _debug._debugger_request_cs
+            dbcs = _debug.Lock._debugger_request_cs
             if dbcs is not None:
                 log.cancel("Cancelling active debugger request")
                 dbcs.cancel()
