@@ -33,7 +33,6 @@ from typing import (
 )
 from types import FrameType
 
-from msgspec import Struct
 import tractor
 import trio
 from trio_typing import TaskStatus
@@ -88,11 +87,54 @@ class Lock:
     # otherwise deadlocks with the parent actor may ensure
     _debugger_request_cs: Optional[trio.CancelScope] = None
 
+    _orig_sigint_handler: Optional[Callable] = None
+
+    @classmethod
+    def shield_sigint(cls):
+        cls._orig_sigint_handler = signal.signal(
+                signal.SIGINT,
+                shield_sigint,
+            )
+
+    @classmethod
+    def unshield_sigint(cls):
+        if cls._orig_sigint_handler is not None:
+            # restore original sigint handler
+            signal.signal(
+                signal.SIGINT,
+                cls._orig_sigint_handler
+            )
+
+        cls._orig_sigint_handler = None
+
     @classmethod
     def maybe_release(cls):
         cls.local_task_in_debug = None
         if cls.pdb_release_hook:
             cls.pdb_release_hook()
+
+    @classmethod
+    def root_release(cls):
+        try:
+            cls._debug_lock.release()
+        except RuntimeError:
+            # uhhh makes no sense but been seeing the non-owner
+            # release error even though this is definitely the task
+            # that locked?
+            owner = cls._debug_lock.statistics().owner
+            if owner:
+                raise
+
+        cls.global_actor_in_debug = None
+        cls.local_task_in_debug = None
+
+        try:
+            # sometimes the ``trio`` might already be terminated in
+            # which case this call will raise.
+            cls.local_pdb_complete.set()
+        finally:
+            # restore original sigint handler
+            cls.unshield_sigint()
 
 
 class TractorConfig(pdbpp.DefaultConfig):
@@ -274,11 +316,8 @@ async def _hijack_stdin_for_child(
     )
 
     log.debug(f"Actor {subactor_uid} is WAITING on stdin hijack lock")
+    Lock.shield_sigint()
 
-    orig_handler = signal.signal(
-        signal.SIGINT,
-        shield_sigint,
-    )
     try:
         with (
             trio.CancelScope(shield=True),
@@ -330,10 +369,7 @@ async def _hijack_stdin_for_child(
         return "pdb_unlock_complete"
 
     finally:
-        signal.signal(
-            signal.SIGINT,
-            orig_handler
-        )
+        Lock.unshield_sigint()
 
 
 async def wait_for_parent_stdin_hijack(
@@ -399,10 +435,8 @@ def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
 
     pdb = MultiActorPdb()
     # signal.signal = pdbpp.hideframe(signal.signal)
-    orig_handler = signal.signal(
-        signal.SIGINT,
-        partial(shield_sigint, pdb_obj=pdb),
-    )
+
+    Lock.shield_sigint()
 
     # XXX: These are the important flags mentioned in
     # https://github.com/python-trio/trio/issues/1155
@@ -410,15 +444,7 @@ def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
     pdb.allow_kbdint = True
     pdb.nosigint = True
 
-    # TODO: add this as method on our pdb obj?
-    def undo_sigint():
-        # restore original sigint handler
-        signal.signal(
-            signal.SIGINT,
-            orig_handler
-        )
-
-    return pdb, undo_sigint
+    return pdb, Lock.unshield_sigint
 
 
 async def _breakpoint(
@@ -484,7 +510,6 @@ async def _breakpoint(
 
         # assign unlock callback for debugger teardown hooks
         Lock.pdb_release_hook = child_release
-        # _pdb_release_hook = child_release
 
         # this **must** be awaited by the caller and is done using the
         # root nursery so that the debugger can continue to run without
@@ -502,7 +527,6 @@ async def _breakpoint(
                 )
         except RuntimeError:
             Lock.pdb_release_hook()
-            # _pdb_release_hook()
             raise
 
     elif is_root_process():
@@ -534,30 +558,7 @@ async def _breakpoint(
         Lock.local_task_in_debug = task_name
 
         # the lock must be released on pdb completion
-        def root_release():
-            try:
-                Lock._debug_lock.release()
-            except RuntimeError:
-                # uhhh makes no sense but been seeing the non-owner
-                # release error even though this is definitely the task
-                # that locked?
-                owner = Lock._debug_lock.statistics().owner
-                if owner:
-                    raise
-
-            Lock.global_actor_in_debug = None
-            Lock.local_task_in_debug = None
-
-            try:
-                # sometimes the ``trio`` might already be termianated in
-                # which case this call will raise.
-                Lock.local_pdb_complete.set()
-            finally:
-                # restore original sigint handler
-                undo_sigint()
-
-        # _pdb_release_hook = root_release
-        Lock.pdb_release_hook = root_release
+        Lock.pdb_release_hook = Lock.root_release
 
     try:
         # block here one (at the appropriate frame *up*) where
