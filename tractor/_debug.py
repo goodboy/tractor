@@ -85,6 +85,7 @@ _debugger_request_cs: Optional[trio.CancelScope] = None
 class TractorConfig(pdbpp.DefaultConfig):
     """Custom ``pdbpp`` goodness.
     """
+    use_pygments = True
     # sticky_by_default = True
     enable_hidden_frames = False
 

@@ -110,6 +110,13 @@ def ctlc(request) -> bool:
         # be 3.10+ mega-asap.
         pytest.skip('Py3.9 and `pdbpp` son no bueno..')
 
+    if use_ctlc:
+        # XXX: disable pygments highlighting for auto-tests
+        # since some envs (like actions CI) will struggle
+        # the the added color-char encoding..
+        from tractor._debug import TractorConfig
+        TractorConfig.use_pygements = False
+
     yield use_ctlc
 
 
