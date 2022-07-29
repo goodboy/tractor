@@ -18,6 +18,10 @@ import time
 
 import pytest
 import pexpect
+from pexpect.exceptions import (
+    TIMEOUT,
+    EOF,
+)
 
 from conftest import repodir
 
@@ -544,7 +548,7 @@ def test_multi_daemon_subactors(
     # now the root actor won't clobber the bp_forever child
     # during it's first access to the debug lock, but will instead
     # wait for the lock to release, by the edge triggered
-    # ``_debug._no_remote_has_tty`` event before sending cancel messages
+    # ``_debug.Lock.no_remote_has_tty`` event before sending cancel messages
     # (via portals) to its underlings B)
 
     # at some point here there should have been some warning msg from
@@ -577,7 +581,7 @@ def test_multi_daemon_subactors(
         child.sendline('c')
         child.expect(pexpect.EOF)
 
-    except pexpect.exceptions.TIMEOUT:
+    except TIMEOUT:
         # Failed to exit using continue..?
         child.sendline('q')
         child.expect(pexpect.EOF)
@@ -605,9 +609,14 @@ def test_multi_subactors_root_errors(
         do_ctlc(child)
 
     # continue again to catch 2nd name error from
+    # continue again to catch 2nd name error from
     # actor 'name_error_1' (which is 2nd depth).
     child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
+    try:
+        child.expect(r"\(Pdb\+\+\)")
+    except TIMEOUT:
+        child.sendline('')
+
     before = str(child.before.decode())
     assert "Attaching to pdb in crashed actor: ('name_error_1'" in before
     assert "NameError" in before
@@ -676,7 +685,7 @@ def test_multi_nested_subactors_error_through_nurseries(
             child.sendline('c')
             time.sleep(0.1)
 
-        except pexpect.exceptions.EOF:
+        except EOF:
 
             # race conditions on how fast the continue is sent?
             print(f"Failed early on {i}?")
@@ -722,8 +731,8 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
             child.expect(r"\(Pdb\+\+\)")
 
         except (
-            pexpect.exceptions.EOF,
-            pexpect.exceptions.TIMEOUT,
+            EOF,
+            TIMEOUT,
         ):
             # races all over..
 
@@ -748,7 +757,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
         try:
             child.expect(pexpect.EOF)
             break
-        except pexpect.exceptions.TIMEOUT:
+        except TIMEOUT:
             child.sendline('c')
             time.sleep(0.1)
             print('child was able to grab tty lock again?')
