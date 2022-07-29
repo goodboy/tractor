@@ -430,7 +430,11 @@ def test_multi_subactors(
 
     # wait for spawn error to show up
     spawn_err = "Attaching to pdb in crashed actor: ('spawn_error'"
-    while spawn_err not in before:
+    start = time.time()
+    while (
+        spawn_err not in before
+        and (time.time() - start) < 3
+    ):
         child.sendline('c')
         time.sleep(0.1)
         child.expect(r"\(Pdb\+\+\)")
