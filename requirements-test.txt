@@ -1,5 +1,6 @@
 pytest
 pytest-trio
+pytest-timeout
 pdbpp
 mypy<0.920
 trio_typing<0.7.0

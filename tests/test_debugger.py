@@ -683,6 +683,7 @@ def test_multi_nested_subactors_error_through_nurseries(
         assert "NameError" in before
 
 
+@pytest.mark.timeout(15)
 def test_root_nursery_cancels_before_child_releases_tty_lock(
     spawn,
     start_method,
@@ -734,6 +735,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
             do_ctlc(child)
 
         child.sendline('c')
+        time.sleep(0.1)
 
     while True:
         try:
@@ -741,6 +743,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
             break
         except pexpect.exceptions.TIMEOUT:
             child.sendline('c')
+            time.sleep(0.1)
             print('child was able to grab tty lock again?')
 
     if not timed_out_early:
