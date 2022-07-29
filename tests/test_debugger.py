@@ -753,7 +753,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
         child.sendline('c')
         time.sleep(0.1)
 
-    for i in range(10):
+    for i in range(3):
         try:
             child.expect(pexpect.EOF)
             break
