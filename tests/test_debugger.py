@@ -742,7 +742,7 @@ def test_multi_nested_subactors_error_through_nurseries(
         assert "NameError" in before
 
 
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(20)
 def test_root_nursery_cancels_before_child_releases_tty_lock(
     spawn,
     start_method,
@@ -798,22 +798,24 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
 
     for i in range(3):
         try:
-            child.expect(pexpect.EOF)
+            child.expect(pexpect.EOF, timeout=0.5)
             break
         except TIMEOUT:
             child.sendline('c')
             time.sleep(0.1)
             print('child was able to grab tty lock again?')
     else:
+        print('giving up on child releasing, sending `quit` cmd')
         child.sendline('q')
         child.expect(pexpect.EOF)
 
     if not timed_out_early:
-
         before = str(child.before.decode())
-        assert "tractor._exceptions.RemoteActorError: ('spawner0'" in before
-        assert "tractor._exceptions.RemoteActorError: ('name_error'" in before
-        assert "NameError: name 'doggypants' is not defined" in before
+        assert_before(child, [
+            "tractor._exceptions.RemoteActorError: ('spawner0'",
+            "tractor._exceptions.RemoteActorError: ('name_error'",
+            "NameError: name 'doggypants' is not defined",
+        ])
 
 
 def test_root_cancels_child_context_during_startup(
