@@ -98,7 +98,10 @@ def assert_before(
     params=[False, True],
     ids='ctl-c={}'.format,
 )
-def ctlc(request) -> bool:
+def ctlc(
+    request,
+    ci_env: bool,
+) -> bool:
 
     use_ctlc = request.param
 
@@ -114,12 +117,27 @@ def ctlc(request) -> bool:
         # be 3.10+ mega-asap.
         pytest.skip('Py3.9 and `pdbpp` son no bueno..')
 
-    if use_ctlc:
-        # XXX: disable pygments highlighting for auto-tests
-        # since some envs (like actions CI) will struggle
-        # the the added color-char encoding..
-        from tractor._debug import TractorConfig
-        TractorConfig.use_pygements = False
+    # in CI we skip tests which >= depth 1 actor trees due to there
+    # still being an oustanding issue with relaying the debug-mode-state
+    # through intermediary parents.
+    if ci_env:
+        node = request.node
+        markers = node.own_markers
+        for mark in markers:
+            if mark.name == 'has_nested_actors':
+                pytest.skip(
+                    f'Test for {node} uses nested actors and fails in CI\n'
+                    f'The test seems to run fine locally but until we solve the following '
+                    'issue this CI test will be xfail:\n'
+                    f'<#issue>'
+                )
+
+    # if use_ctlc:
+    #     # XXX: disable pygments highlighting for auto-tests
+    #     # since some envs (like actions CI) will struggle
+    #     # the the added color-char encoding..
+    #     from tractor._debug import TractorConfig
+    #     TractorConfig.use_pygements = False
 
     yield use_ctlc
 
@@ -194,8 +212,8 @@ def do_ctlc(
     delay: float = 0.1,
     patt: Optional[str] = None,
 
-    # XXX: literally no idea why this is an issue in CI but likely will
-    # flush out (hopefully) with proper 3.10 release of `pdbpp`...
+    # expect repl UX to reprint the prompt after every
+    # ctrl-c send.
     expect_prompt: bool = True,
 
 ) -> None:
@@ -207,8 +225,7 @@ def do_ctlc(
 
         # TODO: figure out why this makes CI fail..
         # if you run this test manually it works just fine..
-        from conftest import _ci_env
-        if expect_prompt and not _ci_env:
+        if expect_prompt:
             before = str(child.before.decode())
             time.sleep(delay)
             child.expect(r"\(Pdb\+\+\)")
@@ -271,8 +288,10 @@ def test_subactor_error(
     ctlc: bool,
     do_next: bool,
 ):
-    "Single subactor raising an error"
+    '''
+    Single subactor raising an error
 
+    '''
     child = spawn('subactor_error')
 
     # scan for the pdbpp prompt
@@ -372,6 +391,7 @@ def test_subactor_breakpoint(
     assert 'bdb.BdbQuit' in before
 
 
+@pytest.mark.has_nested_actors
 def test_multi_subactors(
     spawn,
     ctlc: bool,
@@ -441,7 +461,7 @@ def test_multi_subactors(
     start = time.time()
     while (
         spawn_err not in before
-        and (time.time() - start) < 3
+        and (time.time() - start) < 3  # timeout eventually
     ):
         child.sendline('c')
         time.sleep(0.1)
@@ -452,11 +472,10 @@ def test_multi_subactors(
             do_ctlc(child)
 
     # 2nd depth nursery should trigger
-    if not ctlc:
-        assert_before(child, [
-            spawn_err,
-            "RemoteActorError: ('name_error_1'",
-        ])
+    assert_before(child, [
+        spawn_err,
+        "RemoteActorError: ('name_error_1'",
+    ])
 
     # now run some "continues" to show re-entries
     for _ in range(5):
@@ -589,6 +608,7 @@ def test_multi_daemon_subactors(
         child.expect(pexpect.EOF)
 
 
+@pytest.mark.has_nested_actors
 def test_multi_subactors_root_errors(
     spawn,
     ctlc: bool
@@ -618,12 +638,8 @@ def test_multi_subactors_root_errors(
     except TIMEOUT:
         child.sendline('')
 
-    # XXX: lol honestly no idea why CI is cuck but
-    # seems like this likely falls into our unhandled nested
-    # case and isn't working in that env due to raciness..
-    name = 'name_error' if ctlc else 'name_error_1'
     assert_before(child, [
-        f"Attaching to pdb in crashed actor: ('{name}'",
+        "Attaching to pdb in crashed actor: ('name_error_1'",
         "NameError",
     ])
 
@@ -666,6 +682,7 @@ def test_multi_subactors_root_errors(
     assert "AssertionError" in before
 
 
+@pytest.mark.has_nested_actors
 def test_multi_nested_subactors_error_through_nurseries(
     spawn,
 
