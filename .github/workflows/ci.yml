@@ -74,7 +74,7 @@ jobs:
         run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
 
       - name: Run tests
-        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rs -v
+        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
 
   # We skip 3.10 on windows for now due to
   # https://github.com/pytest-dev/pytest/issues/8733
