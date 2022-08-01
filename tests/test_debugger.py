@@ -96,6 +96,34 @@ def spawn(
     return _spawn
 
 
+PROMPT = r"\(Pdb\+\+\)"
+
+
+def expect(
+    child,
+
+    # prompt by default
+    patt: str = PROMPT,
+
+    **kwargs,
+
+) -> None:
+    '''
+    Expect wrapper that prints last seen console
+    data before failing.
+
+    '''
+    try:
+        child.expect(
+            patt,
+            **kwargs,
+        )
+    except TIMEOUT:
+        before = str(child.before.decode())
+        print(before)
+        raise
+
+
 def assert_before(
     child,
     patts: list[str],
@@ -174,7 +202,7 @@ def test_root_actor_error(spawn, user_in_out):
     child = spawn('root_actor_error')
 
     # scan for the pdbpp prompt
-    child.expect(r"\(Pdb\+\+\)")
+    expect(child, PROMPT)
 
     before = str(child.before.decode())
 
@@ -186,7 +214,7 @@ def test_root_actor_error(spawn, user_in_out):
     child.sendline(user_input)
 
     # process should exit
-    child.expect(pexpect.EOF)
+    expect(child, EOF)
     assert expect_err_str in str(child.before)
 
 
@@ -742,7 +770,7 @@ def test_multi_nested_subactors_error_through_nurseries(
         assert "NameError" in before
 
 
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(15)
 def test_root_nursery_cancels_before_child_releases_tty_lock(
     spawn,
     start_method,
@@ -807,7 +835,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
     else:
         print('giving up on child releasing, sending `quit` cmd')
         child.sendline('q')
-        child.expect(pexpect.EOF)
+        expect(child, EOF)
 
     if not timed_out_early:
         before = str(child.before.decode())
