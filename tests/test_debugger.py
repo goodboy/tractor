@@ -58,18 +58,21 @@ def mk_cmd(ex_name: str) -> str:
     )
 
 
+# TODO: was trying to this xfail style but some weird bug i see in CI
+# that's happening at collect time.. pretty soon gonna dump actions i'm
+# thinkin...
 # in CI we skip tests which >= depth 1 actor trees due to there
 # still being an oustanding issue with relaying the debug-mode-state
 # through intermediary parents.
-has_nested_actors = pytest.mark.xfail(
-    os.environ.get('CI', False),
-    reason=(
-        'This test uses nested actors and fails in CI\n'
-        'The test seems to run fine locally but until we solve the '
-        'following issue this CI test will be xfail:\n'
-        '<#issue>'
-    )
-)
+has_nested_actors = pytest.mark.has_nested_actors #.xfail(
+    # os.environ.get('CI', False),
+    # reason=(
+    #     'This test uses nested actors and fails in CI\n'
+    #     'The test seems to run fine locally but until we solve the '
+    #     'following issue this CI test will be xfail:\n'
+    #     '<#issue>'
+    # )
+# )
 
 
 @pytest.fixture
@@ -116,6 +119,7 @@ def assert_before(
 def ctlc(
     request,
     ci_env: bool,
+
 ) -> bool:
 
     use_ctlc = request.param
@@ -131,6 +135,18 @@ def ctlc(
         # and get this working especially since we want to
         # be 3.10+ mega-asap.
         pytest.skip('Py3.9 and `pdbpp` son no bueno..')
+
+    if ci_env:
+        node = request.node
+        markers = node.own_markers
+        for mark in markers:
+            if mark.name == 'has_nested_actors':
+                pytest.skip(
+                    f'Test for {node} uses nested actors and fails in CI\n'
+                    f'The test seems to run fine locally but until we solve the following '
+                    'issue this CI test will be xfail:\n'
+                    f'<#issue>'
+                )
 
     if use_ctlc:
         # XXX: disable pygments highlighting for auto-tests
