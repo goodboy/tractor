@@ -955,7 +955,7 @@ class Actor:
                         chan._exc = exc
                         raise exc
 
-                    log.info(
+                    log.runtime(
                         f"Processing request from {actorid}\n"
                         f"{ns}.{funcname}({kwargs})")
 
@@ -1004,7 +1004,12 @@ class Actor:
                                 )
                                 try:
                                     await _invoke(
-                                        self, cid, chan, func, kwargs, is_rpc=False
+                                        self,
+                                        cid,
+                                        chan,
+                                        func,
+                                        kwargs,
+                                        is_rpc=False,
                                     )
                                 except BaseException:
                                     log.exception("failed to cancel task?")
