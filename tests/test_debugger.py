@@ -771,15 +771,18 @@ def test_multi_nested_subactors_error_through_nurseries(
 
 
 @pytest.mark.timeout(15)
+@has_nested_actors
 def test_root_nursery_cancels_before_child_releases_tty_lock(
     spawn,
     start_method,
     ctlc: bool,
 ):
-    """Test that when the root sends a cancel message before a nested
-    child has unblocked (which can happen when it has the tty lock and
-    is engaged in pdb) it is indeed cancelled after exiting the debugger.
-    """
+    '''
+    Test that when the root sends a cancel message before a nested child
+    has unblocked (which can happen when it has the tty lock and is
+    engaged in pdb) it is indeed cancelled after exiting the debugger.
+
+    '''
     timed_out_early = False
 
     child = spawn('root_cancelled_but_child_is_in_tty_lock')
