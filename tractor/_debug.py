@@ -138,9 +138,11 @@ class Lock:
 
 
 class TractorConfig(pdbpp.DefaultConfig):
-    """Custom ``pdbpp`` goodness.
-    """
-    use_pygments = True
+    '''
+    Custom ``pdbpp`` goodness.
+
+    '''
+    # use_pygments = True
     # sticky_by_default = True
     enable_hidden_frames = False
 
