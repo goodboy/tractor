@@ -174,42 +174,6 @@ class MultiActorPdb(pdbpp.Pdb):
             Lock.maybe_release()
 
 
-# TODO: will be needed whenever we get to true remote debugging.
-# XXX see https://github.com/goodboy/tractor/issues/130
-
-# # TODO: is there some way to determine this programatically?
-# _pdb_exit_patterns = tuple(
-#     str.encode(patt + "\n") for patt in (
-#         'c', 'cont', 'continue', 'q', 'quit')
-# )
-
-# def subactoruid2proc(
-#     actor: 'Actor',  # noqa
-#     uid: Tuple[str, str]
-# ) -> trio.Process:
-#     n = actor._actoruid2nursery[uid]
-#     _, proc, _ = n._children[uid]
-#     return proc
-
-# async def hijack_stdin():
-#     log.info(f"Hijacking stdin from {actor.uid}")
-
-#     trap std in and relay to subproc
-#     async_stdin = trio.wrap_file(sys.stdin)
-
-#     async with aclosing(async_stdin):
-#         async for msg in async_stdin:
-#             log.runtime(f"Stdin input:\n{msg}")
-#             # encode to bytes
-#             bmsg = str.encode(msg)
-
-#             # relay bytes to subproc over pipe
-#             # await proc.stdin.send_all(bmsg)
-
-#             if bmsg in _pdb_exit_patterns:
-#                 log.info("Closing stdin hijack")
-#                 break
-
 @acm
 async def _acquire_debug_lock(
     uid: Tuple[str, str]
