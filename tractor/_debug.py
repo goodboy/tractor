@@ -68,7 +68,7 @@ class Lock:
 
     '''
     # placeholder for function to set a ``trio.Event`` on debugger exit
-    pdb_release_hook: Optional[Callable] = None
+    # pdb_release_hook: Optional[Callable] = None
 
     # actor-wide variable pointing to current task name using debugger
     local_task_in_debug: Optional[str] = None
@@ -108,13 +108,7 @@ class Lock:
         cls._orig_sigint_handler = None
 
     @classmethod
-    def maybe_release(cls):
-        cls.local_task_in_debug = None
-        if cls.pdb_release_hook:
-            cls.pdb_release_hook()
-
-    @classmethod
-    def root_release(cls):
+    def release(cls):
         try:
             cls._debug_lock.release()
         except RuntimeError:
@@ -125,6 +119,7 @@ class Lock:
             if owner:
                 raise
 
+        # actor-local state, irrelevant for non-root.
         cls.global_actor_in_debug = None
         cls.local_task_in_debug = None
 
@@ -165,17 +160,17 @@ class MultiActorPdb(pdbpp.Pdb):
         try:
             super().set_continue()
         finally:
-            Lock.maybe_release()
+            Lock.release()
 
     def set_quit(self):
         try:
             super().set_quit()
         finally:
-            Lock.maybe_release()
+            Lock.release()
 
 
 @acm
-async def _acquire_debug_lock(
+async def _acquire_debug_lock_from_root_task(
     uid: Tuple[str, str]
 
 ) -> AsyncIterator[trio.StrictFIFOLock]:
@@ -217,7 +212,7 @@ async def _acquire_debug_lock(
         # IF we received a cancel during the shielded lock entry of some
         # next-in-queue requesting task, then the resumption here will
         # result in that ``trio.Cancelled`` being raised to our caller
-        # (likely from ``_hijack_stdin_for_child()`` below)!  In
+        # (likely from ``lock_tty_for_child()`` below)!  In
         # this case the ``finally:`` below should trigger and the
         # surrounding caller side context should cancel normally
         # relaying back to the caller.
@@ -225,8 +220,6 @@ async def _acquire_debug_lock(
         yield Lock._debug_lock
 
     finally:
-        # if Lock.global_actor_in_debug == uid:
-
         if (
             we_acquired
             and Lock._debug_lock.locked()
@@ -255,20 +248,21 @@ async def _acquire_debug_lock(
 
 
 @tractor.context
-async def _hijack_stdin_for_child(
+async def lock_tty_for_child(
 
     ctx: tractor.Context,
     subactor_uid: Tuple[str, str]
 
 ) -> str:
     '''
-    Hijack the tty in the root process of an actor tree such that
-    the pdbpp debugger console can be allocated to a sub-actor for repl
-    bossing.
+    Lock the TTY in the root process of an actor tree in a new
+    inter-actor-context-task such that the ``pdbpp`` debugger console
+    can be mutex-allocated to the calling sub-actor for REPL control
+    without interference by other processes / threads.
 
-    NOTE: this task is invoked in the root actor-process of the actor
-    tree. It is meant to be invoked as an rpc-task which should be
-    highly reliable at cleaning out the tty-lock state when complete!
+    NOTE: this task must be invoked in the root process of the actor
+    tree. It is meant to be invoked as an rpc-task and should be
+    highly reliable at releasing the mutex complete!
 
     '''
     task_name = trio.lowlevel.current_task().name
@@ -288,7 +282,7 @@ async def _hijack_stdin_for_child(
         with (
             trio.CancelScope(shield=True),
         ):
-            async with _acquire_debug_lock(subactor_uid):  # as lock:
+            async with _acquire_debug_lock_from_root_task(subactor_uid):
 
                 # indicate to child that we've locked stdio
                 await ctx.started('Locked')
@@ -311,14 +305,17 @@ async def wait_for_parent_stdin_hijack(
     task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED
 ):
     '''
-    Connect to the root actor via a ctx and invoke a task which locks
-    a root-local TTY lock.
+    Connect to the root actor via a ``Context`` and invoke a task which
+    locks a root-local TTY lock: ``lock_tty_for_child()``; this func
+    should be called in a new task from a child actor **and never the
+    root*.
 
     This function is used by any sub-actor to acquire mutex access to
-    pdb and the root's TTY for interactive debugging (see below inside
-    ``_breakpoint()``). It can be used to ensure that an intermediate
-    nursery-owning actor does not clobber its children if they are in
-    debug (see below inside ``maybe_wait_for_debugger()``).
+    the ``pdb`` REPL and thus the root's TTY for interactive debugging
+    (see below inside ``_breakpoint()``). It can be used to ensure that
+    an intermediate nursery-owning actor does not clobber its children
+    if they are in debug (see below inside
+    ``maybe_wait_for_debugger()``).
 
     '''
     with trio.CancelScope(shield=True) as cs:
@@ -330,7 +327,7 @@ async def wait_for_parent_stdin_hijack(
                 # this syncs to child's ``Context.started()`` call.
                 async with portal.open_context(
 
-                    tractor._debug._hijack_stdin_for_child,
+                    tractor._debug.lock_tty_for_child,
                     subactor_uid=actor_uid,
 
                 ) as (ctx, val):
@@ -390,8 +387,8 @@ async def _breakpoint(
 
 ) -> None:
     '''
-    breakpoint entry for engaging pdb machinery in the root or
-    a subactor.
+    Breakpoint entry for engaging debugger instance sync-interaction,
+    from async code, executing in actor runtime (task).
 
     '''
     __tracebackhide__ = True
@@ -411,12 +408,17 @@ async def _breakpoint(
         Lock.local_pdb_complete = trio.Event()
 
     # TODO: need a more robust check for the "root" actor
-    if actor._parent_chan and not is_root_process():
+    if (
+        not is_root_process()
+        and actor._parent_chan  # a connected child
+    ):
 
         if Lock.local_task_in_debug:
+
+            # Recurrence entry case: this task already has the lock and
+            # is likely recurrently entering a breakpoint
             if Lock.local_task_in_debug == task_name:
-                # this task already has the lock and is
-                # likely recurrently entering a breakpoint
+                # noop on recurrent entry case
                 return
 
             # if **this** actor is already in debug mode block here
@@ -430,20 +432,6 @@ async def _breakpoint(
         # mark local actor as "in debug mode" to avoid recurrent
         # entries/requests to the root process
         Lock.local_task_in_debug = task_name
-
-        def child_release():
-            try:
-                # sometimes the ``trio`` might already be termianated in
-                # which case this call will raise.
-                Lock.local_pdb_complete.set()
-            finally:
-                # restore original sigint handler
-                undo_sigint()
-                # should always be cleared in the hijack hook aboved right?
-                # _local_task_in_debug = None
-
-        # assign unlock callback for debugger teardown hooks
-        Lock.pdb_release_hook = child_release
 
         # this **must** be awaited by the caller and is done using the
         # root nursery so that the debugger can continue to run without
@@ -460,7 +448,7 @@ async def _breakpoint(
                     actor.uid,
                 )
         except RuntimeError:
-            Lock.pdb_release_hook()
+            Lock.release()
             raise
 
     elif is_root_process():
@@ -468,8 +456,8 @@ async def _breakpoint(
         # we also wait in the root-parent for any child that
         # may have the tty locked prior
         # TODO: wait, what about multiple root tasks acquiring it though?
-        # root process (us) already has it; ignore
         if Lock.global_actor_in_debug == actor.uid:
+            # re-entrant root process already has it: noop.
             return
 
         # XXX: since we need to enter pdb synchronously below,
@@ -491,9 +479,6 @@ async def _breakpoint(
         Lock.global_actor_in_debug = actor.uid
         Lock.local_task_in_debug = task_name
 
-        # the lock must be released on pdb completion
-        Lock.pdb_release_hook = Lock.root_release
-
     try:
         # block here one (at the appropriate frame *up*) where
         # ``breakpoint()`` was awaited and begin handling stdio.
@@ -501,7 +486,7 @@ async def _breakpoint(
         debug_func(actor, pdb)
 
     except bdb.BdbQuit:
-        Lock.maybe_release()
+        Lock.release()
         raise
 
     # XXX: apparently we can't do this without showing this frame
@@ -597,9 +582,8 @@ def shield_sigint(
             )
 
     # child actor that has locked the debugger
-    elif (
-        not is_root_process()
-    ):
+    elif not is_root_process():
+
         chan: Channel = actor._parent_chan
         if not chan or not chan.connected():
             log.warning(
@@ -738,7 +722,7 @@ async def _maybe_enter_pm(err):
     ):
         log.debug("Actor crashed, entering debug mode")
         await post_mortem()
-        Lock.maybe_release()
+        Lock.release()
         return True
 
     else:
@@ -754,7 +738,7 @@ async def acquire_debug_lock(
 
     This helper is for actor's who don't actually need
     to acquired the debugger but want to wait until the
-    lock is free in the tree root.
+    lock is free in the process-tree root.
 
     '''
     if not debug_mode():
