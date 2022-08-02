@@ -288,8 +288,6 @@ async def _hijack_stdin_for_child(
         with (
             trio.CancelScope(shield=True),
         ):
-            # try:
-            # lock = None
             async with _acquire_debug_lock(subactor_uid):  # as lock:
 
                 # indicate to child that we've locked stdio
@@ -301,36 +299,6 @@ async def _hijack_stdin_for_child(
                 # wait for unlock pdb by child
                 async with ctx.open_stream() as stream:
                     assert await stream.receive() == 'pdb_unlock'
-
-            # except (
-            #     BaseException,
-            #     # trio.MultiError,
-            #     # Exception,
-            #     # trio.BrokenResourceError,
-            #     # trio.Cancelled,  # by local cancellation
-            #     # trio.ClosedResourceError,  # by self._rx_chan
-            #     # ContextCancelled,
-            #     # ConnectionResetError,
-            # ):
-            #     # XXX: there may be a race with the portal teardown
-            #     # with the calling actor which we can safely ignore.
-            #     # The alternative would be sending an ack message
-            #     # and allowing the client to wait for us to teardown
-            #     # first?
-            #     if lock and lock.locked():
-            #         try:
-            #             lock.release()
-            #         except RuntimeError:
-            #             log.exception(f"we don't own the tty lock?")
-
-            #     # if isinstance(err, trio.Cancelled):
-            #     raise
-
-            # finally:
-            #     log.runtime(
-            #         "TTY lock released, remote task:"
-            #         f"{task_name}:{subactor_uid}"
-            #     )
 
         return "pdb_unlock_complete"
 
