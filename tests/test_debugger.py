@@ -10,7 +10,6 @@ TODO:
     - wonder if any of it'll work on OS X?
 
 """
-import os
 from os import path
 from typing import Optional
 import platform
@@ -64,14 +63,15 @@ def mk_cmd(ex_name: str) -> str:
 # in CI we skip tests which >= depth 1 actor trees due to there
 # still being an oustanding issue with relaying the debug-mode-state
 # through intermediary parents.
-has_nested_actors = pytest.mark.has_nested_actors #.xfail(
-    # os.environ.get('CI', False),
-    # reason=(
-    #     'This test uses nested actors and fails in CI\n'
-    #     'The test seems to run fine locally but until we solve the '
-    #     'following issue this CI test will be xfail:\n'
-    #     '<#issue>'
-    # )
+has_nested_actors = pytest.mark.has_nested_actors
+# .xfail(
+#     os.environ.get('CI', False),
+#     reason=(
+#         'This test uses nested actors and fails in CI\n'
+#         'The test seems to run fine locally but until we solve the '
+#         'following issue this CI test will be xfail:\n'
+#         'https://github.com/goodboy/tractor/issues/320'
+#     )
 # )
 
 
@@ -171,9 +171,9 @@ def ctlc(
             if mark.name == 'has_nested_actors':
                 pytest.skip(
                     f'Test for {node} uses nested actors and fails in CI\n'
-                    f'The test seems to run fine locally but until we solve the following '
-                    'issue this CI test will be xfail:\n'
-                    f'<#issue>'
+                    f'The test seems to run fine locally but until we solve'
+                    'this issue this CI test will be xfail:\n'
+                    'https://github.com/goodboy/tractor/issues/320'
                 )
 
     if use_ctlc:
@@ -733,7 +733,7 @@ def test_multi_nested_subactors_error_through_nurseries(
     spawn,
 
     # TODO: address debugger issue for nested tree:
-    # <issuelink>
+    # https://github.com/goodboy/tractor/issues/320
     # ctlc: bool,
 ):
     """Verify deeply nested actors that error trigger debugger entries
