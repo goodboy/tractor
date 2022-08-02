@@ -649,7 +649,8 @@ def shield_sigint(
             )
 
         # TODO: how to handle the case of an intermediary-child actor
-        # that **is not** marked in debug mode?
+        # that **is not** marked in debug mode? See oustanding issue:
+        # https://github.com/goodboy/tractor/issues/320
         # elif debug_mode():
 
     else:
@@ -695,11 +696,6 @@ def _set_trace(
     __tracebackhide__ = True
     actor = actor or tractor.current_actor()
 
-    # XXX: on latest ``pdbpp`` i guess we don't need this?
-    # frame = sys._getframe()
-    # last_f = frame.f_back
-    # last_f.f_globals['__tracebackhide__'] = True
-
     # start 2 levels up in user code
     frame: Optional[FrameType] = sys._getframe()
     if frame:
@@ -738,27 +734,11 @@ def _post_mortem(
     '''
     log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
 
-    # XXX: on py3.10 if you don't have latest ``pdbpp`` installed.
-    # The exception looks something like:
-    # Traceback (most recent call last):
-    # File ".../tractor/_debug.py", line 729, in _post_mortem
-    #   for _ in range(100):
-    # File "../site-packages/pdb.py", line 1227, in xpm
-    #   post_mortem(info[2], Pdb)
-    # File "../site-packages/pdb.py", line 1175, in post_mortem
-    #   p.interaction(None, t)
-    # File "../site-packages/pdb.py", line 216, in interaction
-    #   ret = self.setup(frame, traceback)
-    # File "../site-packages/pdb.py", line 259, in setup
-    #   ret = super(Pdb, self).setup(frame, tb)
-    # File "/usr/lib/python3.10/pdb.py", line 217, in setup
-    #   self.curframe = self.stack[self.curindex][0]
-    # IndexError: list index out of range
-
-    # NOTE: you need ``pdbpp`` master (at least this commit
+    # TODO: you need ``pdbpp`` master (at least this commit
     # https://github.com/pdbpp/pdbpp/commit/b757794857f98d53e3ebbe70879663d7d843a6c2)
-    # to fix this and avoid the hang it causes XD.
-    # see also: https://github.com/pdbpp/pdbpp/issues/480
+    # to fix this and avoid the hang it causes. See issue:
+    # https://github.com/pdbpp/pdbpp/issues/480
+    # TODO: help with a 3.10+ major release if/when it arrives.
 
     pdbpp.xpm(Pdb=lambda: pdb)
 
@@ -848,9 +828,6 @@ async def maybe_wait_for_debugger(
 
             if Lock.global_actor_in_debug:
                 sub_in_debug = tuple(Lock.global_actor_in_debug)
-                # alive = tractor.current_actor().child_alive(sub_in_debug)
-                # if not alive:
-                #     break
 
             log.debug('Root polling for debug')
 
