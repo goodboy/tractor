@@ -73,6 +73,9 @@ jobs:
       - name: Install dependencies
         run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
 
+      - name: List dependencies
+        run: pip freeze
+
       - name: Run tests
         run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
 
@@ -109,6 +112,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
+
+      - name: List dependencies
+        run: pip freeze
 
       - name: Run tests
         run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rs --full-trace
