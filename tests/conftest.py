@@ -85,11 +85,14 @@ def spawn_backend(request):
     return request.config.option.spawn_backend
 
 
+_ci_env: bool = os.environ.get('CI', False)
+
+
 @pytest.fixture(scope='session')
 def ci_env() -> bool:
     """Detect CI envoirment.
     """
-    return os.environ.get('TRAVIS', False) or os.environ.get('CI', False)
+    return _ci_env
 
 
 @pytest.fixture(scope='session')

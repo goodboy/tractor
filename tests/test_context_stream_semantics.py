@@ -265,42 +265,44 @@ async def test_callee_closes_ctx_after_stream_open():
             enable_modules=[__name__],
         )
 
-        async with portal.open_context(
-            close_ctx_immediately,
+        with trio.fail_after(2):
+            async with portal.open_context(
+                close_ctx_immediately,
 
-            # flag to avoid waiting the final result
-            # cancel_on_exit=True,
+                # flag to avoid waiting the final result
+                # cancel_on_exit=True,
 
-        ) as (ctx, sent):
+            ) as (ctx, sent):
 
-            assert sent is None
+                assert sent is None
 
-            with trio.fail_after(0.5):
-                async with ctx.open_stream() as stream:
+                with trio.fail_after(0.5):
+                    async with ctx.open_stream() as stream:
 
-                    # should fall through since ``StopAsyncIteration``
-                    # should be raised through translation of
-                    # a ``trio.EndOfChannel`` by
-                    # ``trio.abc.ReceiveChannel.__anext__()``
-                    async for _ in stream:
-                        assert 0
-                    else:
+                        # should fall through since ``StopAsyncIteration``
+                        # should be raised through translation of
+                        # a ``trio.EndOfChannel`` by
+                        # ``trio.abc.ReceiveChannel.__anext__()``
+                        async for _ in stream:
+                            assert 0
+                        else:
 
-                        # verify stream is now closed
-                        try:
-                            await stream.receive()
-                        except trio.EndOfChannel:
+                            # verify stream is now closed
+                            try:
+                                await stream.receive()
+                            except trio.EndOfChannel:
+                                pass
+
+                # TODO: should be just raise the closed resource err
+                # directly here to enforce not allowing a re-open
+                # of a stream to the context (at least until a time of
+                # if/when we decide that's a good idea?)
+                try:
+                    with trio.fail_after(0.5):
+                        async with ctx.open_stream() as stream:
                             pass
-
-            # TODO: should be just raise the closed resource err
-            # directly here to enforce not allowing a re-open
-            # of a stream to the context (at least until a time of
-            # if/when we decide that's a good idea?)
-            try:
-                async with ctx.open_stream() as stream:
+                except trio.ClosedResourceError:
                     pass
-            except trio.ClosedResourceError:
-                pass
 
         await portal.cancel_actor()
 

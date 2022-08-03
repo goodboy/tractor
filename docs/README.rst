@@ -3,13 +3,14 @@
 |gh_actions|
 |docs|
 
-``tractor`` is a `structured concurrent`_, multi-processing_ runtime built on trio_.
+``tractor`` is a `structured concurrent`_, multi-processing_ runtime
+built on trio_.
 
 Fundamentally ``tractor`` gives you parallelism via ``trio``-"*actors*":
 our nurseries_ let you spawn new Python processes which each run a ``trio``
 scheduled runtime - a call to ``trio.run()``.
 
-We believe the system adhere's to the `3 axioms`_ of an "`actor model`_"
+We believe the system adheres to the `3 axioms`_ of an "`actor model`_"
 but likely *does not* look like what *you* probably think an "actor
 model" looks like, and that's *intentional*.
 
@@ -577,13 +578,13 @@ say hi, please feel free to reach us in our `matrix channel`_.  If
 matrix seems too hip, we're also mostly all in the the `trio gitter
 channel`_!
 
+.. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
+.. _multi-processing: https://en.wikipedia.org/wiki/Multiprocessing
+.. _trio: https://github.com/python-trio/trio
 .. _nurseries: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/#nurseries-a-structured-replacement-for-go-statements
 .. _actor model: https://en.wikipedia.org/wiki/Actor_model
-.. _trio: https://github.com/python-trio/trio
-.. _multi-processing: https://en.wikipedia.org/wiki/Multiprocessing
 .. _trionic: https://trio.readthedocs.io/en/latest/design.html#high-level-design-principles
 .. _async sandwich: https://trio.readthedocs.io/en/latest/tutorial.html#async-sandwich
-.. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
 .. _3 axioms: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=162s
 .. .. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
 .. _adherance to: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=1821s

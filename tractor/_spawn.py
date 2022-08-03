@@ -307,7 +307,8 @@ async def new_proc(
         proc: Optional[trio.Process] = None
         try:
             try:
-                proc = await trio.open_process(spawn_cmd)
+                # TODO: needs ``trio_typing`` patch?
+                proc = await trio.lowlevel.open_process(spawn_cmd)  # type: ignore
 
                 log.runtime(f"Started {proc}")
 
@@ -333,6 +334,9 @@ async def new_proc(
                                 with trio.move_on_after(0.5):
                                     await proc.wait()
                 raise
+
+            # a sub-proc ref **must** exist now
+            assert proc
 
             portal = Portal(chan)
             actor_nursery._children[subactor.uid] = (

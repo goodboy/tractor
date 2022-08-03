@@ -43,7 +43,7 @@ setup(
     install_requires=[
 
         # trio related
-        'trio>0.8',
+        'trio >= 0.20',
         'async_generator',
         'trio_typing',
 
@@ -54,11 +54,22 @@ setup(
         # tooling
         'colorlog',
         'wrapt',
-        'pdbpp',
+
+        # pip ref docs on these specs:
+        # https://pip.pypa.io/en/stable/reference/requirement-specifiers/#examples
+        # and pep:
+        # https://peps.python.org/pep-0440/#version-specifiers
+        'pdbpp <= 0.10.1; python_version < "3.10"',
+
         # windows deps workaround for ``pdbpp``
         # https://github.com/pdbpp/pdbpp/issues/498
         # https://github.com/pdbpp/fancycompleter/issues/37
         'pyreadline3 ; platform_system == "Windows"',
+
+        # 3.10 has an outstanding unreleased issue and `pdbpp` itself
+        #   pins to patched forks of its own dependencies as well..and
+        #   we need a specific patch on master atm.
+        'pdbpp @ git+https://github.com/pdbpp/pdbpp@76c4be5#egg=pdbpp ; python_version > "3.9"',  # noqa: E501
 
         # serialization
         'msgspec >= "0.4.0"'
@@ -83,8 +94,8 @@ setup(
         "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
         "Intended Audience :: Science/Research",
         "Intended Audience :: Developers",
         "Topic :: System :: Distributed Computing",

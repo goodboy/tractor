@@ -81,11 +81,14 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
     'example_script',
 
     # walk yields: (dirpath, dirnames, filenames)
-    [(p[0], f) for p in os.walk(examples_dir()) for f in p[2]
+    [
+        (p[0], f) for p in os.walk(examples_dir()) for f in p[2]
 
         if '__' not in f
         and f[0] != '_'
-        and 'debugging' not in p[0]],
+        and 'debugging' not in p[0]
+        and 'integration' not in p[0]
+    ],
 
     ids=lambda t: t[1],
 )
@@ -113,9 +116,19 @@ def test_example(run_example_in_subproc, example_script):
             # print(f'STDOUT: {out}')
 
             # if we get some gnarly output let's aggregate and raise
-            errmsg = err.decode()
-            errlines = errmsg.splitlines()
-            if err and 'Error' in errlines[-1]:
-                raise Exception(errmsg)
+            if err:
+                errmsg = err.decode()
+                errlines = errmsg.splitlines()
+                last_error = errlines[-1]
+                if (
+                    'Error' in last_error
+
+                    # XXX: currently we print this to console, but maybe
+                    # shouldn't eventually once we figure out what's
+                    # a better way to be explicit about aio side
+                    # cancels?
+                    and 'asyncio.exceptions.CancelledError' not in last_error
+                ):
+                    raise Exception(errmsg)
 
             assert proc.returncode == 0
