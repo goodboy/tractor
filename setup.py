@@ -55,6 +55,9 @@ setup(
         'colorlog',
         'wrapt',
 
+        # serialization
+        'msgspec',
+
         # pip ref docs on these specs:
         # https://pip.pypa.io/en/stable/reference/requirement-specifiers/#examples
         # and pep:
@@ -69,9 +72,6 @@ setup(
         #   pins to patched forks of its own dependencies as well..and
         #   we need a specific patch on master atm.
         'pdbpp @ git+https://github.com/pdbpp/pdbpp@76c4be5#egg=pdbpp ; python_version > "3.9"',  # noqa: E501
-
-        # serialization
-        'msgspec >= "0.4.0"'
 
     ],
     tests_require=['pytest'],
