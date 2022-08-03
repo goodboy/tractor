@@ -29,7 +29,7 @@ import warnings
 
 import trio
 
-from ._runtime import Actor, Arbiter
+from ._runtime import Actor, Arbiter, async_main
 from . import _debug
 from . import _spawn
 from . import _state
@@ -188,13 +188,14 @@ async def open_root_actor(
         # start the actor runtime in a new task
         async with trio.open_nursery() as nursery:
 
-            # ``Actor._async_main()`` creates an internal nursery and
+            # ``_runtime.async_main()`` creates an internal nursery and
             # thus blocks here until the entire underlying actor tree has
             # terminated thereby conducting structured concurrency.
 
             await nursery.start(
                 partial(
-                    actor._async_main,
+                    async_main,
+                    actor,
                     accept_addr=(host, port),
                     parent_addr=None
                 )
