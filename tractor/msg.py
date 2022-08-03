@@ -24,7 +24,7 @@ Built-in messaging patterns, types, APIs and helpers.
 # ``pkgutil.resolve_name()`` internally uses
 # ``importlib.import_module()`` which can be filtered by inserting
 # a ``MetaPathFinder`` into ``sys.meta_path`` (which we could do before
-# entering the ``Actor._process_messages()`` loop).
+# entering the ``_runtime.process_messages()`` loop).
 # - https://github.com/python/cpython/blob/main/Lib/pkgutil.py#L645
 # - https://stackoverflow.com/questions/1350466/preventing-python-code-from-importing-certain-modules
 #   - https://stackoverflow.com/a/63320902

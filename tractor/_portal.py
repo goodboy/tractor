@@ -611,9 +611,11 @@ async def open_portal(
 
         msg_loop_cs: Optional[trio.CancelScope] = None
         if start_msg_loop:
+            from ._runtime import process_messages
             msg_loop_cs = await nursery.start(
                 partial(
-                    actor._process_messages,
+                    process_messages,
+                    actor,
                     channel,
                     # if the local task is cancelled we want to keep
                     # the msg loop running until our block ends
