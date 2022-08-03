@@ -1,8 +1,0 @@
-Adjust the `tractor._spawn.soft_wait()` strategy to avoid sending an
-actor cancel request (via `Portal.cancel_actor()`) if either the child
-process is detected as having terminated or the IPC channel is detected
-to be closed.
-
-This ensures (even) more deterministic inter-actor cancellation by
-avoiding the timeout condition where possible when a whild never
-sucessfully spawned, crashed, or became un-contactable over IPC.

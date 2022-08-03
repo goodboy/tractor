@@ -1,0 +1,28 @@
+[tool.towncrier]
+package = "tractor"
+filename = "NEWS.rst"
+directory = "nooz/"
+version = "0.1.0a5"
+title_format = "tractor {version} ({project_date})"
+template = "nooz/_template.rst"
+all_bullets = true
+
+  [[tool.towncrier.type]]
+  directory = "feature"
+  name = "Features"
+  showcontent = true
+
+  [[tool.towncrier.type]]
+  directory = "bugfix"
+  name = "Bug Fixes"
+  showcontent = true
+
+  [[tool.towncrier.type]]
+  directory = "doc"
+  name = "Improved Documentation"
+  showcontent = true
+
+  [[tool.towncrier.type]]
+  directory = "trivial"
+  name = "Trivial/Internal Changes"
+  showcontent = true

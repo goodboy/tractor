@@ -4,6 +4,148 @@ Changelog
 
 .. towncrier release notes start
 
+tractor 0.1.0a5 (2022-08-03)
+============================
+
+This is our final release supporting Python 3.9 since we will be moving
+internals to the new `match:` syntax from 3.10 going forward and
+further, we have officially dropped usage of the `msgpack` library and
+happily adopted `msgspec`.
+
+Features
+--------
+
+- `#165 <https://github.com/goodboy/tractor/issues/165>`_: Add SIGINT
+  protection to our `pdbpp` based debugger subystem such that for
+  (single-depth) actor trees in debug mode we ignore interrupts in any
+  actor currently holding the TTY lock thus avoiding clobbering IPC
+  connections and/or task and process state when working in the REPL.
+
+  As a big note currently so called "nested" actor trees (trees with
+  actors having more then one parent/ancestor) are not fully supported
+  since we don't yet have a mechanism to relay the debug mode knowledge
+  "up" the actor tree (for eg. when handling a crash in a leaf actor).
+  As such currently there is a set of tests and known scenarios which will
+  result in process cloberring by the zombie repaing machinery and these
+  have been documented in https://github.com/goodboy/tractor/issues/320.
+
+  The implementation details include:
+
+  - utilizing a custom SIGINT handler which we apply whenever an actor's
+    runtime enters the debug machinery, which we also make sure the
+    stdlib's `pdb` configuration doesn't override (which it does by
+    default without special instance config).
+  - litter the runtime with `maybe_wait_for_debugger()` mostly in spots
+    where the root actor should block before doing embedded nursery
+    teardown ops which both cancel potential-children-in-deubg as well
+    as eventually trigger zombie reaping machinery.
+  - hardening of the TTY locking semantics/API both in terms of IPC
+    terminations and cancellation and lock release determinism from
+    sync debugger instance methods.
+  - factoring of locking infrastructure into a new `._debug.Lock` global
+    which encapsulates all details of the ``trio`` sync primitives and
+    task/actor uid management and tracking.
+
+  We also add `ctrl-c` cases throughout the test suite though these are
+  disabled for py3.9 (`pdbpp` UX differences that don't seem worth
+  compensating for, especially since this will be our last 3.9 supported
+  release) and there are a slew of marked cases that aren't expected to
+  work in CI more generally (as mentioned in the "nested" tree note
+  above) despite seemingly working  when run manually on linux.
+
+- `#304 <https://github.com/goodboy/tractor/issues/304>`_: Add a new
+  ``to_asyncio.LinkedTaskChannel.subscribe()`` which gives task-oriented
+  broadcast functionality semantically equivalent to
+  ``tractor.MsgStream.subscribe()`` this makes it possible for multiple
+  ``trio``-side tasks to consume ``asyncio``-side task msgs in tandem.
+
+  Further Improvements to the test suite were added in this patch set
+  including a new scenario test for a sub-actor managed "service nursery"
+  (implementing the basics of a "service manager") including use of
+  *infected asyncio* mode. Further we added a lower level
+  ``test_trioisms.py`` to start to track issues we need to work around in
+  ``trio`` itself which in this case included a bug we were trying to
+  solve related to https://github.com/python-trio/trio/issues/2258.
+
+
+Bug Fixes
+---------
+
+- `#318 <https://github.com/goodboy/tractor/issues/318>`_: Fix
+  a previously undetected ``trio``-``asyncio`` task lifetime linking
+  issue with the ``to_asyncio.open_channel_from()`` api where both sides
+  where not properly waiting/signalling termination and it was possible
+  for ``asyncio``-side errors to not propagate due to a race condition.
+
+  The implementation fix summary is:
+  - add state to signal the end of the ``trio`` side task to be
+    read by the ``asyncio`` side and always cancel any ongoing
+    task in such cases.
+  - always wait on the ``asyncio`` task termination from the ``trio``
+    side on error before maybe raising said error.
+  - always close the ``trio`` mem chan on exit to ensure the other
+    side can detect it and follow.
+
+
+Trivial/Internal Changes
+------------------------
+
+- `#248 <https://github.com/goodboy/tractor/issues/248>`_: Adjust the
+  `tractor._spawn.soft_wait()` strategy to avoid sending an actor cancel
+  request (via `Portal.cancel_actor()`) if either the child process is
+  detected as having terminated or the IPC channel is detected to be
+  closed.
+
+  This ensures (even) more deterministic inter-actor cancellation by
+  avoiding the timeout condition where possible when a whild never
+  sucessfully spawned, crashed, or became un-contactable over IPC.
+
+- `#295 <https://github.com/goodboy/tractor/issues/295>`_: Add an
+  experimental ``tractor.msg.NamespacePath`` type for passing Python
+  objects by "reference" through a ``str``-subtype message and using the
+  new ``pkgutil.resolve_name()`` for reference loading.
+
+- `#298 <https://github.com/goodboy/tractor/issues/298>`_: Add a new
+  `tractor.experimental` subpackage for staging new high level APIs and
+  subystems that we might eventually make built-ins.
+
+- `#300 <https://github.com/goodboy/tractor/issues/300>`_: Update to and
+  pin latest ``msgpack`` (1.0.3) and ``msgspec`` (0.4.0) both of which
+  required adjustments for backwards imcompatible API tweaks.
+
+- `#303 <https://github.com/goodboy/tractor/issues/303>`_: Fence off
+  ``multiprocessing`` imports until absolutely necessary in an effort to
+  avoid "resource tracker" spawning side effects that seem to have
+  varying degrees of unreliability per Python release. Port to new
+  ``msgspec.DecodeError``.
+
+- `#305 <https://github.com/goodboy/tractor/issues/305>`_: Add
+  ``tractor.query_actor()`` an addr looker-upper which doesn't deliver
+  a ``Portal`` instance and instead just a socket address ``tuple``.
+
+  Sometimes it's handy to just have a simple way to figure out if
+  a "service" actor is up, so add this discovery helper for that. We'll
+  prolly just leave it undocumented for now until we figure out
+  a longer-term/better discovery system.
+
+- `#316 <https://github.com/goodboy/tractor/issues/316>`_: Run windows
+  CI jobs on python 3.10 after some hacks for ``pdbpp`` dependency
+  issues.
+
+  Issue was to do with the now deprecated `pyreadline` project which
+  should be changed over to `pyreadline3`.
+
+- `#317 <https://github.com/goodboy/tractor/issues/317>`_: Drop use of
+  the ``msgpack`` package and instead move fully to the ``msgspec``
+  codec library.
+
+  We've now used ``msgspec`` extensively in production and there's no
+  reason to not use it as default. Further this change preps us for the up
+  and coming typed messaging semantics (#196), dialog-unprotocol system
+  (#297), and caps-based messaging-protocols (#299) planned before our
+  first beta.
+
+
 tractor 0.1.0a4 (2021-12-18)
 ============================
 
