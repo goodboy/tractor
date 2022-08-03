@@ -7,6 +7,11 @@ Changelog
 tractor 0.1.0a5 (2022-08-03)
 ============================
 
+This is our final release supporting Python 3.9 since we will be moving
+internals to the new `match:` syntax from 3.10 going forward and
+further, we have officially dropped usage of the `msgpack` library and
+happily adopted `msgspec`.
+
 Features
 --------
 
