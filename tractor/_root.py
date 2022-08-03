@@ -29,7 +29,7 @@ import warnings
 
 import trio
 
-from ._actor import Actor, Arbiter
+from ._runtime import Actor, Arbiter
 from . import _debug
 from . import _spawn
 from . import _state

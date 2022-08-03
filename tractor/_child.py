@@ -24,7 +24,7 @@ import argparse
 
 from ast import literal_eval
 
-from ._actor import Actor
+from ._runtime import Actor
 from ._entry import _trio_main
 
 
