@@ -57,7 +57,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ['3.9', '3.10']
+        python: ['3.10']
         spawn_backend: ['trio', 'mp']
 
     steps:
@@ -97,7 +97,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest]
-        python: ['3.9', '3.10']
+        python: ['3.10']
         spawn_backend: ['trio', 'mp']
 
     steps:
