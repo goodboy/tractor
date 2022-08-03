@@ -25,7 +25,7 @@ with open('docs/README.rst', encoding='utf-8') as f:
 
 setup(
     name="tractor",
-    version='0.1.0a5',  # alpha zone
+    version='0.1.0a6dev0',  # alpha zone
     description='structured concurrrent "actors"',
     long_description=readme,
     license='AGPLv3',
@@ -59,7 +59,6 @@ setup(
         # https://pip.pypa.io/en/stable/reference/requirement-specifiers/#examples
         # and pep:
         # https://peps.python.org/pep-0440/#version-specifiers
-        'pdbpp <= 0.10.1; python_version < "3.10"',
 
         # windows deps workaround for ``pdbpp``
         # https://github.com/pdbpp/pdbpp/issues/498
@@ -94,7 +93,6 @@ setup(
         "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
         "Programming Language :: Python :: Implementation :: CPython",
         "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Intended Audience :: Science/Research",
         "Intended Audience :: Developers",
