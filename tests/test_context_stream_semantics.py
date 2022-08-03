@@ -571,7 +571,7 @@ def test_one_end_stream_not_opened(overrun_by):
 
     '''
     overrunner, buf_size_increase, entrypoint = overrun_by
-    from tractor._actor import Actor
+    from tractor._runtime import Actor
     buf_size = buf_size_increase + Actor.msg_buffer_size
 
     async def main():
