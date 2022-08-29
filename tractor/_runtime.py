@@ -337,10 +337,6 @@ def _get_mod_abspath(module):
     return os.path.abspath(module.__file__)
 
 
-# process-global stack closed at end on actor runtime teardown
-_lifetime_stack: ExitStack = ExitStack()
-
-
 async def try_ship_error_to_parent(
     channel: Channel,
     err: Union[Exception, trio.MultiError],
@@ -405,6 +401,10 @@ class Actor:
 
     # if started on ``asycio`` running ``trio`` in guest mode
     _infected_aio: bool = False
+
+    # Process-global stack closed at end on actor runtime teardown.
+    # NOTE: this is currently an undocumented public api.
+    lifetime_stack: ExitStack = ExitStack()
 
     def __init__(
         self,
@@ -1293,7 +1293,7 @@ async def async_main(
         # killed (i.e. this actor is cancelled or signalled by the parent)
     except Exception as err:
         log.info("Closing all actor lifetime contexts")
-        _lifetime_stack.close()
+        actor.lifetime_stack.close()
 
         if not registered_with_arbiter:
             # TODO: I guess we could try to connect back
@@ -1332,7 +1332,7 @@ async def async_main(
         #     with trio.CancelScope(shield=True):
         #         await _debug.breakpoint()
 
-        _lifetime_stack.close()
+        actor.lifetime_stack.close()
 
         # Unregister actor from the arbiter
         if registered_with_arbiter and (
