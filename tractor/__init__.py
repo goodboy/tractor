@@ -46,9 +46,11 @@ from ._debug import breakpoint, post_mortem
 from . import msg
 from ._root import run, run_daemon, open_root_actor
 from ._portal import Portal
+from ._runtime import Actor
 
 
 __all__ = [
+    'Actor',
     'Channel',
     'Context',
     'ContextCancelled',

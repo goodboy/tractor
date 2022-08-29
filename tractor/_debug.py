@@ -643,7 +643,7 @@ def shield_sigint(
 
 
 def _set_trace(
-    actor: Optional[tractor._actor.Actor] = None,
+    actor: Optional[tractor.Actor] = None,
     pdb: Optional[MultiActorPdb] = None,
 ):
     __tracebackhide__ = True
@@ -676,7 +676,7 @@ breakpoint = partial(
 
 
 def _post_mortem(
-    actor: tractor._actor.Actor,
+    actor: tractor.Actor,
     pdb: MultiActorPdb,
 
 ) -> None:
