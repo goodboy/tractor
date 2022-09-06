@@ -28,6 +28,8 @@ jobs:
       - name: Run MyPy check
         run: mypy tractor/ --ignore-missing-imports
 
+  # test that we can generate a software distribution and install it
+  # thus avoid missing file issues after packaging.
   sdist-linux:
     name: 'sdist'
     runs-on: ubuntu-latest
@@ -74,7 +76,7 @@ jobs:
         run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
 
       - name: List dependencies
-        run: pip freeze
+        run: pip list
 
       - name: Run tests
         run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
@@ -114,7 +116,7 @@ jobs:
         run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
 
       - name: List dependencies
-        run: pip freeze
+        run: pip list
 
       - name: Run tests
-        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rs --full-trace
+        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
