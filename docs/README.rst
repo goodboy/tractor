@@ -568,8 +568,8 @@ Help us push toward the future of distributed `Python`.
   <https://github.com/goodboy/tractor/issues/196>`_ with draft work
   started in `#311 <https://github.com/goodboy/tractor/pull/311>`_)
 - We **recently disabled CI-testing on windows** and need help getting
-  it running again! (see `#322
-  <https://github.com/goodboy/tractor/pull/322>`_). **We do have windows
+  it running again! (see `#327
+  <https://github.com/goodboy/tractor/pull/327>`_). **We do have windows
   support** (and have for quite a while) but since no active hacker
   exists in the user-base to help test on that OS, for now we're not
   actively maintaining testing due to the added hassle and general
