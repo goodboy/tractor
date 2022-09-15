@@ -1,0 +1,16 @@
+Strictly support Python 3.10+, start runtime machinery reorg
+
+Since we want to push forward using the new `match:` syntax for our
+internal RPC-msg loops, we officially drop 3.9 support for the next
+release which should coincide well with the first release of 3.11.
+
+This patch set also officially removes the ``tractor.run()`` API (which
+has been deprecated for some time) as well as starts an initial re-org
+of the internal runtime core by:
+- renaming ``tractor._actor`` -> ``._runtime``
+- moving the ``._runtime.ActorActor._process_messages()`` and
+  ``._async_main()`` to be module level singleton-task-functions since
+  they are only started once for each connection and actor spawn
+  respectively; this internal API thus looks more similar to (at the
+  time of writing) the ``trio``-internals in ``trio._core._run``.
+- officially remove ``tractor.run()``, now deprecated for some time.
