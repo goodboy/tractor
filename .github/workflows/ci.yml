@@ -90,38 +90,38 @@ jobs:
   # - https://docs.github.com/en/actions/learn-github-actions/managing-complex-workflows
   # - https://docs.github.com/en/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
   # - https://docs.github.com/en/actions/learn-github-actions/workflow-syntax-for-github-actions#jobsjob_idif
-  testing-windows:
-    name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
-    timeout-minutes: 12
-    runs-on: ${{ matrix.os }}
+  # testing-windows:
+  #   name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
+  #   timeout-minutes: 12
+  #   runs-on: ${{ matrix.os }}
 
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
-        python: ['3.10']
-        spawn_backend: ['trio', 'mp']
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       os: [windows-latest]
+  #       python: ['3.10']
+  #       spawn_backend: ['trio', 'mp']
 
-    steps:
+  #   steps:
 
-      - name: Checkout
-        uses: actions/checkout@v2
+  #     - name: Checkout
+  #       uses: actions/checkout@v2
 
-      - name: Setup python
-        uses: actions/setup-python@v2
-        with:
-          python-version: '${{ matrix.python }}'
+  #     - name: Setup python
+  #       uses: actions/setup-python@v2
+  #       with:
+  #         python-version: '${{ matrix.python }}'
 
-      - name: Install dependencies
-        run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
+  #     - name: Install dependencies
+  #       run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
 
-      # TODO: pretty sure this solves debugger deps-issues on windows, but it needs to
-      # be verified by someone with a native setup.
-      # - name: Force pyreadline3
-      #   run: pip uninstall pyreadline; pip install -U pyreadline3
+  #     # TODO: pretty sure this solves debugger deps-issues on windows, but it needs to
+  #     # be verified by someone with a native setup.
+  #     # - name: Force pyreadline3
+  #     #   run: pip uninstall pyreadline; pip install -U pyreadline3
 
-      - name: List dependencies
-        run: pip list
+  #     - name: List dependencies
+  #       run: pip list
 
-      - name: Run tests
-        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+  #     - name: Run tests
+  #       run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
