@@ -23,13 +23,6 @@ async def test_no_arbitter():
             pass
 
 
-def test_no_main():
-    """An async function **must** be passed to ``tractor.run()``.
-    """
-    with pytest.raises(TypeError):
-        tractor.run(None)
-
-
 @tractor_test
 async def test_self_is_registered(arb_addr):
     "Verify waiting on the arbiter to register itself using the standard api."
