@@ -19,7 +19,7 @@ Sub-process entry points.
 
 """
 from functools import partial
-from typing import Tuple, Any
+from typing import Any
 
 import trio  # type: ignore
 
@@ -35,10 +35,10 @@ log = get_logger(__name__)
 def _mp_main(
 
     actor: 'Actor',  # type: ignore
-    accept_addr: Tuple[str, int],
-    forkserver_info: Tuple[Any, Any, Any, Any, Any],
+    accept_addr: tuple[str, int],
+    forkserver_info: tuple[Any, Any, Any, Any, Any],
     start_method: str,
-    parent_addr: Tuple[str, int] = None,
+    parent_addr: tuple[str, int] = None,
     infect_asyncio: bool = False,
 
 ) -> None:
@@ -85,7 +85,7 @@ def _trio_main(
 
     actor: Actor,  # type: ignore
     *,
-    parent_addr: Tuple[str, int] = None,
+    parent_addr: tuple[str, int] = None,
     infect_asyncio: bool = False,
 
 ) -> None:

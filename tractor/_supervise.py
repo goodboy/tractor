@@ -20,7 +20,10 @@
 """
 from functools import partial
 import inspect
-from typing import Tuple, List, Dict, Optional, TYPE_CHECKING
+from typing import (
+    Optional,
+    TYPE_CHECKING,
+)
 import typing
 import warnings
 
@@ -43,7 +46,7 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-_default_bind_addr: Tuple[str, int] = ('127.0.0.1', 0)
+_default_bind_addr: tuple[str, int] = ('127.0.0.1', 0)
 
 
 class ActorNursery:
@@ -79,15 +82,15 @@ class ActorNursery:
         actor: Actor,
         ria_nursery: trio.Nursery,
         da_nursery: trio.Nursery,
-        errors: Dict[Tuple[str, str], Exception],
+        errors: dict[tuple[str, str], Exception],
     ) -> None:
         # self.supervisor = supervisor  # TODO
         self._actor: Actor = actor
         self._ria_nursery = ria_nursery
         self._da_nursery = da_nursery
-        self._children: Dict[
-            Tuple[str, str],
-            Tuple[Actor, mp.Process, Optional[Portal]]
+        self._children: dict[
+            tuple[str, str],
+            tuple[Actor, mp.Process, Optional[Portal]]
         ] = {}
         # portals spawned with ``run_in_actor()`` are
         # cancelled when their "main" result arrives
@@ -102,9 +105,9 @@ class ActorNursery:
         self,
         name: str,
         *,
-        bind_addr: Tuple[str, int] = _default_bind_addr,
-        rpc_module_paths: List[str] = None,
-        enable_modules: List[str] = None,
+        bind_addr: tuple[str, int] = _default_bind_addr,
+        rpc_module_paths: list[str] = None,
+        enable_modules: list[str] = None,
         loglevel: str = None,  # set log level per subactor
         nursery: trio.Nursery = None,
         debug_mode: Optional[bool] = None,
@@ -173,9 +176,9 @@ class ActorNursery:
         *,
 
         name: Optional[str] = None,
-        bind_addr: Tuple[str, int] = _default_bind_addr,
-        rpc_module_paths: Optional[List[str]] = None,
-        enable_modules: List[str] = None,
+        bind_addr: tuple[str, int] = _default_bind_addr,
+        rpc_module_paths: Optional[list[str]] = None,
+        enable_modules: list[str] = None,
         loglevel: str = None,  # set log level per subactor
         infect_asyncio: bool = False,
 
@@ -293,7 +296,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 ) -> typing.AsyncGenerator[ActorNursery, None]:
 
     # the collection of errors retreived from spawned sub-actors
-    errors: Dict[Tuple[str, str], Exception] = {}
+    errors: dict[tuple[str, str], Exception] = {}
 
     # This is the outermost level "deamon actor" nursery. It is awaited
     # **after** the below inner "run in actor nursery". This allows for

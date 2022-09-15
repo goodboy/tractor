@@ -102,6 +102,8 @@ async def gather_contexts(
         # deliver control once all managers have started up
         await all_entered.wait()
 
+        # NOTE: order *should* be preserved in the output values
+        # since ``dict``s are now implicitly ordered.
         yield tuple(unwrapped.values())
 
         # we don't need a try/finally since cancellation will be triggered

@@ -26,7 +26,10 @@ support provided by ``tractor.Context.open_stream()`` and friends.
 from __future__ import annotations
 import inspect
 import typing
-from typing import Dict, Any, Set, Callable, List, Tuple
+from typing import (
+    Any,
+    Callable,
+)
 from functools import partial
 from async_generator import aclosing
 
@@ -44,7 +47,7 @@ log = get_logger('messaging')
 
 async def fan_out_to_ctxs(
     pub_async_gen_func: typing.Callable,  # it's an async gen ... gd mypy
-    topics2ctxs: Dict[str, list],
+    topics2ctxs: dict[str, list],
     packetizer: typing.Callable = None,
 ) -> None:
     '''
@@ -61,7 +64,7 @@ async def fan_out_to_ctxs(
 
         async for published in pub_gen:
 
-            ctx_payloads: List[Tuple[Context, Any]] = []
+            ctx_payloads: list[tuple[Context, Any]] = []
 
             for topic, data in published.items():
                 log.debug(f"publishing {topic, data}")
@@ -103,8 +106,8 @@ async def fan_out_to_ctxs(
 
 def modify_subs(
 
-    topics2ctxs: Dict[str, List[Context]],
-    topics: Set[str],
+    topics2ctxs: dict[str, list[Context]],
+    topics: set[str],
     ctx: Context,
 
 ) -> None:
@@ -136,20 +139,20 @@ def modify_subs(
             topics2ctxs.pop(topic)
 
 
-_pub_state: Dict[str, dict] = {}
-_pubtask2lock: Dict[str, trio.StrictFIFOLock] = {}
+_pub_state: dict[str, dict] = {}
+_pubtask2lock: dict[str, trio.StrictFIFOLock] = {}
 
 
 def pub(
     wrapped: typing.Callable = None,
     *,
-    tasks: Set[str] = set(),
+    tasks: set[str] = set(),
 ):
     """Publisher async generator decorator.
 
     A publisher can be called multiple times from different actors but
     will only spawn a finite set of internal tasks to stream values to
-    each caller. The ``tasks: Set[str]`` argument to the decorator
+    each caller. The ``tasks: set[str]`` argument to the decorator
     specifies the names of the mutex set of publisher tasks.  When the
     publisher function is called, an argument ``task_name`` must be
     passed to specify which task (of the set named in ``tasks``) should
@@ -158,9 +161,9 @@ def pub(
     necessary.
 
     Values yielded from the decorated async generator must be
-    ``Dict[str, Dict[str, Any]]`` where the fist level key is the topic
+    ``dict[str, dict[str, Any]]`` where the fist level key is the topic
     string and determines which subscription the packet will be
-    delivered to and the value is a packet ``Dict[str, Any]`` by default
+    delivered to and the value is a packet ``dict[str, Any]`` by default
     of the form:
 
     .. ::python
@@ -186,7 +189,7 @@ def pub(
 
 
     The publisher must be called passing in the following arguments:
-    - ``topics: Set[str]`` the topic sequence or "subscriptions"
+    - ``topics: set[str]`` the topic sequence or "subscriptions"
     - ``task_name: str`` the task to use (if ``tasks`` was passed)
     - ``ctx: Context`` the tractor context (only needed if calling the
       pub func without a nursery, otherwise this is provided implicitly)
@@ -231,7 +234,7 @@ def pub(
     if wrapped is None:
         return partial(pub, tasks=tasks)
 
-    task2lock: Dict[str, trio.StrictFIFOLock] = {}
+    task2lock: dict[str, trio.StrictFIFOLock] = {}
 
     for name in tasks:
         task2lock[name] = trio.StrictFIFOLock()
@@ -243,7 +246,7 @@ def pub(
         # `wrapt` docs
         async def _execute(
             ctx: Context,
-            topics: Set[str],
+            topics: set[str],
             *args,
             # *,
             task_name: str = None,  # default: only one task allocated

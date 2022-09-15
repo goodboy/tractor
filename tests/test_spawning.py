@@ -1,7 +1,7 @@
 """
 Spawning basics
 """
-from typing import Dict, Tuple, Optional
+from typing import Optional
 
 import pytest
 import trio
@@ -14,8 +14,8 @@ data_to_pass_down = {'doggy': 10, 'kitty': 4}
 
 async def spawn(
     is_arbiter: bool,
-    data: Dict,
-    arb_addr: Tuple[str, int],
+    data: dict,
+    arb_addr: tuple[str, int],
 ):
     namespaces = [__name__]
 

@@ -9,7 +9,7 @@ is ``tractor``'s channels.
 
 """
 from contextlib import asynccontextmanager
-from typing import List, Callable
+from typing import Callable
 import itertools
 import math
 import time
@@ -71,8 +71,8 @@ async def worker_pool(workers=4):
 
         async def _map(
             worker_func: Callable[[int], bool],
-            sequence: List[int]
-        ) -> List[bool]:
+            sequence: list[int]
+        ) -> list[bool]:
 
             # define an async (local) task to collect results from workers
             async def send_result(func, value, portal):
