@@ -81,9 +81,9 @@ jobs:
       - name: Run tests
         run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
 
-  # We skip 3.10 on windows for now due to
-  # https://github.com/pytest-dev/pytest/issues/8733
-  # some kinda weird `pyreadline` issue..
+  # We skip 3.10 on windows for now due to not having any collabs to
+  # debug the CI failures. Anyone wanting to hack and solve them is very
+  # welcome, but our primary user base is not using that OS.
 
   # TODO: use job filtering to accomplish instead of repeated
   # boilerplate as is above XD:
@@ -114,6 +114,11 @@ jobs:
 
       - name: Install dependencies
         run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
+
+      # TODO: pretty sure this solves debugger deps-issues on windows, but it needs to
+      # be verified by someone with a native setup.
+      # - name: Force pyreadline3
+      #   run: pip uninstall pyreadline; pip install -U pyreadline3
 
       - name: List dependencies
         run: pip list
