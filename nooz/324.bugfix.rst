@@ -1,0 +1,4 @@
+Only set `._debug.Lock.local_pdb_complete` if has been created.
+
+This can be triggered by a very rare race condition (and thus we have no
+working test yet) but it is known to exist in (a) consumer project(s).
