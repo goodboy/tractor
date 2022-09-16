@@ -126,7 +126,8 @@ class Lock:
         try:
             # sometimes the ``trio`` might already be terminated in
             # which case this call will raise.
-            cls.local_pdb_complete.set()
+            if cls.local_pdb_complete is not None:
+                cls.local_pdb_complete.set()
         finally:
             # restore original sigint handler
             cls.unshield_sigint()
