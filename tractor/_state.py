@@ -18,7 +18,10 @@
 Per process state
 
 """
-from typing import Optional, Dict, Any
+from typing import (
+    Optional,
+    Any,
+)
 from collections.abc import Mapping
 
 import trio
@@ -27,7 +30,7 @@ from ._exceptions import NoRuntime
 
 
 _current_actor: Optional['Actor'] = None  # type: ignore # noqa
-_runtime_vars: Dict[str, Any] = {
+_runtime_vars: dict[str, Any] = {
     '_debug_mode': False,
     '_is_root': False,
     '_root_mailbox': (None, None)

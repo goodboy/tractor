@@ -396,7 +396,7 @@ tasks spawned via multiple RPC calls to an actor can modify
 
 
         # a per process cache
-        _actor_cache: Dict[str, bool] = {}
+        _actor_cache: dict[str, bool] = {}
 
 
         def ping_endpoints(endpoints: List[str]):

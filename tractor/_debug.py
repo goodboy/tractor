@@ -25,7 +25,6 @@ import signal
 from functools import partial
 from contextlib import asynccontextmanager as acm
 from typing import (
-    Tuple,
     Optional,
     Callable,
     AsyncIterator,
@@ -74,7 +73,7 @@ class Lock:
     local_task_in_debug: Optional[str] = None
 
     # actor tree-wide actor uid that supposedly has the tty lock
-    global_actor_in_debug: Optional[Tuple[str, str]] = None
+    global_actor_in_debug: Optional[tuple[str, str]] = None
 
     local_pdb_complete: Optional[trio.Event] = None
     no_remote_has_tty: Optional[trio.Event] = None
@@ -172,7 +171,7 @@ class MultiActorPdb(pdbpp.Pdb):
 
 @acm
 async def _acquire_debug_lock_from_root_task(
-    uid: Tuple[str, str]
+    uid: tuple[str, str]
 
 ) -> AsyncIterator[trio.StrictFIFOLock]:
     '''
@@ -252,7 +251,7 @@ async def _acquire_debug_lock_from_root_task(
 async def lock_tty_for_child(
 
     ctx: tractor.Context,
-    subactor_uid: Tuple[str, str]
+    subactor_uid: tuple[str, str]
 
 ) -> str:
     '''
@@ -302,7 +301,7 @@ async def lock_tty_for_child(
 
 
 async def wait_for_parent_stdin_hijack(
-    actor_uid: Tuple[str, str],
+    actor_uid: tuple[str, str],
     task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED
 ):
     '''
@@ -643,7 +642,7 @@ def shield_sigint(
 
 
 def _set_trace(
-    actor: Optional[tractor._actor.Actor] = None,
+    actor: Optional[tractor.Actor] = None,
     pdb: Optional[MultiActorPdb] = None,
 ):
     __tracebackhide__ = True
@@ -676,7 +675,7 @@ breakpoint = partial(
 
 
 def _post_mortem(
-    actor: tractor._actor.Actor,
+    actor: tractor.Actor,
     pdb: MultiActorPdb,
 
 ) -> None:
@@ -732,7 +731,7 @@ async def _maybe_enter_pm(err):
 
 @acm
 async def acquire_debug_lock(
-    subactor_uid: Tuple[str, str],
+    subactor_uid: tuple[str, str],
 ) -> AsyncGenerator[None, tuple]:
     '''
     Grab root's debug lock on entry, release on exit.

@@ -23,8 +23,10 @@ import inspect
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import (
-    Any, Optional, Callable,
-    AsyncGenerator, Dict,
+    Any,
+    Optional,
+    Callable,
+    AsyncGenerator,
     AsyncIterator
 )
 
@@ -393,7 +395,7 @@ class Context:
 
     async def _maybe_raise_from_remote_msg(
         self,
-        msg: Dict[str, Any],
+        msg: dict[str, Any],
 
     ) -> None:
         '''

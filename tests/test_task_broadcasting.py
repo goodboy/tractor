@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from functools import partial
 from itertools import cycle
 import time
-from typing import Optional, List, Tuple
+from typing import Optional
 
 import pytest
 import trio
@@ -62,8 +62,8 @@ async def ensure_sequence(
 @asynccontextmanager
 async def open_sequence_streamer(
 
-    sequence: List[int],
-    arb_addr: Tuple[str, int],
+    sequence: list[int],
+    arb_addr: tuple[str, int],
     start_method: str,
 
 ) -> tractor.MsgStream:

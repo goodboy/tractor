@@ -18,7 +18,11 @@
 Actor discovery API.
 
 """
-from typing import Tuple, Optional, Union, AsyncGenerator
+from typing import (
+    Optional,
+    Union,
+    AsyncGenerator,
+)
 from contextlib import asynccontextmanager as acm
 
 from ._ipc import _connect_chan, Channel
@@ -104,7 +108,7 @@ async def query_actor(
 @acm
 async def find_actor(
     name: str,
-    arbiter_sockaddr: Tuple[str, int] = None
+    arbiter_sockaddr: tuple[str, int] = None
 
 ) -> AsyncGenerator[Optional[Portal], None]:
     '''
@@ -130,7 +134,7 @@ async def find_actor(
 @acm
 async def wait_for_actor(
     name: str,
-    arbiter_sockaddr: Tuple[str, int] = None
+    arbiter_sockaddr: tuple[str, int] = None
 ) -> AsyncGenerator[Portal, None]:
     """Wait on an actor to register with the arbiter.
 

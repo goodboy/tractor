@@ -18,7 +18,11 @@
 Our classy exception set.
 
 """
-from typing import Dict, Any, Optional, Type
+from typing import (
+    Any,
+    Optional,
+    Type,
+)
 import importlib
 import builtins
 import traceback
@@ -95,7 +99,7 @@ def pack_error(
     exc: BaseException,
     tb=None,
 
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create an "error message" for tranmission over
     a channel (aka the wire).
     """
@@ -114,7 +118,7 @@ def pack_error(
 
 def unpack_error(
 
-    msg: Dict[str, Any],
+    msg: dict[str, Any],
     chan=None,
     err_type=RemoteActorError
 

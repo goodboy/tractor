@@ -23,13 +23,15 @@ from functools import partial
 import importlib
 import logging
 import os
-from typing import Tuple, Optional, List, Any
+from typing import (
+    Optional,
+)
 import typing
 import warnings
 
 import trio
 
-from ._actor import Actor, Arbiter
+from ._runtime import Actor, Arbiter, async_main
 from . import _debug
 from . import _spawn
 from . import _state
@@ -50,7 +52,7 @@ logger = log.get_logger('tractor')
 async def open_root_actor(
 
     # defaults are above
-    arbiter_addr: Optional[Tuple[str, int]] = (
+    arbiter_addr: Optional[tuple[str, int]] = (
         _default_arbiter_host,
         _default_arbiter_port,
     ),
@@ -68,8 +70,8 @@ async def open_root_actor(
     # internal logging
     loglevel: Optional[str] = None,
 
-    enable_modules: Optional[List] = None,
-    rpc_module_paths: Optional[List] = None,
+    enable_modules: Optional[list] = None,
+    rpc_module_paths: Optional[list] = None,
 
 ) -> typing.Any:
     """Async entry point for ``tractor``.
@@ -188,13 +190,14 @@ async def open_root_actor(
         # start the actor runtime in a new task
         async with trio.open_nursery() as nursery:
 
-            # ``Actor._async_main()`` creates an internal nursery and
+            # ``_runtime.async_main()`` creates an internal nursery and
             # thus blocks here until the entire underlying actor tree has
             # terminated thereby conducting structured concurrency.
 
             await nursery.start(
                 partial(
-                    actor._async_main,
+                    async_main,
+                    actor,
                     accept_addr=(host, port),
                     parent_addr=None
                 )
@@ -229,28 +232,35 @@ async def open_root_actor(
         logger.runtime("Root actor terminated")
 
 
-def run(
-
-    # target
-    async_fn: typing.Callable[..., typing.Awaitable],
-    *args,
+def run_daemon(
+    enable_modules: list[str],
 
     # runtime kwargs
     name: Optional[str] = 'root',
-    arbiter_addr: Tuple[str, int] = (
+    arbiter_addr: tuple[str, int] = (
         _default_arbiter_host,
         _default_arbiter_port,
     ),
 
     start_method: Optional[str] = None,
     debug_mode: bool = False,
-    **kwargs,
+    **kwargs
 
-) -> Any:
-    """Run a trio-actor async function in process.
+) -> None:
+    '''
+    Spawn daemon actor which will respond to RPC; the main task simply
+    starts the runtime and then sleeps forever.
 
-    This is tractor's main entry and the start point for any async actor.
-    """
+    This is a very minimal convenience wrapper around starting
+    a "run-until-cancelled" root actor which can be started with a set
+    of enabled modules for RPC request handling.
+
+    '''
+    kwargs['enable_modules'] = list(enable_modules)
+
+    for path in enable_modules:
+        importlib.import_module(path)
+
     async def _main():
 
         async with open_root_actor(
@@ -260,35 +270,6 @@ def run(
             debug_mode=debug_mode,
             **kwargs,
         ):
+            return await trio.sleep_forever()
 
-            return await async_fn(*args)
-
-    warnings.warn(
-        "`tractor.run()` is now deprecated. `tractor` now"
-        " implicitly starts the root actor on first actor nursery"
-        " use. If you want to start the root actor manually, use"
-        " `tractor.open_root_actor()`.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     return trio.run(_main)
-
-
-def run_daemon(
-    enable_modules: list[str],
-    **kwargs
-) -> None:
-    '''
-    Spawn daemon actor which will respond to RPC.
-
-    This is a convenience wrapper around
-    ``tractor.run(trio.sleep(float('inf')))`` such that the first actor spawned
-    is meant to run forever responding to RPC requests.
-
-    '''
-    kwargs['enable_modules'] = list(enable_modules)
-
-    for path in enable_modules:
-        importlib.import_module(path)
-
-    return run(partial(trio.sleep, float('inf')), **kwargs)

@@ -19,14 +19,14 @@ Sub-process entry points.
 
 """
 from functools import partial
-from typing import Tuple, Any
-import signal
+from typing import Any
 
 import trio  # type: ignore
 
 from .log import get_console_log, get_logger
 from . import _state
 from .to_asyncio import run_as_asyncio_guest
+from ._runtime import async_main, Actor
 
 
 log = get_logger(__name__)
@@ -35,10 +35,10 @@ log = get_logger(__name__)
 def _mp_main(
 
     actor: 'Actor',  # type: ignore
-    accept_addr: Tuple[str, int],
-    forkserver_info: Tuple[Any, Any, Any, Any, Any],
+    accept_addr: tuple[str, int],
+    forkserver_info: tuple[Any, Any, Any, Any, Any],
     start_method: str,
-    parent_addr: Tuple[str, int] = None,
+    parent_addr: tuple[str, int] = None,
     infect_asyncio: bool = False,
 
 ) -> None:
@@ -63,7 +63,8 @@ def _mp_main(
 
     log.debug(f"parent_addr is {parent_addr}")
     trio_main = partial(
-        actor._async_main,
+        async_main,
+        actor,
         accept_addr,
         parent_addr=parent_addr
     )
@@ -82,9 +83,9 @@ def _mp_main(
 
 def _trio_main(
 
-    actor: 'Actor',  # type: ignore
+    actor: Actor,  # type: ignore
     *,
-    parent_addr: Tuple[str, int] = None,
+    parent_addr: tuple[str, int] = None,
     infect_asyncio: bool = False,
 
 ) -> None:
@@ -106,7 +107,8 @@ def _trio_main(
 
     log.debug(f"parent_addr is {parent_addr}")
     trio_main = partial(
-        actor._async_main,
+        async_main,
+        actor,
         parent_addr=parent_addr
     )
 

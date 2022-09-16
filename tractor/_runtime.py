@@ -391,7 +391,7 @@ class Actor:
     is_arbiter: bool = False
     msg_buffer_size: int = 2**6
 
-    # nursery placeholders filled in by `_async_main()` after fork
+    # nursery placeholders filled in by `async_main()` after fork
     _root_n: Optional[trio.Nursery] = None
     _service_n: Optional[trio.Nursery] = None
     _server_n: Optional[trio.Nursery] = None
@@ -416,9 +416,11 @@ class Actor:
         arbiter_addr: Optional[tuple[str, int]] = None,
         spawn_method: Optional[str] = None
     ) -> None:
-        """This constructor is called in the parent actor **before** the spawning
+        '''
+        This constructor is called in the parent actor **before** the spawning
         phase (aka before a new process is executed).
-        """
+
+        '''
         self.name = name
         self.uid = (name, uid or str(uuid.uuid4()))
 
@@ -439,9 +441,6 @@ class Actor:
 
         self.enable_modules = mods
         self._mods: dict[str, ModuleType] = {}
-
-        # TODO: consider making this a dynamically defined
-        # @dataclass once we get py3.7
         self.loglevel = loglevel
 
         self._arb_addr = (
@@ -482,9 +481,11 @@ class Actor:
     async def wait_for_peer(
         self, uid: tuple[str, str]
     ) -> tuple[trio.Event, Channel]:
-        """Wait for a connection back from a spawned actor with a given
+        '''
+        Wait for a connection back from a spawned actor with a given
         ``uid``.
-        """
+
+        '''
         log.runtime(f"Waiting for peer {uid} to connect")
         event = self._peer_connected.setdefault(uid, trio.Event())
         await event.wait()
@@ -492,12 +493,14 @@ class Actor:
         return event, self._peers[uid][-1]
 
     def load_modules(self) -> None:
-        """Load allowed RPC modules locally (after fork).
+        '''
+        Load allowed RPC modules locally (after fork).
 
         Since this actor may be spawned on a different machine from
         the original nursery we need to try and load the local module
         code (if it exists).
-        """
+
+        '''
         try:
             if self._spawn_method == 'trio':
                 parent_data = self._parent_main_data
@@ -614,7 +617,7 @@ class Actor:
         # Begin channel management - respond to remote requests and
         # process received reponses.
         try:
-            disconnected = await self._process_messages(chan)
+            disconnected = await process_messages(self, chan)
 
         except (
             trio.Cancelled,
@@ -884,227 +887,6 @@ class Actor:
         ctx._remote_func_type = functype
         return ctx
 
-    async def _process_messages(
-        self,
-        chan: Channel,
-        shield: bool = False,
-        task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED,
-
-    ) -> bool:
-        '''
-        Process messages for the channel async-RPC style.
-
-        Receive multiplexed RPC requests and deliver responses over ``chan``.
-
-        '''
-        # TODO: once https://github.com/python-trio/trio/issues/467 gets
-        # worked out we'll likely want to use that!
-        msg = None
-        nursery_cancelled_before_task: bool = False
-
-        log.runtime(f"Entering msg loop for {chan} from {chan.uid}")
-        try:
-            with trio.CancelScope(shield=shield) as loop_cs:
-                # this internal scope allows for keeping this message
-                # loop running despite the current task having been
-                # cancelled (eg. `open_portal()` may call this method from
-                # a locally spawned task) and recieve this scope using
-                # ``scope = Nursery.start()``
-                task_status.started(loop_cs)
-                async for msg in chan:
-
-                    if msg is None:  # loop terminate sentinel
-
-                        log.cancel(
-                            f"Channel to {chan.uid} terminated?\n"
-                            "Cancelling all associated tasks..")
-
-                        for (channel, cid) in self._rpc_tasks.copy():
-                            if channel is chan:
-                                await self._cancel_task(cid, channel)
-
-                        log.runtime(
-                                f"Msg loop signalled to terminate for"
-                                f" {chan} from {chan.uid}")
-
-                        break
-
-                    log.transport(   # type: ignore
-                        f"Received msg {msg} from {chan.uid}")
-
-                    cid = msg.get('cid')
-                    if cid:
-                        # deliver response to local caller/waiter
-                        await self._push_result(chan, cid, msg)
-
-                        log.runtime(
-                            f"Waiting on next msg for {chan} from {chan.uid}")
-                        continue
-
-                    # process command request
-                    try:
-                        ns, funcname, kwargs, actorid, cid = msg['cmd']
-                    except KeyError:
-                        # This is the non-rpc error case, that is, an
-                        # error **not** raised inside a call to ``_invoke()``
-                        # (i.e. no cid was provided in the msg - see above).
-                        # Push this error to all local channel consumers
-                        # (normally portals) by marking the channel as errored
-                        assert chan.uid
-                        exc = unpack_error(msg, chan=chan)
-                        chan._exc = exc
-                        raise exc
-
-                    log.runtime(
-                        f"Processing request from {actorid}\n"
-                        f"{ns}.{funcname}({kwargs})")
-
-                    if ns == 'self':
-                        func = getattr(self, funcname)
-
-                        if funcname == 'cancel':
-
-                            # don't start entire actor runtime
-                            # cancellation if this actor is in debug
-                            # mode
-                            pdb_complete = _debug.Lock.local_pdb_complete
-                            if pdb_complete:
-                                await pdb_complete.wait()
-
-                            # we immediately start the runtime machinery
-                            # shutdown
-                            with trio.CancelScope(shield=True):
-                                # self.cancel() was called so kill this
-                                # msg loop and break out into
-                                # ``_async_main()``
-                                log.cancel(
-                                    f"Actor {self.uid} was remotely cancelled "
-                                    f"by {chan.uid}"
-                                )
-                                await _invoke(
-                                    self, cid, chan, func, kwargs, is_rpc=False
-                                )
-
-                            loop_cs.cancel()
-                            break
-
-                        if funcname == '_cancel_task':
-
-                            # we immediately start the runtime machinery
-                            # shutdown
-                            with trio.CancelScope(shield=True):
-                                # self.cancel() was called so kill this
-                                # msg loop and break out into
-                                # ``_async_main()``
-                                kwargs['chan'] = chan
-                                log.cancel(
-                                    f'Remote request to cancel task\n'
-                                    f'remote actor: {chan.uid}\n'
-                                    f'task: {cid}'
-                                )
-                                try:
-                                    await _invoke(
-                                        self,
-                                        cid,
-                                        chan,
-                                        func,
-                                        kwargs,
-                                        is_rpc=False,
-                                    )
-                                except BaseException:
-                                    log.exception("failed to cancel task?")
-
-                                continue
-                    else:
-                        # complain to client about restricted modules
-                        try:
-                            func = self._get_rpc_func(ns, funcname)
-                        except (ModuleNotExposed, AttributeError) as err:
-                            err_msg = pack_error(err)
-                            err_msg['cid'] = cid
-                            await chan.send(err_msg)
-                            continue
-
-                    # spin up a task for the requested function
-                    log.runtime(f"Spawning task for {func}")
-                    assert self._service_n
-                    try:
-                        cs = await self._service_n.start(
-                            partial(_invoke, self, cid, chan, func, kwargs),
-                            name=funcname,
-                        )
-                    except (RuntimeError, trio.MultiError):
-                        # avoid reporting a benign race condition
-                        # during actor runtime teardown.
-                        nursery_cancelled_before_task = True
-                        break
-
-                    # never allow cancelling cancel requests (results in
-                    # deadlock and other weird behaviour)
-                    # if func != self.cancel:
-                    if isinstance(cs, Exception):
-                        log.warning(
-                            f"Task for RPC func {func} failed with"
-                            f"{cs}")
-                    else:
-                        # mark that we have ongoing rpc tasks
-                        self._ongoing_rpc_tasks = trio.Event()
-                        log.runtime(f"RPC func is {func}")
-                        # store cancel scope such that the rpc task can be
-                        # cancelled gracefully if requested
-                        self._rpc_tasks[(chan, cid)] = (
-                            cs, func, trio.Event())
-
-                    log.runtime(
-                        f"Waiting on next msg for {chan} from {chan.uid}")
-
-                # end of async for, channel disconnect vis
-                # ``trio.EndOfChannel``
-                log.runtime(
-                    f"{chan} for {chan.uid} disconnected, cancelling tasks"
-                )
-                await self.cancel_rpc_tasks(chan)
-
-        except (
-            TransportClosed,
-        ):
-            # channels "breaking" (for TCP streams by EOF or 104
-            # connection-reset) is ok since we don't have a teardown
-            # handshake for them (yet) and instead we simply bail out of
-            # the message loop and expect the teardown sequence to clean
-            # up.
-            log.runtime(f'channel from {chan.uid} closed abruptly:\n{chan}')
-
-            # transport **was** disconnected
-            return True
-
-        except (Exception, trio.MultiError) as err:
-            if nursery_cancelled_before_task:
-                sn = self._service_n
-                assert sn and sn.cancel_scope.cancel_called
-                log.cancel(
-                    f'Service nursery cancelled before it handled {funcname}'
-                )
-            else:
-                # ship any "internal" exception (i.e. one from internal
-                # machinery not from an rpc task) to parent
-                log.exception("Actor errored:")
-                if self._parent_chan:
-                    await try_ship_error_to_parent(self._parent_chan, err)
-
-            # if this is the `MainProcess` we expect the error broadcasting
-            # above to trigger an error at consuming portal "checkpoints"
-            raise
-
-        finally:
-            # msg debugging for when he machinery is brokey
-            log.runtime(
-                f"Exiting msg loop for {chan} from {chan.uid} "
-                f"with last msg:\n{msg}")
-
-        # transport **was not** disconnected
-        return False
-
     async def _from_parent(
         self,
         parent_addr: Optional[tuple[str, int]],
@@ -1161,198 +943,6 @@ class Actor:
             await self.cancel()
             raise
 
-    async def _async_main(
-        self,
-        accept_addr: Optional[tuple[str, int]] = None,
-
-        # XXX: currently ``parent_addr`` is only needed for the
-        # ``multiprocessing`` backend (which pickles state sent to
-        # the child instead of relaying it over the connect-back
-        # channel). Once that backend is removed we can likely just
-        # change this to a simple ``is_subactor: bool`` which will
-        # be False when running as root actor and True when as
-        # a subactor.
-        parent_addr: Optional[tuple[str, int]] = None,
-        task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
-
-    ) -> None:
-        """
-        Start the channel server, maybe connect back to the parent, and
-        start the main task.
-
-        A "root-most" (or "top-level") nursery for this actor is opened here
-        and when cancelled effectively cancels the actor.
-
-        """
-        registered_with_arbiter = False
-        try:
-
-            # establish primary connection with immediate parent
-            self._parent_chan = None
-            if parent_addr is not None:
-
-                self._parent_chan, accept_addr_rent = await self._from_parent(
-                    parent_addr)
-
-                # either it's passed in because we're not a child
-                # or because we're running in mp mode
-                if accept_addr_rent is not None:
-                    accept_addr = accept_addr_rent
-
-            # load exposed/allowed RPC modules
-            # XXX: do this **after** establishing a channel to the parent
-            # but **before** starting the message loop for that channel
-            # such that import errors are properly propagated upwards
-            self.load_modules()
-
-            # The "root" nursery ensures the channel with the immediate
-            # parent is kept alive as a resilient service until
-            # cancellation steps have (mostly) occurred in
-            # a deterministic way.
-            async with trio.open_nursery() as root_nursery:
-                self._root_n = root_nursery
-                assert self._root_n
-
-                async with trio.open_nursery() as service_nursery:
-                    # This nursery is used to handle all inbound
-                    # connections to us such that if the TCP server
-                    # is killed, connections can continue to process
-                    # in the background until this nursery is cancelled.
-                    self._service_n = service_nursery
-                    assert self._service_n
-
-                    # Startup up the channel server with,
-                    # - subactor: the bind address is sent by our parent
-                    #   over our established channel
-                    # - root actor: the ``accept_addr`` passed to this method
-                    assert accept_addr
-                    host, port = accept_addr
-
-                    self._server_n = await service_nursery.start(
-                        partial(
-                            self._serve_forever,
-                            service_nursery,
-                            accept_host=host,
-                            accept_port=port
-                        )
-                    )
-                    accept_addr = self.accept_addr
-                    if _state._runtime_vars['_is_root']:
-                        _state._runtime_vars['_root_mailbox'] = accept_addr
-
-                    # Register with the arbiter if we're told its addr
-                    log.runtime(f"Registering {self} for role `{self.name}`")
-                    assert isinstance(self._arb_addr, tuple)
-
-                    async with get_arbiter(*self._arb_addr) as arb_portal:
-                        await arb_portal.run_from_ns(
-                            'self',
-                            'register_actor',
-                            uid=self.uid,
-                            sockaddr=accept_addr,
-                        )
-
-                    registered_with_arbiter = True
-
-                    # init steps complete
-                    task_status.started()
-
-                    # Begin handling our new connection back to our
-                    # parent. This is done last since we don't want to
-                    # start processing parent requests until our channel
-                    # server is 100% up and running.
-                    if self._parent_chan:
-                        await root_nursery.start(
-                            partial(
-                                self._process_messages,
-                                self._parent_chan,
-                                shield=True,
-                            )
-                        )
-                    log.runtime("Waiting on service nursery to complete")
-                log.runtime("Service nursery complete")
-                log.runtime("Waiting on root nursery to complete")
-
-            # Blocks here as expected until the root nursery is
-            # killed (i.e. this actor is cancelled or signalled by the parent)
-        except Exception as err:
-            log.info("Closing all actor lifetime contexts")
-            _lifetime_stack.close()
-
-            if not registered_with_arbiter:
-                # TODO: I guess we could try to connect back
-                # to the parent through a channel and engage a debugger
-                # once we have that all working with std streams locking?
-                log.exception(
-                    f"Actor errored and failed to register with arbiter "
-                    f"@ {self._arb_addr}?")
-                log.error(
-                    "\n\n\t^^^ THIS IS PROBABLY A TRACTOR BUGGGGG!!! ^^^\n"
-                    "\tCALMLY CALL THE AUTHORITIES AND HIDE YOUR CHILDREN.\n\n"
-                    "\tYOUR PARENT CODE IS GOING TO KEEP WORKING FINE!!!\n"
-                    "\tTHIS IS HOW RELIABlE SYSTEMS ARE SUPPOSED TO WORK!?!?\n"
-                )
-
-            if self._parent_chan:
-                await try_ship_error_to_parent(self._parent_chan, err)
-
-            # always!
-            log.exception("Actor errored:")
-            raise
-
-        finally:
-            log.info("Runtime nursery complete")
-
-            # tear down all lifetime contexts if not in guest mode
-            # XXX: should this just be in the entrypoint?
-            log.info("Closing all actor lifetime contexts")
-
-            # TODO: we can't actually do this bc the debugger
-            # uses the _service_n to spawn the lock task, BUT,
-            # in theory if we had the root nursery surround this finally
-            # block it might be actually possible to debug THIS
-            # machinery in the same way as user task code?
-            # if self.name == 'brokerd.ib':
-            #     with trio.CancelScope(shield=True):
-            #         await _debug.breakpoint()
-
-            _lifetime_stack.close()
-
-            # Unregister actor from the arbiter
-            if registered_with_arbiter and (
-                    self._arb_addr is not None
-            ):
-                failed = False
-                with trio.move_on_after(0.5) as cs:
-                    cs.shield = True
-                    try:
-                        async with get_arbiter(*self._arb_addr) as arb_portal:
-                            await arb_portal.run_from_ns(
-                                'self',
-                                'unregister_actor',
-                                uid=self.uid
-                            )
-                    except OSError:
-                        failed = True
-                if cs.cancelled_caught:
-                    failed = True
-                if failed:
-                    log.warning(
-                        f"Failed to unregister {self.name} from arbiter")
-
-            # Ensure all peers (actors connected to us as clients) are finished
-            if not self._no_more_peers.is_set():
-                if any(
-                    chan.connected() for chan in chain(*self._peers.values())
-                ):
-                    log.runtime(
-                        f"Waiting for remaining peers {self._peers} to clear")
-                    with trio.CancelScope(shield=True):
-                        await self._no_more_peers.wait()
-            log.runtime("All peer channels are complete")
-
-        log.runtime("Runtime completed")
-
     async def _serve_forever(
         self,
         handler_nursery: trio.Nursery,
@@ -1362,11 +952,13 @@ class Actor:
         accept_port: int = 0,
         task_status: TaskStatus[trio.Nursery] = trio.TASK_STATUS_IGNORED,
     ) -> None:
-        """Start the channel server, begin listening for new connections.
+        '''
+        Start the channel server, begin listening for new connections.
 
         This will cause an actor to continue living (blocking) until
         ``cancel_server()`` is called.
-        """
+
+        '''
         self._server_down = trio.Event()
         try:
             async with trio.open_nursery() as server_n:
@@ -1391,16 +983,19 @@ class Actor:
             self._server_down.set()
 
     def cancel_soon(self) -> None:
-        """Cancel this actor asap; can be called from a sync context.
+        '''
+        Cancel this actor asap; can be called from a sync context.
 
         Schedules `.cancel()` to be run immediately just like when
         cancelled by the parent.
-        """
+
+        '''
         assert self._service_n
         self._service_n.start_soon(self.cancel)
 
     async def cancel(self) -> bool:
-        """Cancel this actor's runtime.
+        '''
+        Cancel this actor's runtime.
 
         The "deterministic" teardown sequence in order is:
             - cancel all ongoing rpc tasks by cancel scope
@@ -1409,7 +1004,8 @@ class Actor:
             - cancel the "service" nursery reponsible for
               spawning new rpc tasks
             - return control the parent channel message loop
-        """
+
+        '''
         log.cancel(f"{self.uid} is trying to cancel")
         self._cancel_called = True
 
@@ -1495,9 +1091,11 @@ class Actor:
         self,
         only_chan: Optional[Channel] = None,
     ) -> None:
-        """Cancel all existing RPC responder tasks using the cancel scope
+        '''
+        Cancel all existing RPC responder tasks using the cancel scope
         registered for each.
-        """
+
+        '''
         tasks = self._rpc_tasks
         if tasks:
             log.cancel(f"Cancelling all {len(tasks)} rpc tasks:\n{tasks} ")
@@ -1518,27 +1116,37 @@ class Actor:
             await self._ongoing_rpc_tasks.wait()
 
     def cancel_server(self) -> None:
-        """Cancel the internal channel server nursery thereby
+        '''
+        Cancel the internal channel server nursery thereby
         preventing any new inbound connections from being established.
-        """
+
+        '''
         if self._server_n:
             log.runtime("Shutting down channel server")
             self._server_n.cancel_scope.cancel()
 
     @property
     def accept_addr(self) -> Optional[tuple[str, int]]:
-        """Primary address to which the channel server is bound.
-        """
+        '''
+        Primary address to which the channel server is bound.
+
+        '''
         # throws OSError on failure
         return self._listeners[0].socket.getsockname()  # type: ignore
 
     def get_parent(self) -> Portal:
-        """Return a portal to our parent actor."""
+        '''
+        Return a portal to our parent actor.
+
+        '''
         assert self._parent_chan, "No parent channel for this actor?"
         return Portal(self._parent_chan)
 
     def get_chans(self, uid: tuple[str, str]) -> list[Channel]:
-        """Return all channels to the actor with provided uid."""
+        '''
+        Return all channels to the actor with provided uid.
+
+        '''
         return self._peers[uid]
 
     async def _do_handshake(
@@ -1546,11 +1154,13 @@ class Actor:
         chan: Channel
 
     ) -> tuple[str, str]:
-        """Exchange (name, UUIDs) identifiers as the first communication step.
+        '''
+        Exchange (name, UUIDs) identifiers as the first communication step.
 
         These are essentially the "mailbox addresses" found in actor model
         parlance.
-        """
+
+        '''
         await chan.send(self.uid)
         value = await chan.recv()
         uid: tuple[str, str] = (str(value[0]), str(value[1]))
@@ -1564,6 +1174,423 @@ class Actor:
 
     def is_infected_aio(self) -> bool:
         return self._infected_aio
+
+
+async def async_main(
+    actor: Actor,
+    accept_addr: Optional[tuple[str, int]] = None,
+
+    # XXX: currently ``parent_addr`` is only needed for the
+    # ``multiprocessing`` backend (which pickles state sent to
+    # the child instead of relaying it over the connect-back
+    # channel). Once that backend is removed we can likely just
+    # change this to a simple ``is_subactor: bool`` which will
+    # be False when running as root actor and True when as
+    # a subactor.
+    parent_addr: Optional[tuple[str, int]] = None,
+    task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
+
+) -> None:
+    '''
+    Actor runtime entrypoint; start the IPC channel server, maybe connect
+    back to the parent, and startup all core machinery tasks.
+
+    A "root-most" (or "top-level") nursery for this actor is opened here
+    and when cancelled effectively cancels the actor.
+
+    '''
+    registered_with_arbiter = False
+    try:
+
+        # establish primary connection with immediate parent
+        actor._parent_chan = None
+        if parent_addr is not None:
+
+            actor._parent_chan, accept_addr_rent = await actor._from_parent(
+                parent_addr)
+
+            # either it's passed in because we're not a child
+            # or because we're running in mp mode
+            if accept_addr_rent is not None:
+                accept_addr = accept_addr_rent
+
+        # load exposed/allowed RPC modules
+        # XXX: do this **after** establishing a channel to the parent
+        # but **before** starting the message loop for that channel
+        # such that import errors are properly propagated upwards
+        actor.load_modules()
+
+        # The "root" nursery ensures the channel with the immediate
+        # parent is kept alive as a resilient service until
+        # cancellation steps have (mostly) occurred in
+        # a deterministic way.
+        async with trio.open_nursery() as root_nursery:
+            actor._root_n = root_nursery
+            assert actor._root_n
+
+            async with trio.open_nursery() as service_nursery:
+                # This nursery is used to handle all inbound
+                # connections to us such that if the TCP server
+                # is killed, connections can continue to process
+                # in the background until this nursery is cancelled.
+                actor._service_n = service_nursery
+                assert actor._service_n
+
+                # Startup up the channel server with,
+                # - subactor: the bind address is sent by our parent
+                #   over our established channel
+                # - root actor: the ``accept_addr`` passed to this method
+                assert accept_addr
+                host, port = accept_addr
+
+                actor._server_n = await service_nursery.start(
+                    partial(
+                        actor._serve_forever,
+                        service_nursery,
+                        accept_host=host,
+                        accept_port=port
+                    )
+                )
+                accept_addr = actor.accept_addr
+                if _state._runtime_vars['_is_root']:
+                    _state._runtime_vars['_root_mailbox'] = accept_addr
+
+                # Register with the arbiter if we're told its addr
+                log.runtime(f"Registering {actor} for role `{actor.name}`")
+                assert isinstance(actor._arb_addr, tuple)
+
+                async with get_arbiter(*actor._arb_addr) as arb_portal:
+                    await arb_portal.run_from_ns(
+                        'self',
+                        'register_actor',
+                        uid=actor.uid,
+                        sockaddr=accept_addr,
+                    )
+
+                registered_with_arbiter = True
+
+                # init steps complete
+                task_status.started()
+
+                # Begin handling our new connection back to our
+                # parent. This is done last since we don't want to
+                # start processing parent requests until our channel
+                # server is 100% up and running.
+                if actor._parent_chan:
+                    await root_nursery.start(
+                        partial(
+                            process_messages,
+                            actor,
+                            actor._parent_chan,
+                            shield=True,
+                        )
+                    )
+                log.runtime("Waiting on service nursery to complete")
+            log.runtime("Service nursery complete")
+            log.runtime("Waiting on root nursery to complete")
+
+        # Blocks here as expected until the root nursery is
+        # killed (i.e. this actor is cancelled or signalled by the parent)
+    except Exception as err:
+        log.info("Closing all actor lifetime contexts")
+        _lifetime_stack.close()
+
+        if not registered_with_arbiter:
+            # TODO: I guess we could try to connect back
+            # to the parent through a channel and engage a debugger
+            # once we have that all working with std streams locking?
+            log.exception(
+                f"Actor errored and failed to register with arbiter "
+                f"@ {actor._arb_addr}?")
+            log.error(
+                "\n\n\t^^^ THIS IS PROBABLY A TRACTOR BUGGGGG!!! ^^^\n"
+                "\tCALMLY CALL THE AUTHORITIES AND HIDE YOUR CHILDREN.\n\n"
+                "\tYOUR PARENT CODE IS GOING TO KEEP WORKING FINE!!!\n"
+                "\tTHIS IS HOW RELIABlE SYSTEMS ARE SUPPOSED TO WORK!?!?\n"
+            )
+
+        if actor._parent_chan:
+            await try_ship_error_to_parent(actor._parent_chan, err)
+
+        # always!
+        log.exception("Actor errored:")
+        raise
+
+    finally:
+        log.info("Runtime nursery complete")
+
+        # tear down all lifetime contexts if not in guest mode
+        # XXX: should this just be in the entrypoint?
+        log.info("Closing all actor lifetime contexts")
+
+        # TODO: we can't actually do this bc the debugger
+        # uses the _service_n to spawn the lock task, BUT,
+        # in theory if we had the root nursery surround this finally
+        # block it might be actually possible to debug THIS
+        # machinery in the same way as user task code?
+        # if actor.name == 'brokerd.ib':
+        #     with trio.CancelScope(shield=True):
+        #         await _debug.breakpoint()
+
+        _lifetime_stack.close()
+
+        # Unregister actor from the arbiter
+        if registered_with_arbiter and (
+                actor._arb_addr is not None
+        ):
+            failed = False
+            with trio.move_on_after(0.5) as cs:
+                cs.shield = True
+                try:
+                    async with get_arbiter(*actor._arb_addr) as arb_portal:
+                        await arb_portal.run_from_ns(
+                            'self',
+                            'unregister_actor',
+                            uid=actor.uid
+                        )
+                except OSError:
+                    failed = True
+            if cs.cancelled_caught:
+                failed = True
+            if failed:
+                log.warning(
+                    f"Failed to unregister {actor.name} from arbiter")
+
+        # Ensure all peers (actors connected to us as clients) are finished
+        if not actor._no_more_peers.is_set():
+            if any(
+                chan.connected() for chan in chain(*actor._peers.values())
+            ):
+                log.runtime(
+                    f"Waiting for remaining peers {actor._peers} to clear")
+                with trio.CancelScope(shield=True):
+                    await actor._no_more_peers.wait()
+        log.runtime("All peer channels are complete")
+
+    log.runtime("Runtime completed")
+
+
+async def process_messages(
+    actor: Actor,
+    chan: Channel,
+    shield: bool = False,
+    task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED,
+
+) -> bool:
+    '''
+    Process messages for the IPC transport channel async-RPC style.
+
+    Receive multiplexed RPC requests, spawn handler tasks and deliver
+    responses over or boxed errors back to the "caller" task.
+
+    '''
+    # TODO: once https://github.com/python-trio/trio/issues/467 gets
+    # worked out we'll likely want to use that!
+    msg = None
+    nursery_cancelled_before_task: bool = False
+
+    log.runtime(f"Entering msg loop for {chan} from {chan.uid}")
+    try:
+        with trio.CancelScope(shield=shield) as loop_cs:
+            # this internal scope allows for keeping this message
+            # loop running despite the current task having been
+            # cancelled (eg. `open_portal()` may call this method from
+            # a locally spawned task) and recieve this scope using
+            # ``scope = Nursery.start()``
+            task_status.started(loop_cs)
+            async for msg in chan:
+
+                if msg is None:  # loop terminate sentinel
+
+                    log.cancel(
+                        f"Channel to {chan.uid} terminated?\n"
+                        "Cancelling all associated tasks..")
+
+                    for (channel, cid) in actor._rpc_tasks.copy():
+                        if channel is chan:
+                            await actor._cancel_task(cid, channel)
+
+                    log.runtime(
+                            f"Msg loop signalled to terminate for"
+                            f" {chan} from {chan.uid}")
+
+                    break
+
+                log.transport(   # type: ignore
+                    f"Received msg {msg} from {chan.uid}")
+
+                cid = msg.get('cid')
+                if cid:
+                    # deliver response to local caller/waiter
+                    await actor._push_result(chan, cid, msg)
+
+                    log.runtime(
+                        f"Waiting on next msg for {chan} from {chan.uid}")
+                    continue
+
+                # process command request
+                try:
+                    ns, funcname, kwargs, actorid, cid = msg['cmd']
+                except KeyError:
+                    # This is the non-rpc error case, that is, an
+                    # error **not** raised inside a call to ``_invoke()``
+                    # (i.e. no cid was provided in the msg - see above).
+                    # Push this error to all local channel consumers
+                    # (normally portals) by marking the channel as errored
+                    assert chan.uid
+                    exc = unpack_error(msg, chan=chan)
+                    chan._exc = exc
+                    raise exc
+
+                log.runtime(
+                    f"Processing request from {actorid}\n"
+                    f"{ns}.{funcname}({kwargs})")
+
+                if ns == 'self':
+                    func = getattr(actor, funcname)
+
+                    if funcname == 'cancel':
+
+                        # don't start entire actor runtime
+                        # cancellation if this actor is in debug
+                        # mode
+                        pdb_complete = _debug.Lock.local_pdb_complete
+                        if pdb_complete:
+                            await pdb_complete.wait()
+
+                        # we immediately start the runtime machinery
+                        # shutdown
+                        with trio.CancelScope(shield=True):
+                            # actor.cancel() was called so kill this
+                            # msg loop and break out into
+                            # ``async_main()``
+                            log.cancel(
+                                f"Actor {actor.uid} was remotely cancelled "
+                                f"by {chan.uid}"
+                            )
+                            await _invoke(
+                                actor, cid, chan, func, kwargs, is_rpc=False
+                            )
+
+                        loop_cs.cancel()
+                        break
+
+                    if funcname == '_cancel_task':
+
+                        # we immediately start the runtime machinery
+                        # shutdown
+                        with trio.CancelScope(shield=True):
+                            # actor.cancel() was called so kill this
+                            # msg loop and break out into
+                            # ``async_main()``
+                            kwargs['chan'] = chan
+                            log.cancel(
+                                f'Remote request to cancel task\n'
+                                f'remote actor: {chan.uid}\n'
+                                f'task: {cid}'
+                            )
+                            try:
+                                await _invoke(
+                                    actor,
+                                    cid,
+                                    chan,
+                                    func,
+                                    kwargs,
+                                    is_rpc=False,
+                                )
+                            except BaseException:
+                                log.exception("failed to cancel task?")
+
+                            continue
+                else:
+                    # complain to client about restricted modules
+                    try:
+                        func = actor._get_rpc_func(ns, funcname)
+                    except (ModuleNotExposed, AttributeError) as err:
+                        err_msg = pack_error(err)
+                        err_msg['cid'] = cid
+                        await chan.send(err_msg)
+                        continue
+
+                # spin up a task for the requested function
+                log.runtime(f"Spawning task for {func}")
+                assert actor._service_n
+                try:
+                    cs = await actor._service_n.start(
+                        partial(_invoke, actor, cid, chan, func, kwargs),
+                        name=funcname,
+                    )
+                except (RuntimeError, trio.MultiError):
+                    # avoid reporting a benign race condition
+                    # during actor runtime teardown.
+                    nursery_cancelled_before_task = True
+                    break
+
+                # never allow cancelling cancel requests (results in
+                # deadlock and other weird behaviour)
+                # if func != actor.cancel:
+                if isinstance(cs, Exception):
+                    log.warning(
+                        f"Task for RPC func {func} failed with"
+                        f"{cs}")
+                else:
+                    # mark that we have ongoing rpc tasks
+                    actor._ongoing_rpc_tasks = trio.Event()
+                    log.runtime(f"RPC func is {func}")
+                    # store cancel scope such that the rpc task can be
+                    # cancelled gracefully if requested
+                    actor._rpc_tasks[(chan, cid)] = (
+                        cs, func, trio.Event())
+
+                log.runtime(
+                    f"Waiting on next msg for {chan} from {chan.uid}")
+
+            # end of async for, channel disconnect vis
+            # ``trio.EndOfChannel``
+            log.runtime(
+                f"{chan} for {chan.uid} disconnected, cancelling tasks"
+            )
+            await actor.cancel_rpc_tasks(chan)
+
+    except (
+        TransportClosed,
+    ):
+        # channels "breaking" (for TCP streams by EOF or 104
+        # connection-reset) is ok since we don't have a teardown
+        # handshake for them (yet) and instead we simply bail out of
+        # the message loop and expect the teardown sequence to clean
+        # up.
+        log.runtime(f'channel from {chan.uid} closed abruptly:\n{chan}')
+
+        # transport **was** disconnected
+        return True
+
+    except (Exception, trio.MultiError) as err:
+        if nursery_cancelled_before_task:
+            sn = actor._service_n
+            assert sn and sn.cancel_scope.cancel_called
+            log.cancel(
+                f'Service nursery cancelled before it handled {funcname}'
+            )
+        else:
+            # ship any "internal" exception (i.e. one from internal
+            # machinery not from an rpc task) to parent
+            log.exception("Actor errored:")
+            if actor._parent_chan:
+                await try_ship_error_to_parent(actor._parent_chan, err)
+
+        # if this is the `MainProcess` we expect the error broadcasting
+        # above to trigger an error at consuming portal "checkpoints"
+        raise
+
+    finally:
+        # msg debugging for when he machinery is brokey
+        log.runtime(
+            f"Exiting msg loop for {chan} from {chan.uid} "
+            f"with last msg:\n{msg}")
+
+    # transport **was not** disconnected
+    return False
 
 
 class Arbiter(Actor):

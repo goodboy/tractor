@@ -36,7 +36,10 @@ from ._discovery import (
     query_actor,
 )
 from ._supervise import open_nursery
-from ._state import current_actor, is_root_process
+from ._state import (
+    current_actor,
+    is_root_process,
+)
 from ._exceptions import (
     RemoteActorError,
     ModuleNotExposed,
@@ -44,11 +47,16 @@ from ._exceptions import (
 )
 from ._debug import breakpoint, post_mortem
 from . import msg
-from ._root import run, run_daemon, open_root_actor
+from ._root import (
+    run_daemon,
+    open_root_actor,
+)
 from ._portal import Portal
+from ._runtime import Actor
 
 
 __all__ = [
+    'Actor',
     'Channel',
     'Context',
     'ContextCancelled',
@@ -70,7 +78,6 @@ __all__ = [
     'open_root_actor',
     'post_mortem',
     'query_actor',
-    'run',
     'run_daemon',
     'stream',
     'to_asyncio',

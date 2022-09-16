@@ -5,7 +5,6 @@ Advanced streaming patterns using bidirectional streams and contexts.
 from collections import Counter
 import itertools
 import platform
-from typing import Set, Dict, List
 
 import trio
 import tractor
@@ -15,7 +14,7 @@ def is_win():
     return platform.system() == 'Windows'
 
 
-_registry: Dict[str, Set[tractor.ReceiveMsgStream]] = {
+_registry: dict[str, set[tractor.ReceiveMsgStream]] = {
     'even': set(),
     'odd': set(),
 }
@@ -77,7 +76,7 @@ async def subscribe(
 
 async def consumer(
 
-    subs: List[str],
+    subs: list[str],
 
 ) -> None:
 
