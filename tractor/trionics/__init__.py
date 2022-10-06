@@ -21,6 +21,7 @@ Sugary patterns for trio + tractor designs.
 from ._mngrs import (
     gather_contexts,
     maybe_open_context,
+    maybe_open_nursery,
 )
 from ._broadcast import (
     broadcast_receiver,
@@ -35,4 +36,5 @@ __all__ = [
     'BroadcastReceiver',
     'Lagged',
     'maybe_open_context',
+    'maybe_open_nursery',
 ]
