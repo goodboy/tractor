@@ -36,6 +36,7 @@ import trio
 from trio_typing import TaskStatus
 
 from ..log import get_logger
+from .._state import current_actor
 
 
 log = get_logger(__name__)
@@ -140,6 +141,7 @@ class _Cache:
     a kept-alive-while-in-use async resource.
 
     '''
+    service_n: Optional[trio.Nursery] = None
     locks: dict[Hashable, trio.Lock] = {}
     users: int = 0
     values: dict[Any,  Any] = {}
@@ -147,7 +149,7 @@ class _Cache:
         Hashable,
         tuple[trio.Nursery, trio.Event]
     ] = {}
-    nurseries: dict[int, trio.Nursery] = {}
+    # nurseries: dict[int, trio.Nursery] = {}
     no_more_users: Optional[trio.Event] = None
 
     @classmethod
@@ -205,18 +207,24 @@ async def maybe_open_context(
     lock = _Cache.locks.setdefault(fid, trio.Lock())
     await lock.acquire()
 
-    try:
-        # **critical section** that should prevent other tasks from
-        # checking the _Cache until complete otherwise the scheduler
-        # may switch and by accident we create more then one resource.
-        yielded = _Cache.values[ctx_key]
+    # XXX: old way were doing it
+    # service_n: Optional[trio.Nursery] = current_actor()._service_n
 
-    except KeyError:
-        log.info(f'Allocating new {acm_func} for {ctx_key}')
-        mngr = acm_func(**kwargs)
-        service_n: Optional[trio.Nursery] = _Cache.nurseries.get(fid)
-        async with maybe_open_nursery(service_n) as service_n:
-            _Cache.nurseries[fid] = service_n
+    # one singleton nursery per actor
+    service_n: trio.Nursery
+    async with maybe_open_nursery(_Cache.service_n) as service_n:
+        _Cache.service_n = service_n
+
+        try:
+            # **critical section** that should prevent other tasks from
+            # checking the _Cache until complete otherwise the scheduler
+            # may switch and by accident we create more then one resource.
+            yielded = _Cache.values[ctx_key]
+
+        except KeyError:
+            log.info(f'Allocating new {acm_func} for {ctx_key}')
+            mngr = acm_func(**kwargs)
+            service_n: Optional[trio.Nursery] = current_actor()._service_n
             resources = _Cache.resources
             assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
             resources[ctx_key] = (service_n, trio.Event())
@@ -231,26 +239,26 @@ async def maybe_open_context(
             lock.release()
             yield False, yielded
 
-    else:
-        log.info(f'Reusing _Cached resource for {ctx_key}')
-        _Cache.users += 1
-        lock.release()
-        yield True, yielded
+        else:
+            log.info(f'Reusing _Cached resource for {ctx_key}')
+            _Cache.users += 1
+            lock.release()
+            yield True, yielded
 
-    finally:
-        _Cache.users -= 1
+        finally:
+            _Cache.users -= 1
 
-        if yielded is not None:
-            # if no more consumers, teardown the client
-            if _Cache.users <= 0:
-                log.info(f'De-allocating resource for {ctx_key}')
+            if yielded is not None:
+                # if no more consumers, teardown the client
+                if _Cache.users <= 0:
+                    log.info(f'De-allocating resource for {ctx_key}')
 
-                # XXX: if we're cancelled we the entry may have never
-                # been entered since the nursery task was killed.
-                # _, no_more_users = _Cache.resources[ctx_key]
-                entry = _Cache.resources.get(ctx_key)
-                if entry:
-                    _, no_more_users = entry
-                    no_more_users.set()
+                    # XXX: if we're cancelled we the entry may have never
+                    # been entered since the nursery task was killed.
+                    # _, no_more_users = _Cache.resources[ctx_key]
+                    entry = _Cache.resources.get(ctx_key)
+                    if entry:
+                        _, no_more_users = entry
+                        no_more_users.set()
 
-                _Cache.locks.pop(fid)
+                    _Cache.locks.pop(fid)
