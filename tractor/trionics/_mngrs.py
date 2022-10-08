@@ -36,7 +36,6 @@ import trio
 from trio_typing import TaskStatus
 
 from ..log import get_logger
-from .._state import current_actor
 
 
 log = get_logger(__name__)
@@ -224,7 +223,6 @@ async def maybe_open_context(
         except KeyError:
             log.info(f'Allocating new {acm_func} for {ctx_key}')
             mngr = acm_func(**kwargs)
-            service_n: Optional[trio.Nursery] = current_actor()._service_n
             resources = _Cache.resources
             assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
             resources[ctx_key] = (service_n, trio.Event())
