@@ -1,0 +1,7 @@
+Add ``key: Callable[..., Hashable]`` support to ``.trionics.maybe_open_context()``
+
+Gives users finer grained control over cache hit behaviour using
+a callable which receives the input ``kwargs: dict``. Further this patch
+avoids use of the internal ``Actor._service_n`` for spawning the
+entering manager tasks and instead allocates and uses an actor global
+singleton ``_Cache.service_n``.
