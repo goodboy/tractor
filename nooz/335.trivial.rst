@@ -1,0 +1,5 @@
+Establish an explicit "backend spawning" method table; use it from CI
+
+More clearly lays out the current set of (3) backends: ``['trio',
+'mp_spawn', 'mp_forkserver']`` and adjusts the ``._spawn.py`` internals
+as well as the test suite to accommodate.
