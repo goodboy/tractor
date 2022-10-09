@@ -92,7 +92,7 @@ class ActorNursery:
             tuple[str, str],
             tuple[
                 Actor,
-                mp.context.Process | trio.Process,
+                trio.Process | mp.Process,
                 Optional[Portal],
             ]
         ] = {}

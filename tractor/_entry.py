@@ -18,15 +18,28 @@
 Sub-process entry points.
 
 """
+from __future__ import annotations
 from functools import partial
-from typing import Any
+from typing import (
+    Any,
+    TYPE_CHECKING,
+)
 
 import trio  # type: ignore
 
-from .log import get_console_log, get_logger
+from .log import (
+    get_console_log,
+    get_logger,
+)
 from . import _state
 from .to_asyncio import run_as_asyncio_guest
-from ._runtime import async_main, Actor
+from ._runtime import (
+    async_main,
+    Actor,
+)
+
+if TYPE_CHECKING:
+    from ._spawn import SpawnMethodKey
 
 
 log = get_logger(__name__)
@@ -37,7 +50,7 @@ def _mp_main(
     actor: 'Actor',  # type: ignore
     accept_addr: tuple[str, int],
     forkserver_info: tuple[Any, Any, Any, Any, Any],
-    start_method: str,
+    start_method: SpawnMethodKey,
     parent_addr: tuple[str, int] = None,
     infect_asyncio: bool = False,
 
