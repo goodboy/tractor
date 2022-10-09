@@ -22,7 +22,6 @@ from typing import (
     Optional,
     Any,
 )
-from collections.abc import Mapping
 
 import trio
 
@@ -44,12 +43,6 @@ def current_actor(err_on_no_runtime: bool = True) -> 'Actor':  # type: ignore # 
         raise NoRuntime("No local actor has been initialized yet")
 
     return _current_actor
-
-
-_conc_name_getters = {
-    'task': trio.lowlevel.current_task,
-    'actor': current_actor
-}
 
 
 def is_main_process() -> bool:

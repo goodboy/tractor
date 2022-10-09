@@ -18,6 +18,7 @@
 ``trio`` inspired apis and helpers
 
 """
+from contextlib import asynccontextmanager as acm
 from functools import partial
 import inspect
 from typing import (
@@ -27,8 +28,8 @@ from typing import (
 import typing
 import warnings
 
+from exceptiongroup import BaseExceptionGroup
 import trio
-from async_generator import asynccontextmanager
 
 from ._debug import maybe_wait_for_debugger
 from ._state import current_actor, is_main_process
@@ -294,7 +295,7 @@ class ActorNursery:
         self._join_procs.set()
 
 
-@asynccontextmanager
+@acm
 async def _open_and_supervise_one_cancels_all_nursery(
     actor: Actor,
 ) -> typing.AsyncGenerator[ActorNursery, None]:
@@ -387,13 +388,16 @@ async def _open_and_supervise_one_cancels_all_nursery(
                             # cancel all subactors
                             await anursery.cancel()
 
-                    except trio.MultiError as merr:
+                    except BaseExceptionGroup as merr:
                         # If we receive additional errors while waiting on
                         # remaining subactors that were cancelled,
                         # aggregate those errors with the original error
                         # that triggered this teardown.
                         if err not in merr.exceptions:
-                            raise trio.MultiError(merr.exceptions + [err])
+                            raise BaseExceptionGroup(
+                                'tractor.ActorNursery errored with',
+                                list(merr.exceptions) + [err],
+                            )
                     else:
                         raise
 
@@ -402,9 +406,8 @@ async def _open_and_supervise_one_cancels_all_nursery(
         # XXX: do we need a `trio.Cancelled` catch here as well?
         # this is the catch around the ``.run_in_actor()`` nursery
         except (
-
             Exception,
-            trio.MultiError,
+            BaseExceptionGroup,
             trio.Cancelled
 
         ) as err:
@@ -436,9 +439,12 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     with trio.CancelScope(shield=True):
                         await anursery.cancel()
 
-                # use `MultiError` as needed
+                # use `BaseExceptionGroup` as needed
                 if len(errors) > 1:
-                    raise trio.MultiError(tuple(errors.values()))
+                    raise BaseExceptionGroup(
+                        'tractor.ActorNursery errored with',
+                        tuple(errors.values()),
+                    )
                 else:
                     raise list(errors.values())[0]
 
@@ -447,7 +453,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
     # after nursery exit
 
 
-@asynccontextmanager
+@acm
 async def open_nursery(
     **kwargs,
 

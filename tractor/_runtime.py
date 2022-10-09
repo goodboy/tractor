@@ -37,9 +37,10 @@ import os
 from contextlib import ExitStack
 import warnings
 
+from async_generator import aclosing
+from exceptiongroup import BaseExceptionGroup
 import trio  # type: ignore
 from trio_typing import TaskStatus
-from async_generator import aclosing
 
 from ._ipc import Channel
 from ._streaming import Context
@@ -194,7 +195,7 @@ async def _invoke(
                     res = await coro
                     await chan.send({'return': res, 'cid': cid})
 
-            except trio.MultiError:
+            except BaseExceptionGroup:
                 # if a context error was set then likely
                 # thei multierror was raised due to that
                 if ctx._error is not None:
@@ -266,7 +267,7 @@ async def _invoke(
 
     except (
         Exception,
-        trio.MultiError
+        BaseExceptionGroup,
     ) as err:
 
         if not is_multi_cancelled(err):
@@ -349,7 +350,7 @@ def _get_mod_abspath(module):
 
 async def try_ship_error_to_parent(
     channel: Channel,
-    err: Union[Exception, trio.MultiError],
+    err: Union[Exception, BaseExceptionGroup],
 
 ) -> None:
     with trio.CancelScope(shield=True):
@@ -1549,7 +1550,10 @@ async def process_messages(
                         partial(_invoke, actor, cid, chan, func, kwargs),
                         name=funcname,
                     )
-                except (RuntimeError, trio.MultiError):
+                except (
+                    RuntimeError,
+                    BaseExceptionGroup,
+                ):
                     # avoid reporting a benign race condition
                     # during actor runtime teardown.
                     nursery_cancelled_before_task = True
@@ -1594,7 +1598,10 @@ async def process_messages(
         # transport **was** disconnected
         return True
 
-    except (Exception, trio.MultiError) as err:
+    except (
+        Exception,
+        BaseExceptionGroup,
+    ) as err:
         if nursery_cancelled_before_task:
             sn = actor._service_n
             assert sn and sn.cancel_scope.cancel_called

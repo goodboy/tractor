@@ -460,7 +460,6 @@ class Portal:
             # sure it's worth being pedantic:
             # Exception,
             # trio.Cancelled,
-            # trio.MultiError,
             # KeyboardInterrupt,
 
         ) as err:

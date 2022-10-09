@@ -29,6 +29,8 @@ from typing import (
 import typing
 import warnings
 
+
+from exceptiongroup import BaseExceptionGroup
 import trio
 
 from ._runtime import Actor, Arbiter, async_main
@@ -205,7 +207,10 @@ async def open_root_actor(
             try:
                 yield actor
 
-            except (Exception, trio.MultiError) as err:
+            except (
+                Exception,
+                BaseExceptionGroup,
+            ) as err:
 
                 entered = await _debug._maybe_enter_pm(err)
 

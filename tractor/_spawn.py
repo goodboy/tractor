@@ -31,6 +31,7 @@ from typing import (
 )
 from collections.abc import Awaitable
 
+from exceptiongroup import BaseExceptionGroup
 import trio
 from trio_typing import TaskStatus
 
@@ -146,8 +147,11 @@ async def exhaust_portal(
         # always be established and shutdown using a context manager api
         final = await portal.result()
 
-    except (Exception, trio.MultiError) as err:
-        # we reraise in the parent task via a ``trio.MultiError``
+    except (
+        Exception,
+        BaseExceptionGroup,
+    ) as err:
+        # we reraise in the parent task via a ``BaseExceptionGroup``
         return err
     except trio.Cancelled as err:
         # lol, of course we need this too ;P
@@ -175,7 +179,7 @@ async def cancel_on_completion(
     '''
     # if this call errors we store the exception for later
     # in ``errors`` which will be reraised inside
-    # a MultiError and we still send out a cancel request
+    # an exception group and we still send out a cancel request
     result = await exhaust_portal(portal, actor)
     if isinstance(result, Exception):
         errors[actor.uid] = result
