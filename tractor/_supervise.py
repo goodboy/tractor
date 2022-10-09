@@ -90,7 +90,11 @@ class ActorNursery:
         self._da_nursery = da_nursery
         self._children: dict[
             tuple[str, str],
-            tuple[Actor, mp.Process, Optional[Portal]]
+            tuple[
+                Actor,
+                mp.context.Process | trio.Process,
+                Optional[Portal],
+            ]
         ] = {}
         # portals spawned with ``run_in_actor()`` are
         # cancelled when their "main" result arrives

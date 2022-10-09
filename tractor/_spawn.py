@@ -22,7 +22,11 @@ from __future__ import annotations
 import sys
 import platform
 from typing import (
-    Any, Optional, Callable, TypeVar, TYPE_CHECKING
+    Any,
+    Optional,
+    Callable,
+    TypeVar,
+    TYPE_CHECKING,
 )
 from collections.abc import Awaitable
 
@@ -48,6 +52,7 @@ from ._exceptions import ActorFailure
 
 
 if TYPE_CHECKING:
+    from ._supervise import ActorNursery
     import multiprocessing as mp
     ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
 
@@ -249,7 +254,7 @@ async def soft_wait(
 async def new_proc(
 
     name: str,
-    actor_nursery: 'ActorNursery',  # type: ignore  # noqa
+    actor_nursery: ActorNursery,
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
 
@@ -308,7 +313,8 @@ async def new_proc(
         try:
             try:
                 # TODO: needs ``trio_typing`` patch?
-                proc = await trio.lowlevel.open_process(spawn_cmd)  # type: ignore
+                proc = await trio.lowlevel.open_process(    # type: ignore
+                    spawn_cmd)
 
                 log.runtime(f"Started {proc}")
 
@@ -340,7 +346,10 @@ async def new_proc(
 
             portal = Portal(chan)
             actor_nursery._children[subactor.uid] = (
-                subactor, proc, portal)
+                subactor,
+                proc,
+                portal,
+            )
 
             # send additional init params
             await chan.send({
@@ -443,7 +452,7 @@ async def new_proc(
 async def mp_new_proc(
 
     name: str,
-    actor_nursery: 'ActorNursery',  # type: ignore  # noqa
+    actor_nursery: ActorNursery,  # type: ignore  # noqa
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
     # passed through to actor main
@@ -480,8 +489,8 @@ async def mp_new_proc(
             # forkserver.set_forkserver_preload(enable_modules)
             forkserver.ensure_running()
             fs_info = (
-                fs._forkserver_address,
-                fs._forkserver_alive_fd,
+                fs._forkserver_address,  # type: ignore  # noqa
+                fs._forkserver_alive_fd,  # type: ignore  # noqa
                 getattr(fs, '_forkserver_pid', None),
                 getattr(
                     resource_tracker._resource_tracker, '_pid', None),
@@ -490,9 +499,9 @@ async def mp_new_proc(
         else:
             assert curr_actor._forkserver_info
             fs_info = (
-                fs._forkserver_address,
-                fs._forkserver_alive_fd,
-                fs._forkserver_pid,
+                fs._forkserver_address,  # type: ignore  # noqa
+                fs._forkserver_alive_fd,  # type: ignore  # noqa
+                fs._forkserver_pid,  # type: ignore  # noqa
                 resource_tracker._resource_tracker._pid,
                 resource_tracker._resource_tracker._fd,
              ) = curr_actor._forkserver_info
