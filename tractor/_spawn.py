@@ -44,7 +44,6 @@ from ._state import (
     is_root_process,
     debug_mode,
 )
-
 from .log import get_logger
 from ._portal import Portal
 from ._runtime import Actor
@@ -62,9 +61,9 @@ log = get_logger('tractor')
 # placeholder for an mp start context if so using that backend
 _ctx: Optional[mp.context.BaseContext] = None
 SpawnMethodKey = Literal[
-    'trio',
-    'spawn',
-    'forkserver',
+    'trio',  # supported on all platforms
+    'mp_spawn',
+    'mp_forkserver',  # posix only
 ]
 _spawn_method: SpawnMethodKey = 'trio'
 
@@ -84,7 +83,7 @@ else:
 
 
 def try_set_start_method(
-    name: SpawnMethodKey
+    key: SpawnMethodKey
 
 ) -> Optional[mp.context.BaseContext]:
     '''
@@ -101,29 +100,30 @@ def try_set_start_method(
     global _ctx
     global _spawn_method
 
-    methods = mp.get_all_start_methods()
-    if 'fork' in methods:
+    mp_methods = mp.get_all_start_methods()
+    if 'fork' in mp_methods:
         # forking is incompatible with ``trio``s global task tree
-        methods.remove('fork')
+        mp_methods.remove('fork')
 
-    # supported on all platforms
-    methods += ['trio']
+    match key:
+        case 'mp_forkserver':
+            from . import _forkserver_override
+            _forkserver_override.override_stdlib()
+            _ctx = mp.get_context('forkserver')
 
-    if name not in methods:
-        raise ValueError(
-            f"Spawn method `{name}` is invalid please choose one of {methods}"
-        )
-    elif name == 'forkserver':
-        from . import _forkserver_override
-        _forkserver_override.override_stdlib()
-        _ctx = mp.get_context(name)
+        case 'mp_spawn':
+            _ctx = mp.get_context('spawn')
 
-    elif name == 'trio':
-        _ctx = None
-    else:
-        _ctx = mp.get_context(name)
+        case 'trio':
+            _ctx = None
 
-    _spawn_method = name
+        case _:
+            raise ValueError(
+                f'Spawn method `{key}` is invalid!\n'
+                f'Please choose one of {SpawnMethodKey}'
+            )
+
+    _spawn_method = key
     return _ctx
 
 
@@ -299,7 +299,6 @@ async def new_proc(
 
 
 async def trio_proc(
-
     name: str,
     actor_nursery: ActorNursery,
     subactor: Actor,
@@ -309,9 +308,7 @@ async def trio_proc(
     bind_addr: tuple[str, int],
     parent_addr: tuple[str, int],
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
-
     *,
-
     infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
@@ -475,7 +472,6 @@ async def trio_proc(
 
 
 async def mp_proc(
-
     name: str,
     actor_nursery: ActorNursery,  # type: ignore  # noqa
     subactor: Actor,
@@ -502,6 +498,7 @@ async def mp_proc(
     assert _ctx
     start_method = _ctx.get_start_method()
     if start_method == 'forkserver':
+
         from multiprocessing import forkserver  # type: ignore
         # XXX do our hackery on the stdlib to avoid multiple
         # forkservers (one at each subproc layer).
@@ -521,7 +518,7 @@ async def mp_proc(
                     resource_tracker._resource_tracker, '_pid', None),
                 resource_tracker._resource_tracker._fd,
             )
-        else:
+        else:  # request to forkerserver to fork a new child
             assert curr_actor._forkserver_info
             fs_info = (
                 fs._forkserver_address,  # type: ignore  # noqa
@@ -531,6 +528,7 @@ async def mp_proc(
                 resource_tracker._resource_tracker._fd,
              ) = curr_actor._forkserver_info
     else:
+        # spawn method
         fs_info = (None, None, None, None, None)
 
     proc: mp.Process = _ctx.Process(  # type: ignore
@@ -539,7 +537,7 @@ async def mp_proc(
             subactor,
             bind_addr,
             fs_info,
-            start_method,
+            _spawn_method,
             parent_addr,
             infect_asyncio,
         ),
@@ -641,8 +639,8 @@ async def mp_proc(
 
 
 # proc spawning backend target map
-_methods: dict[str, Callable] = {
+_methods: dict[SpawnMethodKey, Callable] = {
     'trio': trio_proc,
-    'spawn': mp_proc,
-    'forkserver': mp_proc,
+    'mp_spawn': mp_proc,
+    'mp_forkserver': mp_proc,
 }

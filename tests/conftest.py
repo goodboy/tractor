@@ -57,8 +57,6 @@ def tractor_test(fn):
 
         if start_method is None:
             if platform.system() == "Windows":
-                start_method = 'spawn'
-            else:
                 start_method = 'trio'
 
         if 'start_method' in inspect.signature(fn).parameters:
@@ -79,7 +77,7 @@ def tractor_test(fn):
                     # TODO: only enable when pytest is passed --pdb
                     # debug_mode=True,
 
-                ) as actor:
+                ):
                     await fn(*args, **kwargs)
 
             main = _main
@@ -89,12 +87,9 @@ def tractor_test(fn):
             main = partial(fn, *args, **kwargs)
 
         return trio.run(main)
-            # arbiter_addr=arb_addr,
-            # loglevel=loglevel,
-            # start_method=start_method,
-        # )
 
     return wrapper
+
 
 _arb_addr = '127.0.0.1', random.randint(1000, 9999)
 
@@ -143,11 +138,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     backend = config.option.spawn_backend
-
-    if backend == 'mp':
-        tractor._spawn.try_set_start_method('spawn')
-    elif backend == 'trio':
-        tractor._spawn.try_set_start_method(backend)
+    tractor._spawn.try_set_start_method(backend)
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -181,13 +172,20 @@ def arb_addr():
 
 def pytest_generate_tests(metafunc):
     spawn_backend = metafunc.config.option.spawn_backend
+
     if not spawn_backend:
         # XXX some weird windows bug with `pytest`?
-        spawn_backend = 'mp'
-    assert spawn_backend in ('mp', 'trio')
+        spawn_backend = 'trio'
+
+    assert spawn_backend in (
+        'mp_spawn',
+        'mp_forkserver',
+        'trio',
+    )
 
     if 'start_method' in metafunc.fixturenames:
-        if spawn_backend == 'mp':
+        if 'mp' in spawn_backend:
+
             from multiprocessing import get_all_start_methods
             methods = get_all_start_methods()
             if 'fork' in methods:
@@ -195,6 +193,9 @@ def pytest_generate_tests(metafunc):
                 # removing XXX: the fork method is in general
                 # incompatible with trio's global scheduler state
                 methods.remove('fork')
+
+            methods = [f'mp_{meth}' for meth in methods]
+
         elif spawn_backend == 'trio':
             methods = ['trio']
 

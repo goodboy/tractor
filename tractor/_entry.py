@@ -47,7 +47,7 @@ log = get_logger(__name__)
 
 def _mp_main(
 
-    actor: 'Actor',  # type: ignore
+    actor: Actor,  # type: ignore
     accept_addr: tuple[str, int],
     forkserver_info: tuple[Any, Any, Any, Any, Any],
     start_method: SpawnMethodKey,
