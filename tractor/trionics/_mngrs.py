@@ -35,6 +35,7 @@ from typing import (
 import trio
 from trio_typing import TaskStatus
 
+from .._state import current_actor
 from ..log import get_logger
 
 
@@ -206,57 +207,61 @@ async def maybe_open_context(
     lock = _Cache.locks.setdefault(fid, trio.Lock())
     await lock.acquire()
 
-    # XXX: old way were doing it
-    # service_n: Optional[trio.Nursery] = current_actor()._service_n
+    # XXX: one singleton nursery per actor and we want to
+    # have it not be closed until all consumers have exited (which is
+    # currently difficult to implement any other way besides using our
+    # pre-allocated runtime instance..)
+    service_n: trio.Nursery = current_actor()._service_n
 
-    # one singleton nursery per actor
-    service_n: trio.Nursery
-    async with maybe_open_nursery(_Cache.service_n) as service_n:
-        _Cache.service_n = service_n
+    # TODO: is there any way to allocate
+    # a 'stays-open-till-last-task-finshed nursery?
+    # service_n: trio.Nursery
+    # async with maybe_open_nursery(_Cache.service_n) as service_n:
+    #     _Cache.service_n = service_n
 
-        try:
-            # **critical section** that should prevent other tasks from
-            # checking the _Cache until complete otherwise the scheduler
-            # may switch and by accident we create more then one resource.
-            yielded = _Cache.values[ctx_key]
+    try:
+        # **critical section** that should prevent other tasks from
+        # checking the _Cache until complete otherwise the scheduler
+        # may switch and by accident we create more then one resource.
+        yielded = _Cache.values[ctx_key]
 
-        except KeyError:
-            log.info(f'Allocating new {acm_func} for {ctx_key}')
-            mngr = acm_func(**kwargs)
-            resources = _Cache.resources
-            assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
-            resources[ctx_key] = (service_n, trio.Event())
+    except KeyError:
+        log.info(f'Allocating new {acm_func} for {ctx_key}')
+        mngr = acm_func(**kwargs)
+        resources = _Cache.resources
+        assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
+        resources[ctx_key] = (service_n, trio.Event())
 
-            # sync up to the mngr's yielded value
-            yielded = await service_n.start(
-                _Cache.run_ctx,
-                mngr,
-                ctx_key,
-            )
-            _Cache.users += 1
-            lock.release()
-            yield False, yielded
+        # sync up to the mngr's yielded value
+        yielded = await service_n.start(
+            _Cache.run_ctx,
+            mngr,
+            ctx_key,
+        )
+        _Cache.users += 1
+        lock.release()
+        yield False, yielded
 
-        else:
-            log.info(f'Reusing _Cached resource for {ctx_key}')
-            _Cache.users += 1
-            lock.release()
-            yield True, yielded
+    else:
+        log.info(f'Reusing _Cached resource for {ctx_key}')
+        _Cache.users += 1
+        lock.release()
+        yield True, yielded
 
-        finally:
-            _Cache.users -= 1
+    finally:
+        _Cache.users -= 1
 
-            if yielded is not None:
-                # if no more consumers, teardown the client
-                if _Cache.users <= 0:
-                    log.info(f'De-allocating resource for {ctx_key}')
+        if yielded is not None:
+            # if no more consumers, teardown the client
+            if _Cache.users <= 0:
+                log.info(f'De-allocating resource for {ctx_key}')
 
-                    # XXX: if we're cancelled we the entry may have never
-                    # been entered since the nursery task was killed.
-                    # _, no_more_users = _Cache.resources[ctx_key]
-                    entry = _Cache.resources.get(ctx_key)
-                    if entry:
-                        _, no_more_users = entry
-                        no_more_users.set()
+                # XXX: if we're cancelled we the entry may have never
+                # been entered since the nursery task was killed.
+                # _, no_more_users = _Cache.resources[ctx_key]
+                entry = _Cache.resources.get(ctx_key)
+                if entry:
+                    _, no_more_users = entry
+                    no_more_users.set()
 
-                    _Cache.locks.pop(fid)
+                _Cache.locks.pop(fid)
