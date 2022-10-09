@@ -177,29 +177,19 @@ def pytest_generate_tests(metafunc):
         # XXX some weird windows bug with `pytest`?
         spawn_backend = 'trio'
 
+    # TODO: maybe just use the literal `._spawn.SpawnMethodKey`?
     assert spawn_backend in (
         'mp_spawn',
         'mp_forkserver',
         'trio',
     )
 
+    # NOTE: used to be used to dyanmically parametrize tests for when
+    # you just passed --spawn-backend=`mp` on the cli, but now we expect
+    # that cli input to be manually specified, BUT, maybe we'll do
+    # something like this again in the future?
     if 'start_method' in metafunc.fixturenames:
-        if 'mp' in spawn_backend:
-
-            from multiprocessing import get_all_start_methods
-            methods = get_all_start_methods()
-            if 'fork' in methods:
-                # fork not available on windows, so check before
-                # removing XXX: the fork method is in general
-                # incompatible with trio's global scheduler state
-                methods.remove('fork')
-
-            methods = [f'mp_{meth}' for meth in methods]
-
-        elif spawn_backend == 'trio':
-            methods = ['trio']
-
-        metafunc.parametrize("start_method", methods, scope='module')
+        metafunc.parametrize("start_method", [spawn_backend], scope='module')
 
 
 def sig_prog(proc, sig):
