@@ -35,6 +35,7 @@ import warnings
 import trio
 from async_generator import asynccontextmanager
 
+from .trionics import maybe_open_nursery
 from ._state import current_actor
 from ._ipc import Channel
 from .log import get_logger
@@ -48,25 +49,6 @@ from ._streaming import Context, ReceiveMsgStream
 
 
 log = get_logger(__name__)
-
-
-@asynccontextmanager
-async def maybe_open_nursery(
-    nursery: trio.Nursery = None,
-    shield: bool = False,
-) -> AsyncGenerator[trio.Nursery, Any]:
-    '''
-    Create a new nursery if None provided.
-
-    Blocks on exit as expected if no input nursery is provided.
-
-    '''
-    if nursery is not None:
-        yield nursery
-    else:
-        async with trio.open_nursery() as nursery:
-            nursery.cancel_scope.shield = shield
-            yield nursery
 
 
 def _unwrap_msg(

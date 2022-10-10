@@ -1,0 +1,4 @@
+Add ``key: Callable[..., Hashable]`` support to ``.trionics.maybe_open_context()``
+
+Gives users finer grained control over cache hit behaviour using
+a callable which receives the input ``kwargs: dict``.
