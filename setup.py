@@ -47,6 +47,7 @@ setup(
         'trio >= 0.22',
         'async_generator',
         'trio_typing',
+        'exceptiongroup',
 
         # tooling
         'tricycle',
