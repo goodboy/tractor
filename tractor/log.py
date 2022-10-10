@@ -18,12 +18,14 @@
 Log like a forester!
 
 """
+from collections.abc import Mapping
 import sys
 import logging
 import colorlog  # type: ignore
-from typing import Optional
 
-from ._state import ActorContextInfo
+import trio
+
+from ._state import current_actor
 
 
 _proj_name: str = 'tractor'
@@ -36,7 +38,8 @@ LOG_FORMAT = (
     # "{bold_white}{log_color}{asctime}{reset}"
     "{log_color}{asctime}{reset}"
     " {bold_white}{thin_white}({reset}"
-    "{thin_white}{actor}, {process}, {task}){reset}{bold_white}{thin_white})"
+    "{thin_white}{actor_name}[{actor_uid}], "
+    "{process}, {task}){reset}{bold_white}{thin_white})"
     " {reset}{log_color}[{reset}{bold_log_color}{levelname}{reset}{log_color}]"
     " {log_color}{name}"
     " {thin_white}{filename}{log_color}:{reset}{thin_white}{lineno}{log_color}"
@@ -134,6 +137,37 @@ class StackLevelAdapter(logging.LoggerAdapter):
             stack_info=stack_info,
             stacklevel=stacklevel,
         )
+
+
+_conc_name_getters = {
+    'task': lambda: trio.lowlevel.current_task().name,
+    'actor': lambda: current_actor(),
+    'actor_name': lambda: current_actor().name,
+    'actor_uid': lambda: current_actor().uid[1][:6],
+}
+
+
+class ActorContextInfo(Mapping):
+    "Dyanmic lookup for local actor and task names"
+    _context_keys = (
+        'task',
+        'actor',
+        'actor_name',
+        'actor_uid',
+    )
+
+    def __len__(self):
+        return len(self._context_keys)
+
+    def __iter__(self):
+        return iter(self._context_keys)
+
+    def __getitem__(self, key: str) -> str:
+        try:
+            return _conc_name_getters[key]()
+        except RuntimeError:
+            # no local actor/task context initialized yet
+            return f'no {key} context'
 
 
 def get_logger(

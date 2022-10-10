@@ -52,24 +52,6 @@ _conc_name_getters = {
 }
 
 
-class ActorContextInfo(Mapping):
-    "Dyanmic lookup for local actor and task names"
-    _context_keys = ('task', 'actor')
-
-    def __len__(self):
-        return len(self._context_keys)
-
-    def __iter__(self):
-        return iter(self._context_keys)
-
-    def __getitem__(self, key: str) -> str:
-        try:
-            return _conc_name_getters[key]().name  # type: ignore
-        except RuntimeError:
-            # no local actor/task context initialized yet
-            return f'no {key} context'
-
-
 def is_main_process() -> bool:
     """Bool determining if this actor is running in the top-most process.
     """
