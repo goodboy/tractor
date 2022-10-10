@@ -38,7 +38,6 @@ setup(
         'tractor',
         'tractor.experimental',
         'tractor.trionics',
-        'tractor.testing',
     ],
     install_requires=[
 

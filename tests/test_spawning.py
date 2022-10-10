@@ -142,7 +142,7 @@ def test_loglevel_propagated_to_subactor(
     capfd,
     arb_addr,
 ):
-    if start_method == 'forkserver':
+    if start_method == 'mp_forkserver':
         pytest.skip(
             "a bug with `capfd` seems to make forkserver capture not work?")
 

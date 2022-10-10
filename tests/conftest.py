@@ -8,15 +8,89 @@ import random
 import signal
 import platform
 import time
+import inspect
+from functools import partial, wraps
 
 import pytest
+import trio
 import tractor
 
-# export for tests
-from tractor.testing import tractor_test  # noqa
-
-
 pytest_plugins = ['pytester']
+
+
+def tractor_test(fn):
+    """
+    Use:
+
+    @tractor_test
+    async def test_whatever():
+        await ...
+
+    If fixtures:
+
+        - ``arb_addr`` (a socket addr tuple where arbiter is listening)
+        - ``loglevel`` (logging level passed to tractor internals)
+        - ``start_method`` (subprocess spawning backend)
+
+    are defined in the `pytest` fixture space they will be automatically
+    injected to tests declaring these funcargs.
+    """
+    @wraps(fn)
+    def wrapper(
+        *args,
+        loglevel=None,
+        arb_addr=None,
+        start_method=None,
+        **kwargs
+    ):
+        # __tracebackhide__ = True
+
+        if 'arb_addr' in inspect.signature(fn).parameters:
+            # injects test suite fixture value to test as well
+            # as `run()`
+            kwargs['arb_addr'] = arb_addr
+
+        if 'loglevel' in inspect.signature(fn).parameters:
+            # allows test suites to define a 'loglevel' fixture
+            # that activates the internal logging
+            kwargs['loglevel'] = loglevel
+
+        if start_method is None:
+            if platform.system() == "Windows":
+                start_method = 'trio'
+
+        if 'start_method' in inspect.signature(fn).parameters:
+            # set of subprocess spawning backends
+            kwargs['start_method'] = start_method
+
+        if kwargs:
+
+            # use explicit root actor start
+
+            async def _main():
+                async with tractor.open_root_actor(
+                    # **kwargs,
+                    arbiter_addr=arb_addr,
+                    loglevel=loglevel,
+                    start_method=start_method,
+
+                    # TODO: only enable when pytest is passed --pdb
+                    # debug_mode=True,
+
+                ):
+                    await fn(*args, **kwargs)
+
+            main = _main
+
+        else:
+            # use implicit root actor start
+            main = partial(fn, *args, **kwargs)
+
+        return trio.run(main)
+
+    return wrapper
+
+
 _arb_addr = '127.0.0.1', random.randint(1000, 9999)
 
 
@@ -64,11 +138,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     backend = config.option.spawn_backend
-
-    if backend == 'mp':
-        tractor._spawn.try_set_start_method('spawn')
-    elif backend == 'trio':
-        tractor._spawn.try_set_start_method(backend)
+    tractor._spawn.try_set_start_method(backend)
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -102,24 +172,24 @@ def arb_addr():
 
 def pytest_generate_tests(metafunc):
     spawn_backend = metafunc.config.option.spawn_backend
+
     if not spawn_backend:
         # XXX some weird windows bug with `pytest`?
-        spawn_backend = 'mp'
-    assert spawn_backend in ('mp', 'trio')
+        spawn_backend = 'trio'
 
+    # TODO: maybe just use the literal `._spawn.SpawnMethodKey`?
+    assert spawn_backend in (
+        'mp_spawn',
+        'mp_forkserver',
+        'trio',
+    )
+
+    # NOTE: used to be used to dyanmically parametrize tests for when
+    # you just passed --spawn-backend=`mp` on the cli, but now we expect
+    # that cli input to be manually specified, BUT, maybe we'll do
+    # something like this again in the future?
     if 'start_method' in metafunc.fixturenames:
-        if spawn_backend == 'mp':
-            from multiprocessing import get_all_start_methods
-            methods = get_all_start_methods()
-            if 'fork' in methods:
-                # fork not available on windows, so check before
-                # removing XXX: the fork method is in general
-                # incompatible with trio's global scheduler state
-                methods.remove('fork')
-        elif spawn_backend == 'trio':
-            methods = ['trio']
-
-        metafunc.parametrize("start_method", methods, scope='module')
+        metafunc.parametrize("start_method", [spawn_backend], scope='module')
 
 
 def sig_prog(proc, sig):

@@ -7,8 +7,9 @@ import platform
 
 import trio
 import tractor
-from tractor.testing import tractor_test
 import pytest
+
+from conftest import tractor_test
 
 
 def test_must_define_ctx():

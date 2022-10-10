@@ -26,7 +26,7 @@ jobs:
         run: pip install -U . --upgrade-strategy eager -r requirements-test.txt
 
       - name: Run MyPy check
-        run: mypy tractor/ --ignore-missing-imports
+        run: mypy tractor/ --ignore-missing-imports --show-traceback
 
   # test that we can generate a software distribution and install it
   # thus avoid missing file issues after packaging.
@@ -60,7 +60,11 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python: ['3.10']
-        spawn_backend: ['trio', 'mp']
+        spawn_backend: [
+          'trio',
+          'mp_spawn',
+          'mp_forkserver',
+        ]
 
     steps:
 

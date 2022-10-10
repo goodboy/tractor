@@ -62,7 +62,7 @@ async def open_root_actor(
     # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
     # OR `trio` (the new default).
-    start_method: Optional[str] = None,
+    start_method: Optional[_spawn.SpawnMethodKey] = None,
 
     # enables the multi-process debugger support
     debug_mode: bool = False,

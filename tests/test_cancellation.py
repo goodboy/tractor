@@ -435,7 +435,7 @@ def test_cancel_via_SIGINT(
         with trio.fail_after(2):
             async with tractor.open_nursery() as tn:
                 await tn.start_actor('sucka')
-                if spawn_backend == 'mp':
+                if 'mp' in spawn_backend:
                     time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)
                 await trio.sleep_forever()
@@ -474,7 +474,7 @@ def test_cancel_via_SIGINT_other_task(
         with trio.fail_after(timeout):
             async with trio.open_nursery() as n:
                 await n.start(spawn_and_sleep_forever)
-                if spawn_backend == 'mp':
+                if 'mp' in spawn_backend:
                     time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)
 

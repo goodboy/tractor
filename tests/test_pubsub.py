@@ -4,8 +4,9 @@ from itertools import cycle
 import pytest
 import trio
 import tractor
-from tractor.testing import tractor_test
 from tractor.experimental import msgpub
+
+from conftest import tractor_test
 
 
 def test_type_checks():

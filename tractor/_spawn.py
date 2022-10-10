@@ -22,7 +22,12 @@ from __future__ import annotations
 import sys
 import platform
 from typing import (
-    Any, Optional, Callable, TypeVar, TYPE_CHECKING
+    Any,
+    Literal,
+    Optional,
+    Callable,
+    TypeVar,
+    TYPE_CHECKING,
 )
 from collections.abc import Awaitable
 
@@ -39,7 +44,6 @@ from ._state import (
     is_root_process,
     debug_mode,
 )
-
 from .log import get_logger
 from ._portal import Portal
 from ._runtime import Actor
@@ -48,6 +52,7 @@ from ._exceptions import ActorFailure
 
 
 if TYPE_CHECKING:
+    from ._supervise import ActorNursery
     import multiprocessing as mp
     ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
 
@@ -55,7 +60,12 @@ log = get_logger('tractor')
 
 # placeholder for an mp start context if so using that backend
 _ctx: Optional[mp.context.BaseContext] = None
-_spawn_method: str = "trio"
+SpawnMethodKey = Literal[
+    'trio',  # supported on all platforms
+    'mp_spawn',
+    'mp_forkserver',  # posix only
+]
+_spawn_method: SpawnMethodKey = 'trio'
 
 
 if platform.system() == 'Windows':
@@ -72,7 +82,10 @@ else:
         await trio.lowlevel.wait_readable(proc.sentinel)
 
 
-def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
+def try_set_start_method(
+    key: SpawnMethodKey
+
+) -> Optional[mp.context.BaseContext]:
     '''
     Attempt to set the method for process starting, aka the "actor
     spawning backend".
@@ -87,28 +100,30 @@ def try_set_start_method(name: str) -> Optional[mp.context.BaseContext]:
     global _ctx
     global _spawn_method
 
-    methods = mp.get_all_start_methods()
-    if 'fork' in methods:
+    mp_methods = mp.get_all_start_methods()
+    if 'fork' in mp_methods:
         # forking is incompatible with ``trio``s global task tree
-        methods.remove('fork')
+        mp_methods.remove('fork')
 
-    # supported on all platforms
-    methods += ['trio']
+    match key:
+        case 'mp_forkserver':
+            from . import _forkserver_override
+            _forkserver_override.override_stdlib()
+            _ctx = mp.get_context('forkserver')
 
-    if name not in methods:
-        raise ValueError(
-            f"Spawn method `{name}` is invalid please choose one of {methods}"
-        )
-    elif name == 'forkserver':
-        from . import _forkserver_override
-        _forkserver_override.override_stdlib()
-        _ctx = mp.get_context(name)
-    elif name == 'trio':
-        _ctx = None
-    else:
-        _ctx = mp.get_context(name)
+        case 'mp_spawn':
+            _ctx = mp.get_context('spawn')
 
-    _spawn_method = name
+        case 'trio':
+            _ctx = None
+
+        case _:
+            raise ValueError(
+                f'Spawn method `{key}` is invalid!\n'
+                f'Please choose one of {SpawnMethodKey}'
+            )
+
+    _spawn_method = key
     return _ctx
 
 
@@ -247,9 +262,8 @@ async def soft_wait(
 
 
 async def new_proc(
-
     name: str,
-    actor_nursery: 'ActorNursery',  # type: ignore  # noqa
+    actor_nursery: ActorNursery,
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
 
@@ -264,6 +278,41 @@ async def new_proc(
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
+
+    # lookup backend spawning target
+    target = _methods[_spawn_method]
+
+    # mark the new actor with the global spawn method
+    subactor._spawn_method = _spawn_method
+
+    await target(
+        name,
+        actor_nursery,
+        subactor,
+        errors,
+        bind_addr,
+        parent_addr,
+        _runtime_vars,  # run time vars
+        infect_asyncio=infect_asyncio,
+        task_status=task_status,
+    )
+
+
+async def trio_proc(
+    name: str,
+    actor_nursery: ActorNursery,
+    subactor: Actor,
+    errors: dict[tuple[str, str], Exception],
+
+    # passed through to actor main
+    bind_addr: tuple[str, int],
+    parent_addr: tuple[str, int],
+    _runtime_vars: dict[str, Any],  # serialized and sent to _child
+    *,
+    infect_asyncio: bool = False,
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
+
+) -> None:
     '''
     Create a new ``Process`` using a "spawn method" as (configured using
     ``try_set_start_method()``).
@@ -272,178 +321,159 @@ async def new_proc(
     here is to be considered the core supervision strategy.
 
     '''
-    # mark the new actor with the global spawn method
-    subactor._spawn_method = _spawn_method
-    uid = subactor.uid
+    spawn_cmd = [
+        sys.executable,
+        "-m",
+        # Hardcode this (instead of using ``_child.__name__`` to avoid a
+        # double import warning: https://stackoverflow.com/a/45070583
+        "tractor._child",
+        # We provide the child's unique identifier on this exec/spawn
+        # line for debugging purposes when viewing the process tree from
+        # the OS; it otherwise can be passed via the parent channel if
+        # we prefer in the future (for privacy).
+        "--uid",
+        str(subactor.uid),
+        # Address the child must connect to on startup
+        "--parent_addr",
+        str(parent_addr)
+    ]
 
-    if _spawn_method == 'trio':
-        spawn_cmd = [
-            sys.executable,
-            "-m",
-            # Hardcode this (instead of using ``_child.__name__`` to avoid a
-            # double import warning: https://stackoverflow.com/a/45070583
-            "tractor._child",
-            # We provide the child's unique identifier on this exec/spawn
-            # line for debugging purposes when viewing the process tree from
-            # the OS; it otherwise can be passed via the parent channel if
-            # we prefer in the future (for privacy).
-            "--uid",
-            str(subactor.uid),
-            # Address the child must connect to on startup
-            "--parent_addr",
-            str(parent_addr)
+    if subactor.loglevel:
+        spawn_cmd += [
+            "--loglevel",
+            subactor.loglevel
         ]
+    # Tell child to run in guest mode on top of ``asyncio`` loop
+    if infect_asyncio:
+        spawn_cmd.append("--asyncio")
 
-        if subactor.loglevel:
-            spawn_cmd += [
-                "--loglevel",
-                subactor.loglevel
-            ]
-        # Tell child to run in guest mode on top of ``asyncio`` loop
-        if infect_asyncio:
-            spawn_cmd.append("--asyncio")
-
-        cancelled_during_spawn: bool = False
-        proc: Optional[trio.Process] = None
+    cancelled_during_spawn: bool = False
+    proc: Optional[trio.Process] = None
+    try:
         try:
-            try:
-                # TODO: needs ``trio_typing`` patch?
-                proc = await trio.lowlevel.open_process(spawn_cmd)  # type: ignore
+            # TODO: needs ``trio_typing`` patch?
+            proc = await trio.lowlevel.open_process(    # type: ignore
+                spawn_cmd)
 
-                log.runtime(f"Started {proc}")
+            log.runtime(f"Started {proc}")
 
-                # wait for actor to spawn and connect back to us
-                # channel should have handshake completed by the
-                # local actor by the time we get a ref to it
-                event, chan = await actor_nursery._actor.wait_for_peer(
-                    subactor.uid)
+            # wait for actor to spawn and connect back to us
+            # channel should have handshake completed by the
+            # local actor by the time we get a ref to it
+            event, chan = await actor_nursery._actor.wait_for_peer(
+                subactor.uid)
 
-            except trio.Cancelled:
-                cancelled_during_spawn = True
-                # we may cancel before the child connects back in which
-                # case avoid clobbering the pdb tty.
-                if debug_mode():
-                    with trio.CancelScope(shield=True):
-                        # don't clobber an ongoing pdb
-                        if is_root_process():
-                            await maybe_wait_for_debugger()
-
-                        elif proc is not None:
-                            async with acquire_debug_lock(uid):
-                                # soft wait on the proc to terminate
-                                with trio.move_on_after(0.5):
-                                    await proc.wait()
-                raise
-
-            # a sub-proc ref **must** exist now
-            assert proc
-
-            portal = Portal(chan)
-            actor_nursery._children[subactor.uid] = (
-                subactor, proc, portal)
-
-            # send additional init params
-            await chan.send({
-                "_parent_main_data": subactor._parent_main_data,
-                "enable_modules": subactor.enable_modules,
-                "_arb_addr": subactor._arb_addr,
-                "bind_host": bind_addr[0],
-                "bind_port": bind_addr[1],
-                "_runtime_vars": _runtime_vars,
-            })
-
-            # track subactor in current nursery
-            curr_actor = current_actor()
-            curr_actor._actoruid2nursery[subactor.uid] = actor_nursery
-
-            # resume caller at next checkpoint now that child is up
-            task_status.started(portal)
-
-            # wait for ActorNursery.wait() to be called
-            with trio.CancelScope(shield=True):
-                await actor_nursery._join_procs.wait()
-
-            async with trio.open_nursery() as nursery:
-                if portal in actor_nursery._cancel_after_result_on_exit:
-                    nursery.start_soon(
-                        cancel_on_completion,
-                        portal,
-                        subactor,
-                        errors
-                    )
-
-                # This is a "soft" (cancellable) join/reap which
-                # will remote cancel the actor on a ``trio.Cancelled``
-                # condition.
-                await soft_wait(
-                    proc,
-                    trio.Process.wait,
-                    portal
-                )
-
-                # cancel result waiter that may have been spawned in
-                # tandem if not done already
-                log.warning(
-                    "Cancelling existing result waiter task for "
-                    f"{subactor.uid}")
-                nursery.cancel_scope.cancel()
-
-        finally:
-            # The "hard" reap since no actor zombies are allowed!
-            # XXX: do this **after** cancellation/tearfown to avoid
-            # killing the process too early.
-            if proc:
-                log.cancel(f'Hard reap sequence starting for {uid}')
+        except trio.Cancelled:
+            cancelled_during_spawn = True
+            # we may cancel before the child connects back in which
+            # case avoid clobbering the pdb tty.
+            if debug_mode():
                 with trio.CancelScope(shield=True):
-
                     # don't clobber an ongoing pdb
-                    if cancelled_during_spawn:
-                        # Try again to avoid TTY clobbering.
-                        async with acquire_debug_lock(uid):
+                    if is_root_process():
+                        await maybe_wait_for_debugger()
+
+                    elif proc is not None:
+                        async with acquire_debug_lock(subactor.uid):
+                            # soft wait on the proc to terminate
                             with trio.move_on_after(0.5):
                                 await proc.wait()
+            raise
 
-                    if is_root_process():
-                        await maybe_wait_for_debugger(
-                            child_in_debug=_runtime_vars.get(
-                                '_debug_mode', False),
-                        )
+        # a sub-proc ref **must** exist now
+        assert proc
 
-                    if proc.poll() is None:
-                        log.cancel(f"Attempting to hard kill {proc}")
-                        await do_hard_kill(proc)
-
-                    log.debug(f"Joined {proc}")
-            else:
-                log.warning('Nursery cancelled before sub-proc started')
-
-            if not cancelled_during_spawn:
-                # pop child entry to indicate we no longer managing this
-                # subactor
-                actor_nursery._children.pop(subactor.uid)
-
-    else:
-        # `multiprocessing`
-        # async with trio.open_nursery() as nursery:
-        await mp_new_proc(
-            name=name,
-            actor_nursery=actor_nursery,
-            subactor=subactor,
-            errors=errors,
-
-            # passed through to actor main
-            bind_addr=bind_addr,
-            parent_addr=parent_addr,
-            _runtime_vars=_runtime_vars,
-            infect_asyncio=infect_asyncio,
-            task_status=task_status,
+        portal = Portal(chan)
+        actor_nursery._children[subactor.uid] = (
+            subactor,
+            proc,
+            portal,
         )
 
+        # send additional init params
+        await chan.send({
+            "_parent_main_data": subactor._parent_main_data,
+            "enable_modules": subactor.enable_modules,
+            "_arb_addr": subactor._arb_addr,
+            "bind_host": bind_addr[0],
+            "bind_port": bind_addr[1],
+            "_runtime_vars": _runtime_vars,
+        })
 
-async def mp_new_proc(
+        # track subactor in current nursery
+        curr_actor = current_actor()
+        curr_actor._actoruid2nursery[subactor.uid] = actor_nursery
 
+        # resume caller at next checkpoint now that child is up
+        task_status.started(portal)
+
+        # wait for ActorNursery.wait() to be called
+        with trio.CancelScope(shield=True):
+            await actor_nursery._join_procs.wait()
+
+        async with trio.open_nursery() as nursery:
+            if portal in actor_nursery._cancel_after_result_on_exit:
+                nursery.start_soon(
+                    cancel_on_completion,
+                    portal,
+                    subactor,
+                    errors
+                )
+
+            # This is a "soft" (cancellable) join/reap which
+            # will remote cancel the actor on a ``trio.Cancelled``
+            # condition.
+            await soft_wait(
+                proc,
+                trio.Process.wait,
+                portal
+            )
+
+            # cancel result waiter that may have been spawned in
+            # tandem if not done already
+            log.warning(
+                "Cancelling existing result waiter task for "
+                f"{subactor.uid}")
+            nursery.cancel_scope.cancel()
+
+    finally:
+        # The "hard" reap since no actor zombies are allowed!
+        # XXX: do this **after** cancellation/tearfown to avoid
+        # killing the process too early.
+        if proc:
+            log.cancel(f'Hard reap sequence starting for {subactor.uid}')
+            with trio.CancelScope(shield=True):
+
+                # don't clobber an ongoing pdb
+                if cancelled_during_spawn:
+                    # Try again to avoid TTY clobbering.
+                    async with acquire_debug_lock(subactor.uid):
+                        with trio.move_on_after(0.5):
+                            await proc.wait()
+
+                if is_root_process():
+                    await maybe_wait_for_debugger(
+                        child_in_debug=_runtime_vars.get(
+                            '_debug_mode', False),
+                    )
+
+                if proc.poll() is None:
+                    log.cancel(f"Attempting to hard kill {proc}")
+                    await do_hard_kill(proc)
+
+                log.debug(f"Joined {proc}")
+        else:
+            log.warning('Nursery cancelled before sub-proc started')
+
+        if not cancelled_during_spawn:
+            # pop child entry to indicate we no longer managing this
+            # subactor
+            actor_nursery._children.pop(subactor.uid)
+
+
+async def mp_proc(
     name: str,
-    actor_nursery: 'ActorNursery',  # type: ignore  # noqa
+    actor_nursery: ActorNursery,  # type: ignore  # noqa
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
     # passed through to actor main
@@ -468,6 +498,7 @@ async def mp_new_proc(
     assert _ctx
     start_method = _ctx.get_start_method()
     if start_method == 'forkserver':
+
         from multiprocessing import forkserver  # type: ignore
         # XXX do our hackery on the stdlib to avoid multiple
         # forkservers (one at each subproc layer).
@@ -480,23 +511,24 @@ async def mp_new_proc(
             # forkserver.set_forkserver_preload(enable_modules)
             forkserver.ensure_running()
             fs_info = (
-                fs._forkserver_address,
-                fs._forkserver_alive_fd,
+                fs._forkserver_address,  # type: ignore  # noqa
+                fs._forkserver_alive_fd,  # type: ignore  # noqa
                 getattr(fs, '_forkserver_pid', None),
                 getattr(
                     resource_tracker._resource_tracker, '_pid', None),
                 resource_tracker._resource_tracker._fd,
             )
-        else:
+        else:  # request to forkerserver to fork a new child
             assert curr_actor._forkserver_info
             fs_info = (
-                fs._forkserver_address,
-                fs._forkserver_alive_fd,
-                fs._forkserver_pid,
+                fs._forkserver_address,  # type: ignore  # noqa
+                fs._forkserver_alive_fd,  # type: ignore  # noqa
+                fs._forkserver_pid,  # type: ignore  # noqa
                 resource_tracker._resource_tracker._pid,
                 resource_tracker._resource_tracker._fd,
              ) = curr_actor._forkserver_info
     else:
+        # spawn method
         fs_info = (None, None, None, None, None)
 
     proc: mp.Process = _ctx.Process(  # type: ignore
@@ -505,7 +537,7 @@ async def mp_new_proc(
             subactor,
             bind_addr,
             fs_info,
-            start_method,
+            _spawn_method,
             parent_addr,
             infect_asyncio,
         ),
@@ -599,4 +631,16 @@ async def mp_new_proc(
         log.debug(f"Joined {proc}")
 
         # pop child entry to indicate we are no longer managing subactor
-        subactor, proc, portal = actor_nursery._children.pop(subactor.uid)
+        actor_nursery._children.pop(subactor.uid)
+
+        # TODO: prolly report to ``mypy`` how this causes all sorts of
+        # false errors..
+        # subactor, proc, portal = actor_nursery._children.pop(subactor.uid)
+
+
+# proc spawning backend target map
+_methods: dict[SpawnMethodKey, Callable] = {
+    'trio': trio_proc,
+    'mp_spawn': mp_proc,
+    'mp_forkserver': mp_proc,
+}
