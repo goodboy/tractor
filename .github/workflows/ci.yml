@@ -118,7 +118,7 @@ jobs:
         run: uv tree
 
       - name: Run tests
-        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx --full-trace
 
   # XXX legacy NOTE XXX
   #
