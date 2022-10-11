@@ -170,11 +170,11 @@ async def trio_ctx(
     # message.
     with trio.fail_after(2):
         async with (
+            trio.open_nursery() as n,
+
             tractor.to_asyncio.open_channel_from(
                 sleep_and_err,
             ) as (first, chan),
-
-            trio.open_nursery() as n,
         ):
 
             assert first == 'start'
