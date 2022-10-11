@@ -83,7 +83,7 @@ jobs:
         run: pip list
 
       - name: Run tests
-        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx --full-trace
 
   # We skip 3.10 on windows for now due to not having any collabs to
   # debug the CI failures. Anyone wanting to hack and solve them is very
