@@ -372,7 +372,7 @@ class Context:
     # status flags
     _cancel_called: bool = False
     _cancel_msg: Optional[str] = None
-    _trigger_debugger_on_cancel: bool = True
+    _enter_debugger_on_cancel: bool = True
     _started_called: bool = False
     _started_received: bool = False
     _stream_opened: bool = False
