@@ -485,10 +485,12 @@ def test_multi_subactors(
     # 2nd name_error failure
     child.expect(r"\(Pdb\+\+\)")
 
-    assert_before(child, [
-        "Attaching to pdb in crashed actor: ('name_error_1'",
-        "NameError",
-    ])
+    # TODO: will we ever get the race where this crash will show up?
+    # blocklist strat now prevents this crash
+    # assert_before(child, [
+    #     "Attaching to pdb in crashed actor: ('name_error_1'",
+    #     "NameError",
+    # ])
 
     if ctlc:
         do_ctlc(child)
@@ -683,49 +685,64 @@ def test_multi_subactors_root_errors(
     # continue again to catch 2nd name error from
     # actor 'name_error_1' (which is 2nd depth).
     child.sendline('c')
+
+    # due to block list strat from #337, this will no longer
+    # propagate before the root errors and cancels the spawner sub-tree.
     child.expect(r"\(Pdb\+\+\)")
+
+    # only if the blocking condition doesn't kick in fast enough
+    before = str(child.before.decode())
+    if "Debug lock blocked for ['name_error_1'" not in before:
+
+        assert_before(child, [
+            "Attaching to pdb in crashed actor: ('name_error_1'",
+            "NameError",
+        ])
+
+        if ctlc:
+            do_ctlc(child)
+
+        child.sendline('c')
+        child.expect(r"\(Pdb\+\+\)")
+
+    # check if the spawner crashed or was blocked from debug
+    # and if this intermediary attached check the boxed error
+    before = str(child.before.decode())
+    if "Attaching to pdb in crashed actor: ('spawn_error'" in before:
+
+        assert_before(child, [
+            # boxed error from spawner's child
+            "RemoteActorError: ('name_error_1'",
+            "NameError",
+        ])
+
+        if ctlc:
+            do_ctlc(child)
+
+        child.sendline('c')
+        child.expect(r"\(Pdb\+\+\)")
+
+    # expect a root actor crash
     assert_before(child, [
-        "Attaching to pdb in crashed actor: ('name_error_1'",
-        "NameError",
-    ])
-
-    if ctlc:
-        do_ctlc(child)
-
-    child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
-    assert_before(child, [
-        "Attaching to pdb in crashed actor: ('spawn_error'",
-        # boxed error from previous step
-        "RemoteActorError: ('name_error_1'",
-        "NameError",
-    ])
-
-    if ctlc:
-        do_ctlc(child)
-
-    child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
-    assert_before(child, [
-        "Attaching to pdb in crashed actor: ('root'",
-        # boxed error from previous step
         "RemoteActorError: ('name_error'",
         "NameError",
+
+        # error from root actor and root task that created top level nursery
+        "Attaching to pdb in crashed actor: ('root'",
+        "AssertionError",
     ])
 
-    # warnings assert we probably don't need
-    # assert "Cancelling nursery in ('spawn_error'," in before
-
-    if ctlc:
-        do_ctlc(child)
-
-    # continue again
     child.sendline('c')
     child.expect(pexpect.EOF)
 
-    before = str(child.before.decode())
-    # error from root actor and root task that created top level nursery
-    assert "AssertionError" in before
+    assert_before(child, [
+        # "Attaching to pdb in crashed actor: ('root'",
+        # boxed error from previous step
+        "RemoteActorError: ('name_error'",
+        "NameError",
+        "AssertionError",
+        'assert 0',
+    ])
 
 
 @has_nested_actors
