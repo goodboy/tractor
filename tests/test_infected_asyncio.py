@@ -170,11 +170,11 @@ async def trio_ctx(
     # message.
     with trio.fail_after(2):
         async with (
+            trio.open_nursery() as n,
+
             tractor.to_asyncio.open_channel_from(
                 sleep_and_err,
             ) as (first, chan),
-
-            trio.open_nursery() as n,
         ):
 
             assert first == 'start'
@@ -203,24 +203,25 @@ def test_context_spawns_aio_task_that_errors(
     '''
     async def main():
 
-        async with tractor.open_nursery() as n:
-            p = await n.start_actor(
-                'aio_daemon',
-                enable_modules=[__name__],
-                infect_asyncio=True,
-                # debug_mode=True,
-                loglevel='cancel',
-            )
-            async with p.open_context(
-                trio_ctx,
-            ) as (ctx, first):
+        with trio.fail_after(2):
+            async with tractor.open_nursery() as n:
+                p = await n.start_actor(
+                    'aio_daemon',
+                    enable_modules=[__name__],
+                    infect_asyncio=True,
+                    # debug_mode=True,
+                    loglevel='cancel',
+                )
+                async with p.open_context(
+                    trio_ctx,
+                ) as (ctx, first):
 
-                assert first == 'start'
+                    assert first == 'start'
 
-                if parent_cancels:
-                    await p.cancel_actor()
+                    if parent_cancels:
+                        await p.cancel_actor()
 
-                await trio.sleep_forever()
+                    await trio.sleep_forever()
 
     with pytest.raises(RemoteActorError) as excinfo:
         trio.run(main)

@@ -234,6 +234,9 @@ async def _invoke(
                         f'{ctx.chan.uid}'
                     )
 
+                if ctx._cancel_msg:
+                    msg += f' with msg:\n{ctx._cancel_msg}'
+
                 # task-contex was cancelled so relay to the cancel to caller
                 raise ContextCancelled(
                     msg,
@@ -275,8 +278,16 @@ async def _invoke(
             # if not is_multi_cancelled(err) and (
 
             entered_debug: bool = False
-            if not isinstance(err, ContextCancelled) or (
-                isinstance(err, ContextCancelled) and ctx._cancel_called
+            if (
+                not isinstance(err, ContextCancelled)
+                or (
+                    isinstance(err, ContextCancelled)
+                    and ctx._cancel_called
+
+                    # if the root blocks the debugger lock request from a child
+                    # we will get a remote-cancelled condition.
+                    and ctx._enter_debugger_on_cancel
+                )
             ):
                 # XXX: is there any case where we'll want to debug IPC
                 # disconnects as a default?
@@ -286,7 +297,6 @@ async def _invoke(
                 # recovery logic - the only case is some kind of strange bug
                 # in our transport layer itself? Going to keep this
                 # open ended for now.
-
                 entered_debug = await _debug._maybe_enter_pm(err)
 
                 if not entered_debug:
@@ -698,16 +708,35 @@ class Actor:
                 log.runtime(f"No more channels for {chan.uid}")
                 self._peers.pop(uid, None)
 
-                # for (uid, cid) in self._contexts.copy():
-                #     if chan.uid == uid:
-                #         self._contexts.pop((uid, cid))
+                # NOTE: block this actor from acquiring the
+                # debugger-TTY-lock since we have no way to know if we
+                # cancelled it and further there is no way to ensure the
+                # lock will be released if acquired due to having no
+                # more active IPC channels.
+                if _state.is_root_process():
+                    pdb_lock = _debug.Lock
+                    pdb_lock._blocked.add(uid)
+                    log.runtime(f"{uid} blocked from pdb locking")
+
+                    # if a now stale local task has the TTY lock still
+                    # we cancel it to allow servicing other requests for
+                    # the lock.
+                    if (
+                        pdb_lock._root_local_task_cs_in_debug
+                        and not pdb_lock._root_local_task_cs_in_debug.cancel_called
+                    ):
+                        log.warning(
+                            f'STALE DEBUG LOCK DETECTED FOR {uid}'
+                        )
+                        # TODO: figure out why this breaks tests..
+                        # pdb_lock._root_local_task_cs_in_debug.cancel()
 
             log.runtime(f"Peers is {self._peers}")
 
             # No more channels to other actors (at all) registered
             # as connected.
             if not self._peers:
-                log.runtime("Signalling no more peer channels")
+                log.runtime("Signalling no more peer channel connections")
                 self._no_more_peers.set()
 
             # XXX: is this necessary (GC should do it)?

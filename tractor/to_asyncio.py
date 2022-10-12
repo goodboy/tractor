@@ -466,11 +466,11 @@ async def open_channel_from(
         ):
             # sync to a "started()"-like first delivered value from the
             # ``asyncio`` task.
-            first = await chan.receive()
-
-            # deliver stream handle upward
             try:
                 with chan._trio_cs:
+                    first = await chan.receive()
+
+                    # deliver stream handle upward
                     yield first, chan
             finally:
                 chan._trio_exited = True
@@ -491,16 +491,18 @@ def run_as_asyncio_guest(
     SC semantics.
 
     '''
-    # Uh, oh. :o
+    # Uh, oh.
+    #
+    # :o
 
     # It looks like your event loop has caught a case of the ``trio``s.
 
     # :()
 
-    # Don't worry, we've heard you'll barely notice. You might hallucinate
-    # a few more propagating errors and feel like your digestion has
-    # slowed but if anything get's too bad your parents will know about
-    # it.
+    # Don't worry, we've heard you'll barely notice. You might
+    # hallucinate a few more propagating errors and feel like your
+    # digestion has slowed but if anything get's too bad your parents
+    # will know about it.
 
     # :)
 

@@ -38,8 +38,14 @@ from trio_typing import TaskStatus
 
 from .log import get_logger
 from ._discovery import get_root
-from ._state import is_root_process, debug_mode
-from ._exceptions import is_multi_cancelled
+from ._state import (
+    is_root_process,
+    debug_mode,
+)
+from ._exceptions import (
+    is_multi_cancelled,
+    ContextCancelled,
+)
 from ._ipc import Channel
 
 
@@ -72,6 +78,18 @@ class Lock:
     # actor-wide variable pointing to current task name using debugger
     local_task_in_debug: Optional[str] = None
 
+    # NOTE: set by the current task waiting on the root tty lock from
+    # the CALLER side of the `lock_tty_for_child()` context entry-call
+    # and must be cancelled if this actor is cancelled via IPC
+    # request-message otherwise deadlocks with the parent actor may
+    # ensure
+    _debugger_request_cs: Optional[trio.CancelScope] = None
+
+    # NOTE: set only in the root actor for the **local** root spawned task
+    # which has acquired the lock (i.e. this is on the callee side of
+    # the `lock_tty_for_child()` context entry).
+    _root_local_task_cs_in_debug: Optional[trio.CancelScope] = None
+
     # actor tree-wide actor uid that supposedly has the tty lock
     global_actor_in_debug: Optional[tuple[str, str]] = None
 
@@ -81,12 +99,8 @@ class Lock:
     # lock in root actor preventing multi-access to local tty
     _debug_lock: trio.StrictFIFOLock = trio.StrictFIFOLock()
 
-    # XXX: set by the current task waiting on the root tty lock
-    # and must be cancelled if this actor is cancelled via message
-    # otherwise deadlocks with the parent actor may ensure
-    _debugger_request_cs: Optional[trio.CancelScope] = None
-
     _orig_sigint_handler: Optional[Callable] = None
+    _blocked: set[tuple[str, str]] = set()
 
     @classmethod
     def shield_sigint(cls):
@@ -196,6 +210,12 @@ async def _acquire_debug_lock_from_root_task(
             f"entering lock checkpoint, remote task: {task_name}:{uid}"
         )
         we_acquired = True
+
+        # NOTE: if the surrounding cancel scope from the
+        # `lock_tty_for_child()` caller is cancelled, this line should
+        # unblock and NOT leave us in some kind of
+        # a "child-locked-TTY-but-child-is-uncontactable-over-IPC"
+        # condition.
         await Lock._debug_lock.acquire()
 
         if Lock.no_remote_has_tty is None:
@@ -267,6 +287,15 @@ async def lock_tty_for_child(
     '''
     task_name = trio.lowlevel.current_task().name
 
+    if tuple(subactor_uid) in Lock._blocked:
+        log.warning(
+            f'Actor {subactor_uid} is blocked from acquiring debug lock\n'
+            f"remote task: {task_name}:{subactor_uid}"
+        )
+        ctx._enter_debugger_on_cancel = False
+        await ctx.cancel(f'Debug lock blocked for {subactor_uid}')
+        return 'pdb_lock_blocked'
+
     # TODO: when we get to true remote debugging
     # this will deliver stdin data?
 
@@ -280,8 +309,9 @@ async def lock_tty_for_child(
 
     try:
         with (
-            trio.CancelScope(shield=True),
+            trio.CancelScope(shield=True) as debug_lock_cs,
         ):
+            Lock._root_local_task_cs_in_debug = debug_lock_cs
             async with _acquire_debug_lock_from_root_task(subactor_uid):
 
                 # indicate to child that we've locked stdio
@@ -297,6 +327,7 @@ async def lock_tty_for_child(
         return "pdb_unlock_complete"
 
     finally:
+        Lock._root_local_task_cs_in_debug = None
         Lock.unshield_sigint()
 
 
@@ -353,7 +384,7 @@ async def wait_for_parent_stdin_hijack(
 
                 log.pdb('unlocked context')
 
-        except tractor.ContextCancelled:
+        except ContextCancelled:
             log.warning('Root actor cancelled debug lock')
 
         finally:
@@ -721,9 +752,11 @@ async def _maybe_enter_pm(err):
         and not is_multi_cancelled(err)
     ):
         log.debug("Actor crashed, entering debug mode")
-        await post_mortem()
-        Lock.release()
-        return True
+        try:
+            await post_mortem()
+        finally:
+            Lock.release()
+            return True
 
     else:
         return False

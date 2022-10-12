@@ -1,0 +1,41 @@
+Add support for debug-lock blocking using a ``._debug.Lock._blocked:
+set[tuple]`` and add ids when no-more IPC connections with the
+root actor are detected.
+
+This is an enhancement which (mostly) solves a lingering debugger
+locking race case we needed to handle:
+
+- child crashes acquires TTY lock in root and attaches to ``pdb``
+- child IPC goes down such that all channels to the root are broken
+  / non-functional.
+- root is stuck thinking the child is still in debug even though it
+  can't be contacted and the child actor machinery hasn't been
+  cancelled by its parent.
+- root get's stuck in deadlock with child since it won't send a cancel
+  request until the child is finished debugging (to avoid clobbering
+  a child that is actually using the debugger), but the child can't
+  unlock the debugger bc IPC is down and it can't contact the root.
+
+To avoid this scenario add debug lock blocking list via
+`._debug.Lock._blocked: set[tuple]` which holds actor uids for any actor
+that is detected by the root as having no transport channel connections
+(of which at least one should exist if this sub-actor at some point
+acquired the debug lock). The root consequently checks this list for any
+actor that tries to (re)acquire the lock and blocks with
+a ``ContextCancelled``. Further, when a debug condition is tested in
+``._runtime._invoke``, the context's ``._enter_debugger_on_cancel`` is
+set to `False` if the actor was put on the block list then all
+post-mortem / crash handling will be bypassed for that task.
+
+In theory this approach to block list management may cause problems
+where some nested child actor acquires and releases the lock multiple
+times and it gets stuck on the block list after the first use? If this
+turns out to be an issue we can try changing the strat so blocks are
+only added when the root has zero IPC peers left?
+
+Further, this adds a root-locking-task side cancel scope,
+``Lock._root_local_task_cs_in_debug``, which can be ``.cancel()``-ed by the root
+runtime when a stale lock is detected during the IPC channel testing.
+However, right now we're NOT using this since it seems to cause test
+failures likely due to causing pre-mature cancellation and maybe needs
+a bit more experimenting?

@@ -371,6 +371,8 @@ class Context:
 
     # status flags
     _cancel_called: bool = False
+    _cancel_msg: Optional[str] = None
+    _enter_debugger_on_cancel: bool = True
     _started_called: bool = False
     _started_received: bool = False
     _stream_opened: bool = False
@@ -452,7 +454,11 @@ class Context:
                 if not self._scope_nursery._closed:  # type: ignore
                     self._scope_nursery.start_soon(raiser)
 
-    async def cancel(self) -> None:
+    async def cancel(
+        self,
+        msg: Optional[str] = None,
+
+    ) -> None:
         '''
         Cancel this inter-actor-task context.
 
@@ -461,6 +467,8 @@ class Context:
 
         '''
         side = 'caller' if self._portal else 'callee'
+        if msg:
+            assert side == 'callee', 'Only callee side can provide cancel msg'
 
         log.cancel(f'Cancelling {side} side of context to {self.chan.uid}')
 
@@ -497,8 +505,10 @@ class Context:
                     log.cancel(
                         "Timed out on cancelling remote task "
                         f"{cid} for {self._portal.channel.uid}")
+
+        # callee side remote task
         else:
-            # callee side remote task
+            self._cancel_msg = msg
 
             # TODO: should we have an explicit cancel message
             # or is relaying the local `trio.Cancelled` as an
