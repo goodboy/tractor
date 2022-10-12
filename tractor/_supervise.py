@@ -301,7 +301,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 ) -> typing.AsyncGenerator[ActorNursery, None]:
 
     # the collection of errors retreived from spawned sub-actors
-    errors: dict[tuple[str, str], Exception] = {}
+    errors: dict[tuple[str, str], BaseException] = {}
 
     # This is the outermost level "deamon actor" nursery. It is awaited
     # **after** the below inner "run in actor nursery". This allows for
@@ -347,7 +347,6 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     anursery._join_procs.set()
 
                 except BaseException as err:
-
                     # If we error in the root but the debugger is
                     # engaged we don't want to prematurely kill (and
                     # thus clobber access to) the local tty since it
@@ -383,7 +382,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                             else:
                                 log.exception(
                                     f"Nursery for {current_actor().uid} "
-                                    f"errored with {err}, ")
+                                    f"errored with")
 
                             # cancel all subactors
                             await anursery.cancel()
@@ -410,7 +409,8 @@ async def _open_and_supervise_one_cancels_all_nursery(
             BaseExceptionGroup,
             trio.Cancelled
 
-        ) as err:
+        ) as err:  # noqa
+            errors[actor.uid] = err
 
             # XXX: yet another guard before allowing the cancel
             # sequence in case a (single) child is in debug.
