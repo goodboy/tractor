@@ -708,24 +708,15 @@ class Actor:
                 log.runtime(f"No more channels for {chan.uid}")
                 self._peers.pop(uid, None)
 
-                # for (uid, cid) in self._contexts.copy():
-                #     if chan.uid == uid:
-                #         self._contexts.pop((uid, cid))
-
                 # NOTE: block this actor from acquiring the
                 # debugger-TTY-lock since we have no way to know if we
                 # cancelled it and further there is no way to ensure the
                 # lock will be released if acquired due to having no
                 # more active IPC channels.
-                if (
-                    _state.is_root_process()
-                ):
+                if _state.is_root_process():
                     pdb_lock = _debug.Lock
-                    log.cancel(
-                        f'{uid} is now blocked from debugger lock'
-                    )
-                    log.runtime(f"{uid} blocked from pdb locking")
                     pdb_lock._blocked.add(uid)
+                    log.runtime(f"{uid} blocked from pdb locking")
 
                     # if a now stale local task has the TTY lock still
                     # we cancel it to allow servicing other requests for
@@ -745,7 +736,7 @@ class Actor:
             # No more channels to other actors (at all) registered
             # as connected.
             if not self._peers:
-                log.runtime("Signalling no more peer channels")
+                log.runtime("Signalling no more peer channel connections")
                 self._no_more_peers.set()
 
             # XXX: is this necessary (GC should do it)?
