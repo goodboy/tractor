@@ -52,17 +52,17 @@ log = get_logger(__name__)
 
 
 def _unwrap_msg(
-
     msg: dict[str, Any],
     channel: Channel
 
 ) -> Any:
+    __tracebackhide__ = True
     try:
         return msg['return']
     except KeyError:
         # internal error should never get here
         assert msg.get('cid'), "Received internal error at portal?"
-        raise unpack_error(msg, channel)
+        raise unpack_error(msg, channel) from None
 
 
 class MessagingError(Exception):
@@ -136,6 +136,7 @@ class Portal:
         Return the result(s) from the remote actor's "main" task.
 
         '''
+        # __tracebackhide__ = True
         # Check for non-rpc errors slapped on the
         # channel for which we always raise
         exc = self.channel._exc

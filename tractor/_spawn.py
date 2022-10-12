@@ -140,6 +140,7 @@ async def exhaust_portal(
     If the main task is an async generator do our best to consume
     what's left of it.
     '''
+    __tracebackhide__ = True
     try:
         log.debug(f"Waiting on final result from {actor.uid}")
 

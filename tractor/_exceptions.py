@@ -121,10 +121,12 @@ def unpack_error(
     err_type=RemoteActorError
 
 ) -> Exception:
-    """Unpack an 'error' message from the wire
+    '''
+    Unpack an 'error' message from the wire
     into a local ``RemoteActorError``.
 
-    """
+    '''
+    __tracebackhide__ = True
     error = msg['error']
 
     tb_str = error.get('tb_str', '')
