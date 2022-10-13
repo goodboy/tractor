@@ -25,6 +25,7 @@ import signal
 from functools import partial
 from contextlib import asynccontextmanager as acm
 from typing import (
+    Any,
     Optional,
     Callable,
     AsyncIterator,
@@ -75,7 +76,9 @@ class Lock:
     # placeholder for function to set a ``trio.Event`` on debugger exit
     # pdb_release_hook: Optional[Callable] = None
 
-    _trio_handler: Callable | None = None
+    _trio_handler: Callable[
+        [int, Optional[FrameType]], Any
+    ] | int | None = None
 
     # actor-wide variable pointing to current task name using debugger
     local_task_in_debug: str | None = None
