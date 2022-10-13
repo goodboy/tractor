@@ -25,14 +25,15 @@ from itertools import chain
 import importlib
 import importlib.util
 import inspect
-import uuid
+import signal
+import sys
 from typing import (
     Any, Optional,
     Union, TYPE_CHECKING,
     Callable,
 )
+import uuid
 from types import ModuleType
-import sys
 import os
 from contextlib import ExitStack
 import warnings
@@ -709,6 +710,14 @@ class Actor:
                 log.runtime(f"No more channels for {chan.uid}")
                 self._peers.pop(uid, None)
 
+            log.runtime(f"Peers is {self._peers}")
+
+            # No more channels to other actors (at all) registered
+            # as connected.
+            if not self._peers:
+                log.runtime("Signalling no more peer channel connections")
+                self._no_more_peers.set()
+
                 # NOTE: block this actor from acquiring the
                 # debugger-TTY-lock since we have no way to know if we
                 # cancelled it and further there is no way to ensure the
@@ -722,23 +731,16 @@ class Actor:
                     # if a now stale local task has the TTY lock still
                     # we cancel it to allow servicing other requests for
                     # the lock.
+                    db_cs = pdb_lock._root_local_task_cs_in_debug
                     if (
-                        pdb_lock._root_local_task_cs_in_debug
-                        and not pdb_lock._root_local_task_cs_in_debug.cancel_called
+                        db_cs
+                        and not db_cs.cancel_called
                     ):
                         log.warning(
                             f'STALE DEBUG LOCK DETECTED FOR {uid}'
                         )
                         # TODO: figure out why this breaks tests..
-                        # pdb_lock._root_local_task_cs_in_debug.cancel()
-
-            log.runtime(f"Peers is {self._peers}")
-
-            # No more channels to other actors (at all) registered
-            # as connected.
-            if not self._peers:
-                log.runtime("Signalling no more peer channel connections")
-                self._no_more_peers.set()
+                        db_cs.cancel()
 
             # XXX: is this necessary (GC should do it)?
             if chan.connected():
@@ -1229,6 +1231,10 @@ async def async_main(
     and when cancelled effectively cancels the actor.
 
     '''
+    # attempt to retreive ``trio``'s sigint handler and stash it
+    # on our debugger lock state.
+    _debug.Lock._trio_handler = signal.getsignal(signal.SIGINT)
+
     registered_with_arbiter = False
     try:
 

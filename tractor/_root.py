@@ -23,6 +23,7 @@ from functools import partial
 import importlib
 import logging
 import os
+import signal
 from typing import (
     Optional,
 )
@@ -33,7 +34,11 @@ import warnings
 from exceptiongroup import BaseExceptionGroup
 import trio
 
-from ._runtime import Actor, Arbiter, async_main
+from ._runtime import (
+    Actor,
+    Arbiter,
+    async_main,
+)
 from . import _debug
 from . import _spawn
 from . import _state
@@ -76,13 +81,18 @@ async def open_root_actor(
     rpc_module_paths: Optional[list] = None,
 
 ) -> typing.Any:
-    """Async entry point for ``tractor``.
+    '''
+    Runtime init entry point for ``tractor``.
 
-    """
+    '''
     # Override the global debugger hook to make it play nice with
     # ``trio``, see:
     # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
     os.environ['PYTHONBREAKPOINT'] = 'tractor._debug._set_trace'
+
+    # attempt to retreive ``trio``'s sigint handler and stash it
+    # on our debugger lock state.
+    _debug.Lock._trio_handler =  signal.getsignal(signal.SIGINT)
 
     # mark top most level process as root actor
     _state._runtime_vars['_is_root'] = True

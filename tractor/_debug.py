@@ -75,8 +75,10 @@ class Lock:
     # placeholder for function to set a ``trio.Event`` on debugger exit
     # pdb_release_hook: Optional[Callable] = None
 
+    _trio_handler: Callable | None = None
+
     # actor-wide variable pointing to current task name using debugger
-    local_task_in_debug: Optional[str] = None
+    local_task_in_debug: str | None = None
 
     # NOTE: set by the current task waiting on the root tty lock from
     # the CALLER side of the `lock_tty_for_child()` context entry-call
@@ -105,19 +107,16 @@ class Lock:
     @classmethod
     def shield_sigint(cls):
         cls._orig_sigint_handler = signal.signal(
-                signal.SIGINT,
-                shield_sigint,
-            )
+            signal.SIGINT,
+            shield_sigint,
+        )
 
     @classmethod
     def unshield_sigint(cls):
-        if cls._orig_sigint_handler is not None:
-            # restore original sigint handler
-            signal.signal(
-                signal.SIGINT,
-                cls._orig_sigint_handler
-            )
-
+        # always restore ``trio``'s sigint handler. see notes below in
+        # the pdb factory about the nightmare that is that code swapping
+        # out the handler when the repl activates...
+        signal.signal(signal.SIGINT, cls._trio_handler)
         cls._orig_sigint_handler = None
 
     @classmethod
@@ -544,7 +543,7 @@ def shield_sigint(
 
 ) -> None:
     '''
-    Specialized debugger compatible SIGINT handler.
+    Specialized, debugger-aware SIGINT handler.
 
     In childred we always ignore to avoid deadlocks since cancellation
     should always be managed by the parent supervising actor. The root
@@ -601,6 +600,8 @@ def shield_sigint(
         # which has already terminated to unlock.
         and any_connected
     ):
+        # we are root and some actor is in debug mode
+        # if uid_in_debug is not None:
         name = uid_in_debug[0]
         if name != 'root':
             log.pdb(
@@ -611,6 +612,22 @@ def shield_sigint(
             log.pdb(
                 "Ignoring SIGINT while in debug mode"
             )
+    elif (
+        is_root_process()
+    ):
+        log.pdb(
+            "Ignoring SIGINT since debug mode is enabled"
+        )
+
+        # revert back to ``trio`` handler asap!
+        Lock.unshield_sigint()
+        if (
+            Lock._root_local_task_cs_in_debug
+            and not Lock._root_local_task_cs_in_debug.cancel_called
+        ):
+            Lock._root_local_task_cs_in_debug.cancel()
+
+        # raise KeyboardInterrupt
 
     # child actor that has locked the debugger
     elif not is_root_process():
@@ -636,10 +653,9 @@ def shield_sigint(
         # https://github.com/goodboy/tractor/issues/320
         # elif debug_mode():
 
-    else:
-        log.pdb(
-            "Ignoring SIGINT since debug mode is enabled"
-        )
+    else:  # XXX: shouldn't ever get here?
+        print("WTFWTFWTF")
+        raise KeyboardInterrupt
 
     # NOTE: currently (at least on ``fancycompleter`` 0.9.2)
     # it lookks to be that the last command that was run (eg. ll)
