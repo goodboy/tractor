@@ -83,7 +83,7 @@ class ActorNursery:
         actor: Actor,
         ria_nursery: trio.Nursery,
         da_nursery: trio.Nursery,
-        errors: dict[tuple[str, str], Exception],
+        errors: dict[tuple[str, str], BaseException],
     ) -> None:
         # self.supervisor = supervisor  # TODO
         self._actor: Actor = actor
