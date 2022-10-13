@@ -60,23 +60,41 @@ def test_remote_error(arb_addr, args_err):
             arbiter_addr=arb_addr,
         ) as nursery:
 
+            # on a remote type error caused by bad input args
+            # this should raise directly which means we **don't** get
+            # an exception group outside the nursery since the error
+            # here and the far end task error are one in the same?
             portal = await nursery.run_in_actor(
                 assert_err, name='errorer', **args
             )
 
             # get result(s) from main task
             try:
+                # this means the root actor will also raise a local
+                # parent task error and thus an eg will propagate out
+                # of this actor nursery.
                 await portal.result()
             except tractor.RemoteActorError as err:
                 assert err.type == errtype
                 print("Look Maa that actor failed hard, hehh")
                 raise
 
-    with pytest.raises(tractor.RemoteActorError) as excinfo:
-        trio.run(main)
+    # ensure boxed errors
+    if args:
+        with pytest.raises(tractor.RemoteActorError) as excinfo:
+            trio.run(main)
 
-    # ensure boxed error is correct
-    assert excinfo.value.type == errtype
+        assert excinfo.value.type == errtype
+
+    else:
+        # the root task will also error on the `.result()` call
+        # so we expect an error from there AND the child.
+        with pytest.raises(BaseExceptionGroup) as excinfo:
+            trio.run(main)
+
+        # ensure boxed errors
+        for exc in excinfo.value.exceptions:
+            assert exc.type == errtype
 
 
 def test_multierror(arb_addr):
