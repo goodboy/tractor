@@ -10,6 +10,7 @@ TODO:
     - wonder if any of it'll work on OS X?
 
 """
+import itertools
 from os import path
 from typing import Optional
 import platform
@@ -783,24 +784,31 @@ def test_multi_nested_subactors_error_through_nurseries(
 
     timed_out_early: bool = False
 
-    for i in range(12):
+    for send_char in itertools.cycle(['c', 'q']):
         try:
             child.expect(r"\(Pdb\+\+\)")
-            child.sendline('c')
-            time.sleep(0.1)
+            child.sendline(send_char)
+            time.sleep(0.01)
 
         except EOF:
-
-            # race conditions on how fast the continue is sent?
-            print(f"Failed early on {i}?")
-            timed_out_early = True
             break
-    else:
-        child.expect(pexpect.EOF)
 
-    if not timed_out_early:
-        before = str(child.before.decode())
-        assert "NameError" in before
+    assert_before(child, [
+
+        # boxed source errors
+        "NameError: name 'doggypants' is not defined",
+        "tractor._exceptions.RemoteActorError: ('name_error'",
+        "bdb.BdbQuit",
+
+        # first level subtrees
+        "tractor._exceptions.RemoteActorError: ('spawner0'",
+        # "tractor._exceptions.RemoteActorError: ('spawner1'",
+
+        # propagation of errors up through nested subtrees
+        "tractor._exceptions.RemoteActorError: ('spawn_until_0'",
+        "tractor._exceptions.RemoteActorError: ('spawn_until_1'",
+        "tractor._exceptions.RemoteActorError: ('spawn_until_2'",
+    ])
 
 
 @pytest.mark.timeout(15)
