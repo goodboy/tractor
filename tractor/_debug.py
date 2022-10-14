@@ -365,7 +365,7 @@ async def wait_for_parent_stdin_hijack(
 
                 ) as (ctx, val):
 
-                    log.pdb('locked context')
+                    log.debug('locked context')
                     assert val == 'Locked'
 
                     async with ctx.open_stream() as stream:
@@ -384,15 +384,14 @@ async def wait_for_parent_stdin_hijack(
                         # sync with callee termination
                         assert await ctx.result() == "pdb_unlock_complete"
 
-                log.pdb('unlocked context')
+                log.debug('exitting child side locking task context')
 
         except ContextCancelled:
             log.warning('Root actor cancelled debug lock')
 
         finally:
-            log.pdb(f"Exiting debugger for actor {actor_uid}")
             Lock.local_task_in_debug = None
-            log.pdb(f"Child {actor_uid} released parent stdio lock")
+            log.debug(f'Exiting debugger from child')
 
 
 def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
