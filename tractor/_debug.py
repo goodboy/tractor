@@ -391,7 +391,7 @@ async def wait_for_parent_stdin_hijack(
 
         finally:
             Lock.local_task_in_debug = None
-            log.debug(f'Exiting debugger from child')
+            log.debug('Exiting debugger from child')
 
 
 def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
@@ -424,9 +424,8 @@ async def _breakpoint(
 
     '''
     __tracebackhide__ = True
-
-    pdb, undo_sigint = mk_mpdb()
     actor = tractor.current_actor()
+    pdb, undo_sigint = mk_mpdb()
     task_name = trio.lowlevel.current_task().name
 
     # TODO: is it possible to debug a trio.Cancelled except block?
@@ -450,7 +449,10 @@ async def _breakpoint(
             # Recurrence entry case: this task already has the lock and
             # is likely recurrently entering a breakpoint
             if Lock.local_task_in_debug == task_name:
-                # noop on recurrent entry case
+                # noop on recurrent entry case but we want to trigger
+                # a checkpoint to allow other actors error-propagate and
+                # potetially avoid infinite re-entries in some subactor.
+                await trio.lowlevel.checkpoint()
                 return
 
             # if **this** actor is already in debug mode block here
@@ -469,10 +471,13 @@ async def _breakpoint(
         # root nursery so that the debugger can continue to run without
         # being restricted by the scope of a new task nursery.
 
-        # NOTE: if we want to debug a trio.Cancelled triggered exception
+        # TODO: if we want to debug a trio.Cancelled triggered exception
         # we have to figure out how to avoid having the service nursery
-        # cancel on this task start? I *think* this works below?
-        # actor._service_n.cancel_scope.shield = shield
+        # cancel on this task start? I *think* this works below:
+        # ```python
+        #   actor._service_n.cancel_scope.shield = shield
+        # ```
+        # but not entirely sure if that's a sane way to implement it?
         try:
             with trio.CancelScope(shield=True):
                 await actor._service_n.start(
@@ -481,6 +486,13 @@ async def _breakpoint(
                 )
         except RuntimeError:
             Lock.release()
+
+            if actor._cancel_called:
+                # service nursery won't be usable and we
+                # don't want to lock up the root either way since
+                # we're in (the midst of) cancellation.
+                return
+
             raise
 
     elif is_root_process():
@@ -531,10 +543,6 @@ async def _breakpoint(
     #     # last_f = frame.f_back
     #     # last_f.f_globals['__tracebackhide__'] = True
     #     # signal.signal = pdbpp.hideframe(signal.signal)
-    #     signal.signal(
-    #         signal.SIGINT,
-    #         orig_handler
-    #     )
 
 
 def shield_sigint(
