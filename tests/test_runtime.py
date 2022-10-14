@@ -62,7 +62,10 @@ async def test_lifetime_stack_wipes_tmpfile(
                         )
                     ).result()
 
-    except tractor.RemoteActorError:
+    except (
+        tractor.RemoteActorError,
+        tractor.BaseExceptionGroup,
+    ):
         pass
 
     # tmp file should have been wiped by
