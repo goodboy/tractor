@@ -1,0 +1,25 @@
+Add support for ``trio >= 0.22`` and support for the new Python 3.11
+``[Base]ExceptionGroup`` from `pep 654`_ via the backported
+`exceptiongroup`_ package and some final fixes to the debug mode
+subsystem.
+
+This port ended up driving some (hopefully) final fixes to our debugger
+subsystem including the solution to all lingering stdstreams locking
+race-conditions and deadlock scenarios. This includes extending the
+debugger tests suite as well as cancellation and ``asyncio`` mode cases.
+Some of the notable details:
+
+- always reverting to the ``trio`` SIGINT handler when leaving debug
+  mode.
+- bypassing child attempts to acquire the debug lock when detected
+  to be amdist actor-runtime-cancellation.
+- allowing the root actor to cancel local but IPC-stale subactor
+  requests-tasks for the debug lock when in a "no IPC peers" state.
+
+Further we refined our ``ActorNursery`` semantics to be more similar to
+``trio`` in the sense that parent task errors are always packed into the
+actor-nursery emitted exception group and adjusted all tests and
+examples accordingly.
+
+.. _pep 654: https://peps.python.org/pep-0654/#handling-exception-groups
+.. _exceptiongroup: https://github.com/python-trio/exceptiongroup
