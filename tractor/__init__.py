@@ -18,7 +18,7 @@
 tractor: structured concurrent "actors".
 
 """
-from trio import MultiError
+from exceptiongroup import BaseExceptionGroup
 
 from ._clustering import open_actor_cluster
 from ._ipc import Channel
@@ -62,7 +62,7 @@ __all__ = [
     'ContextCancelled',
     'ModuleNotExposed',
     'MsgStream',
-    'MultiError',
+    'BaseExceptionGroup',
     'Portal',
     'ReceiveMsgStream',
     'RemoteActorError',

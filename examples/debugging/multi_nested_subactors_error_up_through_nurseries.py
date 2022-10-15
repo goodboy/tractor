@@ -12,18 +12,31 @@ async def breakpoint_forever():
     while True:
         await tractor.breakpoint()
 
+        # NOTE: if the test never sent 'q'/'quit' commands
+        # on the pdb repl, without this checkpoint line the
+        # repl would spin in this actor forever.
+        # await trio.sleep(0)
+
 
 async def spawn_until(depth=0):
     """"A nested nursery that triggers another ``NameError``.
     """
     async with tractor.open_nursery() as n:
         if depth < 1:
-            # await n.run_in_actor('breakpoint_forever', breakpoint_forever)
-            await n.run_in_actor(
+
+            await n.run_in_actor(breakpoint_forever)
+
+            p = await n.run_in_actor(
                 name_error,
                 name='name_error'
             )
+            await trio.sleep(0.5)
+            # rx and propagate error from child
+            await p.result()
+
         else:
+            # recusrive call to spawn another process branching layer of
+            # the tree
             depth -= 1
             await n.run_in_actor(
                 spawn_until,
@@ -53,6 +66,7 @@ async def main():
     """
     async with tractor.open_nursery(
         debug_mode=True,
+        # loglevel='cancel',
     ) as n:
 
         # spawn both actors
@@ -67,8 +81,16 @@ async def main():
             name='spawner1',
         )
 
+        # TODO: test this case as well where the parent don't see
+        # the sub-actor errors by default and instead expect a user
+        # ctrl-c to kill the root.
+        with trio.move_on_after(3):
+            await trio.sleep_forever()
+
         # gah still an issue here.
         await portal.result()
+
+        # should never get here
         await portal1.result()
 
 

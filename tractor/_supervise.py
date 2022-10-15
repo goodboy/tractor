@@ -18,6 +18,7 @@
 ``trio`` inspired apis and helpers
 
 """
+from contextlib import asynccontextmanager as acm
 from functools import partial
 import inspect
 from typing import (
@@ -27,8 +28,8 @@ from typing import (
 import typing
 import warnings
 
+from exceptiongroup import BaseExceptionGroup
 import trio
-from async_generator import asynccontextmanager
 
 from ._debug import maybe_wait_for_debugger
 from ._state import current_actor, is_main_process
@@ -82,7 +83,7 @@ class ActorNursery:
         actor: Actor,
         ria_nursery: trio.Nursery,
         da_nursery: trio.Nursery,
-        errors: dict[tuple[str, str], Exception],
+        errors: dict[tuple[str, str], BaseException],
     ) -> None:
         # self.supervisor = supervisor  # TODO
         self._actor: Actor = actor
@@ -294,13 +295,17 @@ class ActorNursery:
         self._join_procs.set()
 
 
-@asynccontextmanager
+@acm
 async def _open_and_supervise_one_cancels_all_nursery(
     actor: Actor,
+
 ) -> typing.AsyncGenerator[ActorNursery, None]:
 
+    # TODO: yay or nay?
+    # __tracebackhide__ = True
+
     # the collection of errors retreived from spawned sub-actors
-    errors: dict[tuple[str, str], Exception] = {}
+    errors: dict[tuple[str, str], BaseException] = {}
 
     # This is the outermost level "deamon actor" nursery. It is awaited
     # **after** the below inner "run in actor nursery". This allows for
@@ -333,19 +338,17 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # after we yield upwards
                     yield anursery
 
+                    # When we didn't error in the caller's scope,
+                    # signal all process-monitor-tasks to conduct
+                    # the "hard join phase".
                     log.runtime(
                         f"Waiting on subactors {anursery._children} "
                         "to complete"
                     )
-
-                    # Last bit before first nursery block ends in the case
-                    # where we didn't error in the caller's scope
-
-                    # signal all process monitor tasks to conduct
-                    # hard join phase.
                     anursery._join_procs.set()
 
-                except BaseException as err:
+                except BaseException as inner_err:
+                    errors[actor.uid] = inner_err
 
                     # If we error in the root but the debugger is
                     # engaged we don't want to prematurely kill (and
@@ -362,49 +365,42 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # worry more are coming).
                     anursery._join_procs.set()
 
-                    try:
-                        # XXX: hypothetically an error could be
-                        # raised and then a cancel signal shows up
-                        # slightly after in which case the `else:`
-                        # block here might not complete?  For now,
-                        # shield both.
-                        with trio.CancelScope(shield=True):
-                            etype = type(err)
-                            if etype in (
-                                trio.Cancelled,
-                                KeyboardInterrupt
-                            ) or (
-                                is_multi_cancelled(err)
-                            ):
-                                log.cancel(
-                                    f"Nursery for {current_actor().uid} "
-                                    f"was cancelled with {etype}")
-                            else:
-                                log.exception(
-                                    f"Nursery for {current_actor().uid} "
-                                    f"errored with {err}, ")
+                    # XXX: hypothetically an error could be
+                    # raised and then a cancel signal shows up
+                    # slightly after in which case the `else:`
+                    # block here might not complete?  For now,
+                    # shield both.
+                    with trio.CancelScope(shield=True):
+                        etype = type(inner_err)
+                        if etype in (
+                            trio.Cancelled,
+                            KeyboardInterrupt
+                        ) or (
+                            is_multi_cancelled(inner_err)
+                        ):
+                            log.cancel(
+                                f"Nursery for {current_actor().uid} "
+                                f"was cancelled with {etype}")
+                        else:
+                            log.exception(
+                                f"Nursery for {current_actor().uid} "
+                                f"errored with")
 
-                            # cancel all subactors
-                            await anursery.cancel()
+                        # cancel all subactors
+                        await anursery.cancel()
 
-                    except trio.MultiError as merr:
-                        # If we receive additional errors while waiting on
-                        # remaining subactors that were cancelled,
-                        # aggregate those errors with the original error
-                        # that triggered this teardown.
-                        if err not in merr.exceptions:
-                            raise trio.MultiError(merr.exceptions + [err])
-                    else:
-                        raise
+            # ria_nursery scope end
 
-                # ria_nursery scope end
-
-        # XXX: do we need a `trio.Cancelled` catch here as well?
-        # this is the catch around the ``.run_in_actor()`` nursery
+        # TODO: this is the handler around the ``.run_in_actor()``
+        # nursery. Ideally we can drop this entirely in the future as
+        # the whole ``.run_in_actor()`` API should be built "on top of"
+        # this lower level spawn-request-cancel "daemon actor" API where
+        # a local in-actor task nursery is used with one-to-one task
+        # + `await Portal.run()` calls and the results/errors are
+        # handled directly (inline) and errors by the local nursery.
         except (
-
             Exception,
-            trio.MultiError,
+            BaseExceptionGroup,
             trio.Cancelled
 
         ) as err:
@@ -436,18 +432,20 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     with trio.CancelScope(shield=True):
                         await anursery.cancel()
 
-                # use `MultiError` as needed
+                # use `BaseExceptionGroup` as needed
                 if len(errors) > 1:
-                    raise trio.MultiError(tuple(errors.values()))
+                    raise BaseExceptionGroup(
+                        'tractor.ActorNursery errored with',
+                        tuple(errors.values()),
+                    )
                 else:
                     raise list(errors.values())[0]
 
-        # ria_nursery scope end - nursery checkpoint
+        # da_nursery scope end - nursery checkpoint
+    # final exit
 
-    # after nursery exit
 
-
-@asynccontextmanager
+@acm
 async def open_nursery(
     **kwargs,
 

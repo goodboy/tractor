@@ -8,6 +8,10 @@ import platform
 import time
 from itertools import repeat
 
+from exceptiongroup import (
+    BaseExceptionGroup,
+    ExceptionGroup,
+)
 import pytest
 import trio
 import tractor
@@ -56,29 +60,49 @@ def test_remote_error(arb_addr, args_err):
             arbiter_addr=arb_addr,
         ) as nursery:
 
+            # on a remote type error caused by bad input args
+            # this should raise directly which means we **don't** get
+            # an exception group outside the nursery since the error
+            # here and the far end task error are one in the same?
             portal = await nursery.run_in_actor(
                 assert_err, name='errorer', **args
             )
 
             # get result(s) from main task
             try:
+                # this means the root actor will also raise a local
+                # parent task error and thus an eg will propagate out
+                # of this actor nursery.
                 await portal.result()
             except tractor.RemoteActorError as err:
                 assert err.type == errtype
                 print("Look Maa that actor failed hard, hehh")
                 raise
 
-    with pytest.raises(tractor.RemoteActorError) as excinfo:
-        trio.run(main)
+    # ensure boxed errors
+    if args:
+        with pytest.raises(tractor.RemoteActorError) as excinfo:
+            trio.run(main)
 
-    # ensure boxed error is correct
-    assert excinfo.value.type == errtype
+        assert excinfo.value.type == errtype
+
+    else:
+        # the root task will also error on the `.result()` call
+        # so we expect an error from there AND the child.
+        with pytest.raises(BaseExceptionGroup) as excinfo:
+            trio.run(main)
+
+        # ensure boxed errors
+        for exc in excinfo.value.exceptions:
+            assert exc.type == errtype
 
 
 def test_multierror(arb_addr):
-    """Verify we raise a ``trio.MultiError`` out of a nursery where
+    '''
+    Verify we raise a ``BaseExceptionGroup`` out of a nursery where
     more then one actor errors.
-    """
+
+    '''
     async def main():
         async with tractor.open_nursery(
             arbiter_addr=arb_addr,
@@ -95,10 +119,10 @@ def test_multierror(arb_addr):
                 print("Look Maa that first actor failed hard, hehh")
                 raise
 
-        # here we should get a `trio.MultiError` containing exceptions
+        # here we should get a ``BaseExceptionGroup`` containing exceptions
         # from both subactors
 
-    with pytest.raises(trio.MultiError):
+    with pytest.raises(BaseExceptionGroup):
         trio.run(main)
 
 
@@ -107,7 +131,7 @@ def test_multierror(arb_addr):
     'num_subactors', range(25, 26),
 )
 def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
-    """Verify we raise a ``trio.MultiError`` out of a nursery where
+    """Verify we raise a ``BaseExceptionGroup`` out of a nursery where
     more then one actor errors and also with a delay before failure
     to test failure during an ongoing spawning.
     """
@@ -123,10 +147,11 @@ def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
                     delay=delay
                 )
 
-    with pytest.raises(trio.MultiError) as exc_info:
+    # with pytest.raises(trio.MultiError) as exc_info:
+    with pytest.raises(BaseExceptionGroup) as exc_info:
         trio.run(main)
 
-    assert exc_info.type == tractor.MultiError
+    assert exc_info.type == ExceptionGroup
     err = exc_info.value
     exceptions = err.exceptions
 
@@ -214,8 +239,8 @@ async def test_cancel_infinite_streamer(start_method):
     [
         # daemon actors sit idle while single task actors error out
         (1, tractor.RemoteActorError, AssertionError, (assert_err, {}), None),
-        (2, tractor.MultiError, AssertionError, (assert_err, {}), None),
-        (3, tractor.MultiError, AssertionError, (assert_err, {}), None),
+        (2, BaseExceptionGroup, AssertionError, (assert_err, {}), None),
+        (3, BaseExceptionGroup, AssertionError, (assert_err, {}), None),
 
         # 1 daemon actor errors out while single task actors sleep forever
         (3, tractor.RemoteActorError, AssertionError, (sleep_forever, {}),
@@ -226,7 +251,7 @@ async def test_cancel_infinite_streamer(start_method):
          (do_nuthin, {}), (assert_err, {'delay': 1}, True)),
         # daemon complete quickly delay while single task
         # actors error after brief delay
-        (3, tractor.MultiError, AssertionError,
+        (3, BaseExceptionGroup, AssertionError,
          (assert_err, {'delay': 1}), (do_nuthin, {}, False)),
     ],
     ids=[
@@ -293,7 +318,7 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
         # should error here with a ``RemoteActorError`` or ``MultiError``
 
     except first_err as err:
-        if isinstance(err, tractor.MultiError):
+        if isinstance(err, BaseExceptionGroup):
             assert len(err.exceptions) == num_actors
             for exc in err.exceptions:
                 if isinstance(exc, tractor.RemoteActorError):
@@ -337,7 +362,7 @@ async def spawn_and_error(breadth, depth) -> None:
 @tractor_test
 async def test_nested_multierrors(loglevel, start_method):
     '''
-    Test that failed actor sets are wrapped in `trio.MultiError`s. This
+    Test that failed actor sets are wrapped in `BaseExceptionGroup`s. This
     test goes only 2 nurseries deep but we should eventually have tests
     for arbitrary n-depth actor trees.
 
@@ -365,7 +390,7 @@ async def test_nested_multierrors(loglevel, start_method):
                         breadth=subactor_breadth,
                         depth=depth,
                     )
-        except trio.MultiError as err:
+        except BaseExceptionGroup as err:
             assert len(err.exceptions) == subactor_breadth
             for subexc in err.exceptions:
 
@@ -383,10 +408,10 @@ async def test_nested_multierrors(loglevel, start_method):
                         assert subexc.type in (
                             tractor.RemoteActorError,
                             trio.Cancelled,
-                            trio.MultiError
+                            BaseExceptionGroup,
                         )
 
-                    elif isinstance(subexc, trio.MultiError):
+                    elif isinstance(subexc, BaseExceptionGroup):
                         for subsub in subexc.exceptions:
 
                             if subsub in (tractor.RemoteActorError,):
@@ -394,7 +419,7 @@ async def test_nested_multierrors(loglevel, start_method):
 
                             assert type(subsub) in (
                                 trio.Cancelled,
-                                trio.MultiError,
+                                BaseExceptionGroup,
                             )
                 else:
                     assert isinstance(subexc, tractor.RemoteActorError)
@@ -406,13 +431,13 @@ async def test_nested_multierrors(loglevel, start_method):
                     if is_win():
                         if isinstance(subexc, tractor.RemoteActorError):
                             assert subexc.type in (
-                                trio.MultiError,
+                                BaseExceptionGroup,
                                 tractor.RemoteActorError
                             )
                         else:
-                            assert isinstance(subexc, trio.MultiError)
+                            assert isinstance(subexc, BaseExceptionGroup)
                     else:
-                        assert subexc.type is trio.MultiError
+                        assert subexc.type is ExceptionGroup
                 else:
                     assert subexc.type in (
                         tractor.RemoteActorError,

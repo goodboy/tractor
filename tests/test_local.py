@@ -11,15 +11,15 @@ from conftest import tractor_test
 
 
 @pytest.mark.trio
-async def test_no_arbitter():
+async def test_no_runtime():
     """An arbitter must be established before any nurseries
     can be created.
 
     (In other words ``tractor.open_root_actor()`` must be engaged at
     some point?)
     """
-    with pytest.raises(RuntimeError):
-        with tractor.open_nursery():
+    with pytest.raises(RuntimeError) :
+        async with tractor.find_actor('doggy'):
             pass
 
 

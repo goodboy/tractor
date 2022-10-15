@@ -27,7 +27,18 @@ async def main():
 
         # retreive results
         async with p0.open_stream_from(breakpoint_forever) as stream:
-            await p1.run(name_error)
+
+            # triggers the first name error
+            try:
+                await p1.run(name_error)
+            except tractor.RemoteActorError as rae:
+                assert rae.type is NameError
+
+            async for i in stream:
+
+                # a second time try the failing subactor and this tie
+                # let error propagate up to the parent/nursery.
+                await p1.run(name_error)
 
 
 if __name__ == '__main__':

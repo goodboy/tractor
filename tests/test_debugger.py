@@ -10,6 +10,7 @@ TODO:
     - wonder if any of it'll work on OS X?
 
 """
+import itertools
 from os import path
 from typing import Optional
 import platform
@@ -485,10 +486,12 @@ def test_multi_subactors(
     # 2nd name_error failure
     child.expect(r"\(Pdb\+\+\)")
 
-    assert_before(child, [
-        "Attaching to pdb in crashed actor: ('name_error_1'",
-        "NameError",
-    ])
+    # TODO: will we ever get the race where this crash will show up?
+    # blocklist strat now prevents this crash
+    # assert_before(child, [
+    #     "Attaching to pdb in crashed actor: ('name_error_1'",
+    #     "NameError",
+    # ])
 
     if ctlc:
         do_ctlc(child)
@@ -580,14 +583,14 @@ def test_multi_daemon_subactors(
 
     child.expect(r"\(Pdb\+\+\)")
 
-    # there is a race for which subactor will acquire
-    # the root's tty lock first
-
-    before = str(child.before.decode())
+    # there can be a race for which subactor will acquire
+    # the root's tty lock first so anticipate either crash
+    # message on the first entry.
 
     bp_forever_msg = "Attaching pdb to actor: ('bp_forever'"
-    name_error_msg = "NameError"
+    name_error_msg = "NameError: name 'doggypants' is not defined"
 
+    before = str(child.before.decode())
     if bp_forever_msg in before:
         next_msg = name_error_msg
 
@@ -609,9 +612,7 @@ def test_multi_daemon_subactors(
 
     child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
-    before = str(child.before.decode())
-
-    assert next_msg in before
+    assert_before(child, [next_msg])
 
     # XXX: hooray the root clobbering the child here was fixed!
     # IMO, this demonstrates the true power of SC system design.
@@ -630,32 +631,50 @@ def test_multi_daemon_subactors(
     if ctlc:
         do_ctlc(child)
 
+    # expect another breakpoint actor entry
+    child.sendline('c')
+    child.expect(r"\(Pdb\+\+\)")
+    assert_before(child, [bp_forever_msg])
+
+    if ctlc:
+        do_ctlc(child)
+
+    # should crash with the 2nd name error (simulates
+    # a retry) and then the root eventually (boxed) errors
+    # after 1 or more further bp actor entries.
+
+    child.sendline('c')
+    child.expect(r"\(Pdb\+\+\)")
+    assert_before(child, [name_error_msg])
+
     # wait for final error in root
+    # where it crashs with boxed error
     while True:
-
-        child.sendline('c')
-        child.expect(r"\(Pdb\+\+\)")
-        before = str(child.before.decode())
         try:
-
-            # root error should be packed as remote error
-            assert "_exceptions.RemoteActorError: ('name_error'" in before
+            child.sendline('c')
+            child.expect(r"\(Pdb\+\+\)")
+            assert_before(
+                child,
+                [bp_forever_msg]
+            )
+        except AssertionError:
             break
 
-        except AssertionError:
-            assert bp_forever_msg in before
+    # child.sendline('c')
+    # assert_before(
 
-        if ctlc:
-            do_ctlc(child)
+    # child.sendline('c')
+    assert_before(
+        child,
+        [
+            # boxed error raised in root task
+            "Attaching to pdb in crashed actor: ('root'",
+            "_exceptions.RemoteActorError: ('name_error'",
+        ]
+    )
 
-    try:
-        child.sendline('c')
-        child.expect(pexpect.EOF)
-
-    except TIMEOUT:
-        # Failed to exit using continue..?
-        child.sendline('q')
-        child.expect(pexpect.EOF)
+    child.sendline('c')
+    child.expect(pexpect.EOF)
 
 
 @has_nested_actors
@@ -683,49 +702,64 @@ def test_multi_subactors_root_errors(
     # continue again to catch 2nd name error from
     # actor 'name_error_1' (which is 2nd depth).
     child.sendline('c')
+
+    # due to block list strat from #337, this will no longer
+    # propagate before the root errors and cancels the spawner sub-tree.
     child.expect(r"\(Pdb\+\+\)")
+
+    # only if the blocking condition doesn't kick in fast enough
+    before = str(child.before.decode())
+    if "Debug lock blocked for ['name_error_1'" not in before:
+
+        assert_before(child, [
+            "Attaching to pdb in crashed actor: ('name_error_1'",
+            "NameError",
+        ])
+
+        if ctlc:
+            do_ctlc(child)
+
+        child.sendline('c')
+        child.expect(r"\(Pdb\+\+\)")
+
+    # check if the spawner crashed or was blocked from debug
+    # and if this intermediary attached check the boxed error
+    before = str(child.before.decode())
+    if "Attaching to pdb in crashed actor: ('spawn_error'" in before:
+
+        assert_before(child, [
+            # boxed error from spawner's child
+            "RemoteActorError: ('name_error_1'",
+            "NameError",
+        ])
+
+        if ctlc:
+            do_ctlc(child)
+
+        child.sendline('c')
+        child.expect(r"\(Pdb\+\+\)")
+
+    # expect a root actor crash
     assert_before(child, [
-        "Attaching to pdb in crashed actor: ('name_error_1'",
-        "NameError",
-    ])
-
-    if ctlc:
-        do_ctlc(child)
-
-    child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
-    assert_before(child, [
-        "Attaching to pdb in crashed actor: ('spawn_error'",
-        # boxed error from previous step
-        "RemoteActorError: ('name_error_1'",
-        "NameError",
-    ])
-
-    if ctlc:
-        do_ctlc(child)
-
-    child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
-    assert_before(child, [
-        "Attaching to pdb in crashed actor: ('root'",
-        # boxed error from previous step
         "RemoteActorError: ('name_error'",
         "NameError",
+
+        # error from root actor and root task that created top level nursery
+        "Attaching to pdb in crashed actor: ('root'",
+        "AssertionError",
     ])
 
-    # warnings assert we probably don't need
-    # assert "Cancelling nursery in ('spawn_error'," in before
-
-    if ctlc:
-        do_ctlc(child)
-
-    # continue again
     child.sendline('c')
     child.expect(pexpect.EOF)
 
-    before = str(child.before.decode())
-    # error from root actor and root task that created top level nursery
-    assert "AssertionError" in before
+    assert_before(child, [
+        # "Attaching to pdb in crashed actor: ('root'",
+        # boxed error from previous step
+        "RemoteActorError: ('name_error'",
+        "NameError",
+        "AssertionError",
+        'assert 0',
+    ])
 
 
 @has_nested_actors
@@ -750,24 +784,31 @@ def test_multi_nested_subactors_error_through_nurseries(
 
     timed_out_early: bool = False
 
-    for i in range(12):
+    for send_char in itertools.cycle(['c', 'q']):
         try:
             child.expect(r"\(Pdb\+\+\)")
-            child.sendline('c')
-            time.sleep(0.1)
+            child.sendline(send_char)
+            time.sleep(0.01)
 
         except EOF:
-
-            # race conditions on how fast the continue is sent?
-            print(f"Failed early on {i}?")
-            timed_out_early = True
             break
-    else:
-        child.expect(pexpect.EOF)
 
-    if not timed_out_early:
-        before = str(child.before.decode())
-        assert "NameError" in before
+    assert_before(child, [
+
+        # boxed source errors
+        "NameError: name 'doggypants' is not defined",
+        "tractor._exceptions.RemoteActorError: ('name_error'",
+        "bdb.BdbQuit",
+
+        # first level subtrees
+        "tractor._exceptions.RemoteActorError: ('spawner0'",
+        # "tractor._exceptions.RemoteActorError: ('spawner1'",
+
+        # propagation of errors up through nested subtrees
+        "tractor._exceptions.RemoteActorError: ('spawn_until_0'",
+        "tractor._exceptions.RemoteActorError: ('spawn_until_1'",
+        "tractor._exceptions.RemoteActorError: ('spawn_until_2'",
+    ])
 
 
 @pytest.mark.timeout(15)

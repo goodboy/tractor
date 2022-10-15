@@ -8,6 +8,7 @@ import builtins
 import itertools
 import importlib
 
+from exceptiongroup import BaseExceptionGroup
 import pytest
 import trio
 import tractor
@@ -409,11 +410,12 @@ def test_trio_error_cancels_intertask_chan(arb_addr):
             # should trigger remote actor error
             await portal.result()
 
-    with pytest.raises(RemoteActorError) as excinfo:
+    with pytest.raises(BaseExceptionGroup) as excinfo:
         trio.run(main)
 
-    # ensure boxed error is correct
-    assert excinfo.value.type == Exception
+    # ensure boxed errors
+    for exc in excinfo.value.exceptions:
+        assert exc.type == Exception
 
 
 def test_trio_closes_early_and_channel_exits(arb_addr):
@@ -442,11 +444,12 @@ def test_aio_errors_and_channel_propagates_and_closes(arb_addr):
             # should trigger remote actor error
             await portal.result()
 
-    with pytest.raises(RemoteActorError) as excinfo:
+    with pytest.raises(BaseExceptionGroup) as excinfo:
         trio.run(main)
 
-    # ensure boxed error is correct
-    assert excinfo.value.type == Exception
+    # ensure boxed errors
+    for exc in excinfo.value.exceptions:
+        assert exc.type == Exception
 
 
 @tractor.context

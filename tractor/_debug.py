@@ -25,6 +25,7 @@ import signal
 from functools import partial
 from contextlib import asynccontextmanager as acm
 from typing import (
+    Any,
     Optional,
     Callable,
     AsyncIterator,
@@ -75,8 +76,12 @@ class Lock:
     # placeholder for function to set a ``trio.Event`` on debugger exit
     # pdb_release_hook: Optional[Callable] = None
 
+    _trio_handler: Callable[
+        [int, Optional[FrameType]], Any
+    ] | int | None = None
+
     # actor-wide variable pointing to current task name using debugger
-    local_task_in_debug: Optional[str] = None
+    local_task_in_debug: str | None = None
 
     # NOTE: set by the current task waiting on the root tty lock from
     # the CALLER side of the `lock_tty_for_child()` context entry-call
@@ -105,19 +110,16 @@ class Lock:
     @classmethod
     def shield_sigint(cls):
         cls._orig_sigint_handler = signal.signal(
-                signal.SIGINT,
-                shield_sigint,
-            )
+            signal.SIGINT,
+            shield_sigint,
+        )
 
     @classmethod
     def unshield_sigint(cls):
-        if cls._orig_sigint_handler is not None:
-            # restore original sigint handler
-            signal.signal(
-                signal.SIGINT,
-                cls._orig_sigint_handler
-            )
-
+        # always restore ``trio``'s sigint handler. see notes below in
+        # the pdb factory about the nightmare that is that code swapping
+        # out the handler when the repl activates...
+        signal.signal(signal.SIGINT, cls._trio_handler)
         cls._orig_sigint_handler = None
 
     @classmethod
@@ -363,7 +365,7 @@ async def wait_for_parent_stdin_hijack(
 
                 ) as (ctx, val):
 
-                    log.pdb('locked context')
+                    log.debug('locked context')
                     assert val == 'Locked'
 
                     async with ctx.open_stream() as stream:
@@ -382,15 +384,14 @@ async def wait_for_parent_stdin_hijack(
                         # sync with callee termination
                         assert await ctx.result() == "pdb_unlock_complete"
 
-                log.pdb('unlocked context')
+                log.debug('exitting child side locking task context')
 
         except ContextCancelled:
             log.warning('Root actor cancelled debug lock')
 
         finally:
-            log.pdb(f"Exiting debugger for actor {actor_uid}")
             Lock.local_task_in_debug = None
-            log.pdb(f"Child {actor_uid} released parent stdio lock")
+            log.debug('Exiting debugger from child')
 
 
 def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
@@ -423,9 +424,8 @@ async def _breakpoint(
 
     '''
     __tracebackhide__ = True
-
-    pdb, undo_sigint = mk_mpdb()
     actor = tractor.current_actor()
+    pdb, undo_sigint = mk_mpdb()
     task_name = trio.lowlevel.current_task().name
 
     # TODO: is it possible to debug a trio.Cancelled except block?
@@ -449,7 +449,10 @@ async def _breakpoint(
             # Recurrence entry case: this task already has the lock and
             # is likely recurrently entering a breakpoint
             if Lock.local_task_in_debug == task_name:
-                # noop on recurrent entry case
+                # noop on recurrent entry case but we want to trigger
+                # a checkpoint to allow other actors error-propagate and
+                # potetially avoid infinite re-entries in some subactor.
+                await trio.lowlevel.checkpoint()
                 return
 
             # if **this** actor is already in debug mode block here
@@ -468,10 +471,13 @@ async def _breakpoint(
         # root nursery so that the debugger can continue to run without
         # being restricted by the scope of a new task nursery.
 
-        # NOTE: if we want to debug a trio.Cancelled triggered exception
+        # TODO: if we want to debug a trio.Cancelled triggered exception
         # we have to figure out how to avoid having the service nursery
-        # cancel on this task start? I *think* this works below?
-        # actor._service_n.cancel_scope.shield = shield
+        # cancel on this task start? I *think* this works below:
+        # ```python
+        #   actor._service_n.cancel_scope.shield = shield
+        # ```
+        # but not entirely sure if that's a sane way to implement it?
         try:
             with trio.CancelScope(shield=True):
                 await actor._service_n.start(
@@ -480,6 +486,13 @@ async def _breakpoint(
                 )
         except RuntimeError:
             Lock.release()
+
+            if actor._cancel_called:
+                # service nursery won't be usable and we
+                # don't want to lock up the root either way since
+                # we're in (the midst of) cancellation.
+                return
+
             raise
 
     elif is_root_process():
@@ -530,10 +543,6 @@ async def _breakpoint(
     #     # last_f = frame.f_back
     #     # last_f.f_globals['__tracebackhide__'] = True
     #     # signal.signal = pdbpp.hideframe(signal.signal)
-    #     signal.signal(
-    #         signal.SIGINT,
-    #         orig_handler
-    #     )
 
 
 def shield_sigint(
@@ -544,7 +553,7 @@ def shield_sigint(
 
 ) -> None:
     '''
-    Specialized debugger compatible SIGINT handler.
+    Specialized, debugger-aware SIGINT handler.
 
     In childred we always ignore to avoid deadlocks since cancellation
     should always be managed by the parent supervising actor. The root
@@ -601,6 +610,8 @@ def shield_sigint(
         # which has already terminated to unlock.
         and any_connected
     ):
+        # we are root and some actor is in debug mode
+        # if uid_in_debug is not None:
         name = uid_in_debug[0]
         if name != 'root':
             log.pdb(
@@ -611,6 +622,22 @@ def shield_sigint(
             log.pdb(
                 "Ignoring SIGINT while in debug mode"
             )
+    elif (
+        is_root_process()
+    ):
+        log.pdb(
+            "Ignoring SIGINT since debug mode is enabled"
+        )
+
+        # revert back to ``trio`` handler asap!
+        Lock.unshield_sigint()
+        if (
+            Lock._root_local_task_cs_in_debug
+            and not Lock._root_local_task_cs_in_debug.cancel_called
+        ):
+            Lock._root_local_task_cs_in_debug.cancel()
+
+        # raise KeyboardInterrupt
 
     # child actor that has locked the debugger
     elif not is_root_process():
@@ -636,10 +663,9 @@ def shield_sigint(
         # https://github.com/goodboy/tractor/issues/320
         # elif debug_mode():
 
-    else:
-        log.pdb(
-            "Ignoring SIGINT since debug mode is enabled"
-        )
+    else:  # XXX: shouldn't ever get here?
+        print("WTFWTFWTF")
+        raise KeyboardInterrupt
 
     # NOTE: currently (at least on ``fancycompleter`` 0.9.2)
     # it lookks to be that the last command that was run (eg. ll)

@@ -27,6 +27,7 @@ import importlib
 import builtins
 import traceback
 
+import exceptiongroup as eg
 import trio
 
 
@@ -51,9 +52,6 @@ class RemoteActorError(Exception):
 
         self.type = suberror_type
         self.msgdata = msgdata
-
-    # TODO: a trio.MultiError.catch like context manager
-    # for catching underlying remote errors of a particular type
 
 
 class InternalActorError(RemoteActorError):
@@ -123,10 +121,12 @@ def unpack_error(
     err_type=RemoteActorError
 
 ) -> Exception:
-    """Unpack an 'error' message from the wire
+    '''
+    Unpack an 'error' message from the wire
     into a local ``RemoteActorError``.
 
-    """
+    '''
+    __tracebackhide__ = True
     error = msg['error']
 
     tb_str = error.get('tb_str', '')
@@ -139,7 +139,12 @@ def unpack_error(
         suberror_type = trio.Cancelled
 
     else:  # try to lookup a suitable local error type
-        for ns in [builtins, _this_mod, trio]:
+        for ns in [
+            builtins,
+            _this_mod,
+            eg,
+            trio,
+        ]:
             try:
                 suberror_type = getattr(ns, type_name)
                 break
@@ -158,12 +163,15 @@ def unpack_error(
 
 
 def is_multi_cancelled(exc: BaseException) -> bool:
-    """Predicate to determine if a ``trio.MultiError`` contains only
-    ``trio.Cancelled`` sub-exceptions (and is likely the result of
+    '''
+    Predicate to determine if a possible ``eg.BaseExceptionGroup`` contains
+    only ``trio.Cancelled`` sub-exceptions (and is likely the result of
     cancelling a collection of subtasks.
 
-    """
-    return not trio.MultiError.filter(
-        lambda exc: exc if not isinstance(exc, trio.Cancelled) else None,
-        exc,
-    )
+    '''
+    if isinstance(exc, eg.BaseExceptionGroup):
+        return exc.subgroup(
+            lambda exc: isinstance(exc, trio.Cancelled)
+        ) is not None
+
+    return False
