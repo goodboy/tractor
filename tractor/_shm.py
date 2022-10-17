@@ -109,7 +109,7 @@ class SharedInt:
                 log.warning(f'Shm for {name} already unlinked?')
 
 
-class _NpToken(Struct, frozen=True):
+class NDToken(Struct, frozen=True):
     '''
     Internal represenation of a shared memory ``numpy`` array "token"
     which can be used to key and load a system (OS) wide shm entry
@@ -137,18 +137,18 @@ class _NpToken(Struct, frozen=True):
         return self.to_dict()
 
     @classmethod
-    def from_msg(cls, msg: dict) -> _NpToken:
-        if isinstance(msg, _NpToken):
+    def from_msg(cls, msg: dict) -> NDToken:
+        if isinstance(msg, NDToken):
             return msg
 
         # TODO: native struct decoding
         # return _token_dec.decode(msg)
 
         msg['dtype_descr'] = tuple(map(tuple, msg['dtype_descr']))
-        return _NpToken(**msg)
+        return NDToken(**msg)
 
 
-# _token_dec = msgspec.msgpack.Decoder(_NpToken)
+# _token_dec = msgspec.msgpack.Decoder(NDToken)
 
 # TODO: this api?
 # _known_tokens = tractor.ActorVar('_shm_tokens', {})
@@ -156,10 +156,10 @@ class _NpToken(Struct, frozen=True):
 # _known_tokens = trio.RunVar('shms', {})
 
 # process-local store of keys to tokens
-_known_tokens: dict[str, _NpToken] = {}
+_known_tokens: dict[str, NDToken] = {}
 
 
-def get_shm_token(key: str) -> _NpToken | None:
+def get_shm_token(key: str) -> NDToken | None:
     '''
     Convenience func to check if a token
     for the provided key is known by this process.
@@ -175,13 +175,13 @@ def _make_token(
     size: int,
     dtype: np.dtype,
 
-) -> _NpToken:
+) -> NDToken:
     '''
     Create a serializable token that can be used
     to access a shared array.
 
     '''
-    return _NpToken(
+    return NDToken(
         shm_name=key,
         shm_first_index_name=key + "_first",
         shm_last_index_name=key + "_last",
@@ -231,8 +231,8 @@ class ShmArray:
     # TODO: ringbuf api?
 
     @property
-    def _token(self) -> _NpToken:
-        return _NpToken(
+    def _token(self) -> NDToken:
+        return NDToken(
             shm_name=self._shm.name,
             shm_first_index_name=self._first._shm.name,
             shm_last_index_name=self._last._shm.name,
@@ -557,11 +557,11 @@ def attach_shm_ndarray(
     access are constructed.
 
     '''
-    token = _NpToken.from_msg(token)
+    token = NDToken.from_msg(token)
     key = token.shm_name
 
     if key in _known_tokens:
-        assert _NpToken.from_msg(_known_tokens[key]) == token, "WTF"
+        assert NDToken.from_msg(_known_tokens[key]) == token, "WTF"
 
     # XXX: ugh, looks like due to the ``shm_open()`` C api we can't
     # actually place files in a subdir, see discussion here:
@@ -649,10 +649,10 @@ def maybe_open_shm_ndarray(
     running in **this** process. Systems where multiple actors may seek
     to access a common block can use this function to attempt to acquire
     a token as discovered by the actors who have previously stored
-    a "key" -> ``_NpToken`` map in an actor local (aka python global)
+    a "key" -> ``NDToken`` map in an actor local (aka python global)
     variable.
 
-    If you know the explicit ``_NpToken`` for your memory segment instead
+    If you know the explicit ``NDToken`` for your memory segment instead
     use ``attach_shm_array``.
 
     '''
