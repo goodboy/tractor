@@ -2,6 +2,7 @@
 Shared mem primitives and APIs.
 
 """
+import uuid
 
 # import numpy
 import pytest
@@ -11,6 +12,50 @@ from tractor._shm import (
     open_shm_list,
     attach_shm_list,
 )
+
+
+@tractor.context
+async def child_attach_shml_alot(
+    ctx: tractor.Context,
+    shm_key: str,
+) -> None:
+
+    await ctx.started(shm_key)
+
+    # now try to attach a boatload of times in a loop..
+    for _ in range(1000):
+        shml = attach_shm_list(key=shm_key)
+        assert shml.shm.name == shm_key
+        await trio.sleep(0.001)
+
+
+def test_child_attaches_alot():
+    async def main():
+        async with tractor.open_nursery() as an:
+
+            # allocate writeable list in parent
+            key = f'shml_{uuid.uuid4()}'
+            shml = open_shm_list(
+                key=key,
+            )
+
+            portal = await an.start_actor(
+                'shm_attacher',
+                enable_modules=[__name__],
+            )
+
+            async with (
+                portal.open_context(
+                    child_attach_shml_alot,  # taken from pytest parameterization
+                    shm_key=key,
+                ) as (ctx, start_val),
+            ):
+                assert start_val == key
+                await ctx.result()
+
+            await portal.cancel_actor()
+
+    trio.run(main)
 
 
 @tractor.context
