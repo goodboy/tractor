@@ -30,14 +30,18 @@ from multiprocessing import shared_memory as shm
 from multiprocessing.shared_memory import (
     SharedMemory,
     ShareableList,
-    # _USE_POSIX,  # type: ignore
 )
-
-if getattr(shm, '_USE_POSIX', False):
-    from _posixshmem import shm_unlink
 
 from msgspec import Struct
 import tractor
+
+from .log import get_logger
+
+
+_USE_POSIX = getattr(shm, '_USE_POSIX', False)
+if _USE_POSIX:
+    from _posixshmem import shm_unlink
+
 
 try:
     import numpy as np
@@ -45,8 +49,6 @@ try:
     import nptyping
 except ImportError:
     pass
-
-from .log import get_logger
 
 
 log = get_logger(__name__)
@@ -161,6 +163,8 @@ class NDToken(Struct, frozen=True):
 # _known_tokens = tractor.ContextStack('_known_tokens', )
 # _known_tokens = trio.RunVar('shms', {})
 
+# TODO: this should maybe be provided via
+# a `.trionics.maybe_open_context()` wrapper factory?
 # process-local store of keys to tokens
 _known_tokens: dict[str, NDToken] = {}
 
@@ -712,8 +716,12 @@ def maybe_open_shm_ndarray(
 
 class ShmList(ShareableList):
     '''
-    Carbon copy of ``.shared_memory.ShareableList`` but add a
-    readonly state instance var.
+    Carbon copy of ``.shared_memory.ShareableList`` with a few
+    enhancements:
+
+    - readonly mode via instance var flag
+    - ``.__getitem__()`` accepts ``slice`` inputs
+    - exposes the underlying buffer "name" as a ``.key: str``
 
     '''
     def __init__(
@@ -752,10 +760,21 @@ class ShmList(ShareableList):
         self,
         indexish,
     ) -> list:
+
+        # NOTE: this is a non-writeable view (copy?) of the buffer
+        # in a new list instance.
         if isinstance(indexish, slice):
             return list(self)[indexish]
 
         return super().__getitem__(indexish)
+
+    # TODO: should we offer a `.array` and `.push()` equivalent
+    # to the `ShmArray`?
+    # currently we have the following limitations:
+    # - can't write slices of input using traditional slice-assign
+    #   syntax due to the ``ShareableList.__setitem__()`` implementation.
+    # - ``list(shmlist)`` returns a non-mutable copy instead of
+    #   a writeable view which would be handier numpy-style ops.
 
 
 def open_shm_list(
