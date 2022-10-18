@@ -26,19 +26,25 @@ from __future__ import annotations
 from sys import byteorder
 import time
 from typing import Optional
+from multiprocessing import shared_memory as shm
 from multiprocessing.shared_memory import (
     SharedMemory,
     ShareableList,
-    _USE_POSIX,  # type: ignore
+    # _USE_POSIX,  # type: ignore
 )
 
-if _USE_POSIX:
+if getattr(shm, '_USE_POSIX', False):
     from _posixshmem import shm_unlink
 
 from msgspec import Struct
-import numpy as np
-from numpy.lib import recfunctions as rfn
 import tractor
+
+try:
+    import numpy as np
+    from numpy.lib import recfunctions as rfn
+    import nptyping
+except ImportError:
+    pass
 
 from .log import get_logger
 
@@ -742,6 +748,15 @@ class ShmList(ShareableList):
 
         return super().__setitem__(position, value)
 
+    def __getitem__(
+        self,
+        indexish,
+    ) -> list:
+        if isinstance(indexish, slice):
+            return list(self)[indexish]
+
+        return super().__getitem__(indexish)
+
 
 def open_shm_list(
     key: str,
@@ -774,7 +789,11 @@ def open_shm_list(
 
 def attach_shm_list(
     key: str,
+    readonly: bool = False,
 
 ) -> ShmList:
 
-    return ShmList(name=key)
+    return ShmList(
+        name=key,
+        readonly=readonly,
+    )
