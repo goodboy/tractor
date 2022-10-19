@@ -719,7 +719,7 @@ class ShmList(ShareableList):
     Carbon copy of ``.shared_memory.ShareableList`` with a few
     enhancements:
 
-    - readonly mode via instance var flag
+    - readonly mode via instance var flag  `._readonly: bool`
     - ``.__getitem__()`` accepts ``slice`` inputs
     - exposes the underlying buffer "name" as a ``.key: str``
 
@@ -742,6 +742,10 @@ class ShmList(ShareableList):
     @property
     def key(self) -> str:
         return self._key
+
+    @property
+    def readonly(self) -> bool:
+        return self._readonly
 
     def __setitem__(
         self,
@@ -781,13 +785,21 @@ def open_shm_list(
     key: str,
     sequence: list | None = None,
     size: int = int(2 ** 10),
-    dtype: np.dtype | None = None,
+    dtype: float | int | bool | str | bytes | None = float,
     readonly: bool = True,
 
 ) -> ShmList:
 
     if sequence is None:
-        sequence = list(map(float, range(size)))
+        default = {
+            float: 0.,
+            int: 0,
+            bool: True,
+            str: 'doggy',
+            None: None,
+        }[dtype]
+        sequence = [default] * size
+        # sequence = [0.] * size
 
     shml = ShmList(
         sequence=sequence,
