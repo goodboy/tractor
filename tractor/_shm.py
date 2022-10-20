@@ -460,7 +460,6 @@ class ShmArray:
 
 
 def open_shm_ndarray(
-
     key: Optional[str] = None,
     size: int = int(2 ** 10),
     dtype: np.dtype | None = None,
@@ -799,7 +798,6 @@ def open_shm_list(
             None: None,
         }[dtype]
         sequence = [default] * size
-        # sequence = [0.] * size
 
     shml = ShmList(
         sequence=sequence,
