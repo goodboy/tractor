@@ -67,7 +67,6 @@ jobs:
         ]
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v2
 
@@ -83,7 +82,41 @@ jobs:
         run: pip list
 
       - name: Run tests
-        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx --full-trace
+        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+
+
+  testing-macos:
+    name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
+    timeout-minutes: 10
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+        python: ['3.10']
+        spawn_backend: [
+          'trio',
+        ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '${{ matrix.python }}'
+
+      - name: Install dependencies
+        run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
+
+      - name: List dependencies
+        run: pip list
+
+      - name: Run tests
+        run: pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+
 
   # We skip 3.10 on windows for now due to not having any collabs to
   # debug the CI failures. Anyone wanting to hack and solve them is very
