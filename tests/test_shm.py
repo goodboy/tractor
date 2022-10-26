@@ -3,11 +3,14 @@ Shared mem primitives and APIs.
 
 """
 import uuid
+import platform
 
 # import numpy
+import os
 import pytest
 import trio
 import tractor
+import _posixshmem
 from tractor._shm import (
     open_shm_list,
     attach_shm_list,
@@ -30,14 +33,21 @@ async def child_attach_shml_alot(
         )
         assert shml.shm.name == shm_key
         await trio.sleep(0.001)
+        # os.close(shml.shm._fd)
+
 
 
 def test_child_attaches_alot():
     async def main():
         async with tractor.open_nursery() as an:
 
+            osx_shm_shared_mem_char_limit = 31
+
             # allocate writeable list in parent
             key = f'shml_{uuid.uuid4()}'
+            if (platform.uname().system == 'Darwin'):
+                key = key.replace('-', '')[:osx_shm_shared_mem_char_limit - 1]
+        
             shml = open_shm_list(
                 key=key,
             )
@@ -57,6 +67,7 @@ def test_child_attaches_alot():
                 await ctx.result()
 
             await portal.cancel_actor()
+            # os.close(shml.shm._fd)
 
     trio.run(main)
 
@@ -90,6 +101,8 @@ async def child_read_shm_list(
                 frame = shml[i - frame_size:i]
                 print(f'(child): reading frame: {frame}')
 
+        # os.close(shml.shm._fd)
+
 
 @pytest.mark.parametrize(
     'use_str', [False, True],
@@ -115,8 +128,9 @@ def test_parent_writer_child_reader(
                 debug_mode=True,
             )
 
+
             # allocate writeable list in parent
-            key = 'shm_list'
+            key = 'shm_list'             
             seq_size = int(2 * 2 ** 10)
             shml = open_shm_list(
                 key=key,
@@ -157,5 +171,6 @@ def test_parent_writer_child_reader(
                     await stream.send(i)
 
             await portal.cancel_actor()
+            # os.close(shml.shm._fd)
 
     trio.run(main)
