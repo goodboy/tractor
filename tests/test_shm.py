@@ -65,7 +65,6 @@ def test_child_attaches_alot():
 
             await portal.cancel_actor()
 
-
     trio.run(main)
 
 
@@ -102,7 +101,6 @@ async def child_read_shm_list(
                 print(f'(child): reading frame: {frame}')
 
 
-
 @pytest.mark.parametrize(
     'use_str',
     [False, True],
@@ -131,7 +129,7 @@ def test_parent_writer_child_reader(
 
 
             # allocate writeable list in parent
-            key = 'shm_list'             
+            key = 'shm_list'          
             seq_size = int(2 * 2 ** 10)
             shml = open_shm_list(
                 key=key,
@@ -173,6 +171,5 @@ def test_parent_writer_child_reader(
                     await stream.send(i)
 
             await portal.cancel_actor()
-
 
     trio.run(main)
