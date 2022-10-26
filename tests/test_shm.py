@@ -81,7 +81,10 @@ async def child_read_shm_list(
 ) -> None:
 
     # attach in child
-    shml = attach_shm_list(key=shm_key)
+    shml = attach_shm_list(
+        key=shm_key,
+        # dtype=str if use_str else float,
+    )
     await ctx.started(shml.key)
 
     async with ctx.open_stream() as stream:
@@ -105,7 +108,9 @@ async def child_read_shm_list(
 
 
 @pytest.mark.parametrize(
-    'use_str', [False, True],
+    'use_str',
+    [False, True],
+    ids=lambda i: f'use_str_values={i}',
 )
 @pytest.mark.parametrize(
     'frame_size',
@@ -119,7 +124,7 @@ def test_parent_writer_child_reader(
 
     async def main():
         async with tractor.open_nursery(
-            debug_mode=True,
+            # debug_mode=True,
         ) as an:
 
             portal = await an.start_actor(
@@ -135,6 +140,7 @@ def test_parent_writer_child_reader(
             shml = open_shm_list(
                 key=key,
                 size=seq_size,
+                dtype=str if use_str else float,
                 readonly=False,
             )
 
@@ -157,7 +163,7 @@ def test_parent_writer_child_reader(
                     if use_str:
                         val = str(val)
 
-                    print(f'(parent): writing {val}')
+                    # print(f'(parent): writing {val}')
                     shml[i] = val
 
                     # only on frame fills do we
