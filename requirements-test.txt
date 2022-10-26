@@ -6,3 +6,4 @@ mypy
 trio_typing
 pexpect
 towncrier
+numpy
