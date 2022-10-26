@@ -129,7 +129,7 @@ def test_parent_writer_child_reader(
 
 
             # allocate writeable list in parent
-            key = 'shm_list'          
+            key = 'shm_list'      
             seq_size = int(2 * 2 ** 10)
             shml = open_shm_list(
                 key=key,
