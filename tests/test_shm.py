@@ -6,11 +6,9 @@ import uuid
 import platform
 
 # import numpy
-import os
 import pytest
 import trio
 import tractor
-import _posixshmem
 from tractor._shm import (
     open_shm_list,
     attach_shm_list,
@@ -33,7 +31,6 @@ async def child_attach_shml_alot(
         )
         assert shml.shm.name == shm_key
         await trio.sleep(0.001)
-        # os.close(shml.shm._fd)
 
 
 
@@ -67,7 +64,7 @@ def test_child_attaches_alot():
                 await ctx.result()
 
             await portal.cancel_actor()
-            # os.close(shml.shm._fd)
+
 
     trio.run(main)
 
@@ -104,7 +101,6 @@ async def child_read_shm_list(
                 frame = shml[i - frame_size:i]
                 print(f'(child): reading frame: {frame}')
 
-        # os.close(shml.shm._fd)
 
 
 @pytest.mark.parametrize(
@@ -177,6 +173,6 @@ def test_parent_writer_child_reader(
                     await stream.send(i)
 
             await portal.cancel_actor()
-            # os.close(shml.shm._fd)
+
 
     trio.run(main)
