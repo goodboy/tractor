@@ -36,9 +36,12 @@ from conftest import repodir, _ci_env
 # - recurrent root errors
 
 
-if platform.system() == 'Windows':
+if osname := platform.system() in (
+    'Windows',
+    'Darwin',
+):
     pytest.skip(
-        'Debugger tests have no windows support (yet)',
+        'Debugger tests have no {osname} support (yet)',
         allow_module_level=True,
     )
 
@@ -782,8 +785,6 @@ def test_multi_nested_subactors_error_through_nurseries(
     # fixed.
 
     child = spawn('multi_nested_subactors_error_up_through_nurseries')
-
-    timed_out_early: bool = False
 
     for send_char in itertools.cycle(['c', 'q']):
         try:
