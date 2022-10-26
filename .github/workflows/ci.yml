@@ -93,7 +93,6 @@ jobs:
     steps:
 
       - uses: actions/checkout@v4
-
       - name: 'Install uv + py-${{ matrix.python-version }}'
         uses: astral-sh/setup-uv@v6
         with:
@@ -118,6 +117,39 @@ jobs:
         run: uv tree
 
       - name: Run tests
+        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+
+
+  testing-macos:
+    name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
+    timeout-minutes: 10
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+        python: ['3.13']
+        spawn_backend: [
+          'trio',
+        ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '${{ matrix.python }}'
+
+      - name: Install the project w uv
+        run: uv sync --all-extras --dev
+
+      - name: List deps tree
+        run: uv tree
+
+      - name: Run tests w uv
         run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx --full-trace
 
   # XXX legacy NOTE XXX
