@@ -12,9 +12,11 @@ async def stream_data(seed):
 
 # this is the third actor; the aggregator
 async def aggregate(seed):
-    """Ensure that the two streams we receive match but only stream
+    '''
+    Ensure that the two streams we receive match but only stream
     a single set of values to the parent.
-    """
+
+    '''
     async with tractor.open_nursery() as nursery:
         portals = []
         for i in range(1, 3):
@@ -69,7 +71,8 @@ async def aggregate(seed):
 async def main():
     # a nursery which spawns "actors"
     async with tractor.open_nursery(
-        arbiter_addr=('127.0.0.1', 1616)
+        arbiter_addr=('127.0.0.1', 1616),
+        loglevel='cancel',
     ) as nursery:
 
         seed = int(1e3)
@@ -92,6 +95,9 @@ async def main():
             async for value in stream:
                 result_stream.append(value)
 
+            print("ROOT STREAM CONSUMER COMPLETE")
+
+        print("ROOT CANCELLING AGGREGATOR CHILD")
         await portal.cancel_actor()
 
         print(f"STREAM TIME = {time.time() - start}")
