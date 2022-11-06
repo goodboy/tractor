@@ -93,14 +93,16 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
     ids=lambda t: t[1],
 )
 def test_example(run_example_in_subproc, example_script):
-    """Load and run scripts from this repo's ``examples/`` dir as a user
+    '''
+    Load and run scripts from this repo's ``examples/`` dir as a user
     would copy and pasing them into their editor.
 
     On windows a little more "finessing" is done to make
     ``multiprocessing`` play nice: we copy the ``__main__.py`` into the
     test directory and invoke the script as a module with ``python -m
     test_example``.
-    """
+
+    '''
     ex_file = os.path.join(*example_script)
 
     if 'rpc_bidir_streaming' in ex_file and sys.version_info < (3, 9):
@@ -110,25 +112,32 @@ def test_example(run_example_in_subproc, example_script):
         code = ex.read()
 
         with run_example_in_subproc(code) as proc:
-            proc.wait()
-            err, _ = proc.stderr.read(), proc.stdout.read()
-            # print(f'STDERR: {err}')
-            # print(f'STDOUT: {out}')
-
-            # if we get some gnarly output let's aggregate and raise
-            if err:
+            try:
+                proc.wait(timeout=5)
+            finally:
+                err = proc.stderr.read()
                 errmsg = err.decode()
-                errlines = errmsg.splitlines()
-                last_error = errlines[-1]
-                if (
-                    'Error' in last_error
+                out = proc.stdout.read()
+                outmsg = out.decode()
 
-                    # XXX: currently we print this to console, but maybe
-                    # shouldn't eventually once we figure out what's
-                    # a better way to be explicit about aio side
-                    # cancels?
-                    and 'asyncio.exceptions.CancelledError' not in last_error
-                ):
-                    raise Exception(errmsg)
+                if out:
+                    print(f'STDOUT: {out.decode()}')
+
+                # if we get some gnarly output let's aggregate and raise
+                if err:
+                    print(f'STDERR:\n{errmsg}')
+                    errmsg = err.decode()
+                    errlines = errmsg.splitlines()
+                    last_error = errlines[-1]
+                    if (
+                        'Error' in last_error
+
+                        # XXX: currently we print this to console, but maybe
+                        # shouldn't eventually once we figure out what's
+                        # a better way to be explicit about aio side
+                        # cancels?
+                        and 'asyncio.exceptions.CancelledError' not in last_error
+                    ):
+                        raise Exception(errmsg)
 
             assert proc.returncode == 0
