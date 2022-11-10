@@ -3,6 +3,7 @@ Shared mem primitives and APIs.
 
 """
 import uuid
+import platform
 
 # import numpy
 import pytest
@@ -32,12 +33,18 @@ async def child_attach_shml_alot(
         await trio.sleep(0.001)
 
 
+
 def test_child_attaches_alot():
     async def main():
         async with tractor.open_nursery() as an:
 
+            osx_shm_shared_mem_char_limit = 31
+
             # allocate writeable list in parent
             key = f'shml_{uuid.uuid4()}'
+            if (platform.uname().system == 'Darwin'):
+                key = key.replace('-', '')[:osx_shm_shared_mem_char_limit - 1]
+        
             shml = open_shm_list(
                 key=key,
             )
@@ -120,8 +127,9 @@ def test_parent_writer_child_reader(
                 debug_mode=True,
             )
 
+
             # allocate writeable list in parent
-            key = 'shm_list'
+            key = 'shm_list'      
             seq_size = int(2 * 2 ** 10)
             shml = open_shm_list(
                 key=key,
