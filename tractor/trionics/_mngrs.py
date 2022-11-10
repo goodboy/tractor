@@ -122,13 +122,13 @@ async def gather_contexts(
         # deliver control once all managers have started up
         await all_entered.wait()
 
-        # NOTE: order *should* be preserved in the output values
-        # since ``dict``s are now implicitly ordered.
-        yield tuple(unwrapped.values())
-
-        # we don't need a try/finally since cancellation will be triggered
-        # by the surrounding nursery on error.
-        parent_exit.set()
+        try:
+            yield tuple(unwrapped.values())
+        finally:
+            # NOTE: this is ABSOLUTELY REQUIRED to avoid
+            # the following wacky bug:
+            # <tractorbugurlhere>
+            parent_exit.set()
 
 
 # Per actor task caching helpers.
