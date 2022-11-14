@@ -271,7 +271,8 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         self,
 
     ) -> AsyncIterator[BroadcastReceiver]:
-        '''Allocate and return a ``BroadcastReceiver`` which delegates
+        '''
+        Allocate and return a ``BroadcastReceiver`` which delegates
         to this message stream.
 
         This allows multiple local tasks to receive each their own copy
@@ -609,7 +610,14 @@ class Context:
                 # XXX: Make the stream "one-shot use".  On exit, signal
                 # ``trio.EndOfChannel``/``StopAsyncIteration`` to the
                 # far end.
-                await self.send_stop()
+                try:
+                    await self.send_stop()
+                except trio.BrokenResourceError:
+                    log.warning(
+                        f"Couldn't close: stream already broken?\n"
+                        f'actor: {self.chan.uid}\n'
+                        f'ctx id: {self.cid}'
+                    )
 
             finally:
                 if self._portal:
