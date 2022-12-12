@@ -111,11 +111,11 @@ class ActorNursery:
         name: str,
         *,
         bind_addr: tuple[str, int] = _default_bind_addr,
-        rpc_module_paths: list[str] = None,
-        enable_modules: list[str] = None,
-        loglevel: str = None,  # set log level per subactor
-        nursery: trio.Nursery = None,
-        debug_mode: Optional[bool] = None,
+        rpc_module_paths: list[str] | None = None,
+        enable_modules: list[str] | None = None,
+        loglevel: str | None = None,  # set log level per subactor
+        nursery: trio.Nursery | None = None,
+        debug_mode: Optional[bool] | None = None,
         infect_asyncio: bool = False,
     ) -> Portal:
         '''
@@ -182,9 +182,9 @@ class ActorNursery:
 
         name: Optional[str] = None,
         bind_addr: tuple[str, int] = _default_bind_addr,
-        rpc_module_paths: Optional[list[str]] = None,
-        enable_modules: list[str] = None,
-        loglevel: str = None,  # set log level per subactor
+        rpc_module_paths: list[str] | None = None,
+        enable_modules: list[str] | None = None,
+        loglevel: str | None = None,  # set log level per subactor
         infect_asyncio: bool = False,
 
         **kwargs,  # explicit args to ``fn``

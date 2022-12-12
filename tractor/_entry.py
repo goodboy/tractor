@@ -51,7 +51,7 @@ def _mp_main(
     accept_addr: tuple[str, int],
     forkserver_info: tuple[Any, Any, Any, Any, Any],
     start_method: SpawnMethodKey,
-    parent_addr: tuple[str, int] = None,
+    parent_addr: tuple[str, int] | None = None,
     infect_asyncio: bool = False,
 
 ) -> None:
@@ -98,7 +98,7 @@ def _trio_main(
 
     actor: Actor,  # type: ignore
     *,
-    parent_addr: tuple[str, int] = None,
+    parent_addr: tuple[str, int] | None = None,
     infect_asyncio: bool = False,
 
 ) -> None:

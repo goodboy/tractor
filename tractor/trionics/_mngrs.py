@@ -47,7 +47,7 @@ T = TypeVar("T")
 
 @acm
 async def maybe_open_nursery(
-    nursery: trio.Nursery = None,
+    nursery: trio.Nursery | None = None,
     shield: bool = False,
 ) -> AsyncGenerator[trio.Nursery, Any]:
     '''
@@ -108,6 +108,17 @@ async def gather_contexts(
 
     all_entered = trio.Event()
     parent_exit = trio.Event()
+
+    # XXX: ensure greedy sequence of manager instances
+    # since a lazy inline generator doesn't seem to work
+    # with `async with` syntax.
+    mngrs = list(mngrs)
+
+    if not mngrs:
+        raise ValueError(
+            'input mngrs is empty?\n'
+            'Did try to use inline generator syntax?'
+        )
 
     async with trio.open_nursery() as n:
         for mngr in mngrs:

@@ -1,0 +1,11 @@
+Always ``list``-cast the ``mngrs`` input to
+``.trionics.gather_contexts()`` and ensure its size otherwise raise
+a ``ValueError``.
+
+Turns out that trying to pass an inline-style generator comprehension
+doesn't seem to work inside the ``async with`` expression? Further, in
+such a case we can get a hang waiting on the all-entered event
+completion when the internal mngrs iteration is a noop. Instead we
+always greedily check a size and error on empty input; the lazy
+iteration of a generator input is not beneficial anyway since we're
+entering all manager instances in concurrent tasks.

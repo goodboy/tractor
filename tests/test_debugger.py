@@ -634,18 +634,23 @@ def test_multi_daemon_subactors(
     # expect another breakpoint actor entry
     child.sendline('c')
     child.expect(r"\(Pdb\+\+\)")
-    assert_before(child, [bp_forever_msg])
 
-    if ctlc:
-        do_ctlc(child)
+    try:
+        assert_before(child, [bp_forever_msg])
+    except AssertionError:
+        assert_before(child, [name_error_msg])
 
-    # should crash with the 2nd name error (simulates
-    # a retry) and then the root eventually (boxed) errors
-    # after 1 or more further bp actor entries.
+    else:
+        if ctlc:
+            do_ctlc(child)
 
-    child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
-    assert_before(child, [name_error_msg])
+        # should crash with the 2nd name error (simulates
+        # a retry) and then the root eventually (boxed) errors
+        # after 1 or more further bp actor entries.
+
+        child.sendline('c')
+        child.expect(r"\(Pdb\+\+\)")
+        assert_before(child, [name_error_msg])
 
     # wait for final error in root
     # where it crashs with boxed error
@@ -660,10 +665,6 @@ def test_multi_daemon_subactors(
         except AssertionError:
             break
 
-    # child.sendline('c')
-    # assert_before(
-
-    # child.sendline('c')
     assert_before(
         child,
         [

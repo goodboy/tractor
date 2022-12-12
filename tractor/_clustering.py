@@ -32,9 +32,12 @@ import tractor
 async def open_actor_cluster(
     modules: list[str],
     count: int = cpu_count(),
-    names: Optional[list[str]] = None,
-    start_method: Optional[str] = None,
+    names: list[str] | None = None,
     hard_kill: bool = False,
+
+    # passed through verbatim to ``open_root_actor()``
+    **runtime_kwargs,
+
 ) -> AsyncGenerator[
     dict[str, tractor.Portal],
     None,
@@ -49,7 +52,9 @@ async def open_actor_cluster(
         raise ValueError(
             'Number of names is {len(names)} but count it {count}')
 
-    async with tractor.open_nursery(start_method=start_method) as an:
+    async with tractor.open_nursery(
+        **runtime_kwargs,
+    ) as an:
         async with trio.open_nursery() as n:
             uid = tractor.current_actor().uid
 
