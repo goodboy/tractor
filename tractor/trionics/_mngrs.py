@@ -47,7 +47,7 @@ T = TypeVar("T")
 
 @acm
 async def maybe_open_nursery(
-    nursery: trio.Nursery = None,
+    nursery: trio.Nursery | None = None,
     shield: bool = False,
 ) -> AsyncGenerator[trio.Nursery, Any]:
     '''

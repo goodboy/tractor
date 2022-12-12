@@ -172,7 +172,7 @@ class ActorContextInfo(Mapping):
 
 def get_logger(
 
-    name: str = None,
+    name: str | None = None,
     _root_name: str = _proj_name,
 
 ) -> StackLevelAdapter:
@@ -207,7 +207,7 @@ def get_logger(
 
 
 def get_console_log(
-    level: str = None,
+    level: str | None = None,
     **kwargs,
 ) -> logging.LoggerAdapter:
     '''Get the package logger and enable a handler which writes to stderr.

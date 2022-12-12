@@ -423,8 +423,8 @@ class Actor:
         name: str,
         *,
         enable_modules: list[str] = [],
-        uid: str = None,
-        loglevel: str = None,
+        uid: str | None = None,
+        loglevel: str | None = None,
         arbiter_addr: Optional[tuple[str, int]] = None,
         spawn_method: Optional[str] = None
     ) -> None:
@@ -980,7 +980,7 @@ class Actor:
         handler_nursery: trio.Nursery,
         *,
         # (host, port) to bind for channel server
-        accept_host: tuple[str, int] = None,
+        accept_host: tuple[str, int] | None = None,
         accept_port: int = 0,
         task_status: TaskStatus[trio.Nursery] = trio.TASK_STATUS_IGNORED,
     ) -> None:
@@ -1648,17 +1648,28 @@ class Arbiter(Actor):
     '''
     is_arbiter = True
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
 
         self._registry: dict[
             tuple[str, str],
             tuple[str, int],
         ] = {}
-        self._waiters = {}
+        self._waiters: dict[
+            str,
+            # either an event to sync to receiving an actor uid (which
+            # is filled in once the actor has sucessfully registered),
+            # or that uid after registry is complete.
+            list[trio.Event | tuple[str, str]]
+        ] = {}
 
         super().__init__(*args, **kwargs)
 
-    async def find_actor(self, name: str) -> Optional[tuple[str, int]]:
+    async def find_actor(
+        self,
+        name: str,
+
+    ) -> tuple[str, int] | None:
+
         for uid, sockaddr in self._registry.items():
             if name in uid:
                 return sockaddr
@@ -1693,7 +1704,8 @@ class Arbiter(Actor):
         registered.
 
         '''
-        sockaddrs = []
+        sockaddrs: list[tuple[str, int]] = []
+        sockaddr: tuple[str, int]
 
         for (aname, _), sockaddr in self._registry.items():
             if name == aname:
@@ -1703,8 +1715,10 @@ class Arbiter(Actor):
             waiter = trio.Event()
             self._waiters.setdefault(name, []).append(waiter)
             await waiter.wait()
+
             for uid in self._waiters[name]:
-                sockaddrs.append(self._registry[uid])
+                if not isinstance(uid, trio.Event):
+                    sockaddrs.append(self._registry[uid])
 
         return sockaddrs
 
@@ -1714,11 +1728,11 @@ class Arbiter(Actor):
         sockaddr: tuple[str, int]
 
     ) -> None:
-        uid = name, uuid = (str(uid[0]), str(uid[1]))
+        uid = name, _ = (str(uid[0]), str(uid[1]))
         self._registry[uid] = (str(sockaddr[0]), int(sockaddr[1]))
 
         # pop and signal all waiter events
-        events = self._waiters.pop(name, ())
+        events = self._waiters.pop(name, [])
         self._waiters.setdefault(name, []).append(uid)
         for event in events:
             if isinstance(event, trio.Event):

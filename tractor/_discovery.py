@@ -108,7 +108,7 @@ async def query_actor(
 @acm
 async def find_actor(
     name: str,
-    arbiter_sockaddr: tuple[str, int] = None
+    arbiter_sockaddr: tuple[str, int] | None = None
 
 ) -> AsyncGenerator[Optional[Portal], None]:
     '''
@@ -134,7 +134,7 @@ async def find_actor(
 @acm
 async def wait_for_actor(
     name: str,
-    arbiter_sockaddr: tuple[str, int] = None
+    arbiter_sockaddr: tuple[str, int] | None = None
 ) -> AsyncGenerator[Portal, None]:
     """Wait on an actor to register with the arbiter.
 

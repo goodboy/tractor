@@ -186,7 +186,7 @@ class Portal:
 
     async def cancel_actor(
         self,
-        timeout: float = None,
+        timeout: float | None = None,
 
     ) -> bool:
         '''

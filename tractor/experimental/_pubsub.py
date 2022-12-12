@@ -48,7 +48,7 @@ log = get_logger('messaging')
 async def fan_out_to_ctxs(
     pub_async_gen_func: typing.Callable,  # it's an async gen ... gd mypy
     topics2ctxs: dict[str, list],
-    packetizer: typing.Callable = None,
+    packetizer: typing.Callable | None = None,
 ) -> None:
     '''
     Request and fan out quotes to each subscribed actor channel.
@@ -144,7 +144,7 @@ _pubtask2lock: dict[str, trio.StrictFIFOLock] = {}
 
 
 def pub(
-    wrapped: typing.Callable = None,
+    wrapped: typing.Callable | None = None,
     *,
     tasks: set[str] = set(),
 ):
@@ -249,8 +249,8 @@ def pub(
             topics: set[str],
             *args,
             # *,
-            task_name: str = None,  # default: only one task allocated
-            packetizer: Callable = None,
+            task_name: str | None = None,  # default: only one task allocated
+            packetizer: Callable | None = None,
             **kwargs,
         ):
             if task_name is None:

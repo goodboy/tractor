@@ -341,7 +341,7 @@ class Channel:
 
     async def connect(
         self,
-        destaddr: tuple[Any, ...] = None,
+        destaddr: tuple[Any, ...] | None = None,
         **kwargs
 
     ) -> MsgTransport:
