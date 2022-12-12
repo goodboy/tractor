@@ -536,7 +536,10 @@ class Portal:
             await maybe_wait_for_debugger()
 
             # remove the context from runtime tracking
-            self.actor._contexts.pop((self.channel.uid, ctx.cid))
+            self.actor._contexts.pop(
+                (self.channel.uid, ctx.cid),
+                None,
+            )
 
 
 @dataclass
