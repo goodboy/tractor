@@ -455,7 +455,7 @@ class Actor:
         self._mods: dict[str, ModuleType] = {}
         self.loglevel = loglevel
 
-        self._arb_addr = (
+        self._arb_addr: tuple[str, int] | None = (
             str(arbiter_addr[0]),
             int(arbiter_addr[1])
         ) if arbiter_addr else None
@@ -1381,6 +1381,7 @@ async def async_main(
             and not actor.is_arbiter
         ):
             failed = False
+            assert isinstance(actor._arb_addr, tuple)
             with trio.move_on_after(0.5) as cs:
                 cs.shield = True
                 try:
