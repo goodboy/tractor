@@ -166,3 +166,25 @@ def test_loglevel_propagated_to_subactor(
     # ensure subactor spits log message on stderr
     captured = capfd.readouterr()
     assert 'yoyoyo' in captured.err
+
+
+@tractor_test
+async def test_torch_mp_spawn():
+    """The main ``tractor`` routine.
+    """
+    async with tractor.open_nursery(start_method='torch_mp_spawn') as n:
+
+        portal = await n.start_actor(
+            'frank',
+            # enable the actor to run funcs from this current module
+            enable_modules=[__name__],
+        )
+
+        print(await portal.run(movie_theatre_question))
+        # call the subactor a 2nd time
+        print(await portal.run(movie_theatre_question))
+
+        # the async with will block here indefinitely waiting
+        # for our actor "frank" to complete, we cancel 'frank'
+        # to avoid blocking indefinitely
+        await portal.cancel_actor()

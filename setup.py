@@ -76,6 +76,9 @@ setup(
         'pdbpp @ git+https://github.com/pdbpp/pdbpp@76c4be5#egg=pdbpp ; python_version > "3.9"',  # noqa: E501
 
     ],
+    extras_require={
+        'cuda': ['torch']
+    },
     tests_require=['pytest'],
     python_requires=">=3.9",
     keywords=[

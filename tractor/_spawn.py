@@ -65,6 +65,7 @@ SpawnMethodKey = Literal[
     'trio',  # supported on all platforms
     'mp_spawn',
     'mp_forkserver',  # posix only
+    'torch_mp_spawn'
 ]
 _spawn_method: SpawnMethodKey = 'trio'
 
@@ -107,6 +108,10 @@ def try_set_start_method(
         mp_methods.remove('fork')
 
     match key:
+        case 'torch_mp_spawn':
+            import torch.multiprocessing as mp
+            _ctx = mp.get_context('spawn')
+
         case 'mp_forkserver':
             from . import _forkserver_override
             _forkserver_override.override_stdlib()
@@ -648,4 +653,5 @@ _methods: dict[SpawnMethodKey, Callable] = {
     'trio': trio_proc,
     'mp_spawn': mp_proc,
     'mp_forkserver': mp_proc,
+    'torch_mp_spawn': mp_proc
 }
