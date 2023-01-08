@@ -37,7 +37,7 @@ async def echo_sequences(
 
 async def ensure_sequence(
 
-    stream: tractor.ReceiveMsgStream,
+    stream: tractor.MsgStream,
     sequence: list,
     delay: Optional[float] = None,
 

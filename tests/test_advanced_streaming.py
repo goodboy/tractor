@@ -14,7 +14,7 @@ def is_win():
     return platform.system() == 'Windows'
 
 
-_registry: dict[str, set[tractor.ReceiveMsgStream]] = {
+_registry: dict[str, set[tractor.MsgStream]] = {
     'even': set(),
     'odd': set(),
 }
