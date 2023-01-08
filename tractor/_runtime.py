@@ -228,11 +228,11 @@ async def _invoke(
 
                 fname = func.__name__
                 if ctx._cancel_called:
-                    msg = f'{fname} cancelled itself'
+                    msg = f'`{fname}()` cancelled itself'
 
                 elif cs.cancel_called:
                     msg = (
-                        f'{fname} was remotely cancelled by its caller '
+                        f'`{fname}()` was remotely cancelled by its caller '
                         f'{ctx.chan.uid}'
                     )
 
