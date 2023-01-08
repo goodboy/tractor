@@ -45,7 +45,10 @@ from ._exceptions import (
     NoResult,
     ContextCancelled,
 )
-from ._streaming import Context, ReceiveMsgStream
+from ._streaming import (
+    Context,
+    MsgStream,
+)
 
 
 log = get_logger(__name__)
@@ -101,7 +104,7 @@ class Portal:
         # it is expected that ``result()`` will be awaited at some
         # point.
         self._expect_result: Optional[Context] = None
-        self._streams: set[ReceiveMsgStream] = set()
+        self._streams: set[MsgStream] = set()
         self.actor = current_actor()
 
     async def _submit_for_result(
@@ -316,7 +319,7 @@ class Portal:
         async_gen_func: Callable,  # typing: ignore
         **kwargs,
 
-    ) -> AsyncGenerator[ReceiveMsgStream, None]:
+    ) -> AsyncGenerator[MsgStream, None]:
 
         if not inspect.isasyncgenfunction(async_gen_func):
             if not (
@@ -341,7 +344,7 @@ class Portal:
 
         try:
             # deliver receive only stream
-            async with ReceiveMsgStream(
+            async with MsgStream(
                 ctx, ctx._recv_chan,
             ) as rchan:
                 self._streams.add(rchan)
