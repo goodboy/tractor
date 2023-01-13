@@ -58,11 +58,12 @@ logger = log.get_logger('tractor')
 @asynccontextmanager
 async def open_root_actor(
 
+    *,
     # defaults are above
-    arbiter_addr: Optional[tuple[str, int]] = (
-        _default_arbiter_host,
-        _default_arbiter_port,
-    ),
+    arbiter_addr: tuple[str, int] | None = None,
+
+    # defaults are above
+    registry_addr: tuple[str, int] | None = None,
 
     name: Optional[str] = 'root',
 
@@ -112,9 +113,21 @@ async def open_root_actor(
     if start_method is not None:
         _spawn.try_set_start_method(start_method)
 
-    arbiter_addr = (host, port) = arbiter_addr or (
-        _default_arbiter_host,
-        _default_arbiter_port,
+    if arbiter_addr is not None:
+        warnings.warn(
+            '`arbiter_addr` is now deprecated and has been renamed to'
+            '`registry_addr`.\nUse that instead..',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    registry_addr = (host, port) = (
+        registry_addr
+        or arbiter_addr
+        or (
+            _default_arbiter_host,
+            _default_arbiter_port,
+        )
     )
 
     loglevel = (loglevel or log._default_loglevel).upper()
@@ -170,7 +183,7 @@ async def open_root_actor(
 
         actor = Actor(
             name or 'anonymous',
-            arbiter_addr=arbiter_addr,
+            arbiter_addr=registry_addr,
             loglevel=loglevel,
             enable_modules=enable_modules,
         )
@@ -186,7 +199,7 @@ async def open_root_actor(
 
         actor = Arbiter(
             name or 'arbiter',
-            arbiter_addr=arbiter_addr,
+            arbiter_addr=registry_addr,
             loglevel=loglevel,
             enable_modules=enable_modules,
         )
@@ -252,7 +265,7 @@ def run_daemon(
 
     # runtime kwargs
     name: Optional[str] = 'root',
-    arbiter_addr: tuple[str, int] = (
+    registry_addr: tuple[str, int] = (
         _default_arbiter_host,
         _default_arbiter_port,
     ),
@@ -279,7 +292,7 @@ def run_daemon(
     async def _main():
 
         async with open_root_actor(
-            arbiter_addr=arbiter_addr,
+            arbiter_addr=registry_addr,
             name=name,
             start_method=start_method,
             debug_mode=debug_mode,
