@@ -60,6 +60,9 @@ setup(
         # serialization
         'msgspec',
 
+        # debug mode REPL
+        'pdbpp',
+
         # pip ref docs on these specs:
         # https://pip.pypa.io/en/stable/reference/requirement-specifiers/#examples
         # and pep:
@@ -70,10 +73,6 @@ setup(
         # https://github.com/pdbpp/fancycompleter/issues/37
         'pyreadline3 ; platform_system == "Windows"',
 
-        # 3.10 has an outstanding unreleased issue and `pdbpp` itself
-        #   pins to patched forks of its own dependencies as well..and
-        #   we need a specific patch on master atm.
-        'pdbpp @ git+https://github.com/pdbpp/pdbpp@76c4be5#egg=pdbpp ; python_version > "3.9"',  # noqa: E501
 
     ],
     tests_require=['pytest'],
