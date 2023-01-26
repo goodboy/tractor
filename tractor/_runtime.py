@@ -319,7 +319,7 @@ async def _invoke(
             BrokenPipeError,
         ):
             # if we can't propagate the error that's a big boo boo
-            log.error(
+            log.exception(
                 f"Failed to ship error to caller @ {chan.uid} !?"
             )
 
