@@ -73,6 +73,7 @@ class Lock:
     Mostly to avoid a lot of ``global`` declarations for now XD.
 
     '''
+    repl: MultiActorPdb | None = None
     # placeholder for function to set a ``trio.Event`` on debugger exit
     # pdb_release_hook: Optional[Callable] = None
 
@@ -111,7 +112,7 @@ class Lock:
     def shield_sigint(cls):
         cls._orig_sigint_handler = signal.signal(
             signal.SIGINT,
-            shield_sigint,
+            shield_sigint_handler,
         )
 
     @classmethod
@@ -146,6 +147,7 @@ class Lock:
         finally:
             # restore original sigint handler
             cls.unshield_sigint()
+            cls.repl = None
 
 
 class TractorConfig(pdbpp.DefaultConfig):
@@ -183,6 +185,12 @@ class MultiActorPdb(pdbpp.Pdb):
             super().set_quit()
         finally:
             Lock.release()
+
+    # XXX NOTE: we only override this because apparently the stdlib pdb
+    # bois likes to touch the SIGINT handler as much as i like to touch
+    # my d$%&.
+    def _cmdloop(self):
+        self.cmdloop()
 
 
 @acm
@@ -388,6 +396,7 @@ async def wait_for_parent_stdin_hijack(
 
         except ContextCancelled:
             log.warning('Root actor cancelled debug lock')
+            raise
 
         finally:
             Lock.local_task_in_debug = None
@@ -435,7 +444,10 @@ async def _breakpoint(
     # with trio.CancelScope(shield=shield):
     #     await trio.lowlevel.checkpoint()
 
-    if not Lock.local_pdb_complete or Lock.local_pdb_complete.is_set():
+    if (
+        not Lock.local_pdb_complete
+        or Lock.local_pdb_complete.is_set()
+    ):
         Lock.local_pdb_complete = trio.Event()
 
     # TODO: need a more robust check for the "root" actor
@@ -484,6 +496,7 @@ async def _breakpoint(
                     wait_for_parent_stdin_hijack,
                     actor.uid,
                 )
+                Lock.repl = pdb
         except RuntimeError:
             Lock.release()
 
@@ -522,6 +535,7 @@ async def _breakpoint(
 
         Lock.global_actor_in_debug = actor.uid
         Lock.local_task_in_debug = task_name
+        Lock.repl = pdb
 
     try:
         # block here one (at the appropriate frame *up*) where
@@ -545,10 +559,10 @@ async def _breakpoint(
     #     # signal.signal = pdbpp.hideframe(signal.signal)
 
 
-def shield_sigint(
+def shield_sigint_handler(
     signum: int,
     frame: 'frame',  # type: ignore # noqa
-    pdb_obj: Optional[MultiActorPdb] = None,
+    # pdb_obj: Optional[MultiActorPdb] = None,
     *args,
 
 ) -> None:
@@ -565,6 +579,7 @@ def shield_sigint(
     uid_in_debug = Lock.global_actor_in_debug
 
     actor = tractor.current_actor()
+    # print(f'{actor.uid} in HANDLER with ')
 
     def do_cancel():
         # If we haven't tried to cancel the runtime then do that instead
@@ -598,6 +613,9 @@ def shield_sigint(
                 )
                 return do_cancel()
 
+    # only set in the actor actually running the REPL
+    pdb_obj = Lock.repl
+
     # root actor branch that reports whether or not a child
     # has locked debugger.
     if (
@@ -612,32 +630,34 @@ def shield_sigint(
     ):
         # we are root and some actor is in debug mode
         # if uid_in_debug is not None:
-        name = uid_in_debug[0]
-        if name != 'root':
-            log.pdb(
-                f"Ignoring SIGINT while child in debug mode: `{uid_in_debug}`"
-            )
 
-        else:
-            log.pdb(
-                "Ignoring SIGINT while in debug mode"
-            )
+        if pdb_obj:
+            name = uid_in_debug[0]
+            if name != 'root':
+                log.pdb(
+                    f"Ignoring SIGINT, child in debug mode: `{uid_in_debug}`"
+                )
+
+            else:
+                log.pdb(
+                    "Ignoring SIGINT while in debug mode"
+                )
     elif (
         is_root_process()
     ):
-        log.pdb(
-            "Ignoring SIGINT since debug mode is enabled"
-        )
+        if pdb_obj:
+            log.pdb(
+                "Ignoring SIGINT since debug mode is enabled"
+            )
 
-        # revert back to ``trio`` handler asap!
-        Lock.unshield_sigint()
         if (
             Lock._root_local_task_cs_in_debug
             and not Lock._root_local_task_cs_in_debug.cancel_called
         ):
             Lock._root_local_task_cs_in_debug.cancel()
 
-        # raise KeyboardInterrupt
+            # revert back to ``trio`` handler asap!
+            Lock.unshield_sigint()
 
     # child actor that has locked the debugger
     elif not is_root_process():
@@ -653,7 +673,10 @@ def shield_sigint(
             return do_cancel()
 
         task = Lock.local_task_in_debug
-        if task:
+        if (
+            task
+            and pdb_obj
+        ):
             log.pdb(
                 f"Ignoring SIGINT while task in debug mode: `{task}`"
             )
@@ -671,11 +694,16 @@ def shield_sigint(
     # it lookks to be that the last command that was run (eg. ll)
     # will be repeated by default.
 
-    # TODO: maybe redraw/print last REPL output to console
+    # maybe redraw/print last REPL output to console since
+    # we want to alert the user that more input is expect since
+    # nothing has been done dur to ignoring sigint.
     if (
         pdb_obj
-        and sys.version_info <= (3, 10)
     ):
+        # redraw the prompt ONLY in the actor that has the REPL running.
+        pdb_obj.stdout.write(pdb_obj.prompt)
+        pdb_obj.stdout.flush()
+
         # TODO: make this work like sticky mode where if there is output
         # detected as written to the tty we redraw this part underneath
         # and erase the past draw of this same bit above?
@@ -688,14 +716,6 @@ def shield_sigint(
 
         # XXX: lol, see ``pdbpp`` issue:
         # https://github.com/pdbpp/pdbpp/issues/496
-
-        # TODO: pretty sure this is what we should expect to have to run
-        # in total but for now we're just going to wait until `pdbpp`
-        # figures out it's own stuff on 3.10 (and maybe we'll help).
-        # pdb_obj.do_longlist(None)
-
-        # XXX: we were doing this but it shouldn't be required..
-        print(pdb_obj.prompt, end='', flush=True)
 
 
 def _set_trace(
@@ -820,7 +840,10 @@ async def maybe_wait_for_debugger(
 
 ) -> None:
 
-    if not debug_mode() and not child_in_debug:
+    if (
+        not debug_mode()
+        and not child_in_debug
+    ):
         return
 
     if (
