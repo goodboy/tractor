@@ -1,0 +1,10 @@
+Always redraw the `pdbpp` prompt on `SIGINT` during REPL use.
+
+There was recent changes todo with Python 3.10 that required us to pin
+to a specific commit in `pdbpp` which have recently been fixed minus
+this last issue with `SIGINT` shielding: not clobbering or not
+showing the `(Pdb++)` prompt on ctlr-c by the user. This repairs all
+that by firstly removing the standard KBI intercepting of the std lib's
+`pdb.Pdb._cmdloop()` as well as ensuring that only the actor with REPL
+control ever reports `SIGINT` handler log msgs and prompt redraws. With
+this we move back to using pypi `pdbpp` release.
