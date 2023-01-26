@@ -1599,7 +1599,10 @@ async def process_messages(
         # handshake for them (yet) and instead we simply bail out of
         # the message loop and expect the teardown sequence to clean
         # up.
-        log.runtime(f'channel from {chan.uid} closed abruptly:\n{chan}')
+        log.runtime(
+            f'channel from {chan.uid} closed abruptly:\n'
+            f'-> {chan.raddr}\n'
+        )
 
         # transport **was** disconnected
         return True

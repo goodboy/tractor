@@ -457,6 +457,13 @@ async def trio_proc(
                             await proc.wait()
 
                 if is_root_process():
+                    # TODO: solve the following issue where we need
+                    # to do a similar wait like this but in an
+                    # "intermediary" parent actor that itself isn't
+                    # in debug but has a child that is, and we need
+                    # to hold off on relaying SIGINT until that child
+                    # is complete.
+                    # https://github.com/goodboy/tractor/issues/320
                     await maybe_wait_for_debugger(
                         child_in_debug=_runtime_vars.get(
                             '_debug_mode', False),
