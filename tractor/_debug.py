@@ -197,7 +197,7 @@ class MultiActorPdb(pdbpp.Pdb):
         self.cmdloop()
 
     @cached_property
-    def shname(self) -> str:
+    def shname(self) -> str | None:
         '''
         Attempt to return the login shell name with a special check for
         the infamous `xonsh` since it seems to have some issues much
@@ -206,11 +206,18 @@ class MultiActorPdb(pdbpp.Pdb):
         '''
         # SUPER HACKY and only really works if `xonsh` is not used
         # before spawning further sub-shells..
-        xonsh_is_login_sh: bool = os.getenv('XONSH_LOGIN', default=False)
-        if xonsh_is_login_sh:
-            return 'xonsh'
+        shpath = os.getenv('SHELL', None)
 
-        return os.path.basename(os.getenv('SHELL'))
+        if shpath:
+            if (
+                os.getenv('XONSH_LOGIN', default=False)
+                or 'xonsh' in shpath
+            ):
+                return 'xonsh'
+
+            return os.path.basename(shpath)
+
+        return None
 
 
 @acm
