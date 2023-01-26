@@ -24,9 +24,6 @@ import importlib
 import logging
 import os
 import signal
-from typing import (
-    Optional,
-)
 import typing
 import warnings
 
@@ -65,21 +62,21 @@ async def open_root_actor(
     # defaults are above
     registry_addr: tuple[str, int] | None = None,
 
-    name: Optional[str] = 'root',
+    name: str | None = 'root',
 
     # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
     # OR `trio` (the new default).
-    start_method: Optional[_spawn.SpawnMethodKey] = None,
+    start_method: _spawn.SpawnMethodKey | None = None,
 
     # enables the multi-process debugger support
     debug_mode: bool = False,
 
     # internal logging
-    loglevel: Optional[str] = None,
+    loglevel: str | None = None,
 
-    enable_modules: Optional[list] = None,
-    rpc_module_paths: Optional[list] = None,
+    enable_modules: list | None = None,
+    rpc_module_paths: list | None = None,
 
 ) -> typing.Any:
     '''
@@ -93,7 +90,7 @@ async def open_root_actor(
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
-    _debug.Lock._trio_handler =  signal.getsignal(signal.SIGINT)
+    _debug.Lock._trio_handler = signal.getsignal(signal.SIGINT)
 
     # mark top most level process as root actor
     _state._runtime_vars['_is_root'] = True
@@ -173,7 +170,7 @@ async def open_root_actor(
 
     except OSError:
         # TODO: make this a "discovery" log level?
-        logger.warning(f"No actor could be found @ {host}:{port}")
+        logger.warning(f"No actor registry found @ {host}:{port}")
 
     # create a local actor and start up its main routine/task
     if arbiter_found:
@@ -264,13 +261,13 @@ def run_daemon(
     enable_modules: list[str],
 
     # runtime kwargs
-    name: Optional[str] = 'root',
+    name: str | None = 'root',
     registry_addr: tuple[str, int] = (
         _default_arbiter_host,
         _default_arbiter_port,
     ),
 
-    start_method: Optional[str] = None,
+    start_method: str | None = None,
     debug_mode: bool = False,
     **kwargs
 
