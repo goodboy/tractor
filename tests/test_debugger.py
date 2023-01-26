@@ -165,17 +165,16 @@ def ctlc(
         # be 3.10+ mega-asap.
         pytest.skip('Py3.9 and `pdbpp` son no bueno..')
 
-    if ci_env:
-        node = request.node
-        markers = node.own_markers
-        for mark in markers:
-            if mark.name == 'has_nested_actors':
-                pytest.skip(
-                    f'Test for {node} uses nested actors and fails in CI\n'
-                    f'The test seems to run fine locally but until we solve'
-                    'this issue this CI test will be xfail:\n'
-                    'https://github.com/goodboy/tractor/issues/320'
-                )
+    node = request.node
+    markers = node.own_markers
+    for mark in markers:
+        if mark.name == 'has_nested_actors':
+            pytest.skip(
+                f'Test {node} has nested actors and fails with Ctrl-C.\n'
+                f'The test can sometimes run fine locally but until'
+                ' we solve' 'this issue this CI test will be xfail:\n'
+                'https://github.com/goodboy/tractor/issues/320'
+            )
 
     if use_ctlc:
         # XXX: disable pygments highlighting for auto-tests
