@@ -20,9 +20,13 @@ Multi-core debugging for da peeps!
 """
 from __future__ import annotations
 import bdb
+import os
 import sys
 import signal
-from functools import partial
+from functools import (
+    partial,
+    cached_property,
+)
 from contextlib import asynccontextmanager as acm
 from typing import (
     Any,
@@ -191,6 +195,22 @@ class MultiActorPdb(pdbpp.Pdb):
     # my d$%&.
     def _cmdloop(self):
         self.cmdloop()
+
+    @cached_property
+    def shname(self) -> str:
+        '''
+        Attempt to return the login shell name with a special check for
+        the infamous `xonsh` since it seems to have some issues much
+        different from std shells when it comes to flushing the prompt?
+
+        '''
+        # SUPER HACKY and only really works if `xonsh` is not used
+        # before spawning further sub-shells..
+        xonsh_is_login_sh: bool = os.getenv('XONSH_LOGIN', default=False)
+        if xonsh_is_login_sh:
+            return 'xonsh'
+
+        return os.path.basename(os.getenv('SHELL'))
 
 
 @acm
@@ -691,17 +711,19 @@ def shield_sigint_handler(
         raise KeyboardInterrupt
 
     # NOTE: currently (at least on ``fancycompleter`` 0.9.2)
-    # it lookks to be that the last command that was run (eg. ll)
+    # it looks to be that the last command that was run (eg. ll)
     # will be repeated by default.
 
     # maybe redraw/print last REPL output to console since
     # we want to alert the user that more input is expect since
     # nothing has been done dur to ignoring sigint.
     if (
-        pdb_obj
+        pdb_obj  # only when this actor has a REPL engaged
     ):
-        # redraw the prompt ONLY in the actor that has the REPL running.
-        pdb_obj.stdout.write(pdb_obj.prompt)
+        # XXX: yah, mega hack, but how else do we catch this madness XD
+        if pdb_obj.shname == 'xonsh':
+            pdb_obj.stdout.write(pdb_obj.prompt)
+
         pdb_obj.stdout.flush()
 
         # TODO: make this work like sticky mode where if there is output
