@@ -205,16 +205,22 @@ def sig_prog(proc, sig):
 
 
 @pytest.fixture
-def daemon(loglevel, testdir, arb_addr):
-    """Run a daemon actor as a "remote arbiter".
-    """
+def daemon(
+    loglevel: str,
+    testdir,
+    arb_addr: tuple[str, int],
+):
+    '''
+    Run a daemon actor as a "remote arbiter".
+
+    '''
     if loglevel in ('trace', 'debug'):
         # too much logging will lock up the subproc (smh)
         loglevel = 'info'
 
     cmdargs = [
         sys.executable, '-c',
-        "import tractor; tractor.run_daemon([], arbiter_addr={}, loglevel={})"
+        "import tractor; tractor.run_daemon([], registry_addr={}, loglevel={})"
         .format(
             arb_addr,
             "'{}'".format(loglevel) if loglevel else None)

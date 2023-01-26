@@ -24,9 +24,6 @@ import importlib
 import logging
 import os
 import signal
-from typing import (
-    Optional,
-)
 import typing
 import warnings
 
@@ -58,27 +55,28 @@ logger = log.get_logger('tractor')
 @asynccontextmanager
 async def open_root_actor(
 
+    *,
     # defaults are above
-    arbiter_addr: Optional[tuple[str, int]] = (
-        _default_arbiter_host,
-        _default_arbiter_port,
-    ),
+    arbiter_addr: tuple[str, int] | None = None,
 
-    name: Optional[str] = 'root',
+    # defaults are above
+    registry_addr: tuple[str, int] | None = None,
+
+    name: str | None = 'root',
 
     # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
     # OR `trio` (the new default).
-    start_method: Optional[_spawn.SpawnMethodKey] = None,
+    start_method: _spawn.SpawnMethodKey | None = None,
 
     # enables the multi-process debugger support
     debug_mode: bool = False,
 
     # internal logging
-    loglevel: Optional[str] = None,
+    loglevel: str | None = None,
 
-    enable_modules: Optional[list] = None,
-    rpc_module_paths: Optional[list] = None,
+    enable_modules: list | None = None,
+    rpc_module_paths: list | None = None,
 
 ) -> typing.Any:
     '''
@@ -92,7 +90,7 @@ async def open_root_actor(
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
-    _debug.Lock._trio_handler =  signal.getsignal(signal.SIGINT)
+    _debug.Lock._trio_handler = signal.getsignal(signal.SIGINT)
 
     # mark top most level process as root actor
     _state._runtime_vars['_is_root'] = True
@@ -112,9 +110,21 @@ async def open_root_actor(
     if start_method is not None:
         _spawn.try_set_start_method(start_method)
 
-    arbiter_addr = (host, port) = arbiter_addr or (
-        _default_arbiter_host,
-        _default_arbiter_port,
+    if arbiter_addr is not None:
+        warnings.warn(
+            '`arbiter_addr` is now deprecated and has been renamed to'
+            '`registry_addr`.\nUse that instead..',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    registry_addr = (host, port) = (
+        registry_addr
+        or arbiter_addr
+        or (
+            _default_arbiter_host,
+            _default_arbiter_port,
+        )
     )
 
     loglevel = (loglevel or log._default_loglevel).upper()
@@ -160,7 +170,7 @@ async def open_root_actor(
 
     except OSError:
         # TODO: make this a "discovery" log level?
-        logger.warning(f"No actor could be found @ {host}:{port}")
+        logger.warning(f"No actor registry found @ {host}:{port}")
 
     # create a local actor and start up its main routine/task
     if arbiter_found:
@@ -170,7 +180,7 @@ async def open_root_actor(
 
         actor = Actor(
             name or 'anonymous',
-            arbiter_addr=arbiter_addr,
+            arbiter_addr=registry_addr,
             loglevel=loglevel,
             enable_modules=enable_modules,
         )
@@ -186,7 +196,7 @@ async def open_root_actor(
 
         actor = Arbiter(
             name or 'arbiter',
-            arbiter_addr=arbiter_addr,
+            arbiter_addr=registry_addr,
             loglevel=loglevel,
             enable_modules=enable_modules,
         )
@@ -251,13 +261,13 @@ def run_daemon(
     enable_modules: list[str],
 
     # runtime kwargs
-    name: Optional[str] = 'root',
-    arbiter_addr: tuple[str, int] = (
+    name: str | None = 'root',
+    registry_addr: tuple[str, int] = (
         _default_arbiter_host,
         _default_arbiter_port,
     ),
 
-    start_method: Optional[str] = None,
+    start_method: str | None = None,
     debug_mode: bool = False,
     **kwargs
 
@@ -279,7 +289,7 @@ def run_daemon(
     async def _main():
 
         async with open_root_actor(
-            arbiter_addr=arbiter_addr,
+            arbiter_addr=registry_addr,
             name=name,
             start_method=start_method,
             debug_mode=debug_mode,
