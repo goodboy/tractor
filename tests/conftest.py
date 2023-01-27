@@ -7,6 +7,7 @@ import os
 import random
 import signal
 import platform
+import pathlib
 import time
 import inspect
 from functools import partial, wraps
@@ -113,14 +114,21 @@ no_windows = pytest.mark.skipif(
 )
 
 
-def repodir():
-    """Return the abspath to the repo directory.
-    """
-    dirname = os.path.dirname
-    dirpath = os.path.abspath(
-        dirname(dirname(os.path.realpath(__file__)))
-        )
-    return dirpath
+def repodir() -> pathlib.Path:
+    '''
+    Return the abspath to the repo directory.
+
+    '''
+    # 2 parents up to step up through tests/<repo_dir>
+    return pathlib.Path(__file__).parent.parent.absolute()
+
+
+def examples_dir() -> pathlib.Path:
+    '''
+    Return the abspath to the examples directory as `pathlib.Path`.
+
+    '''
+    return repodir() / 'examples'
 
 
 def pytest_addoption(parser):
