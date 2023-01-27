@@ -88,6 +88,7 @@ def run_example_in_subproc(
         and f[0] != '_'
         and 'debugging' not in p[0]
         and 'integration' not in p[0]
+        and 'advanced_faults' not in p[0]
     ],
 
     ids=lambda t: t[1],

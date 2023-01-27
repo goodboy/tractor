@@ -26,7 +26,6 @@ async def break_channel_silently_then_error(
         # doesn't get stuck in debug or hang on the connection join.
         # this more or less simulates an infinite msg-receive hang on
         # the other end.
-        # if msg > 66:
         await stream._ctx.chan.send(None)
         assert 0
 
@@ -64,7 +63,6 @@ async def recv_and_spawn_net_killers(
             if i > 80:
                 n.start_soon(break_channel_silently_then_error, stream)
                 n.start_soon(close_stream_and_error, stream)
-                await trio.sleep_forever()
 
 
 async def main(
@@ -92,7 +90,9 @@ async def main(
             async with ctx.open_stream() as stream:
                 for i in range(100):
 
-                    # this may break in the mp_spawn case
+                    # it actually breaks right here in the
+                    # mp_spawn/forkserver backends and thus the zombie
+                    # reaper never even kicks in?
                     await stream.send(i)
 
                     with trio.move_on_after(2) as cs:
@@ -102,7 +102,7 @@ async def main(
                     if cs.cancelled_caught:
                         # pretend to be a user seeing no streaming action
                         # thinking it's a hang, and then hitting ctl-c..
-                        print("YOO i'm a user and, thingz hangin.. CTL-C CTRL-C..")
+                        print("YOO i'm a user anddd thingz hangin.. CTRL-C..")
                         raise KeyboardInterrupt
 
 
