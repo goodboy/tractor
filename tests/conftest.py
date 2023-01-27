@@ -159,7 +159,7 @@ def loglevel(request):
 
 
 @pytest.fixture(scope='session')
-def spawn_backend(request):
+def spawn_backend(request) -> str:
     return request.config.option.spawn_backend
 
 

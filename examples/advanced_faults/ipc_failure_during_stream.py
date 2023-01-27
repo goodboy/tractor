@@ -64,14 +64,17 @@ async def recv_and_spawn_net_killers(
             if i > 80:
                 n.start_soon(break_channel_silently_then_error, stream)
                 n.start_soon(close_stream_and_error, stream)
+                await trio.sleep_forever()
 
 
 async def main(
-    debug_mode: bool = True,
+    debug_mode: bool = False,
+    start_method: str = 'trio',
 
 ) -> None:
 
     async with open_nursery(
+        start_method=start_method,
 
         # NOTE: even debugger is used we shouldn't get
         # a hang since it never engages due to broken IPC
@@ -88,6 +91,8 @@ async def main(
         ) as (ctx, sent):
             async with ctx.open_stream() as stream:
                 for i in range(100):
+
+                    # this may break in the mp_spawn case
                     await stream.send(i)
 
                     with trio.move_on_after(2) as cs:

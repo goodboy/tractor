@@ -19,6 +19,7 @@ from conftest import (
 )
 def test_child_breaks_ipc_channel_during_stream(
     debug_mode: bool,
+    spawn_backend: str,
 ):
     '''
     Ensure we can (purposely) break IPC during streaming and it's still
@@ -26,13 +27,22 @@ def test_child_breaks_ipc_channel_during_stream(
     SIGINT.
 
     '''
+    expect_final_exc = KeyboardInterrupt
+
+    if spawn_backend != 'trio':
+        if debug_mode:
+            pytest.skip('`debug_mode` only supported on `trio` spawner')
+
+        expect_final_exc = trio.ClosedResourceError
+
     mod = import_path(
         examples_dir() / 'advanced_faults' / 'ipc_failure_during_stream.py',
         root=examples_dir(),
     )
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(expect_final_exc):
         trio.run(
             mod.main,
             debug_mode,
+            spawn_backend,
         )
