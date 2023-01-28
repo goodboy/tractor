@@ -6,8 +6,14 @@
 ``tractor`` is a `structured concurrent`_, multi-processing_ runtime
 built on trio_.
 
-Fundamentally ``tractor`` gives you parallelism via ``trio``-"*actors*":
-our nurseries_ let you spawn new Python processes which each run a ``trio``
+Fundamentally, ``tractor`` gives you parallelism via
+``trio``-"*actors*": independent Python processes (aka
+non-shared-memory threads) which maintain structured
+concurrency (SC) *end-to-end* inside a *supervision tree*.
+
+Cross-process (and thus cross-host) SC is accomplished through the
+combined use of our "actor nurseries_" and an "SC-transitive IPC
+protocol" constructed on top of multiple Pythons each running a ``trio``
 scheduled runtime - a call to ``trio.run()``.
 
 We believe the system adheres to the `3 axioms`_ of an "`actor model`_"
