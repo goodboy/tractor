@@ -497,6 +497,10 @@ class Portal:
                     f'actor: {uid}'
                 )
                 result = await ctx.result()
+                log.runtime(
+                    f'Context {fn_name} returned '
+                    f'value from callee `{result}`'
+                )
 
             # though it should be impossible for any tasks
             # operating *in* this scope to have survived
@@ -518,12 +522,6 @@ class Portal:
                         f'task:{cid}\n'
                         f'actor:{uid}'
                     )
-            else:
-                log.runtime(
-                    f'Context {fn_name} returned '
-                    f'value from callee `{result}`'
-                )
-
             # XXX: (MEGA IMPORTANT) if this is a root opened process we
             # wait for any immediate child in debug before popping the
             # context from the runtime msg loop otherwise inside
