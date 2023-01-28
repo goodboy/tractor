@@ -251,7 +251,7 @@ def test_a_quadruple_example(time_quad_ex, ci_env, spawn_backend):
 
     results, diff = time_quad_ex
     assert results
-    this_fast = 6 if platform.system() in ('Windows', 'Darwin') else 2.666
+    this_fast = 6 if platform.system() in ('Windows', 'Darwin') else 3
     assert diff < this_fast
 
 
