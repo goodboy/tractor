@@ -46,6 +46,7 @@ async def close_stream_and_error(
 async def recv_and_spawn_net_killers(
 
     ctx: Context,
+    break_ipc: bool = False,
     **kwargs,
 
 ) -> None:
@@ -58,9 +59,16 @@ async def recv_and_spawn_net_killers(
         ctx.open_stream() as stream,
         trio.open_nursery() as n,
     ):
-        for i in range(100):
+        async for i in stream:
+            print(f'child echoing {i}')
             await stream.send(i)
-            if i > 80:
+            if (
+                break_ipc
+                and i > 500
+            ):
+                '#################################\n'
+                'Simulating child-side IPC BREAK!\n'
+                '#################################'
                 n.start_soon(break_channel_silently_then_error, stream)
                 n.start_soon(close_stream_and_error, stream)
 
@@ -68,42 +76,72 @@ async def recv_and_spawn_net_killers(
 async def main(
     debug_mode: bool = False,
     start_method: str = 'trio',
+    break_parent_ipc: bool = False,
+    break_child_ipc: bool = False,
 
 ) -> None:
 
-    async with open_nursery(
-        start_method=start_method,
+    async with (
+        open_nursery(
+            start_method=start_method,
 
-        # NOTE: even debugger is used we shouldn't get
-        # a hang since it never engages due to broken IPC
-        debug_mode=debug_mode,
+            # NOTE: even debugger is used we shouldn't get
+            # a hang since it never engages due to broken IPC
+            debug_mode=debug_mode,
+            loglevel='warning',
 
-    ) as n:
-        portal = await n.start_actor(
+        ) as an,
+    ):
+        portal = await an.start_actor(
             'chitty_hijo',
             enable_modules=[__name__],
         )
 
         async with portal.open_context(
             recv_and_spawn_net_killers,
+            break_ipc=break_child_ipc,
+
         ) as (ctx, sent):
             async with ctx.open_stream() as stream:
-                for i in range(100):
+                for i in range(1000):
+
+                    if (
+                        break_parent_ipc
+                        and i > 100
+                    ):
+                        print(
+                            '#################################\n'
+                            'Simulating parent-side IPC BREAK!\n'
+                            '#################################'
+                        )
+                        await stream._ctx.chan.send(None)
 
                     # it actually breaks right here in the
                     # mp_spawn/forkserver backends and thus the zombie
                     # reaper never even kicks in?
+                    print(f'parent sending {i}')
                     await stream.send(i)
 
                     with trio.move_on_after(2) as cs:
+
+                        # NOTE: in the parent side IPC failure case this
+                        # will raise an ``EndOfChannel`` after the child
+                        # is killed and sends a stop msg back to it's
+                        # caller/this-parent.
                         rx = await stream.receive()
-                        print(f'I a mad user and here is what i got {rx}')
+
+                        print(f"I'm a happy user and echoed to me is {rx}")
 
                     if cs.cancelled_caught:
                         # pretend to be a user seeing no streaming action
                         # thinking it's a hang, and then hitting ctl-c..
-                        print("YOO i'm a user anddd thingz hangin.. CTRL-C..")
-                        raise KeyboardInterrupt
+                        print("YOO i'm a user anddd thingz hangin..")
+
+                print(
+                    "YOO i'm mad send side dun but thingz hangin..\n"
+                    'MASHING CTlR-C Ctl-c..'
+                )
+                raise KeyboardInterrupt
 
 
 if __name__ == '__main__':
