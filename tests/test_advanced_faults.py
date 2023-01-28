@@ -8,6 +8,7 @@ from functools import partial
 import pytest
 from _pytest.pathlib import import_path
 import trio
+import tractor
 
 from conftest import (
     examples_dir,
@@ -146,3 +147,47 @@ def test_ipc_channel_break_during_stream(
                 **ipc_break,
             )
         )
+
+
+@tractor.context
+async def break_ipc_after_started(
+    ctx: tractor.Context,
+) -> None:
+    await ctx.started()
+    async with ctx.open_stream() as stream:
+        await stream.aclose()
+        await trio.sleep(0.2)
+        await ctx.chan.send(None)
+        print('child broke IPC and terminating')
+
+
+def test_stream_closed_right_after_ipc_break_and_zombie_lord_engages():
+    '''
+    Verify that is a subactor's IPC goes down just after bringing up a stream
+    the parent can trigger a SIGINT and the child will be reaped out-of-IPC by
+    the localhost process supervision machinery: aka "zombie lord".
+
+    '''
+    async def main():
+        async with tractor.open_nursery() as n:
+            portal = await n.start_actor(
+                'ipc_breaker',
+                enable_modules=[__name__],
+            )
+
+            with trio.move_on_after(1):
+                async with (
+                    portal.open_context(
+                        break_ipc_after_started
+                    ) as (ctx, sent),
+                ):
+                    async with ctx.open_stream():
+                        await trio.sleep(0.5)
+
+                    print('parent waiting on context')
+
+            print('parent exited context')
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        trio.run(main)
