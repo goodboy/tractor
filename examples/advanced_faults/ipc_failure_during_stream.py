@@ -46,8 +46,7 @@ async def close_stream_and_error(
 async def recv_and_spawn_net_killers(
 
     ctx: Context,
-    break_ipc: bool = False,
-    **kwargs,
+    break_ipc_after: bool | int = False,
 
 ) -> None:
     '''
@@ -63,8 +62,8 @@ async def recv_and_spawn_net_killers(
             print(f'child echoing {i}')
             await stream.send(i)
             if (
-                break_ipc
-                and i > 500
+                break_ipc_after
+                and i > break_ipc_after
             ):
                 '#################################\n'
                 'Simulating child-side IPC BREAK!\n'
@@ -76,8 +75,12 @@ async def recv_and_spawn_net_killers(
 async def main(
     debug_mode: bool = False,
     start_method: str = 'trio',
-    break_parent_ipc: bool = False,
-    break_child_ipc: bool = False,
+
+    # by default we break the parent IPC first (if configured to break
+    # at all), but this can be changed so the child does first (even if
+    # both are set to break).
+    break_parent_ipc_after: int | bool = False,
+    break_child_ipc_after: int | bool = False,
 
 ) -> None:
 
@@ -99,15 +102,15 @@ async def main(
 
         async with portal.open_context(
             recv_and_spawn_net_killers,
-            break_ipc=break_child_ipc,
+            break_ipc_after=break_child_ipc_after,
 
         ) as (ctx, sent):
             async with ctx.open_stream() as stream:
                 for i in range(1000):
 
                     if (
-                        break_parent_ipc
-                        and i > 100
+                        break_parent_ipc_after
+                        and i > break_parent_ipc_after
                     ):
                         print(
                             '#################################\n'
