@@ -157,7 +157,7 @@ class BroadcastReceiver(ReceiveChannel):
         rx_chan: AsyncReceiver,
         state: BroadcastState,
         receive_afunc: Optional[Callable[[], Awaitable[Any]]] = None,
-        raise_on_lag: bool = True,
+        raise_on_lag: bool = False,
 
     ) -> None:
 
@@ -441,7 +441,8 @@ def broadcast_receiver(
 
     recv_chan: AsyncReceiver,
     max_buffer_size: int,
-    **kwargs,
+    receive_afunc: Optional[Callable[[], Awaitable[Any]]] = None,
+    raise_on_lag: bool = False,
 
 ) -> BroadcastReceiver:
 
@@ -452,5 +453,6 @@ def broadcast_receiver(
             maxlen=max_buffer_size,
             subs={},
         ),
-        **kwargs,
+        receive_afunc=receive_afunc,
+        raise_on_lag=raise_on_lag,
     )
