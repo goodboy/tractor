@@ -1,0 +1,15 @@
+Fixes to ensure IPC (channel) breakage doesn't result in hung actor
+trees; the zombie reaping and general supervision machinery will always
+clean up and terminate.
+
+This includes not only the (mostly minor) fixes to solve these cases but
+also a new extensive test suite in `test_advanced_faults.py` with an
+accompanying highly configurable example module-script in
+`examples/advanced_faults/ipc_failure_during_stream.py`. Tests ensure we
+never get hang or zombies despite operating in debug mode and attempt to
+simulate all possible IPC transport failure cases for a local-host actor
+tree.
+
+Further we simplify `Context.open_stream.__aexit__()` to just call
+`MsgStream.aclose()` directly more or less avoiding a pure duplicate
+code path.

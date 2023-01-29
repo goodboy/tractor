@@ -260,7 +260,9 @@ async def soft_wait(
 
             if proc.poll() is None:  # type: ignore
                 log.warning(
-                    f'Process still alive after cancel request:\n{uid}')
+                    'Actor still alive after cancel request:\n'
+                    f'{uid}'
+                )
 
                 n.cancel_scope.cancel()
         raise

@@ -14,6 +14,7 @@ import itertools
 from os import path
 from typing import Optional
 import platform
+import pathlib
 import sys
 import time
 
@@ -24,7 +25,10 @@ from pexpect.exceptions import (
     EOF,
 )
 
-from conftest import repodir, _ci_env
+from conftest import (
+    examples_dir,
+    _ci_env,
+)
 
 # TODO: The next great debugger audit could be done by you!
 # - recurrent entry to breakpoint() from single actor *after* and an
@@ -43,19 +47,13 @@ if platform.system() == 'Windows':
     )
 
 
-def examples_dir():
-    """Return the abspath to the examples directory.
-    """
-    return path.join(repodir(), 'examples', 'debugging/')
-
-
 def mk_cmd(ex_name: str) -> str:
-    """Generate a command suitable to pass to ``pexpect.spawn()``.
-    """
-    return ' '.join(
-        ['python',
-         path.join(examples_dir(), f'{ex_name}.py')]
-    )
+    '''
+    Generate a command suitable to pass to ``pexpect.spawn()``.
+
+    '''
+    script_path: pathlib.Path = examples_dir() / 'debugging' / f'{ex_name}.py'
+    return ' '.join(['python', str(script_path)])
 
 
 # TODO: was trying to this xfail style but some weird bug i see in CI

@@ -12,17 +12,17 @@ import shutil
 
 import pytest
 
-from conftest import repodir
-
-
-def examples_dir():
-    """Return the abspath to the examples directory.
-    """
-    return os.path.join(repodir(), 'examples')
+from conftest import (
+    examples_dir,
+)
 
 
 @pytest.fixture
-def run_example_in_subproc(loglevel, testdir, arb_addr):
+def run_example_in_subproc(
+    loglevel: str,
+    testdir,
+    arb_addr: tuple[str, int],
+):
 
     @contextmanager
     def run(script_code):
@@ -32,8 +32,8 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
             # on windows we need to create a special __main__.py which will
             # be executed with ``python -m <modulename>`` on windows..
             shutil.copyfile(
-                os.path.join(examples_dir(), '__main__.py'),
-                os.path.join(str(testdir), '__main__.py')
+                examples_dir() / '__main__.py',
+                str(testdir / '__main__.py'),
             )
 
             # drop the ``if __name__ == '__main__'`` guard onwards from
@@ -88,6 +88,7 @@ def run_example_in_subproc(loglevel, testdir, arb_addr):
         and f[0] != '_'
         and 'debugging' not in p[0]
         and 'integration' not in p[0]
+        and 'advanced_faults' not in p[0]
     ],
 
     ids=lambda t: t[1],

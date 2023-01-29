@@ -228,11 +228,11 @@ async def _invoke(
 
                 fname = func.__name__
                 if ctx._cancel_called:
-                    msg = f'{fname} cancelled itself'
+                    msg = f'`{fname}()` cancelled itself'
 
                 elif cs.cancel_called:
                     msg = (
-                        f'{fname} was remotely cancelled by its caller '
+                        f'`{fname}()` was remotely cancelled by its caller '
                         f'{ctx.chan.uid}'
                     )
 
@@ -319,7 +319,7 @@ async def _invoke(
             BrokenPipeError,
         ):
             # if we can't propagate the error that's a big boo boo
-            log.error(
+            log.exception(
                 f"Failed to ship error to caller @ {chan.uid} !?"
             )
 
@@ -455,7 +455,7 @@ class Actor:
         self._mods: dict[str, ModuleType] = {}
         self.loglevel = loglevel
 
-        self._arb_addr = (
+        self._arb_addr: tuple[str, int] | None = (
             str(arbiter_addr[0]),
             int(arbiter_addr[1])
         ) if arbiter_addr else None
@@ -488,7 +488,10 @@ class Actor:
         self._parent_chan: Optional[Channel] = None
         self._forkserver_info: Optional[
             tuple[Any, Any, Any, Any, Any]] = None
-        self._actoruid2nursery: dict[Optional[tuple[str, str]], 'ActorNursery'] = {}  # type: ignore  # noqa
+        self._actoruid2nursery: dict[
+            tuple[str, str],
+            ActorNursery | None,
+        ] = {}  # type: ignore  # noqa
 
     async def wait_for_peer(
         self, uid: tuple[str, str]
@@ -826,7 +829,12 @@ class Actor:
 
             if ctx._backpressure:
                 log.warning(text)
-                await send_chan.send(msg)
+                try:
+                    await send_chan.send(msg)
+                except trio.BrokenResourceError:
+                    # XXX: local consumer has closed their side
+                    # so cancel the far end streaming task
+                    log.warning(f"{chan} is already closed")
             else:
                 try:
                     raise StreamOverrun(text) from None
@@ -1371,10 +1379,12 @@ async def async_main(
         actor.lifetime_stack.close()
 
         # Unregister actor from the arbiter
-        if registered_with_arbiter and (
-                actor._arb_addr is not None
+        if (
+            registered_with_arbiter
+            and not actor.is_arbiter
         ):
             failed = False
+            assert isinstance(actor._arb_addr, tuple)
             with trio.move_on_after(0.5) as cs:
                 cs.shield = True
                 try:
