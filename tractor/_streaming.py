@@ -323,7 +323,7 @@ class MsgStream(trio.abc.Channel):
             # caller can still conduct 2-way streaming using this
             # ``bstream`` handle transparently as though it was the msg
             # stream instance.
-            bstream.send = self.send
+            bstream.send = self.send  # type: ignore
 
             yield bstream
 
