@@ -157,7 +157,7 @@ class BroadcastReceiver(ReceiveChannel):
         rx_chan: AsyncReceiver,
         state: BroadcastState,
         receive_afunc: Optional[Callable[[], Awaitable[Any]]] = None,
-        raise_on_lag: bool = False,
+        raise_on_lag: bool = True,
 
     ) -> None:
 
@@ -388,6 +388,8 @@ class BroadcastReceiver(ReceiveChannel):
     @asynccontextmanager
     async def subscribe(
         self,
+        raise_on_lag: bool = True,
+
     ) -> AsyncIterator[BroadcastReceiver]:
         '''
         Subscribe for values from this broadcast receiver.
@@ -405,6 +407,7 @@ class BroadcastReceiver(ReceiveChannel):
             rx_chan=self._rx,
             state=state,
             receive_afunc=self._recv,
+            raise_on_lag=raise_on_lag,
         )
         # assert clone in state.subs
         assert br.key in state.subs
@@ -442,7 +445,7 @@ def broadcast_receiver(
     recv_chan: AsyncReceiver,
     max_buffer_size: int,
     receive_afunc: Optional[Callable[[], Awaitable[Any]]] = None,
-    raise_on_lag: bool = False,
+    raise_on_lag: bool = True,
 
 ) -> BroadcastReceiver:
 
