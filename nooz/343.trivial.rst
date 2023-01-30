@@ -1,0 +1,19 @@
+Rework our ``.trionics.BroadcastReceiver`` internals to avoid method
+recursion and approach a design and interface closer to ``trio``'s
+``MemoryReceiveChannel``.
+
+The details of the internal changes include:
+
+- implementing a ``BroadcastReceiver.receive_nowait()`` and using it
+  within the async ``.receive()`` thus avoiding recursion from
+  ``.receive()``.
+- failing over to an internal ``._receive_from_underlying()`` when the
+  ``_nowait()`` call raises ``trio.WouldBlock``
+- adding ``BroadcastState.statistics()`` for debugging and testing both
+  internals and by users.
+- add an internal ``BroadcastReceiver._raise_on_lag: bool`` which can be
+  set to avoid ``Lagged`` raising for possible use cases where a user
+  wants to choose between a [cheap or nasty
+  pattern](https://zguide.zeromq.org/docs/chapter7/#The-Cheap-or-Nasty-Pattern)
+  the the particular stream (we use this in ``piker``'s dark clearing
+  engine to avoid fast feeds breaking during HFT periods).

@@ -24,7 +24,6 @@ from ._clustering import open_actor_cluster
 from ._ipc import Channel
 from ._streaming import (
     Context,
-    ReceiveMsgStream,
     MsgStream,
     stream,
     context,
@@ -64,7 +63,6 @@ __all__ = [
     'MsgStream',
     'BaseExceptionGroup',
     'Portal',
-    'ReceiveMsgStream',
     'RemoteActorError',
     'breakpoint',
     'context',

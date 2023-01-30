@@ -50,12 +50,13 @@ log = get_logger(__name__)
 # - use __slots__ on ``Context``?
 
 
-class ReceiveMsgStream(trio.abc.ReceiveChannel):
+class MsgStream(trio.abc.Channel):
     '''
-    A IPC message stream for receiving logically sequenced values over
-    an inter-actor ``Channel``. This is the type returned to a local
-    task which entered either ``Portal.open_stream_from()`` or
-    ``Context.open_stream()``.
+    A bidirectional message stream for receiving logically sequenced
+    values over an inter-actor IPC ``Channel``.
+
+    This is the type returned to a local task which entered either
+    ``Portal.open_stream_from()`` or ``Context.open_stream()``.
 
     Termination rules:
 
@@ -317,15 +318,15 @@ class ReceiveMsgStream(trio.abc.ReceiveChannel):
         async with self._broadcaster.subscribe() as bstream:
             assert bstream.key != self._broadcaster.key
             assert bstream._recv == self._broadcaster._recv
+
+            # NOTE: we patch on a `.send()` to the bcaster so that the
+            # caller can still conduct 2-way streaming using this
+            # ``bstream`` handle transparently as though it was the msg
+            # stream instance.
+            bstream.send = self.send  # type: ignore
+
             yield bstream
 
-
-class MsgStream(ReceiveMsgStream, trio.abc.Channel):
-    '''
-    Bidirectional message stream for use within an inter-actor actor
-    ``Context```.
-
-    '''
     async def send(
         self,
         data: Any
