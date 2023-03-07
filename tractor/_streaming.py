@@ -390,9 +390,13 @@ class Context:
     # only set on the callee side
     _scope_nursery: Optional[trio.Nursery] = None
 
-    _backpressure: bool = False
+    _backpressure: bool = True
 
-    async def send_yield(self, data: Any) -> None:
+    async def send_yield(
+        self,
+        data: Any,
+
+    ) -> None:
 
         warnings.warn(
             "`Context.send_yield()` is now deprecated. "
@@ -466,7 +470,7 @@ class Context:
 
     async def cancel(
         self,
-        msg: Optional[str] = None,
+        msg: str | None = None,
 
     ) -> None:
         '''
@@ -535,8 +539,8 @@ class Context:
     async def open_stream(
 
         self,
-        backpressure: Optional[bool] = True,
-        msg_buffer_size: Optional[int] = None,
+        backpressure: bool | None = True,
+        msg_buffer_size: int | None = None,
 
     ) -> AsyncGenerator[MsgStream, None]:
         '''
@@ -677,7 +681,7 @@ class Context:
 
     async def started(
         self,
-        value: Optional[Any] = None
+        value: Any | None = None
 
     ) -> None:
         '''
@@ -705,10 +709,10 @@ class Context:
 
 
 def stream(func: Callable) -> Callable:
-    """Mark an async function as a streaming routine with ``@stream``.
+    '''
+    Mark an async function as a streaming routine with ``@stream``.
 
-    """
-    # annotate
+    '''
     # TODO: apply whatever solution ``mypy`` ends up picking for this:
     # https://github.com/python/mypy/issues/2087#issuecomment-769266912
     func._tractor_stream_function = True  # type: ignore
@@ -737,10 +741,10 @@ def stream(func: Callable) -> Callable:
 
 
 def context(func: Callable) -> Callable:
-    """Mark an async function as a streaming routine with ``@context``.
+    '''
+    Mark an async function as a streaming routine with ``@context``.
 
-    """
-    # annotate
+    '''
     # TODO: apply whatever solution ``mypy`` ends up picking for this:
     # https://github.com/python/mypy/issues/2087#issuecomment-769266912
     func._tractor_context_function = True  # type: ignore
