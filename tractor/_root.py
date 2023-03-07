@@ -22,8 +22,9 @@ from contextlib import asynccontextmanager
 from functools import partial
 import importlib
 import logging
-import os
 import signal
+import sys
+import os
 import typing
 import warnings
 
@@ -84,8 +85,10 @@ async def open_root_actor(
 
     '''
     # Override the global debugger hook to make it play nice with
-    # ``trio``, see:
+    # ``trio``, see much discussion in:
     # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
+    builtin_bp_handler = sys.breakpointhook
+    orig_bp_path: str | None = os.environ.get('PYTHONBREAKPOINT', None)
     os.environ['PYTHONBREAKPOINT'] = 'tractor._debug._set_trace'
 
     # attempt to retreive ``trio``'s sigint handler and stash it
@@ -256,6 +259,15 @@ async def open_root_actor(
                 )
     finally:
         _state._current_actor = None
+
+        # restore breakpoint hook state
+        sys.breakpointhook = builtin_bp_handler
+        if orig_bp_path is not None:
+            os.environ['PYTHONBREAKPOINT'] = orig_bp_path
+        else:
+            # clear env back to having no entry
+            os.environ.pop('PYTHONBREAKPOINT')
+
         logger.runtime("Root actor terminated")
 
 
@@ -291,7 +303,7 @@ def run_daemon(
     async def _main():
 
         async with open_root_actor(
-            arbiter_addr=registry_addr,
+            registry_addr=registry_addr,
             name=name,
             start_method=start_method,
             debug_mode=debug_mode,
