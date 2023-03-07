@@ -754,8 +754,8 @@ def shield_sigint_handler(
 
 
 def _set_trace(
-    actor: Optional[tractor.Actor] = None,
-    pdb: Optional[MultiActorPdb] = None,
+    actor: tractor.Actor | None = None,
+    pdb: MultiActorPdb | None = None,
 ):
     __tracebackhide__ = True
     actor = actor or tractor.current_actor()
@@ -765,7 +765,11 @@ def _set_trace(
     if frame:
         frame = frame.f_back  # type: ignore
 
-    if frame and pdb and actor is not None:
+    if (
+        frame
+        and pdb
+        and actor is not None
+    ):
         log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
         # no f!#$&* idea, but when we're in async land
         # we need 2x frames up?
@@ -774,7 +778,8 @@ def _set_trace(
     else:
         pdb, undo_sigint = mk_mpdb()
 
-        # we entered the global ``breakpoint()`` built-in from sync code?
+        # we entered the global ``breakpoint()`` built-in from sync
+        # code?
         Lock.local_task_in_debug = 'sync'
 
     pdb.set_trace(frame=frame)
