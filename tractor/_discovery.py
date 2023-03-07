@@ -41,8 +41,10 @@ async def get_arbiter(
     port: int,
 
 ) -> AsyncGenerator[Union[Portal, LocalPortal], None]:
-    '''Return a portal instance connected to a local or remote
+    '''
+    Return a portal instance connected to a local or remote
     arbiter.
+
     '''
     actor = current_actor()
 
@@ -134,12 +136,16 @@ async def find_actor(
 @acm
 async def wait_for_actor(
     name: str,
-    arbiter_sockaddr: tuple[str, int] | None = None
+    arbiter_sockaddr: tuple[str, int] | None = None,
+    # registry_addr: tuple[str, int] | None = None,
+
 ) -> AsyncGenerator[Portal, None]:
-    """Wait on an actor to register with the arbiter.
+    '''
+    Wait on an actor to register with the arbiter.
 
     A portal to the first registered actor is returned.
-    """
+
+    '''
     actor = current_actor()
 
     async with get_arbiter(

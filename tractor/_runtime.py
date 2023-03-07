@@ -825,6 +825,7 @@ class Actor:
                     1,
                     f'\n*** No stream open on `{self.uid[0]}` side! ***\n'
                 )
+
             text = '\n'.join(lines)
 
             if ctx._backpressure:
