@@ -2,11 +2,18 @@ import asyncio
 
 import trio
 import tractor
+from tractor import to_asyncio
+
+
+async def aio_sleep_forever():
+    await asyncio.sleep(float('inf'))
 
 
 async def bp_then_error(
     to_trio: trio.MemorySendChannel,
     from_trio: asyncio.Queue,
+
+    raise_after_bp: bool = True,
 
 ) -> None:
 
@@ -18,40 +25,57 @@ async def bp_then_error(
     #    we set `Lock.local_task_in_debug = 'sync'`, we probably want
     #    some further, at least, meta-data about the task/actoq in debug
     #    in terms of making it clear it's asyncio mucking about.
-
     breakpoint()
 
+    # short checkpoint / delay
     await asyncio.sleep(0.5)
-    raise ValueError('blah')
 
+    if raise_after_bp:
+        raise ValueError('blah')
 
-async def aio_sleep_forever():
-    await asyncio.sleep(float('inf'))
+    # TODO: test case with this so that it gets cancelled?
+    else:
+        # XXX NOTE: this is required in order to get the SIGINT-ignored
+        # hang case documented in the module script section!
+        await aio_sleep_forever()
 
 
 @tractor.context
 async def trio_ctx(
     ctx: tractor.Context,
+    bp_before_started: bool = False,
 ):
 
     # this will block until the ``asyncio`` task sends a "first"
     # message, see first line in above func.
     async with (
-        tractor.to_asyncio.open_channel_from(bp_then_error) as (first, chan),
+
+        to_asyncio.open_channel_from(
+            bp_then_error,
+            raise_after_bp=not bp_before_started,
+        ) as (first, chan),
+
         trio.open_nursery() as n,
     ):
 
         assert first == 'start'
+
+        if bp_before_started:
+            await tractor.breakpoint()
+
         await ctx.started(first)
 
         n.start_soon(
-            tractor.to_asyncio.run_task,
+            to_asyncio.run_task,
             aio_sleep_forever,
         )
         await trio.sleep_forever()
 
 
-async def main():
+async def main(
+    bps_all_over: bool = False,
+
+) -> None:
 
     async with tractor.open_nursery() as n:
 
@@ -63,11 +87,18 @@ async def main():
             loglevel='cancel',
         )
 
-        async with p.open_context(trio_ctx) as (ctx, first):
+        async with p.open_context(
+            trio_ctx,
+            bp_before_started=bps_all_over,
+        ) as (ctx, first):
 
             assert first == 'start'
-            await trio.sleep_forever()
 
+            if bps_all_over:
+                await tractor.breakpoint()
+
+            # await trio.sleep_forever()
+            await ctx.cancel()
             assert 0
 
         # TODO: case where we cancel from trio-side while asyncio task
@@ -76,4 +107,11 @@ async def main():
 
 
 if __name__ == '__main__':
+
+    # works fine B)
     trio.run(main)
+
+    # will hang and ignores SIGINT !!
+    # NOTE: you'll need to send a SIGQUIT (via ctl-\) to kill it
+    # manually..
+    # trio.run(main, True)
