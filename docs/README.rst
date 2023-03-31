@@ -118,7 +118,7 @@ Zombie safe: self-destruct a process tree
             f"running in pid {os.getpid()}"
         )
 
-       await trio.sleep_forever()
+        await trio.sleep_forever()
 
 
     async def main():
