@@ -350,8 +350,9 @@ class Context:
     An inter-actor, ``trio`` task communication context.
 
     NB: This class should never be instatiated directly, it is delivered
-    by either runtime machinery to a remotely started task or by entering
-    ``Portal.open_context()``.
+    by either,
+     - runtime machinery to a remotely started task or,
+     - by entering ``Portal.open_context()``.
 
     Allows maintaining task or protocol specific state between
     2 communicating actor tasks. A unique context is created on the
