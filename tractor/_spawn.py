@@ -206,10 +206,8 @@ async def do_hard_kill(
     # never release until the process exits, now it acts as
     # a hard-kill time ultimatum.
     with trio.move_on_after(terminate_after) as cs:
-
-        # NOTE: This ``__aexit__()`` shields internally.
-        async with proc:  # calls ``trio.Process.aclose()``
-            log.debug(f"Terminating {proc}")
+        log.debug(f"Terminating {proc}")
+        await proc.aclose()
 
     if cs.cancelled_caught:
         # XXX: should pretty much never get here unless we have
