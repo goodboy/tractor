@@ -457,7 +457,7 @@ async def trio_proc(
 
             # cancel result waiter that may have been spawned in
             # tandem if not done already
-            log.warning(
+            log.cancel(
                 "Cancelling existing result waiter task for "
                 f"{subactor.uid}")
             nursery.cancel_scope.cancel()
