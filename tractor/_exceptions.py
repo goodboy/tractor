@@ -55,9 +55,11 @@ class RemoteActorError(Exception):
 
 
 class InternalActorError(RemoteActorError):
-    """Remote internal ``tractor`` error indicating
+    '''
+    Remote internal ``tractor`` error indicating
     failure of some primitive or machinery.
-    """
+
+    '''
 
 
 class TransportClosed(trio.ClosedResourceError):
@@ -136,7 +138,7 @@ def unpack_error(
 
     if type_name == 'ContextCancelled':
         err_type = ContextCancelled
-        suberror_type = trio.Cancelled
+        suberror_type = RemoteActorError
 
     else:  # try to lookup a suitable local error type
         for ns in [
