@@ -132,7 +132,7 @@ def _trio_main(
         else:
             trio.run(trio_main)
     except KeyboardInterrupt:
-        log.warning(f"Actor {actor.uid} received KBI")
+        log.cancel(f"Actor {actor.uid} received KBI")
 
     finally:
         log.info(f"Actor {actor.uid} terminated")
