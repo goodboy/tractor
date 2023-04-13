@@ -74,7 +74,9 @@ class ContextCancelled(RemoteActorError):
     '''
     @property
     def canceller(self) -> tuple[str, str] | None:
-        return self.msgdata.get('canceller')
+        value = self.msgdata.get('canceller')
+        if value:
+            return tuple(value)
 
 
 class TransportClosed(trio.ClosedResourceError):
