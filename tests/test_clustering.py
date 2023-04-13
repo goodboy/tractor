@@ -49,7 +49,7 @@ async def worker(
     await ctx.started()
 
     async with ctx.open_stream(
-        backpressure=True,
+        allow_overruns=True,
     ) as stream:
 
         # TODO: this with the below assert causes a hang bug?
