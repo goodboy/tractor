@@ -426,6 +426,10 @@ class Context:
         if remote_uid:
             return tuple(remote_uid)
 
+    @property
+    def cancelled_caught(self) -> bool:
+        return self._scope.cancelled_caught
+
     # init and streaming state
     _started_called: bool = False
     _started_received: bool = False
@@ -743,7 +747,7 @@ class Context:
         ):
             return err
 
-        raise err from None
+        raise err  # from None
 
     async def result(self) -> Any | Exception:
         '''
