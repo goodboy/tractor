@@ -103,7 +103,7 @@ class Portal:
         # When set to a ``Context`` (when _submit_for_result is called)
         # it is expected that ``result()`` will be awaited at some
         # point.
-        self._expect_result: Optional[Context] = None
+        self._expect_result: Context | None = None
         self._streams: set[MsgStream] = set()
         self.actor = current_actor()
 
@@ -209,7 +209,10 @@ class Portal:
         try:
             # send cancel cmd - might not get response
             # XXX: sure would be nice to make this work with a proper shield
-            with trio.move_on_after(timeout or self.cancel_timeout) as cs:
+            with trio.move_on_after(
+                timeout
+                or self.cancel_timeout
+            ) as cs:
                 cs.shield = True
 
                 await self.run_from_ns('self', 'cancel')
@@ -330,7 +333,9 @@ class Portal:
                     f'{async_gen_func} must be an async generator function!')
 
         fn_mod_path, fn_name = NamespacePath.from_ref(
-            async_gen_func).to_tuple()
+            async_gen_func
+        ).to_tuple()
+
         ctx = await self.actor.start_remote_task(
             self.channel,
             fn_mod_path,
@@ -396,13 +401,16 @@ class Portal:
             raise TypeError(
                 f'{func} must be an async generator function!')
 
+        # TODO: i think from here onward should probably
+        # just be factored into an `@acm` inside a new
+        # a new `_context.py` mod.
         fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
 
         ctx = await self.actor.start_remote_task(
             self.channel,
             fn_mod_path,
             fn_name,
-            kwargs
+            kwargs,
         )
 
         assert ctx._remote_func_type == 'context'
@@ -426,29 +434,47 @@ class Portal:
                     f' but received a non-error msg:\n{pformat(msg)}'
                 )
 
-        _err: Optional[BaseException] = None
-        ctx._portal = self
+        _err: BaseException | None = None
+        ctx._portal: Portal = self
 
-        uid = self.channel.uid
-        cid = ctx.cid
-        etype: Optional[Type[BaseException]] = None
+        uid: tuple = self.channel.uid
+        cid: str = ctx.cid
+        etype: Type[BaseException] | None = None
 
-        # deliver context instance and .started() msg value in open tuple.
+        # deliver context instance and .started() msg value in enter
+        # tuple.
         try:
-            async with trio.open_nursery() as scope_nursery:
-                ctx._scope_nursery = scope_nursery
-
-                # do we need this?
-                # await trio.lowlevel.checkpoint()
+            async with trio.open_nursery() as nurse:
+                ctx._scope_nursery = nurse
+                ctx._scope = nurse.cancel_scope
 
                 yield ctx, first
 
+                # when in allow_ovveruns mode there may be lingering
+                # overflow sender tasks remaining?
+                if nurse.child_tasks:
+                    # ensure we are in overrun state with
+                    # ``._allow_overruns=True`` bc otherwise
+                    # there should be no tasks in this nursery!
+                    if (
+                        not ctx._allow_overruns
+                        or len(nurse.child_tasks) > 1
+                    ):
+                        raise RuntimeError(
+                            'Context has sub-tasks but is '
+                            'not in `allow_overruns=True` Mode!?'
+                        )
+                    ctx._scope.cancel()
+
         except ContextCancelled as err:
             _err = err
+
+            # swallow and mask cross-actor task context cancels that
+            # were initiated by *this* side's task.
             if not ctx._cancel_called:
-                # context was cancelled at the far end but was
-                # not part of this end requesting that cancel
-                # so raise for the local task to respond and handle.
+                # XXX: this should NEVER happen!
+                # from ._debug import breakpoint
+                # await breakpoint()
                 raise
 
             # if the context was cancelled by client code
@@ -468,17 +494,17 @@ class Portal:
 
         ) as err:
             etype = type(err)
-            # the context cancels itself on any cancel
-            # causing error.
 
-            if ctx.chan.connected():
-                log.cancel(
-                    'Context cancelled for task, sending cancel request..\n'
-                    f'task:{cid}\n'
-                    f'actor:{uid}'
-                )
+            # cancel ourselves on any error.
+            log.cancel(
+                'Context cancelled for task, sending cancel request..\n'
+                f'task:{cid}\n'
+                f'actor:{uid}'
+            )
+            try:
+
                 await ctx.cancel()
-            else:
+            except trio.BrokenResourceError:
                 log.warning(
                     'IPC connection for context is broken?\n'
                     f'task:{cid}\n'
@@ -487,12 +513,7 @@ class Portal:
 
             raise
 
-        finally:
-            # in the case where a runtime nursery (due to internal bug)
-            # or a remote actor transmits an error we want to be
-            # sure we get the error the underlying feeder mem chan.
-            # if it's not raised here it *should* be raised from the
-            # msg loop nursery right?
+        else:
             if ctx.chan.connected():
                 log.info(
                     'Waiting on final context-task result for\n'
@@ -505,6 +526,7 @@ class Portal:
                     f'value from callee `{result}`'
                 )
 
+        finally:
             # though it should be impossible for any tasks
             # operating *in* this scope to have survived
             # we tear down the runtime feeder chan last
