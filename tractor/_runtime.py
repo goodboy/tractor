@@ -205,8 +205,9 @@ async def _invoke(
             await chan.send({'functype': 'context', 'cid': cid})
 
             try:
-                with cancel_scope as cs:
-                    ctx._scope = cs
+                async with trio.open_nursery() as nurse:
+                    ctx._scope_nursery = nurse
+                    ctx._scope = nurse.cancel_scope
                     task_status.started(ctx)
                     res = await coro
                     await chan.send({'return': res, 'cid': cid})
@@ -240,8 +241,7 @@ async def _invoke(
                         f'Context entrypoint {func} was terminated:\n{ctx}'
                     )
 
-            assert cs
-            if cs.cancelled_caught:
+            if ctx.cancelled_caught:
 
                 # first check for and raise any remote error
                 # before raising any context cancelled case
@@ -252,6 +252,7 @@ async def _invoke(
                     ctx._maybe_raise_remote_err(re)
 
                 fname = func.__name__
+                cs: trio.CancelScope = ctx._scope
                 if cs.cancel_called:
                     canceller = ctx._cancel_called_remote
                     # await _debug.breakpoint()
@@ -383,7 +384,7 @@ async def _invoke(
         # error is probably from above coro running code *not from the
         # underlyingn rpc invocation* since a scope was never allocated
         # around actual coroutine await.
-        if cs is None:
+        if ctx._scope is None:
             # we don't ever raise directly here to allow the
             # msg-loop-scheduler to continue running for this
             # channel.
