@@ -539,7 +539,6 @@ class Context:
             # from ._debug import breakpoint
             # await breakpoint()
 
-
         # XXX: this will break early callee results sending
         # since when `.result()` is finally called, this
         # chan will be closed..
@@ -966,8 +965,12 @@ class Context:
 
             local_uid = current_actor().uid
             lines = [
-                f'Actor-task context {cid}@{local_uid} was overrun by remote!',
-                f'sender actor: {uid}',
+                f'OVERRUN on actor-task context {cid}@{local_uid}!\n'
+                # TODO: put remote task name here if possible?
+                f'remote sender actor: {uid}',
+                # TODO: put task func name here and maybe an arrow
+                # from sender to overrunner?
+                # f'local task {self.func_name}'
             ]
             if not self._stream_opened:
                 lines.insert(
@@ -988,13 +991,17 @@ class Context:
                 ):
                     self._overflow_q.append(msg)
                     n = self._scope_nursery
-                    if n.child_tasks:
-                        from . import _debug
-                        await _debug.breakpoint()
                     assert not n.child_tasks
-                    n.start_soon(
-                        self._drain_overflows,
-                    )
+                    try:
+                        n.start_soon(
+                            self._drain_overflows,
+                        )
+                    except RuntimeError:
+                        # if the nursery is already cancelled due to
+                        # this context exiting or in error, we ignore
+                        # the nursery error since we never expected
+                        # anything different.
+                        return False
             else:
                 try:
                     raise StreamOverrun(text)
