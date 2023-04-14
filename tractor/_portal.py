@@ -45,10 +45,8 @@ from ._exceptions import (
     NoResult,
     ContextCancelled,
 )
-from ._streaming import (
-    Context,
-    MsgStream,
-)
+from ._context import Context
+from ._streaming import MsgStream
 
 
 log = get_logger(__name__)

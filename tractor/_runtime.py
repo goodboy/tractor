@@ -46,7 +46,7 @@ import trio  # type: ignore
 from trio_typing import TaskStatus
 
 from ._ipc import Channel
-from ._streaming import (
+from ._context import (
     mk_context,
     Context,
 )
