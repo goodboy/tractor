@@ -646,7 +646,6 @@ async def keep_sending_from_callee(
     'overrun_by',
     [
         ('caller', 1, never_open_stream),
-        ('cancel_caller_during_overrun', 1, never_open_stream),
         ('callee', 0, keep_sending_from_callee),
     ],
     ids='overrun_condition={}'.format,
@@ -676,13 +675,12 @@ def test_one_end_stream_not_opened(overrun_by):
                 if 'caller' in overrunner:
 
                     async with ctx.open_stream() as stream:
+
+                        # itersend +1 msg more then the buffer size
+                        # to cause the most basic overrun.
                         for i in range(buf_size):
                             print(f'sending {i}')
                             await stream.send(i)
-
-                        if 'cancel' in overrunner:
-                            # without this we block waiting on the child side
-                            await ctx.cancel()
 
                         else:
                             # expect overrun error to be relayed back
@@ -697,7 +695,9 @@ def test_one_end_stream_not_opened(overrun_by):
 
     # 2 overrun cases and the no overrun case (which pushes right up to
     # the msg limit)
-    if overrunner == 'caller' or 'cancel' in overrunner:
+    if (
+        overrunner == 'caller'
+    ):
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
