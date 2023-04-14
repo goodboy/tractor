@@ -64,21 +64,25 @@ log = get_logger(__name__)
 @dataclass
 class Context:
     '''
-    An inter-actor, ``trio`` task communication context.
+    An inter-actor, ``trio``-task communication context.
 
     NB: This class should never be instatiated directly, it is delivered
     by either,
      - runtime machinery to a remotely started task or,
      - by entering ``Portal.open_context()``.
 
+     and is always constructed using ``mkt_context()``.
+
     Allows maintaining task or protocol specific state between
-    2 communicating actor tasks. A unique context is created on the
-    callee side/end for every request to a remote actor from a portal.
+    2 communicating, parallel executing actor tasks. A unique context is
+    allocated on each side of any task RPC-linked msg dialog, for
+    every request to a remote actor from a portal. On the "callee"
+    side a context is always allocated inside ``._runtime._invoke()``.
 
     A context can be cancelled and (possibly eventually restarted) from
-    either side of the underlying IPC channel, open task oriented
-    message streams and acts as an IPC aware inter-actor-task cancel
-    scope.
+    either side of the underlying IPC channel, it can also open task
+    oriented message streams,  and acts more or less as an IPC aware
+    inter-actor-task ``trio.CancelScope``.
 
     '''
     chan: Channel
@@ -744,7 +748,7 @@ def mk_context(
         _recv_chan=recv_chan,
         **kwargs,
     )
-    ctx._result = id(ctx)
+    ctx._result: int | Any = id(ctx)
     return ctx
 
 
