@@ -26,12 +26,12 @@ with open('docs/README.rst', encoding='utf-8') as f:
 setup(
     name="tractor",
     version='0.1.0a6dev0',  # alpha zone
-    description='structured concurrrent "actors"',
+    description='structured concurrrent `trio`-"actors"',
     long_description=readme,
     license='AGPLv3',
     author='Tyler Goodlet',
     maintainer='Tyler Goodlet',
-    maintainer_email='jgbt@protonmail.com',
+    maintainer_email='goodboy_foss@protonmail.com',
     url='https://github.com/goodboy/tractor',
     platforms=['linux', 'windows'],
     packages=[
@@ -52,16 +52,14 @@ setup(
         # tooling
         'tricycle',
         'trio_typing',
-
-        # tooling
         'colorlog',
         'wrapt',
 
-        # serialization
+        # IPC serialization
         'msgspec',
 
         # debug mode REPL
-        'pdbpp',
+        'pdbp',
 
         # pip ref docs on these specs:
         # https://pip.pypa.io/en/stable/reference/requirement-specifiers/#examples
@@ -73,10 +71,9 @@ setup(
         # https://github.com/pdbpp/fancycompleter/issues/37
         'pyreadline3 ; platform_system == "Windows"',
 
-
     ],
     tests_require=['pytest'],
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     keywords=[
         'trio',
         'async',
