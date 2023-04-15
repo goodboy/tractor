@@ -37,6 +37,7 @@ from typing import (
 )
 from types import FrameType
 
+import pdbp
 import tractor
 import trio
 from trio_typing import TaskStatus
@@ -54,15 +55,16 @@ from ._exceptions import (
 from ._ipc import Channel
 
 
-try:
-    # wtf: only exported when installed in dev mode?
-    import pdbpp
-except ImportError:
-    # pdbpp is installed in regular mode...it monkey patches stuff
-    import pdb
-    xpm = getattr(pdb, 'xpm', None)
-    assert xpm, "pdbpp is not installed?"  # type: ignore
-    pdbpp = pdb
+# TODO: we can drop this now yah?
+# try:
+#     # wtf: only exported when installed in dev mode?
+#     import pdbp
+# except ImportError:
+#     # pdbpp is installed in regular mode...it monkey patches stuff
+#     import pdb
+#     xpm = getattr(pdb, 'xpm', None)
+#     assert xpm, "pdbpp is not installed?"  # type: ignore
+#     pdbpp = pdb
 
 log = get_logger(__name__)
 
@@ -154,22 +156,22 @@ class Lock:
             cls.repl = None
 
 
-class TractorConfig(pdbpp.DefaultConfig):
+class TractorConfig(pdbp.DefaultConfig):
     '''
-    Custom ``pdbpp`` goodness.
+    Custom ``pdbp`` goodness.
 
     '''
     # use_pygments = True
-    # sticky_by_default = True
+    sticky_by_default = True
     enable_hidden_frames = False
 
 
-class MultiActorPdb(pdbpp.Pdb):
+class MultiActorPdb(pdbp.Pdb):
     '''
-    Add teardown hooks to the regular ``pdbpp.Pdb``.
+    Add teardown hooks to the regular ``pdbp.Pdb``.
 
     '''
-    # override the pdbpp config with our coolio one
+    # override the pdbp config with our coolio one
     DefaultConfig = TractorConfig
 
     # def preloop(self):
@@ -313,7 +315,7 @@ async def lock_tty_for_child(
 ) -> str:
     '''
     Lock the TTY in the root process of an actor tree in a new
-    inter-actor-context-task such that the ``pdbpp`` debugger console
+    inter-actor-context-task such that the ``pdbp`` debugger console
     can be mutex-allocated to the calling sub-actor for REPL control
     without interference by other processes / threads.
 
@@ -433,7 +435,7 @@ async def wait_for_parent_stdin_hijack(
 def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
 
     pdb = MultiActorPdb()
-    # signal.signal = pdbpp.hideframe(signal.signal)
+    # signal.signal = pdbp.hideframe(signal.signal)
 
     Lock.shield_sigint()
 
@@ -583,7 +585,7 @@ async def _breakpoint(
     #     # frame = sys._getframe()
     #     # last_f = frame.f_back
     #     # last_f.f_globals['__tracebackhide__'] = True
-    #     # signal.signal = pdbpp.hideframe(signal.signal)
+    #     # signal.signal = pdbp.hideframe(signal.signal)
 
 
 def shield_sigint_handler(
@@ -743,7 +745,7 @@ def shield_sigint_handler(
         # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
-        # XXX: lol, see ``pdbpp`` issue:
+        # XXX LEGACY: lol, see ``pdbpp`` issue:
         # https://github.com/pdbpp/pdbpp/issues/496
 
 
@@ -798,7 +800,7 @@ def _post_mortem(
     # https://github.com/pdbpp/pdbpp/issues/480
     # TODO: help with a 3.10+ major release if/when it arrives.
 
-    pdbpp.xpm(Pdb=lambda: pdb)
+    pdbp.xpm(Pdb=lambda: pdb)
 
 
 post_mortem = partial(
