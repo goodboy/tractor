@@ -302,7 +302,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 ) -> typing.AsyncGenerator[ActorNursery, None]:
 
     # TODO: yay or nay?
-    # __tracebackhide__ = True
+    __tracebackhide__ = True
 
     # the collection of errors retreived from spawned sub-actors
     errors: dict[tuple[str, str], BaseException] = {}
