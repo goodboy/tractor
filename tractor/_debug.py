@@ -161,8 +161,8 @@ class TractorConfig(pdbp.DefaultConfig):
     Custom ``pdbp`` goodness.
 
     '''
-    # use_pygments = True
-    sticky_by_default = True
+    use_pygments = True
+    sticky_by_default = False
     enable_hidden_frames = False
 
 
