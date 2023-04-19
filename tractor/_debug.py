@@ -158,12 +158,16 @@ class Lock:
 
 class TractorConfig(pdbp.DefaultConfig):
     '''
-    Custom ``pdbp`` goodness.
+    Custom ``pdbp`` goodness :surfer:
 
     '''
     # use_pygments = True
     sticky_by_default = True
     enable_hidden_frames = False
+
+    # much thanks @mdmintz for the hot tip!
+    # fixes line spacing issue when resizing terminal B)
+    truncate_long_lines = False
 
 
 class MultiActorPdb(pdbp.Pdb):
