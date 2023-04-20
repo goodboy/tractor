@@ -998,7 +998,7 @@ class Actor:
             log.warning(
                 f"Failed to connect to parent @ {parent_addr},"
                 " closing server")
-            await self.cancel()
+            await self.cancel(requesting_uid=self.uid)
             raise
 
     async def _serve_forever(
