@@ -167,7 +167,7 @@ class TractorConfig(pdbp.DefaultConfig):
 
     # much thanks @mdmintz for the hot tip!
     # fixes line spacing issue when resizing terminal B)
-    truncate_long_lines = False
+    truncate_long_lines = True
 
 
 class MultiActorPdb(pdbp.Pdb):
