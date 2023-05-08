@@ -161,13 +161,13 @@ class TractorConfig(pdbp.DefaultConfig):
     Custom ``pdbp`` goodness :surfer:
 
     '''
-    # use_pygments = True
-    sticky_by_default = True
-    enable_hidden_frames = False
+    use_pygments: bool = True
+    sticky_by_default: bool = False
+    enable_hidden_frames: bool = False
 
     # much thanks @mdmintz for the hot tip!
     # fixes line spacing issue when resizing terminal B)
-    truncate_long_lines = False
+    truncate_long_lines: bool = False
 
 
 class MultiActorPdb(pdbp.Pdb):
