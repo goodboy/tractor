@@ -380,6 +380,7 @@ class Portal:
 
         self,
         func: Callable,
+        allow_overruns: bool = False,
         **kwargs,
 
     ) -> AsyncGenerator[tuple[Context, Any], None]:
@@ -409,6 +410,16 @@ class Portal:
             fn_mod_path,
             fn_name,
             kwargs,
+
+            # NOTE: it's imporant to expose this since you might
+            # get the case where the parent who opened the context does
+            # not open a stream until after some slow startup/init
+            # period, in which case when the first msg is read from
+            # the feeder mem chan, say when first calling
+            # `Context.open_stream(allow_overruns=True)`, the overrun condition will be
+            # raised before any ignoring of overflow msgs can take
+            # place..
+            allow_overruns=allow_overruns,
         )
 
         assert ctx._remote_func_type == 'context'
