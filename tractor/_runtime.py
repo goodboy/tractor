@@ -199,8 +199,8 @@ async def _invoke(
             except BaseExceptionGroup:
                 # if a context error was set then likely
                 # thei multierror was raised due to that
-                if ctx._error is not None:
-                    raise ctx._error from None
+                if ctx._remote_ctx_error is not None:
+                    raise ctx._remote_ctx_error from None
 
                 raise
 

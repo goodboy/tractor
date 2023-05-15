@@ -27,7 +27,8 @@ from typing import (
     Optional,
     Callable,
     AsyncGenerator,
-    AsyncIterator
+    AsyncIterator,
+    TYPE_CHECKING,
 )
 
 import warnings
@@ -39,6 +40,10 @@ from ._exceptions import unpack_error, ContextCancelled
 from ._state import current_actor
 from .log import get_logger
 from .trionics import broadcast_receiver, BroadcastReceiver
+
+
+if TYPE_CHECKING:
+    from ._portal import Portal
 
 
 log = get_logger(__name__)
@@ -70,7 +75,7 @@ class MsgStream(trio.abc.Channel):
     '''
     def __init__(
         self,
-        ctx: 'Context',  # typing: ignore # noqa
+        ctx: Context,  # typing: ignore # noqa
         rx_chan: trio.MemoryReceiveChannel,
         _broadcaster: Optional[BroadcastReceiver] = None,
 
@@ -82,6 +87,9 @@ class MsgStream(trio.abc.Channel):
         # flag to denote end of stream
         self._eoc: bool = False
         self._closed: bool = False
+
+    def ctx(self) -> Context:
+        return self._ctx
 
     # delegate directly to underlying mem channel
     def receive_nowait(self):
@@ -278,7 +286,6 @@ class MsgStream(trio.abc.Channel):
     @asynccontextmanager
     async def subscribe(
         self,
-
     ) -> AsyncIterator[BroadcastReceiver]:
         '''
         Allocate and return a ``BroadcastReceiver`` which delegates
@@ -335,8 +342,8 @@ class MsgStream(trio.abc.Channel):
         Send a message over this stream to the far end.
 
         '''
-        if self._ctx._error:
-            raise self._ctx._error  # from None
+        if self._ctx._remote_ctx_error:
+            raise self._ctx._remote_ctx_error  # from None
 
         if self._closed:
             raise trio.ClosedResourceError('This stream was already closed')
@@ -375,9 +382,10 @@ class Context:
     _remote_func_type: Optional[str] = None
 
     # only set on the caller side
-    _portal: Optional['Portal'] = None    # type: ignore # noqa
+    _portal: Optional[Portal] = None    # type: ignore # noqa
+    _stream: Optional[MsgStream] = None
     _result: Optional[Any] = False
-    _error: Optional[BaseException] = None
+    _remote_ctx_error: Optional[BaseException] = None
 
     # status flags
     _cancel_called: bool = False
@@ -390,7 +398,7 @@ class Context:
     # only set on the callee side
     _scope_nursery: Optional[trio.Nursery] = None
 
-    _backpressure: bool = False
+    _backpressure: bool = True
 
     async def send_yield(self, data: Any) -> None:
 
@@ -435,21 +443,26 @@ class Context:
             # (currently) that other portal APIs (``Portal.run()``,
             # ``.run_in_actor()``) do their own error checking at the point
             # of the call and result processing.
-            log.error(
-                f'Remote context error for {self.chan.uid}:{self.cid}:\n'
-                f'{msg["error"]["tb_str"]}'
-            )
             error = unpack_error(msg, self.chan)
             if (
-                isinstance(error, ContextCancelled) and
-                self._cancel_called
+                isinstance(error, ContextCancelled)
             ):
-                # this is an expected cancel request response message
-                # and we don't need to raise it in scope since it will
-                # potentially override a real error
-                return
+                log.cancel(
+                    f'Remote context error for {self.chan.uid}:{self.cid}:\n'
+                    f'{msg["error"]["tb_str"]}'
+                )
+                if self._cancel_called:
+                    # this is an expected cancel request response message
+                    # and we don't need to raise it in scope since it will
+                    # potentially override a real error
+                    return
+            else:
+                log.error(
+                    f'Remote context error for {self.chan.uid}:{self.cid}:\n'
+                    f'{msg["error"]["tb_str"]}'
+                )
 
-            self._error = error
+            self._remote_ctx_error = error
 
             # TODO: tempted to **not** do this by-reraising in a
             # nursery and instead cancel a surrounding scope, detect
@@ -457,7 +470,7 @@ class Context:
             if self._scope_nursery:
 
                 async def raiser():
-                    raise self._error from None
+                    raise self._remote_ctx_error from None
 
                 # from trio.testing import wait_all_tasks_blocked
                 # await wait_all_tasks_blocked()
@@ -483,6 +496,7 @@ class Context:
         log.cancel(f'Cancelling {side} side of context to {self.chan.uid}')
 
         self._cancel_called = True
+        ipc_broken: bool = False
 
         if side == 'caller':
             if not self._portal:
@@ -500,7 +514,14 @@ class Context:
                 # NOTE: we're telling the far end actor to cancel a task
                 # corresponding to *this actor*. The far end local channel
                 # instance is passed to `Actor._cancel_task()` implicitly.
-                await self._portal.run_from_ns('self', '_cancel_task', cid=cid)
+                try:
+                    await self._portal.run_from_ns(
+                        'self',
+                        '_cancel_task',
+                        cid=cid,
+                    )
+                except trio.BrokenResourceError:
+                    ipc_broken = True
 
             if cs.cancelled_caught:
                 # XXX: there's no way to know if the remote task was indeed
@@ -516,7 +537,10 @@ class Context:
                         "Timed out on cancelling remote task "
                         f"{cid} for {self._portal.channel.uid}")
 
-        # callee side remote task
+            elif ipc_broken:
+                log.cancel(
+                    "Transport layer was broken before cancel request "
+                    f"{cid} for {self._portal.channel.uid}")
         else:
             self._cancel_msg = msg
 
@@ -604,6 +628,7 @@ class Context:
             ctx=self,
             rx_chan=ctx._recv_chan,
         ) as stream:
+            self._stream = stream
 
             if self._portal:
                 self._portal._streams.add(stream)
@@ -645,25 +670,22 @@ class Context:
 
             if not self._recv_chan._closed:  # type: ignore
 
-                # wait for a final context result consuming
-                # and discarding any bi dir stream msgs still
-                # in transit from the far end.
-                while True:
+                def consume(
+                    msg: dict,
 
-                    msg = await self._recv_chan.receive()
+                ) -> Optional[dict]:
                     try:
-                        self._result = msg['return']
-                        break
+                        return msg['return']
                     except KeyError as msgerr:
 
                         if 'yield' in msg:
                             # far end task is still streaming to us so discard
                             log.warning(f'Discarding stream delivered {msg}')
-                            continue
+                            return
 
                         elif 'stop' in msg:
                             log.debug('Remote stream terminated')
-                            continue
+                            return
 
                         # internal error should never get here
                         assert msg.get('cid'), (
@@ -672,6 +694,25 @@ class Context:
                         raise unpack_error(
                             msg, self._portal.channel
                         ) from msgerr
+
+                # wait for a final context result consuming
+                # and discarding any bi dir stream msgs still
+                # in transit from the far end.
+                if self._stream:
+                    async with self._stream.subscribe() as bstream:
+                        async for msg in bstream:
+                            result = consume(msg)
+                            if result:
+                                self._result = result
+                                break
+
+                if not self._result:
+                    while True:
+                        msg = await self._recv_chan.receive()
+                        result = consume(msg)
+                        if result:
+                            self._result = result
+                            break
 
         return self._result
 
