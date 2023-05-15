@@ -1,0 +1,15 @@
+Switch to using the fork & fix of `pdb++`, `pdbp`:
+https://github.com/mdmintz/pdbp
+
+Allows us to sidestep a variety of issues that aren't being maintained
+in the upstream project thanks to the hard work of @mdmintz!
+
+We also include some default settings adjustments as per recent
+development on the fork:
+
+- sticky mode is still turned on by default but now activates when
+  a using the `ll` repl command.
+- turn off line truncation by default to avoid inter-line gaps when
+  resizing the terimnal during use.
+- when using the backtrace cmd either by `w` or `bt`, the config
+  automatically switches to non-sticky mode.
