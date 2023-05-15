@@ -1,7 +1,7 @@
 pytest
 pytest-trio
 pytest-timeout
-pdbpp
+pdbp
 mypy
 trio_typing
 pexpect
