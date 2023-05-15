@@ -1,0 +1,7 @@
+Drop `trio.Process.aclose()` usage, copy into our spawning code.
+
+The details are laid out in https://github.com/goodboy/tractor/issues/330.
+`trio` changed is process running quite some time ago, this just copies
+out the small bit we needed (from the old `.aclose()`) for hard kills
+where a soft runtime cancel request fails and our "zombie killer"
+implementation kicks in.
