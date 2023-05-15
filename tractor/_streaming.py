@@ -70,7 +70,7 @@ class MsgStream(trio.abc.Channel):
     '''
     def __init__(
         self,
-        ctx: 'Context',  # typing: ignore # noqa
+        ctx: Context,  # typing: ignore # noqa
         rx_chan: trio.MemoryReceiveChannel,
         _broadcaster: Optional[BroadcastReceiver] = None,
 
@@ -82,6 +82,9 @@ class MsgStream(trio.abc.Channel):
         # flag to denote end of stream
         self._eoc: bool = False
         self._closed: bool = False
+
+    def ctx(self) -> Context:
+        return self._ctx
 
     # delegate directly to underlying mem channel
     def receive_nowait(self):
@@ -390,7 +393,7 @@ class Context:
     # only set on the callee side
     _scope_nursery: Optional[trio.Nursery] = None
 
-    _backpressure: bool = False
+    _backpressure: bool = True
 
     async def send_yield(self, data: Any) -> None:
 
