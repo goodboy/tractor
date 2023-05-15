@@ -23,13 +23,12 @@ import sys
 import platform
 from typing import (
     Any,
+    Awaitable,
     Literal,
-    Optional,
     Callable,
     TypeVar,
     TYPE_CHECKING,
 )
-from collections.abc import Awaitable
 
 from exceptiongroup import BaseExceptionGroup
 import trio
@@ -60,7 +59,7 @@ if TYPE_CHECKING:
 log = get_logger('tractor')
 
 # placeholder for an mp start context if so using that backend
-_ctx: Optional[mp.context.BaseContext] = None
+_ctx: mp.context.BaseContext | None = None
 SpawnMethodKey = Literal[
     'trio',  # supported on all platforms
     'mp_spawn',
@@ -86,7 +85,7 @@ else:
 def try_set_start_method(
     key: SpawnMethodKey
 
-) -> Optional[mp.context.BaseContext]:
+) -> mp.context.BaseContext | None:
     '''
     Attempt to set the method for process starting, aka the "actor
     spawning backend".
@@ -200,16 +199,37 @@ async def cancel_on_completion(
 async def do_hard_kill(
     proc: trio.Process,
     terminate_after: int = 3,
+
 ) -> None:
     # NOTE: this timeout used to do nothing since we were shielding
     # the ``.wait()`` inside ``new_proc()`` which will pretty much
     # never release until the process exits, now it acts as
     # a hard-kill time ultimatum.
+    log.debug(f"Terminating {proc}")
     with trio.move_on_after(terminate_after) as cs:
 
-        # NOTE: This ``__aexit__()`` shields internally.
-        async with proc:  # calls ``trio.Process.aclose()``
-            log.debug(f"Terminating {proc}")
+        # NOTE: code below was copied verbatim from the now deprecated
+        # (in 0.20.0) ``trio._subrocess.Process.aclose()``, orig doc
+        # string:
+        #
+        # Close any pipes we have to the process (both input and output)
+        # and wait for it to exit. If cancelled, kills the process and
+        # waits for it to finish exiting before propagating the
+        # cancellation.
+        with trio.CancelScope(shield=True):
+            if proc.stdin is not None:
+                await proc.stdin.aclose()
+            if proc.stdout is not None:
+                await proc.stdout.aclose()
+            if proc.stderr is not None:
+                await proc.stderr.aclose()
+        try:
+            await proc.wait()
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+                with trio.CancelScope(shield=True):
+                    await proc.wait()
 
     if cs.cancelled_caught:
         # XXX: should pretty much never get here unless we have
@@ -355,12 +375,11 @@ async def trio_proc(
         spawn_cmd.append("--asyncio")
 
     cancelled_during_spawn: bool = False
-    proc: Optional[trio.Process] = None
+    proc: trio.Process | None = None
     try:
         try:
             # TODO: needs ``trio_typing`` patch?
-            proc = await trio.lowlevel.open_process(    # type: ignore
-                spawn_cmd)
+            proc = await trio.lowlevel.open_process(spawn_cmd)
 
             log.runtime(f"Started {proc}")
 
@@ -444,8 +463,8 @@ async def trio_proc(
             nursery.cancel_scope.cancel()
 
     finally:
-        # The "hard" reap since no actor zombies are allowed!
-        # XXX: do this **after** cancellation/tearfown to avoid
+        # XXX NOTE XXX: The "hard" reap since no actor zombies are
+        # allowed! Do this **after** cancellation/teardown to avoid
         # killing the process too early.
         if proc:
             log.cancel(f'Hard reap sequence starting for {subactor.uid}')
