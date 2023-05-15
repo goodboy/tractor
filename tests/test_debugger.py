@@ -95,7 +95,7 @@ def spawn(
     return _spawn
 
 
-PROMPT = r"\(Pdb\+\+\)"
+PROMPT = r"\(Pdb\+\)"
 
 
 def expect(
@@ -151,18 +151,6 @@ def ctlc(
 
     use_ctlc = request.param
 
-    if (
-        sys.version_info <= (3, 10)
-        and use_ctlc
-    ):
-        # on 3.9 it seems the REPL UX
-        # is highly unreliable and frankly annoying
-        # to test for. It does work from manual testing
-        # but i just don't think it's wroth it to try
-        # and get this working especially since we want to
-        # be 3.10+ mega-asap.
-        pytest.skip('Py3.9 and `pdbpp` son no bueno..')
-
     node = request.node
     markers = node.own_markers
     for mark in markers:
@@ -193,13 +181,15 @@ def ctlc(
     ids=lambda item: f'{item[0]} -> {item[1]}',
 )
 def test_root_actor_error(spawn, user_in_out):
-    """Demonstrate crash handler entering pdbpp from basic error in root actor.
-    """
+    '''
+    Demonstrate crash handler entering pdb from basic error in root actor.
+
+    '''
     user_input, expect_err_str = user_in_out
 
     child = spawn('root_actor_error')
 
-    # scan for the pdbpp prompt
+    # scan for the prompt
     expect(child, PROMPT)
 
     before = str(child.before.decode())
@@ -230,8 +220,8 @@ def test_root_actor_bp(spawn, user_in_out):
     user_input, expect_err_str = user_in_out
     child = spawn('root_actor_breakpoint')
 
-    # scan for the pdbpp prompt
-    child.expect(r"\(Pdb\+\+\)")
+    # scan for the prompt
+    child.expect(PROMPT)
 
     assert 'Error' not in str(child.before)
 
@@ -272,7 +262,7 @@ def do_ctlc(
         if expect_prompt:
             before = str(child.before.decode())
             time.sleep(delay)
-            child.expect(r"\(Pdb\+\+\)")
+            child.expect(PROMPT)
             time.sleep(delay)
 
             if patt:
@@ -291,7 +281,7 @@ def test_root_actor_bp_forever(
     # entries
     for _ in range(10):
 
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
 
         if ctlc:
             do_ctlc(child)
@@ -301,7 +291,7 @@ def test_root_actor_bp_forever(
     # do one continue which should trigger a
     # new task to lock the tty
     child.sendline('continue')
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     # seems that if we hit ctrl-c too fast the
     # sigint guard machinery might not kick in..
@@ -312,10 +302,10 @@ def test_root_actor_bp_forever(
 
     # XXX: this previously caused a bug!
     child.sendline('n')
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     child.sendline('n')
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     # quit out of the loop
     child.sendline('q')
@@ -338,8 +328,8 @@ def test_subactor_error(
     '''
     child = spawn('subactor_error')
 
-    # scan for the pdbpp prompt
-    child.expect(r"\(Pdb\+\+\)")
+    # scan for the prompt
+    child.expect(PROMPT)
 
     before = str(child.before.decode())
     assert "Attaching to pdb in crashed actor: ('name_error'" in before
@@ -359,7 +349,7 @@ def test_subactor_error(
         # creating actor
         child.sendline('continue')
 
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
     before = str(child.before.decode())
 
     # root actor gets debugger engaged
@@ -386,8 +376,8 @@ def test_subactor_breakpoint(
 
     child = spawn('subactor_breakpoint')
 
-    # scan for the pdbpp prompt
-    child.expect(r"\(Pdb\+\+\)")
+    # scan for the prompt
+    child.expect(PROMPT)
 
     before = str(child.before.decode())
     assert "Attaching pdb to actor: ('breakpoint_forever'" in before
@@ -396,7 +386,7 @@ def test_subactor_breakpoint(
     # entries
     for _ in range(10):
         child.sendline('next')
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
 
         if ctlc:
             do_ctlc(child)
@@ -404,7 +394,7 @@ def test_subactor_breakpoint(
     # now run some "continues" to show re-entries
     for _ in range(5):
         child.sendline('continue')
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
         before = str(child.before.decode())
         assert "Attaching pdb to actor: ('breakpoint_forever'" in before
 
@@ -415,7 +405,7 @@ def test_subactor_breakpoint(
     child.sendline('q')
 
     # child process should exit but parent will capture pdb.BdbQuit
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     before = str(child.before.decode())
     assert "RemoteActorError: ('breakpoint_forever'" in before
@@ -447,8 +437,8 @@ def test_multi_subactors(
     '''
     child = spawn(r'multi_subactors')
 
-    # scan for the pdbpp prompt
-    child.expect(r"\(Pdb\+\+\)")
+    # scan for the prompt
+    child.expect(PROMPT)
 
     before = str(child.before.decode())
     assert "Attaching pdb to actor: ('breakpoint_forever'" in before
@@ -460,7 +450,7 @@ def test_multi_subactors(
     # entries
     for _ in range(10):
         child.sendline('next')
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
 
         if ctlc:
             do_ctlc(child)
@@ -469,7 +459,7 @@ def test_multi_subactors(
     child.sendline('c')
 
     # first name_error failure
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
     before = str(child.before.decode())
     assert "Attaching to pdb in crashed actor: ('name_error'" in before
     assert "NameError" in before
@@ -481,7 +471,7 @@ def test_multi_subactors(
     child.sendline('c')
 
     # 2nd name_error failure
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     # TODO: will we ever get the race where this crash will show up?
     # blocklist strat now prevents this crash
@@ -495,7 +485,7 @@ def test_multi_subactors(
 
     # breakpoint loop should re-engage
     child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
     before = str(child.before.decode())
     assert "Attaching pdb to actor: ('breakpoint_forever'" in before
 
@@ -511,7 +501,7 @@ def test_multi_subactors(
     ):
         child.sendline('c')
         time.sleep(0.1)
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
         before = str(child.before.decode())
 
         if ctlc:
@@ -530,11 +520,11 @@ def test_multi_subactors(
     # now run some "continues" to show re-entries
     for _ in range(5):
         child.sendline('c')
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
 
     # quit the loop and expect parent to attach
     child.sendline('q')
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
     before = str(child.before.decode())
 
     assert_before(child, [
@@ -578,7 +568,7 @@ def test_multi_daemon_subactors(
     '''
     child = spawn('multi_daemon_subactors')
 
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     # there can be a race for which subactor will acquire
     # the root's tty lock first so anticipate either crash
@@ -608,7 +598,7 @@ def test_multi_daemon_subactors(
     # second entry by `bp_forever`.
 
     child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
     assert_before(child, [next_msg])
 
     # XXX: hooray the root clobbering the child here was fixed!
@@ -630,7 +620,7 @@ def test_multi_daemon_subactors(
 
     # expect another breakpoint actor entry
     child.sendline('c')
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     try:
         assert_before(child, [bp_forever_msg])
@@ -646,7 +636,7 @@ def test_multi_daemon_subactors(
         # after 1 or more further bp actor entries.
 
         child.sendline('c')
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
         assert_before(child, [name_error_msg])
 
     # wait for final error in root
@@ -654,7 +644,7 @@ def test_multi_daemon_subactors(
     while True:
         try:
             child.sendline('c')
-            child.expect(r"\(Pdb\+\+\)")
+            child.expect(PROMPT)
             assert_before(
                 child,
                 [bp_forever_msg]
@@ -687,8 +677,8 @@ def test_multi_subactors_root_errors(
     '''
     child = spawn('multi_subactor_root_errors')
 
-    # scan for the pdbpp prompt
-    child.expect(r"\(Pdb\+\+\)")
+    # scan for the prompt
+    child.expect(PROMPT)
 
     # at most one subactor should attach before the root is cancelled
     before = str(child.before.decode())
@@ -703,7 +693,7 @@ def test_multi_subactors_root_errors(
 
     # due to block list strat from #337, this will no longer
     # propagate before the root errors and cancels the spawner sub-tree.
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     # only if the blocking condition doesn't kick in fast enough
     before = str(child.before.decode())
@@ -718,7 +708,7 @@ def test_multi_subactors_root_errors(
             do_ctlc(child)
 
         child.sendline('c')
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
 
     # check if the spawner crashed or was blocked from debug
     # and if this intermediary attached check the boxed error
@@ -735,7 +725,7 @@ def test_multi_subactors_root_errors(
             do_ctlc(child)
 
         child.sendline('c')
-        child.expect(r"\(Pdb\+\+\)")
+        child.expect(PROMPT)
 
     # expect a root actor crash
     assert_before(child, [
@@ -784,7 +774,7 @@ def test_multi_nested_subactors_error_through_nurseries(
 
     for send_char in itertools.cycle(['c', 'q']):
         try:
-            child.expect(r"\(Pdb\+\+\)")
+            child.expect(PROMPT)
             child.sendline(send_char)
             time.sleep(0.01)
 
@@ -826,7 +816,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
 
     child = spawn('root_cancelled_but_child_is_in_tty_lock')
 
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     before = str(child.before.decode())
     assert "NameError: name 'doggypants' is not defined" in before
@@ -841,7 +831,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
     for i in range(4):
         time.sleep(0.5)
         try:
-            child.expect(r"\(Pdb\+\+\)")
+            child.expect(PROMPT)
 
         except (
             EOF,
@@ -898,7 +888,7 @@ def test_root_cancels_child_context_during_startup(
     '''
     child = spawn('fast_error_in_root_after_spawn')
 
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     before = str(child.before.decode())
     assert "AssertionError" in before
@@ -915,7 +905,7 @@ def test_different_debug_mode_per_actor(
     ctlc: bool,
 ):
     child = spawn('per_actor_debug')
-    child.expect(r"\(Pdb\+\+\)")
+    child.expect(PROMPT)
 
     # only one actor should enter the debugger
     before = str(child.before.decode())

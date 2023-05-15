@@ -6,8 +6,14 @@
 ``tractor`` is a `structured concurrent`_, multi-processing_ runtime
 built on trio_.
 
-Fundamentally ``tractor`` gives you parallelism via ``trio``-"*actors*":
-our nurseries_ let you spawn new Python processes which each run a ``trio``
+Fundamentally, ``tractor`` gives you parallelism via
+``trio``-"*actors*": independent Python processes (aka
+non-shared-memory threads) which maintain structured
+concurrency (SC) *end-to-end* inside a *supervision tree*.
+
+Cross-process (and thus cross-host) SC is accomplished through the
+combined use of our "actor nurseries_" and an "SC-transitive IPC
+protocol" constructed on top of multiple Pythons each running a ``trio``
 scheduled runtime - a call to ``trio.run()``.
 
 We believe the system adheres to the `3 axioms`_ of an "`actor model`_"
@@ -23,7 +29,8 @@ Features
 - **It's just** a ``trio`` API
 - *Infinitely nesteable* process trees
 - Builtin IPC streaming APIs with task fan-out broadcasting
-- A (first ever?) "native" multi-core debugger UX for Python using `pdb++`_
+- A "native" multi-core debugger REPL using `pdbp`_ (a fork & fix of
+  `pdb++`_ thanks to @mdmintz!)
 - Support for a swappable, OS specific, process spawning layer
 - A modular transport stack, allowing for custom serialization (eg. with
   `msgspec`_), communications protocols, and environment specific IPC
@@ -149,7 +156,7 @@ it **is a bug**.
 
 "Native" multi-process debugging
 --------------------------------
-Using the magic of `pdb++`_ and our internal IPC, we've
+Using the magic of `pdbp`_ and our internal IPC, we've
 been able to create a native feeling debugging experience for
 any (sub-)process in your ``tractor`` tree.
 
@@ -597,6 +604,7 @@ channel`_!
 .. _adherance to: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=1821s
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
+.. _pdbp: https://github.com/mdmintz/pdbp
 .. _pdb++: https://github.com/pdbpp/pdbpp
 .. _guest mode: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
 .. _messages: https://en.wikipedia.org/wiki/Message_passing

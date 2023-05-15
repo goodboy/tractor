@@ -37,6 +37,7 @@ from typing import (
 )
 from types import FrameType
 
+import pdbp
 import tractor
 import trio
 from trio_typing import TaskStatus
@@ -52,17 +53,6 @@ from ._exceptions import (
     ContextCancelled,
 )
 from ._ipc import Channel
-
-
-try:
-    # wtf: only exported when installed in dev mode?
-    import pdbpp
-except ImportError:
-    # pdbpp is installed in regular mode...it monkey patches stuff
-    import pdb
-    xpm = getattr(pdb, 'xpm', None)
-    assert xpm, "pdbpp is not installed?"  # type: ignore
-    pdbpp = pdb
 
 log = get_logger(__name__)
 
@@ -154,22 +144,26 @@ class Lock:
             cls.repl = None
 
 
-class TractorConfig(pdbpp.DefaultConfig):
+class TractorConfig(pdbp.DefaultConfig):
     '''
-    Custom ``pdbpp`` goodness.
+    Custom ``pdbp`` goodness :surfer:
 
     '''
-    # use_pygments = True
-    # sticky_by_default = True
-    enable_hidden_frames = False
+    use_pygments: bool = True
+    sticky_by_default: bool = False
+    enable_hidden_frames: bool = False
+
+    # much thanks @mdmintz for the hot tip!
+    # fixes line spacing issue when resizing terminal B)
+    truncate_long_lines: bool = False
 
 
-class MultiActorPdb(pdbpp.Pdb):
+class MultiActorPdb(pdbp.Pdb):
     '''
-    Add teardown hooks to the regular ``pdbpp.Pdb``.
+    Add teardown hooks to the regular ``pdbp.Pdb``.
 
     '''
-    # override the pdbpp config with our coolio one
+    # override the pdbp config with our coolio one
     DefaultConfig = TractorConfig
 
     # def preloop(self):
@@ -313,7 +307,7 @@ async def lock_tty_for_child(
 ) -> str:
     '''
     Lock the TTY in the root process of an actor tree in a new
-    inter-actor-context-task such that the ``pdbpp`` debugger console
+    inter-actor-context-task such that the ``pdbp`` debugger console
     can be mutex-allocated to the calling sub-actor for REPL control
     without interference by other processes / threads.
 
@@ -433,7 +427,7 @@ async def wait_for_parent_stdin_hijack(
 def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
 
     pdb = MultiActorPdb()
-    # signal.signal = pdbpp.hideframe(signal.signal)
+    # signal.signal = pdbp.hideframe(signal.signal)
 
     Lock.shield_sigint()
 
@@ -583,7 +577,7 @@ async def _breakpoint(
     #     # frame = sys._getframe()
     #     # last_f = frame.f_back
     #     # last_f.f_globals['__tracebackhide__'] = True
-    #     # signal.signal = pdbpp.hideframe(signal.signal)
+    #     # signal.signal = pdbp.hideframe(signal.signal)
 
 
 def shield_sigint_handler(
@@ -743,13 +737,13 @@ def shield_sigint_handler(
         # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
-        # XXX: lol, see ``pdbpp`` issue:
+        # XXX LEGACY: lol, see ``pdbpp`` issue:
         # https://github.com/pdbpp/pdbpp/issues/496
 
 
 def _set_trace(
-    actor: Optional[tractor.Actor] = None,
-    pdb: Optional[MultiActorPdb] = None,
+    actor: tractor.Actor | None = None,
+    pdb: MultiActorPdb | None = None,
 ):
     __tracebackhide__ = True
     actor = actor or tractor.current_actor()
@@ -759,7 +753,11 @@ def _set_trace(
     if frame:
         frame = frame.f_back  # type: ignore
 
-    if frame and pdb and actor is not None:
+    if (
+        frame
+        and pdb
+        and actor is not None
+    ):
         log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
         # no f!#$&* idea, but when we're in async land
         # we need 2x frames up?
@@ -768,7 +766,8 @@ def _set_trace(
     else:
         pdb, undo_sigint = mk_mpdb()
 
-        # we entered the global ``breakpoint()`` built-in from sync code?
+        # we entered the global ``breakpoint()`` built-in from sync
+        # code?
         Lock.local_task_in_debug = 'sync'
 
     pdb.set_trace(frame=frame)
@@ -798,7 +797,7 @@ def _post_mortem(
     # https://github.com/pdbpp/pdbpp/issues/480
     # TODO: help with a 3.10+ major release if/when it arrives.
 
-    pdbpp.xpm(Pdb=lambda: pdb)
+    pdbp.xpm(Pdb=lambda: pdb)
 
 
 post_mortem = partial(
