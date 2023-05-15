@@ -151,19 +151,6 @@ def ctlc(
 
     use_ctlc = request.param
 
-    # TODO: we can remove this bc pdbp right?
-    if (
-        sys.version_info <= (3, 10)
-        and use_ctlc
-    ):
-        # on 3.9 it seems the REPL UX
-        # is highly unreliable and frankly annoying
-        # to test for. It does work from manual testing
-        # but i just don't think it's wroth it to try
-        # and get this working especially since we want to
-        # be 3.10+ mega-asap.
-        pytest.skip('Py3.9 and `pdbpp` son no bueno..')
-
     node = request.node
     markers = node.own_markers
     for mark in markers:
@@ -194,13 +181,15 @@ def ctlc(
     ids=lambda item: f'{item[0]} -> {item[1]}',
 )
 def test_root_actor_error(spawn, user_in_out):
-    """Demonstrate crash handler entering pdbpp from basic error in root actor.
-    """
+    '''
+    Demonstrate crash handler entering pdb from basic error in root actor.
+
+    '''
     user_input, expect_err_str = user_in_out
 
     child = spawn('root_actor_error')
 
-    # scan for the pdbpp prompt
+    # scan for the prompt
     expect(child, PROMPT)
 
     before = str(child.before.decode())
@@ -231,7 +220,7 @@ def test_root_actor_bp(spawn, user_in_out):
     user_input, expect_err_str = user_in_out
     child = spawn('root_actor_breakpoint')
 
-    # scan for the pdbpp prompt
+    # scan for the prompt
     child.expect(PROMPT)
 
     assert 'Error' not in str(child.before)
@@ -339,7 +328,7 @@ def test_subactor_error(
     '''
     child = spawn('subactor_error')
 
-    # scan for the pdbpp prompt
+    # scan for the prompt
     child.expect(PROMPT)
 
     before = str(child.before.decode())
@@ -387,7 +376,7 @@ def test_subactor_breakpoint(
 
     child = spawn('subactor_breakpoint')
 
-    # scan for the pdbpp prompt
+    # scan for the prompt
     child.expect(PROMPT)
 
     before = str(child.before.decode())
@@ -448,7 +437,7 @@ def test_multi_subactors(
     '''
     child = spawn(r'multi_subactors')
 
-    # scan for the pdbpp prompt
+    # scan for the prompt
     child.expect(PROMPT)
 
     before = str(child.before.decode())
@@ -688,7 +677,7 @@ def test_multi_subactors_root_errors(
     '''
     child = spawn('multi_subactor_root_errors')
 
-    # scan for the pdbpp prompt
+    # scan for the prompt
     child.expect(PROMPT)
 
     # at most one subactor should attach before the root is cancelled
