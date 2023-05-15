@@ -54,18 +54,6 @@ from ._exceptions import (
 )
 from ._ipc import Channel
 
-
-# TODO: we can drop this now yah?
-# try:
-#     # wtf: only exported when installed in dev mode?
-#     import pdbp
-# except ImportError:
-#     # pdbpp is installed in regular mode...it monkey patches stuff
-#     import pdb
-#     xpm = getattr(pdb, 'xpm', None)
-#     assert xpm, "pdbpp is not installed?"  # type: ignore
-#     pdbpp = pdb
-
 log = get_logger(__name__)
 
 
