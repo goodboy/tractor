@@ -22,7 +22,7 @@ https://docs.rs/tokio/1.11.0/tokio/sync/broadcast/index.html
 from __future__ import annotations
 from abc import abstractmethod
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager as acm
 from functools import partial
 from operator import ne
 from typing import (
@@ -398,7 +398,7 @@ class BroadcastReceiver(ReceiveChannel):
 
             return await self._receive_from_underlying(key, state)
 
-    @asynccontextmanager
+    @acm
     async def subscribe(
         self,
         raise_on_lag: bool = True,
