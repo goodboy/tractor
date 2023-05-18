@@ -103,7 +103,7 @@ class Context:
 
     # cancellation state
     _cancel_called: bool = False
-    _cancel_called_remote: tuple | None = None
+    _cancelled_remote: tuple | None = None
     _cancel_msg: str | None = None
     _scope: trio.CancelScope | None = None
     _enter_debugger_on_cancel: bool = True
@@ -126,7 +126,7 @@ class Context:
         causing this side of the context to also be cancelled.
 
         '''
-        remote_uid = self._cancel_called_remote
+        remote_uid = self._cancelled_remote
         if remote_uid:
             return tuple(remote_uid)
 
@@ -209,6 +209,10 @@ class Context:
         # that error as the reason.
         self._remote_error = error
 
+        # always record the remote actor's uid since its cancellation
+        # state is directly linked to ours (the local one).
+        self._cancelled_remote = self.chan.uid
+
         if (
             isinstance(error, ContextCancelled)
         ):
@@ -218,9 +222,12 @@ class Context:
             )
 
             if self._cancel_called:
+                # from ._debug import breakpoint
+                # await breakpoint()
+
                 # this is an expected cancel request response message
-                # and we don't need to raise it in scope since it will
-                # potentially override a real error
+                # and we **don't need to raise it** in local cancel
+                # scope since it will potentially override a real error.
                 return
         else:
             log.error(
@@ -236,7 +243,7 @@ class Context:
         ):
             # from trio.testing import wait_all_tasks_blocked
             # await wait_all_tasks_blocked()
-            self._cancel_called_remote = self.chan.uid
+            # self._cancelled_remote = self.chan.uid
             self._scope.cancel()
 
             # NOTE: this usage actually works here B)
@@ -252,7 +259,7 @@ class Context:
     async def cancel(
         self,
         msg: str | None = None,
-        timeout: float = 0.5,
+        timeout: float = 0.616,
         # timeout: float = 1000,
 
     ) -> None:
@@ -281,7 +288,7 @@ class Context:
 
             cid = self.cid
             with trio.move_on_after(timeout) as cs:
-                # cs.shield = True
+                cs.shield = True
                 log.cancel(
                     f"Cancelling stream {cid} to "
                     f"{self._portal.channel.uid}")

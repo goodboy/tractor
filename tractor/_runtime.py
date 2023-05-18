@@ -254,7 +254,7 @@ async def _invoke(
                 fname = func.__name__
                 cs: trio.CancelScope = ctx._scope
                 if cs.cancel_called:
-                    canceller = ctx._cancel_called_remote
+                    canceller = ctx._cancelled_remote
                     # await _debug.breakpoint()
 
                     # NOTE / TODO: if we end up having
@@ -505,7 +505,7 @@ class Actor:
         self.uid = (name, uid or str(uuid.uuid4()))
 
         self._cancel_complete = trio.Event()
-        self._cancel_called_remote: tuple[str, tuple] | None = None
+        self._cancel_called_by_remote: tuple[str, tuple] | None = None
         self._cancel_called: bool = False
 
         # retreive and store parent `__main__` data which
@@ -1069,7 +1069,7 @@ class Actor:
 
         '''
         log.cancel(f"{self.uid} is trying to cancel")
-        self._cancel_called_remote: tuple = requesting_uid
+        self._cancel_called_by_remote: tuple = requesting_uid
         self._cancel_called = True
 
         # cancel all ongoing rpc tasks
@@ -1141,10 +1141,10 @@ class Actor:
             f"peer: {chan.uid}\n")
 
         if (
-            ctx._cancel_called_remote is None
+            ctx._cancelled_remote is None
             and requesting_uid
         ):
-            ctx._cancel_called_remote: tuple = requesting_uid
+            ctx._cancelled_remote: tuple = requesting_uid
 
         # don't allow cancelling this function mid-execution
         # (is this necessary?)
