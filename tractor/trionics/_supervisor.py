@@ -23,6 +23,7 @@ from contextlib import (
     asynccontextmanager as acm,
     contextmanager as cm,
 )
+from functools import partial
 from typing import (
     Generator,
     Any,
@@ -32,7 +33,6 @@ from outcome import (
     Outcome,
     acapture,
 )
-import pdbp
 from msgspec import Struct
 import trio
 from trio._core._run import (
@@ -206,6 +206,8 @@ class TaskManagerNursery(Struct):
 def add_task_handle_and_crash_handling(
     nursery: Nursery,
 
+    debug_mode: bool = False,
+
 ) -> Generator[
     Any,
     Outcome,
@@ -246,7 +248,9 @@ def add_task_handle_and_crash_handling(
     # a REPL on std errors.
     except Exception as err:
         print(f'{task.name} crashed, entering debugger!')
-        pdbp.xpm()
+        if debug_mode:
+            import pdbp
+            pdbp.xpm()
         raise
 
     finally:
@@ -255,11 +259,15 @@ def add_task_handle_and_crash_handling(
 
 @acm
 async def open_nursery(
-    task_manager = None,
-    **kwargs,
+    task_manager: Generator[Any, Outcome, None] | None = None,
+
+    **lowlevel_nursery_kwargs,
 ):
-    async with trio.open_nursery(**kwargs) as nurse:
-        yield TaskManagerNursery(nurse, task_manager=task_manager)
+    async with trio.open_nursery(**lowlevel_nursery_kwargs) as nurse:
+        yield TaskManagerNursery(
+            nurse,
+            task_manager=task_manager,
+        )
 
 
 async def sleep_then_return_val(val: str):
@@ -284,7 +292,10 @@ if __name__ == '__main__':
 
     async def main():
         async with open_nursery(
-            task_manager=add_task_handle_and_crash_handling,
+            task_manager=partial(
+                add_task_handle_and_crash_handling,
+                debug_mode=True,
+            ),
         ) as sn:
             for _ in range(3):
                 outcome, _ = await sn.start_soon(trio.sleep_forever)
