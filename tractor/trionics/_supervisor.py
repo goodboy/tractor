@@ -136,7 +136,7 @@ class ScopePerTaskNursery(Struct):
         else:
             # NOTE: what do we enforce as a signature for the
             # `@task_scope_manager` here?
-            mngr = sm(nursery=n, scope=cs)
+            mngr = sm(nursery=n)
 
         async def _start_wrapped_in_scope(
             task_status: TaskStatus[
@@ -213,11 +213,9 @@ class ScopePerTaskNursery(Struct):
 # @trio.task_scope_manager
 def add_task_handle_and_crash_handling(
     nursery: Nursery,
-    scope: CancelScope,
 
 ) -> Generator[None, list[Any]]:
 
-    cs: CancelScope = CancelScope()
     task_outcome = TaskOutcome()
 
     # if you need it you can ask trio for the task obj
@@ -226,7 +224,7 @@ def add_task_handle_and_crash_handling(
 
     try:
         # yields back when task is terminated, cancelled, returns?
-        with cs:
+        with CancelScope() as cs:
 
             # the yielded value(s) here are what are returned to the
             # nursery's `.start_soon()` caller B)
