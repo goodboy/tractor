@@ -25,8 +25,16 @@ from collections import deque
 from contextlib import asynccontextmanager
 from functools import partial
 from operator import ne
-from typing import Optional, Callable, Awaitable, Any, AsyncIterator, Protocol
-from typing import Generic, TypeVar
+from typing import (
+    Optional,
+    Callable,
+    Awaitable,
+    Any,
+    AsyncIterator,
+    Protocol,
+    Generic,
+    TypeVar,
+)
 
 import trio
 from trio._core._run import Task
