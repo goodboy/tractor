@@ -14,31 +14,36 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""
+'''
 Message stream types and APIs.
 
-"""
+The machinery and types behind ``Context.open_stream()``
+
+'''
 from __future__ import annotations
 import inspect
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from contextlib import asynccontextmanager as acm
 from typing import (
     Any,
-    Optional,
     Callable,
-    AsyncGenerator,
-    AsyncIterator
+    AsyncIterator,
+    TYPE_CHECKING,
 )
-
 import warnings
 
 import trio
 
-from ._ipc import Channel
-from ._exceptions import unpack_error, ContextCancelled
-from ._state import current_actor
+from ._exceptions import (
+    unpack_error,
+)
 from .log import get_logger
-from .trionics import broadcast_receiver, BroadcastReceiver
+from .trionics import (
+    broadcast_receiver,
+    BroadcastReceiver,
+)
+
+if TYPE_CHECKING:
+    from ._context import Context
 
 
 log = get_logger(__name__)
@@ -70,9 +75,9 @@ class MsgStream(trio.abc.Channel):
     '''
     def __init__(
         self,
-        ctx: 'Context',  # typing: ignore # noqa
+        ctx: Context,  # typing: ignore # noqa
         rx_chan: trio.MemoryReceiveChannel,
-        _broadcaster: Optional[BroadcastReceiver] = None,
+        _broadcaster: BroadcastReceiver | None = None,
 
     ) -> None:
         self._ctx = ctx
@@ -275,7 +280,7 @@ class MsgStream(trio.abc.Channel):
         # still need to consume msgs that are "in transit" from the far
         # end (eg. for ``Context.result()``).
 
-    @asynccontextmanager
+    @acm
     async def subscribe(
         self,
 
@@ -335,8 +340,8 @@ class MsgStream(trio.abc.Channel):
         Send a message over this stream to the far end.
 
         '''
-        if self._ctx._error:
-            raise self._ctx._error  # from None
+        if self._ctx._remote_error:
+            raise self._ctx._remote_error  # from None
 
         if self._closed:
             raise trio.ClosedResourceError('This stream was already closed')
@@ -344,371 +349,11 @@ class MsgStream(trio.abc.Channel):
         await self._ctx.chan.send({'yield': data, 'cid': self._ctx.cid})
 
 
-@dataclass
-class Context:
-    '''
-    An inter-actor, ``trio`` task communication context.
-
-    NB: This class should never be instatiated directly, it is delivered
-    by either runtime machinery to a remotely started task or by entering
-    ``Portal.open_context()``.
-
-    Allows maintaining task or protocol specific state between
-    2 communicating actor tasks. A unique context is created on the
-    callee side/end for every request to a remote actor from a portal.
-
-    A context can be cancelled and (possibly eventually restarted) from
-    either side of the underlying IPC channel, open task oriented
-    message streams and acts as an IPC aware inter-actor-task cancel
-    scope.
-
-    '''
-    chan: Channel
-    cid: str
-
-    # these are the "feeder" channels for delivering
-    # message values to the local task from the runtime
-    # msg processing loop.
-    _recv_chan: trio.MemoryReceiveChannel
-    _send_chan: trio.MemorySendChannel
-
-    _remote_func_type: Optional[str] = None
-
-    # only set on the caller side
-    _portal: Optional['Portal'] = None    # type: ignore # noqa
-    _result: Optional[Any] = False
-    _error: Optional[BaseException] = None
-
-    # status flags
-    _cancel_called: bool = False
-    _cancel_msg: Optional[str] = None
-    _enter_debugger_on_cancel: bool = True
-    _started_called: bool = False
-    _started_received: bool = False
-    _stream_opened: bool = False
-
-    # only set on the callee side
-    _scope_nursery: Optional[trio.Nursery] = None
-
-    _backpressure: bool = False
-
-    async def send_yield(self, data: Any) -> None:
-
-        warnings.warn(
-            "`Context.send_yield()` is now deprecated. "
-            "Use ``MessageStream.send()``. ",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        await self.chan.send({'yield': data, 'cid': self.cid})
-
-    async def send_stop(self) -> None:
-        await self.chan.send({'stop': True, 'cid': self.cid})
-
-    async def _maybe_raise_from_remote_msg(
-        self,
-        msg: dict[str, Any],
-
-    ) -> None:
-        '''
-        (Maybe) unpack and raise a msg error into the local scope
-        nursery for this context.
-
-        Acts as a form of "relay" for a remote error raised
-        in the corresponding remote callee task.
-
-        '''
-        error = msg.get('error')
-        if error:
-            # If this is an error message from a context opened by
-            # ``Portal.open_context()`` we want to interrupt any ongoing
-            # (child) tasks within that context to be notified of the remote
-            # error relayed here.
-            #
-            # The reason we may want to raise the remote error immediately
-            # is that there is no guarantee the associated local task(s)
-            # will attempt to read from any locally opened stream any time
-            # soon.
-            #
-            # NOTE: this only applies when
-            # ``Portal.open_context()`` has been called since it is assumed
-            # (currently) that other portal APIs (``Portal.run()``,
-            # ``.run_in_actor()``) do their own error checking at the point
-            # of the call and result processing.
-            log.error(
-                f'Remote context error for {self.chan.uid}:{self.cid}:\n'
-                f'{msg["error"]["tb_str"]}'
-            )
-            error = unpack_error(msg, self.chan)
-            if (
-                isinstance(error, ContextCancelled) and
-                self._cancel_called
-            ):
-                # this is an expected cancel request response message
-                # and we don't need to raise it in scope since it will
-                # potentially override a real error
-                return
-
-            self._error = error
-
-            # TODO: tempted to **not** do this by-reraising in a
-            # nursery and instead cancel a surrounding scope, detect
-            # the cancellation, then lookup the error that was set?
-            if self._scope_nursery:
-
-                async def raiser():
-                    raise self._error from None
-
-                # from trio.testing import wait_all_tasks_blocked
-                # await wait_all_tasks_blocked()
-                if not self._scope_nursery._closed:  # type: ignore
-                    self._scope_nursery.start_soon(raiser)
-
-    async def cancel(
-        self,
-        msg: Optional[str] = None,
-
-    ) -> None:
-        '''
-        Cancel this inter-actor-task context.
-
-        Request that the far side cancel it's current linked context,
-        Timeout quickly in an attempt to sidestep 2-generals...
-
-        '''
-        side = 'caller' if self._portal else 'callee'
-        if msg:
-            assert side == 'callee', 'Only callee side can provide cancel msg'
-
-        log.cancel(f'Cancelling {side} side of context to {self.chan.uid}')
-
-        self._cancel_called = True
-
-        if side == 'caller':
-            if not self._portal:
-                raise RuntimeError(
-                    "No portal found, this is likely a callee side context"
-                )
-
-            cid = self.cid
-            with trio.move_on_after(0.5) as cs:
-                cs.shield = True
-                log.cancel(
-                    f"Cancelling stream {cid} to "
-                    f"{self._portal.channel.uid}")
-
-                # NOTE: we're telling the far end actor to cancel a task
-                # corresponding to *this actor*. The far end local channel
-                # instance is passed to `Actor._cancel_task()` implicitly.
-                await self._portal.run_from_ns('self', '_cancel_task', cid=cid)
-
-            if cs.cancelled_caught:
-                # XXX: there's no way to know if the remote task was indeed
-                # cancelled in the case where the connection is broken or
-                # some other network error occurred.
-                # if not self._portal.channel.connected():
-                if not self.chan.connected():
-                    log.cancel(
-                        "May have failed to cancel remote task "
-                        f"{cid} for {self._portal.channel.uid}")
-                else:
-                    log.cancel(
-                        "Timed out on cancelling remote task "
-                        f"{cid} for {self._portal.channel.uid}")
-
-        # callee side remote task
-        else:
-            self._cancel_msg = msg
-
-            # TODO: should we have an explicit cancel message
-            # or is relaying the local `trio.Cancelled` as an
-            # {'error': trio.Cancelled, cid: "blah"} enough?
-            # This probably gets into the discussion in
-            # https://github.com/goodboy/tractor/issues/36
-            assert self._scope_nursery
-            self._scope_nursery.cancel_scope.cancel()
-
-        if self._recv_chan:
-            await self._recv_chan.aclose()
-
-    @asynccontextmanager
-    async def open_stream(
-
-        self,
-        backpressure: Optional[bool] = True,
-        msg_buffer_size: Optional[int] = None,
-
-    ) -> AsyncGenerator[MsgStream, None]:
-        '''
-        Open a ``MsgStream``, a bi-directional stream connected to the
-        cross-actor (far end) task for this ``Context``.
-
-        This context manager must be entered on both the caller and
-        callee for the stream to logically be considered "connected".
-
-        A ``MsgStream`` is currently "one-shot" use, meaning if you
-        close it you can not "re-open" it for streaming and instead you
-        must re-establish a new surrounding ``Context`` using
-        ``Portal.open_context()``.  In the future this may change but
-        currently there seems to be no obvious reason to support
-        "re-opening":
-            - pausing a stream can be done with a message.
-            - task errors will normally require a restart of the entire
-              scope of the inter-actor task context due to the nature of
-              ``trio``'s cancellation system.
-
-        '''
-        actor = current_actor()
-
-        # here we create a mem chan that corresponds to the
-        # far end caller / callee.
-
-        # Likewise if the surrounding context has been cancelled we error here
-        # since it likely means the surrounding block was exited or
-        # killed
-
-        if self._cancel_called:
-            task = trio.lowlevel.current_task().name
-            raise ContextCancelled(
-                f'Context around {actor.uid[0]}:{task} was already cancelled!'
-            )
-
-        if not self._portal and not self._started_called:
-            raise RuntimeError(
-                'Context.started()` must be called before opening a stream'
-            )
-
-        # NOTE: in one way streaming this only happens on the
-        # caller side inside `Actor.start_remote_task()` so if you try
-        # to send a stop from the caller to the callee in the
-        # single-direction-stream case you'll get a lookup error
-        # currently.
-        ctx = actor.get_context(
-            self.chan,
-            self.cid,
-            msg_buffer_size=msg_buffer_size,
-        )
-        ctx._backpressure = backpressure
-        assert ctx is self
-
-        # XXX: If the underlying channel feeder receive mem chan has
-        # been closed then likely client code has already exited
-        # a ``.open_stream()`` block prior or there was some other
-        # unanticipated error or cancellation from ``trio``.
-
-        if ctx._recv_chan._closed:
-            raise trio.ClosedResourceError(
-                'The underlying channel for this stream was already closed!?')
-
-        async with MsgStream(
-            ctx=self,
-            rx_chan=ctx._recv_chan,
-        ) as stream:
-
-            if self._portal:
-                self._portal._streams.add(stream)
-
-            try:
-                self._stream_opened = True
-
-                # XXX: do we need this?
-                # ensure we aren't cancelled before yielding the stream
-                # await trio.lowlevel.checkpoint()
-                yield stream
-
-                # NOTE: Make the stream "one-shot use".  On exit, signal
-                # ``trio.EndOfChannel``/``StopAsyncIteration`` to the
-                # far end.
-                await stream.aclose()
-
-            finally:
-                if self._portal:
-                    try:
-                        self._portal._streams.remove(stream)
-                    except KeyError:
-                        log.warning(
-                            f'Stream was already destroyed?\n'
-                            f'actor: {self.chan.uid}\n'
-                            f'ctx id: {self.cid}'
-                        )
-
-    async def result(self) -> Any:
-        '''
-        From a caller side, wait for and return the final result from
-        the callee side task.
-
-        '''
-        assert self._portal, "Context.result() can not be called from callee!"
-        assert self._recv_chan
-
-        if self._result is False:
-
-            if not self._recv_chan._closed:  # type: ignore
-
-                # wait for a final context result consuming
-                # and discarding any bi dir stream msgs still
-                # in transit from the far end.
-                while True:
-
-                    msg = await self._recv_chan.receive()
-                    try:
-                        self._result = msg['return']
-                        break
-                    except KeyError as msgerr:
-
-                        if 'yield' in msg:
-                            # far end task is still streaming to us so discard
-                            log.warning(f'Discarding stream delivered {msg}')
-                            continue
-
-                        elif 'stop' in msg:
-                            log.debug('Remote stream terminated')
-                            continue
-
-                        # internal error should never get here
-                        assert msg.get('cid'), (
-                            "Received internal error at portal?")
-
-                        raise unpack_error(
-                            msg, self._portal.channel
-                        ) from msgerr
-
-        return self._result
-
-    async def started(
-        self,
-        value: Optional[Any] = None
-
-    ) -> None:
-        '''
-        Indicate to calling actor's task that this linked context
-        has started and send ``value`` to the other side.
-
-        On the calling side ``value`` is the second item delivered
-        in the tuple returned by ``Portal.open_context()``.
-
-        '''
-        if self._portal:
-            raise RuntimeError(
-                f"Caller side context {self} can not call started!")
-
-        elif self._started_called:
-            raise RuntimeError(
-                f"called 'started' twice on context with {self.chan.uid}")
-
-        await self.chan.send({'started': value, 'cid': self.cid})
-        self._started_called = True
-
-    # TODO: do we need a restart api?
-    # async def restart(self) -> None:
-    #     pass
-
-
 def stream(func: Callable) -> Callable:
-    """Mark an async function as a streaming routine with ``@stream``.
+    '''
+    Mark an async function as a streaming routine with ``@stream``.
 
-    """
-    # annotate
+    '''
     # TODO: apply whatever solution ``mypy`` ends up picking for this:
     # https://github.com/python/mypy/issues/2087#issuecomment-769266912
     func._tractor_stream_function = True  # type: ignore
@@ -732,24 +377,5 @@ def stream(func: Callable) -> Callable:
             "The first argument to the stream function "
             f"{func.__name__} must be `ctx: tractor.Context` "
             "(Or ``to_trio`` if using ``asyncio`` in guest mode)."
-        )
-    return func
-
-
-def context(func: Callable) -> Callable:
-    """Mark an async function as a streaming routine with ``@context``.
-
-    """
-    # annotate
-    # TODO: apply whatever solution ``mypy`` ends up picking for this:
-    # https://github.com/python/mypy/issues/2087#issuecomment-769266912
-    func._tractor_context_function = True  # type: ignore
-
-    sig = inspect.signature(func)
-    params = sig.parameters
-    if 'ctx' not in params:
-        raise TypeError(
-            "The first argument to the context function "
-            f"{func.__name__} must be `ctx: tractor.Context`"
         )
     return func

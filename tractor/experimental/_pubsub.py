@@ -37,7 +37,7 @@ import trio
 import wrapt
 
 from ..log import get_logger
-from .._streaming import Context
+from .._context import Context
 
 
 __all__ = ['pub']
@@ -148,7 +148,8 @@ def pub(
     *,
     tasks: set[str] = set(),
 ):
-    """Publisher async generator decorator.
+    '''
+    Publisher async generator decorator.
 
     A publisher can be called multiple times from different actors but
     will only spawn a finite set of internal tasks to stream values to
@@ -227,7 +228,8 @@ def pub(
     running in a single actor to stream data to an arbitrary number of
     subscribers. If you are ok to have a new task running for every call
     to ``pub_service()`` then probably don't need this.
-    """
+
+    '''
     global _pubtask2lock
 
     # handle the decorator not called with () case

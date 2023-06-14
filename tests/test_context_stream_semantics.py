@@ -13,7 +13,10 @@ from typing import Optional
 import pytest
 import trio
 import tractor
-from tractor._exceptions import StreamOverrun
+from tractor._exceptions import (
+    StreamOverrun,
+    ContextCancelled,
+)
 
 from conftest import tractor_test
 
@@ -91,7 +94,10 @@ async def not_started_but_stream_opened(
 
 @pytest.mark.parametrize(
     'target',
-    [too_many_starteds, not_started_but_stream_opened],
+    [
+        too_many_starteds,
+        not_started_but_stream_opened,
+    ],
     ids='misuse_type={}'.format,
 )
 def test_started_misuse(target):
@@ -226,6 +232,88 @@ def test_simple_context(
             assert is_multi_cancelled(me)
     else:
         trio.run(main)
+
+
+@pytest.mark.parametrize(
+    'callee_returns_early',
+    [True, False],
+    ids=lambda item: f'callee_returns_early={item}'
+)
+@pytest.mark.parametrize(
+    'cancel_method',
+    ['ctx', 'portal'],
+    ids=lambda item: f'cancel_method={item}'
+)
+@pytest.mark.parametrize(
+    'chk_ctx_result_before_exit',
+    [True, False],
+    ids=lambda item: f'chk_ctx_result_before_exit={item}'
+)
+def test_caller_cancels(
+    cancel_method: str,
+    chk_ctx_result_before_exit: bool,
+    callee_returns_early: bool,
+):
+    '''
+    Verify that when the opening side of a context (aka the caller)
+    cancels that context, the ctx does not raise a cancelled when
+    either calling `.result()` or on context exit.
+
+    '''
+    async def check_canceller(
+        ctx: tractor.Context,
+    ) -> None:
+        # should not raise yet return the remote
+        # context cancelled error.
+        res = await ctx.result()
+
+        if callee_returns_early:
+            assert res == 'yo'
+
+        else:
+            err = res
+            assert isinstance(err, ContextCancelled)
+            assert (
+                tuple(err.canceller)
+                ==
+                tractor.current_actor().uid
+            )
+
+    async def main():
+        async with tractor.open_nursery() as nursery:
+            portal = await nursery.start_actor(
+                'simple_context',
+                enable_modules=[__name__],
+            )
+            timeout = 0.5 if not callee_returns_early else 2
+            with trio.fail_after(timeout):
+                async with portal.open_context(
+                    simple_setup_teardown,
+                    data=10,
+                    block_forever=not callee_returns_early,
+                ) as (ctx, sent):
+
+                    if callee_returns_early:
+                        # ensure we block long enough before sending
+                        # a cancel such that the callee has already
+                        # returned it's result.
+                        await trio.sleep(0.5)
+
+                    if cancel_method == 'ctx':
+                        await ctx.cancel()
+                    else:
+                        await portal.cancel_actor()
+
+                    if chk_ctx_result_before_exit:
+                        await check_canceller(ctx)
+
+            if not chk_ctx_result_before_exit:
+                await check_canceller(ctx)
+
+            if cancel_method != 'portal':
+                await portal.cancel_actor()
+
+    trio.run(main)
 
 
 # basic stream terminations:
@@ -506,7 +594,6 @@ async def test_callee_cancels_before_started():
                 cancel_self,
             ) as (ctx, sent):
                 async with ctx.open_stream():
-
                     await trio.sleep_forever()
 
         # raises a special cancel signal
@@ -559,7 +646,6 @@ async def keep_sending_from_callee(
     'overrun_by',
     [
         ('caller', 1, never_open_stream),
-        ('cancel_caller_during_overrun', 1, never_open_stream),
         ('callee', 0, keep_sending_from_callee),
     ],
     ids='overrun_condition={}'.format,
@@ -589,13 +675,12 @@ def test_one_end_stream_not_opened(overrun_by):
                 if 'caller' in overrunner:
 
                     async with ctx.open_stream() as stream:
+
+                        # itersend +1 msg more then the buffer size
+                        # to cause the most basic overrun.
                         for i in range(buf_size):
                             print(f'sending {i}')
                             await stream.send(i)
-
-                        if 'cancel' in overrunner:
-                            # without this we block waiting on the child side
-                            await ctx.cancel()
 
                         else:
                             # expect overrun error to be relayed back
@@ -610,7 +695,9 @@ def test_one_end_stream_not_opened(overrun_by):
 
     # 2 overrun cases and the no overrun case (which pushes right up to
     # the msg limit)
-    if overrunner == 'caller' or 'cance' in overrunner:
+    if (
+        overrunner == 'caller'
+    ):
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
@@ -634,40 +721,102 @@ async def echo_back_sequence(
 
     ctx:  tractor.Context,
     seq: list[int],
-    msg_buffer_size: Optional[int] = None,
+    wait_for_cancel: bool,
+    allow_overruns_side: str,
+    be_slow: bool = False,
+    msg_buffer_size: int = 1,
 
 ) -> None:
     '''
-    Send endlessly on the calleee stream.
+    Send endlessly on the calleee stream using a small buffer size
+    setting on the contex to simulate backlogging that would normally
+    cause overruns.
 
     '''
+    # NOTE: ensure that if the caller is expecting to cancel this task
+    # that we stay echoing much longer then they are so we don't
+    # return early instead of receive the cancel msg.
+    total_batches: int = 1000 if wait_for_cancel else 6
+
     await ctx.started()
+    # await tractor.breakpoint()
     async with ctx.open_stream(
         msg_buffer_size=msg_buffer_size,
+
+        # literally the point of this test XD
+        allow_overruns=(allow_overruns_side in {'child', 'both'}),
     ) as stream:
 
-        seq = list(seq)  # bleh, `msgpack`...
-        count = 0
-        while count < 3:
+        # ensure mem chan settings are correct
+        assert (
+            ctx._send_chan._state.max_buffer_size
+            ==
+            msg_buffer_size
+        )
+
+        seq = list(seq)  # bleh, msgpack sometimes ain't decoded right
+        for _ in range(total_batches):
             batch = []
             async for msg in stream:
                 batch.append(msg)
                 if batch == seq:
                     break
 
+                if be_slow:
+                    await trio.sleep(0.05)
+
+                print('callee waiting on next')
+
             for msg in batch:
                 print(f'callee sending {msg}')
                 await stream.send(msg)
 
-            count += 1
+    print(
+        'EXITING CALLEEE:\n'
+        f'{ctx.cancel_called_remote}'
+    )
+    return 'yo'
 
-        return 'yo'
 
-
-def test_stream_backpressure():
+@pytest.mark.parametrize(
+    # aka the side that will / should raise
+    # and overrun under normal conditions.
+    'allow_overruns_side',
+    ['parent', 'child', 'none', 'both'],
+    ids=lambda item: f'allow_overruns_side={item}'
+)
+@pytest.mark.parametrize(
+    # aka the side that will / should raise
+    # and overrun under normal conditions.
+    'slow_side',
+    ['parent', 'child'],
+    ids=lambda item: f'slow_side={item}'
+)
+@pytest.mark.parametrize(
+    'cancel_ctx',
+    [True, False],
+    ids=lambda item: f'cancel_ctx={item}'
+)
+def test_maybe_allow_overruns_stream(
+    cancel_ctx: bool,
+    slow_side: str,
+    allow_overruns_side: str,
+    loglevel: str,
+):
     '''
     Demonstrate small overruns of each task back and forth
-    on a stream not raising any errors by default.
+    on a stream not raising any errors by default by setting
+    the ``allow_overruns=True``.
+
+    The original idea here was to show that if you set the feeder mem
+    chan to a size smaller then the # of msgs sent you could could not
+    get a `StreamOverrun` crash plus maybe get all the msgs that were
+    sent. The problem with the "real backpressure" case is that due to
+    the current arch it can result in the msg loop being blocked and thus
+    blocking cancellation - which is like super bad. So instead this test
+    had to be adjusted to more or less just "not send overrun errors" so
+    as to handle the case where the sender just moreso cares about not getting
+    errored out when it send to fast..
 
     '''
     async def main():
@@ -675,38 +824,104 @@ def test_stream_backpressure():
             portal = await n.start_actor(
                 'callee_sends_forever',
                 enable_modules=[__name__],
+                loglevel=loglevel,
+
+                # debug_mode=True,
             )
-            seq = list(range(3))
+            seq = list(range(10))
             async with portal.open_context(
                 echo_back_sequence,
                 seq=seq,
-                msg_buffer_size=1,
+                wait_for_cancel=cancel_ctx,
+                be_slow=(slow_side == 'child'),
+                allow_overruns_side=allow_overruns_side,
             ) as (ctx, sent):
+
                 assert sent is None
 
-                async with ctx.open_stream(msg_buffer_size=1) as stream:
-                    count = 0
-                    while count < 3:
+                async with ctx.open_stream(
+                    msg_buffer_size=1 if slow_side == 'parent' else None,
+                    allow_overruns=(allow_overruns_side in {'parent', 'both'}),
+                ) as stream:
+
+                    total_batches: int = 2
+                    for _ in range(total_batches):
                         for msg in seq:
-                            print(f'caller sending {msg}')
+                            # print(f'root tx {msg}')
                             await stream.send(msg)
-                            await trio.sleep(0.1)
+                            if slow_side == 'parent':
+                                # NOTE: we make the parent slightly
+                                # slower, when it is slow, to make sure
+                                # that in the overruns everywhere case
+                                await trio.sleep(0.16)
 
                         batch = []
                         async for msg in stream:
+                            print(f'root rx {msg}')
                             batch.append(msg)
                             if batch == seq:
                                 break
 
-                        count += 1
+                if cancel_ctx:
+                    # cancel the remote task
+                    print('sending root side cancel')
+                    await ctx.cancel()
 
-            # here the context should return
-            assert await ctx.result() == 'yo'
+            res = await ctx.result()
+
+            if cancel_ctx:
+                assert isinstance(res, ContextCancelled)
+                assert tuple(res.canceller) == tractor.current_actor().uid
+
+            else:
+                print(f'RX ROOT SIDE RESULT {res}')
+                assert res == 'yo'
 
             # cancel the daemon
             await portal.cancel_actor()
 
-    trio.run(main)
+    if (
+        allow_overruns_side == 'both'
+        or slow_side == allow_overruns_side
+    ):
+        trio.run(main)
+
+    elif (
+        slow_side != allow_overruns_side
+    ):
+
+        with pytest.raises(tractor.RemoteActorError) as excinfo:
+            trio.run(main)
+
+        err = excinfo.value
+
+        if (
+            allow_overruns_side == 'none'
+        ):
+            # depends on timing is is racy which side will
+            # overrun first :sadkitty:
+
+            # NOTE: i tried to isolate to a deterministic case here
+            # based on timeing, but i was kinda wasted, and i don't
+            # think it's sane to catch them..
+            assert err.type in (
+                tractor.RemoteActorError,
+                StreamOverrun,
+            )
+
+        elif (
+            slow_side == 'child'
+        ):
+            assert err.type == StreamOverrun
+
+        elif slow_side == 'parent':
+            assert err.type == tractor.RemoteActorError
+            assert 'StreamOverrun' in err.msgdata['tb_str']
+
+    else:
+        # if this hits the logic blocks from above are not
+        # exhaustive..
+        pytest.fail('PARAMETRIZED CASE GEN PROBLEM YO')
 
 
 @tractor.context
@@ -737,18 +952,18 @@ async def attach_to_sleep_forever():
             finally:
                 # XXX: previously this would trigger local
                 # ``ContextCancelled`` to be received and raised in the
-                # local context overriding any local error due to
-                # logic inside ``_invoke()`` which checked for
-                # an error set on ``Context._error`` and raised it in
-                # under a cancellation scenario.
-
-                # The problem is you can have a remote cancellation
-                # that is part of a local error and we shouldn't raise
-                # ``ContextCancelled`` **iff** we weren't the side of
-                # the context to initiate it, i.e.
+                # local context overriding any local error due to logic
+                # inside ``_invoke()`` which checked for an error set on
+                # ``Context._error`` and raised it in a cancellation
+                # scenario.
+                # ------
+                # The problem is you can have a remote cancellation that
+                # is part of a local error and we shouldn't raise
+                # ``ContextCancelled`` **iff** we **were not** the side
+                # of the context to initiate it, i.e.
                 # ``Context._cancel_called`` should **NOT** have been
                 # set. The special logic to handle this case is now
-                # inside ``Context._may_raise_from_remote_msg()`` XD
+                # inside ``Context._maybe_raise_from_remote_msg()`` XD
                 await peer_ctx.cancel()
 
 
@@ -769,9 +984,10 @@ async def error_before_started(
 
 def test_do_not_swallow_error_before_started_by_remote_contextcancelled():
     '''
-    Verify that an error raised in a remote context which itself opens another
-    remote context, which it cancels, does not ovverride the original error that
-    caused the cancellation of the secondardy context.
+    Verify that an error raised in a remote context which itself opens
+    another remote context, which it cancels, does not ovverride the
+    original error that caused the cancellation of the secondardy
+    context.
 
     '''
     async def main():

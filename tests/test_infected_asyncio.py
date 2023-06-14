@@ -15,6 +15,7 @@ import tractor
 from tractor import (
     to_asyncio,
     RemoteActorError,
+    ContextCancelled,
 )
 from tractor.trionics import BroadcastReceiver
 
@@ -224,14 +225,23 @@ def test_context_spawns_aio_task_that_errors(
 
                     await trio.sleep_forever()
 
-    with pytest.raises(RemoteActorError) as excinfo:
-        trio.run(main)
+        return await ctx.result()
 
-    err = excinfo.value
-    assert isinstance(err, RemoteActorError)
     if parent_cancels:
-        assert err.type == trio.Cancelled
+        # bc the parent made the cancel request,
+        # the error is not raised locally but instead
+        # the context is exited silently
+        res = trio.run(main)
+        assert isinstance(res, ContextCancelled)
+        assert 'root' in res.canceller[0]
+
     else:
+        expect = RemoteActorError
+        with pytest.raises(expect) as excinfo:
+            trio.run(main)
+
+        err = excinfo.value
+        assert isinstance(err, expect)
         assert err.type == AssertionError
 
 

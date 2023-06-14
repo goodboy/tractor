@@ -18,18 +18,18 @@
 Our classy exception set.
 
 """
+import builtins
+import importlib
 from typing import (
     Any,
-    Optional,
     Type,
 )
-import importlib
-import builtins
 import traceback
 
 import exceptiongroup as eg
 import trio
 
+from ._state import current_actor
 
 _this_mod = importlib.import_module(__name__)
 
@@ -44,7 +44,7 @@ class RemoteActorError(Exception):
     def __init__(
         self,
         message: str,
-        suberror_type: Optional[Type[BaseException]] = None,
+        suberror_type: Type[BaseException] | None = None,
         **msgdata
 
     ) -> None:
@@ -53,19 +53,34 @@ class RemoteActorError(Exception):
         self.type = suberror_type
         self.msgdata = msgdata
 
+    @property
+    def src_actor_uid(self) -> tuple[str, str] | None:
+        return self.msgdata.get('src_actor_uid')
+
 
 class InternalActorError(RemoteActorError):
-    """Remote internal ``tractor`` error indicating
+    '''
+    Remote internal ``tractor`` error indicating
     failure of some primitive or machinery.
-    """
+
+    '''
+
+
+class ContextCancelled(RemoteActorError):
+    '''
+    Inter-actor task context was cancelled by either a call to
+    ``Portal.cancel_actor()`` or ``Context.cancel()``.
+
+    '''
+    @property
+    def canceller(self) -> tuple[str, str] | None:
+        value = self.msgdata.get('canceller')
+        if value:
+            return tuple(value)
 
 
 class TransportClosed(trio.ClosedResourceError):
     "Underlying channel transport was closed prior to use"
-
-
-class ContextCancelled(RemoteActorError):
-    "Inter-actor task context cancelled itself on the callee side."
 
 
 class NoResult(RuntimeError):
@@ -106,12 +121,16 @@ def pack_error(
     else:
         tb_str = traceback.format_exc()
 
-    return {
-        'error': {
-            'tb_str': tb_str,
-            'type_str': type(exc).__name__,
-        }
+    error_msg = {
+        'tb_str': tb_str,
+        'type_str': type(exc).__name__,
+        'src_actor_uid': current_actor().uid,
     }
+
+    if isinstance(exc, ContextCancelled):
+        error_msg.update(exc.msgdata)
+
+    return {'error': error_msg}
 
 
 def unpack_error(
@@ -136,7 +155,7 @@ def unpack_error(
 
     if type_name == 'ContextCancelled':
         err_type = ContextCancelled
-        suberror_type = trio.Cancelled
+        suberror_type = RemoteActorError
 
     else:  # try to lookup a suitable local error type
         for ns in [

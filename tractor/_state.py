@@ -23,11 +23,6 @@ from typing import (
     Any,
 )
 
-import trio
-
-from ._exceptions import NoRuntime
-
-
 _current_actor: Optional['Actor'] = None  # type: ignore # noqa
 _runtime_vars: dict[str, Any] = {
     '_debug_mode': False,
@@ -37,8 +32,11 @@ _runtime_vars: dict[str, Any] = {
 
 
 def current_actor(err_on_no_runtime: bool = True) -> 'Actor':  # type: ignore # noqa
-    """Get the process-local actor instance.
-    """
+    '''
+    Get the process-local actor instance.
+
+    '''
+    from ._exceptions import NoRuntime
     if _current_actor is None and err_on_no_runtime:
         raise NoRuntime("No local actor has been initialized yet")
 
@@ -46,16 +44,20 @@ def current_actor(err_on_no_runtime: bool = True) -> 'Actor':  # type: ignore # 
 
 
 def is_main_process() -> bool:
-    """Bool determining if this actor is running in the top-most process.
-    """
+    '''
+    Bool determining if this actor is running in the top-most process.
+
+    '''
     import multiprocessing as mp
     return mp.current_process().name == 'MainProcess'
 
 
 def debug_mode() -> bool:
-    """Bool determining if "debug mode" is on which enables
+    '''
+    Bool determining if "debug mode" is on which enables
     remote subactor pdb entry on crashes.
-    """
+
+    '''
     return bool(_runtime_vars['_debug_mode'])
 
 

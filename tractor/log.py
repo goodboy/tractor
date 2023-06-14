@@ -82,6 +82,10 @@ class StackLevelAdapter(logging.LoggerAdapter):
         msg: str,
 
     ) -> None:
+        '''
+        IPC level msg-ing.
+
+        '''
         return self.log(5, msg)
 
     def runtime(
@@ -94,12 +98,20 @@ class StackLevelAdapter(logging.LoggerAdapter):
         self,
         msg: str,
     ) -> None:
+        '''
+        Cancellation logging, mostly for runtime reporting.
+
+        '''
         return self.log(16, msg)
 
     def pdb(
         self,
         msg: str,
     ) -> None:
+        '''
+        Debugger logging.
+
+        '''
         return self.log(500, msg)
 
     def log(self, level, msg, *args, **kwargs):

@@ -86,7 +86,7 @@ async def open_sequence_streamer(
         ) as (ctx, first):
 
             assert first is None
-            async with ctx.open_stream(backpressure=True) as stream:
+            async with ctx.open_stream(allow_overruns=True) as stream:
                 yield stream
 
         await portal.cancel_actor()
@@ -413,8 +413,8 @@ def test_ensure_slow_consumers_lag_out(
                     seq = brx._state.subs[brx.key]
                     assert seq == len(brx._state.queue) - 1
 
-                # all backpressured entries in the underlying
-                # channel should have been copied into the caster
+                # all no_overruns entries in the underlying
+                # channel should have been copied into the bcaster
                 # queue trailing-window
                 async for i in rx:
                     print(f'bped: {i}')

@@ -237,7 +237,7 @@ async def maybe_open_context(
         yielded = _Cache.values[ctx_key]
 
     except KeyError:
-        log.info(f'Allocating new {acm_func} for {ctx_key}')
+        log.debug(f'Allocating new {acm_func} for {ctx_key}')
         mngr = acm_func(**kwargs)
         resources = _Cache.resources
         assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
@@ -265,7 +265,7 @@ async def maybe_open_context(
         if yielded is not None:
             # if no more consumers, teardown the client
             if _Cache.users <= 0:
-                log.info(f'De-allocating resource for {ctx_key}')
+                log.debug(f'De-allocating resource for {ctx_key}')
 
                 # XXX: if we're cancelled we the entry may have never
                 # been entered since the nursery task was killed.

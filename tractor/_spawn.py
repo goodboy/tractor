@@ -19,6 +19,7 @@ Machinery for actor process spawning using multiple backends.
 
 """
 from __future__ import annotations
+import multiprocessing as mp
 import sys
 import platform
 from typing import (
@@ -53,7 +54,6 @@ from ._exceptions import ActorFailure
 
 if TYPE_CHECKING:
     from ._supervise import ActorNursery
-    import multiprocessing as mp
     ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
 
 log = get_logger('tractor')
@@ -70,7 +70,6 @@ _spawn_method: SpawnMethodKey = 'trio'
 
 if platform.system() == 'Windows':
 
-    import multiprocessing as mp
     _ctx = mp.get_context("spawn")
 
     async def proc_waiter(proc: mp.Process) -> None:
@@ -457,7 +456,7 @@ async def trio_proc(
 
             # cancel result waiter that may have been spawned in
             # tandem if not done already
-            log.warning(
+            log.cancel(
                 "Cancelling existing result waiter task for "
                 f"{subactor.uid}")
             nursery.cancel_scope.cancel()
