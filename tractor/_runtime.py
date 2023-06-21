@@ -1722,4 +1722,6 @@ class Arbiter(Actor):
 
     ) -> None:
         uid = (str(uid[0]), str(uid[1]))
-        self._registry.pop(uid)
+        entry: tuple = self._registry.pop(uid, None)
+        if entry is None:
+            log.warning(f'Request to de-register {uid} failed?')

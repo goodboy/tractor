@@ -374,7 +374,7 @@ async def wait_for_parent_stdin_hijack(
 
     This function is used by any sub-actor to acquire mutex access to
     the ``pdb`` REPL and thus the root's TTY for interactive debugging
-    (see below inside ``_breakpoint()``). It can be used to ensure that
+    (see below inside ``_pause()``). It can be used to ensure that
     an intermediate nursery-owning actor does not clobber its children
     if they are in debug (see below inside
     ``maybe_wait_for_debugger()``).
@@ -440,17 +440,29 @@ def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
     return pdb, Lock.unshield_sigint
 
 
-async def _breakpoint(
+async def _pause(
 
-    debug_func,
+    debug_func: Callable | None = None,
+    release_lock_signal: trio.Event | None = None,
 
     # TODO:
     # shield: bool = False
+    task_status: TaskStatus[trio.Event] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
     '''
-    Breakpoint entry for engaging debugger instance sync-interaction,
-    from async code, executing in actor runtime (task).
+    A pause point (more commonly known as a "breakpoint") interrupt
+    instruction for engaging a blocking debugger instance to
+    conduct manual console-based-REPL-interaction from within
+    `tractor`'s async runtime, normally from some single-threaded
+    and currently executing actor-hosted-`trio`-task in some
+    (remote) process.
+
+    NOTE: we use the semantics "pause" since it better encompasses
+    the entirety of the necessary global-runtime-state-mutation any
+    actor-task must access and lock in order to get full isolated
+    control over the process tree's root TTY:
+    https://en.wikipedia.org/wiki/Breakpoint
 
     '''
     __tracebackhide__ = True
@@ -559,10 +571,21 @@ async def _breakpoint(
         Lock.repl = pdb
 
     try:
-        # block here one (at the appropriate frame *up*) where
-        # ``breakpoint()`` was awaited and begin handling stdio.
-        log.debug("Entering the synchronous world of pdb")
-        debug_func(actor, pdb)
+        # breakpoint()
+        if debug_func is None:
+            assert release_lock_signal, (
+                'Must pass `release_lock_signal: trio.Event` if no '
+                'trace func provided!'
+            )
+            print(f"{actor.uid} ENTERING WAIT")
+            task_status.started()
+            await release_lock_signal.wait()
+
+        else:
+            # block here one (at the appropriate frame *up*) where
+            # ``breakpoint()`` was awaited and begin handling stdio.
+            log.debug("Entering the synchronous world of pdb")
+            debug_func(actor, pdb)
 
     except bdb.BdbQuit:
         Lock.release()
@@ -708,8 +731,8 @@ def shield_sigint_handler(
         # elif debug_mode():
 
     else:  # XXX: shouldn't ever get here?
-        print("WTFWTFWTF")
-        raise KeyboardInterrupt
+        raise RuntimeError("WTFWTFWTF")
+        # raise KeyboardInterrupt("WTFWTFWTF")
 
     # NOTE: currently (at least on ``fancycompleter`` 0.9.2)
     # it looks to be that the last command that was run (eg. ll)
@@ -737,21 +760,18 @@ def shield_sigint_handler(
         # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
-        # XXX LEGACY: lol, see ``pdbpp`` issue:
-        # https://github.com/pdbpp/pdbpp/issues/496
-
 
 def _set_trace(
     actor: tractor.Actor | None = None,
     pdb: MultiActorPdb | None = None,
 ):
     __tracebackhide__ = True
-    actor = actor or tractor.current_actor()
+    actor: tractor.Actor = actor or tractor.current_actor()
 
     # start 2 levels up in user code
-    frame: Optional[FrameType] = sys._getframe()
+    frame: FrameType | None = sys._getframe()
     if frame:
-        frame = frame.f_back  # type: ignore
+        frame: FrameType = frame.f_back  # type: ignore
 
     if (
         frame
@@ -773,10 +793,66 @@ def _set_trace(
     pdb.set_trace(frame=frame)
 
 
-breakpoint = partial(
-    _breakpoint,
+# TODO: allow pausing from sync code, normally by remapping
+# python's builtin breakpoint() hook to this runtime aware version.
+def pause_from_sync() -> None:
+    import greenback
+
+    actor: tractor.Actor = tractor.current_actor()
+    task_can_release_tty_lock = trio.Event()
+
+    # spawn bg task which will lock out the TTY, we poll
+    # just below until the release event is reporting that task as
+    # waiting.. not the most ideal but works for now ;)
+    greenback.await_(
+        actor._service_n.start(partial(
+            _pause,
+            debug_func=None,
+            release_lock_signal=task_can_release_tty_lock,
+        ))
+    )
+    print("ENTER SYNC PAUSE")
+    pdb, undo_sigint = mk_mpdb()
+    try:
+        print("ENTER SYNC PAUSE")
+        # _set_trace(actor=actor)
+
+        # we entered the global ``breakpoint()`` built-in from sync
+        # code?
+        Lock.local_task_in_debug = 'sync'
+        frame: FrameType | None = sys._getframe()
+        print(f'FRAME: {str(frame)}')
+
+        frame: FrameType = frame.f_back  # type: ignore
+        print(f'FRAME: {str(frame)}')
+
+        frame: FrameType = frame.f_back  # type: ignore
+        print(f'FRAME: {str(frame)}')
+
+        pdb.set_trace(frame=frame)
+        # pdb.do_frame(
+        #     pdb.curindex
+
+    finally:
+        task_can_release_tty_lock.set()
+        undo_sigint()
+
+# using the "pause" semantics instead since
+# that better covers actually somewhat "pausing the runtime"
+# for this particular paralell task to do debugging B)
+pause = partial(
+    _pause,
     _set_trace,
 )
+pp = pause  # short-hand for "pause point"
+
+
+async def breakpoint(**kwargs):
+    log.warning(
+        '`tractor.breakpoint()` is deprecated!\n'
+        'Please use `tractor.pause()` instead!\n'
+    )
+    await pause(**kwargs)
 
 
 def _post_mortem(
@@ -801,7 +877,7 @@ def _post_mortem(
 
 
 post_mortem = partial(
-    _breakpoint,
+    _pause,
     _post_mortem,
 )
 

@@ -46,6 +46,9 @@ from ._exceptions import (
 )
 from ._debug import (
     breakpoint,
+    pause,
+    pp,
+    pause_from_sync,
     post_mortem,
 )
 from . import msg
@@ -59,12 +62,12 @@ from ._runtime import Actor
 
 __all__ = [
     'Actor',
+    'BaseExceptionGroup',
     'Channel',
     'Context',
     'ContextCancelled',
     'ModuleNotExposed',
     'MsgStream',
-    'BaseExceptionGroup',
     'Portal',
     'RemoteActorError',
     'breakpoint',
@@ -77,7 +80,10 @@ __all__ = [
     'open_actor_cluster',
     'open_nursery',
     'open_root_actor',
+    'pause',
     'post_mortem',
+    'pp',
+    'pause_from_sync'
     'query_actor',
     'run_daemon',
     'stream',
