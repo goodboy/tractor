@@ -287,9 +287,9 @@ class ShmArray:
         self,
         fields: Optional[list[str]] = None,
 
-        # type that all field values will be cast to in the returned
-        # view.
-        common_dtype: np.dtype = np.float64,  # type: ignore
+        # type that all field values will be cast to
+        # in the returned view.
+        common_dtype: np.dtype = float,
 
     ) -> np.ndarray:
 
@@ -344,7 +344,7 @@ class ShmArray:
         field_map: Optional[dict[str, str]] = None,
         prepend: bool = False,
         update_first: bool = True,
-        start: Optional[int] = None,
+        start: int | None = None,
 
     ) -> int:
         '''
@@ -386,7 +386,11 @@ class ShmArray:
             # tries to access ``.array`` (which due to the index
             # overlap will be empty). Pretty sure we've fixed it now
             # but leaving this here as a reminder.
-            if prepend and update_first and length:
+            if (
+                prepend
+                and update_first
+                and length
+            ):
                 assert index < self._first.value
 
             if (
@@ -460,10 +464,10 @@ class ShmArray:
 
 
 def open_shm_ndarray(
-    key: Optional[str] = None,
-    size: int = int(2 ** 10),
+    size: int,
+    key: str | None = None,
     dtype: np.dtype | None = None,
-    append_start_index: int = 0,
+    append_start_index: int | None = None,
     readonly: bool = False,
 
 ) -> ShmArray:
@@ -529,9 +533,12 @@ def open_shm_ndarray(
     # ``ShmArray._start.value: int = 0`` and the yet-to-be written
     # real-time section will start at ``ShmArray.index: int``.
 
-    # this sets the index to 3/4 of the length of the buffer
-    # leaving a "days worth of second samples" for the real-time
-    # section.
+    # this sets the index to nearly 2/3rds into the the length of
+    # the buffer leaving at least a "days worth of second samples"
+    # for the real-time section.
+    if append_start_index is None:
+        append_start_index = round(size * 0.616)
+
     last.value = first.value = append_start_index
 
     shmarr = ShmArray(
@@ -640,9 +647,7 @@ def attach_shm_ndarray(
 
 def maybe_open_shm_ndarray(
     key: str,  # unique identifier for segment
-
-    # from ``open_shm_array()``
-    size: int = int(2 ** 10),  # array length in index terms
+    size: int,
     dtype: np.dtype | None = None,
     append_start_index: int = 0,
     readonly: bool = True,
