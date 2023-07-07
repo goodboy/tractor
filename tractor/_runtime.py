@@ -760,6 +760,7 @@ class Actor:
                             # deliver response to local caller/waiter
                             await self._push_result(chan, cid, msg)
 
+                    log.runtime('Waiting on actor nursery to exit..')
                     await local_nursery.exited.wait()
 
                 if disconnected:
@@ -814,7 +815,7 @@ class Actor:
                         db_cs
                         and not db_cs.cancel_called
                     ):
-                        log.warning(
+                        log.critical(
                             f'STALE DEBUG LOCK DETECTED FOR {uid}'
                         )
                         # TODO: figure out why this breaks tests..
