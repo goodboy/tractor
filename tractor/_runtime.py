@@ -632,7 +632,7 @@ class Actor:
                         and not db_cs.cancel_called
                         and uid == pdb_user_uid
                     ):
-                        log.warning(
+                        log.critical(
                             f'STALE DEBUG LOCK DETECTED FOR {uid}'
                         )
                         # TODO: figure out why this breaks tests..
