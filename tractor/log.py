@@ -193,15 +193,39 @@ def get_logger(
     '''
     log = rlog = logging.getLogger(_root_name)
 
-    if name and name != _proj_name:
+    if (
+        name
+        and name != _proj_name
+    ):
 
-        # handling for modules that use ``get_logger(__name__)`` to
-        # avoid duplicate project-package token in msg output
-        rname, _, tail = name.partition('.')
-        if rname == _root_name:
-            name = tail
+        # NOTE: for handling for modules that use ``get_logger(__name__)``
+        # we make the following stylistic choice:
+        # - always avoid duplicate project-package token
+        #   in msg output: i.e. tractor.tractor _ipc.py in header
+        #   looks ridiculous XD
+        # - never show the leaf module name in the {name} part
+        #   since in python the {filename} is always this same
+        #   module-file.
 
-        log = rlog.getChild(name)
+        sub_name: None | str = None
+        rname, _, sub_name = name.partition('.')
+        pkgpath, _, modfilename = sub_name.rpartition('.')
+
+        # NOTE: for tractor itself never include the last level
+        # module key in the name such that something like: eg.
+        # 'tractor.trionics._broadcast` only includes the first
+        # 2 tokens in the (coloured) name part.
+        if rname == 'tractor':
+            sub_name = pkgpath
+
+        if _root_name in sub_name:
+            duplicate, _, sub_name = sub_name.partition('.')
+
+        if not sub_name:
+            log = rlog
+        else:
+            log = rlog.getChild(sub_name)
+
         log.level = rlog.level
 
     # add our actor-task aware adapter which will dynamically look up
@@ -254,3 +278,7 @@ def get_console_log(
 
 def get_loglevel() -> str:
     return _default_loglevel
+
+
+# global module logger for tractor itself
+log = get_logger('tractor')
