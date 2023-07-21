@@ -28,7 +28,6 @@ from typing import (
     Callable,
     AsyncIterator,
     Awaitable,
-    Optional,
 )
 
 import trio
@@ -65,9 +64,9 @@ class LinkedTaskChannel(trio.abc.Channel):
     _trio_exited: bool = False
 
     # set after ``asyncio.create_task()``
-    _aio_task: Optional[asyncio.Task] = None
-    _aio_err: Optional[BaseException] = None
-    _broadcaster: Optional[BroadcastReceiver] = None
+    _aio_task: asyncio.Task | None = None
+    _aio_err: BaseException | None = None
+    _broadcaster: BroadcastReceiver | None = None
 
     async def aclose(self) -> None:
         await self._from_aio.aclose()
@@ -188,7 +187,7 @@ def _run_asyncio_task(
 
     cancel_scope = trio.CancelScope()
     aio_task_complete = trio.Event()
-    aio_err: Optional[BaseException] = None
+    aio_err: BaseException | None = None
 
     chan = LinkedTaskChannel(
         aio_q,  # asyncio.Queue
@@ -270,7 +269,7 @@ def _run_asyncio_task(
         '''
         nonlocal chan
         aio_err = chan._aio_err
-        task_err: Optional[BaseException] = None
+        task_err: BaseException | None = None
 
         # only to avoid ``asyncio`` complaining about uncaptured
         # task exceptions
@@ -350,11 +349,11 @@ async def translate_aio_errors(
     '''
     trio_task = trio.lowlevel.current_task()
 
-    aio_err: Optional[BaseException] = None
+    aio_err: BaseException | None = None
 
     # TODO: make thisi a channel method?
     def maybe_raise_aio_err(
-        err: Optional[Exception] = None
+        err: Exception | None = None
     ) -> None:
         aio_err = chan._aio_err
         if (
