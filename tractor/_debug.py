@@ -30,7 +30,6 @@ from functools import (
 from contextlib import asynccontextmanager as acm
 from typing import (
     Any,
-    Optional,
     Callable,
     AsyncIterator,
     AsyncGenerator,
@@ -40,7 +39,10 @@ from types import FrameType
 import pdbp
 import tractor
 import trio
-from trio_typing import TaskStatus
+from trio_typing import (
+    TaskStatus,
+    # Task,
+)
 
 from .log import get_logger
 from ._discovery import get_root
@@ -69,10 +71,10 @@ class Lock:
     '''
     repl: MultiActorPdb | None = None
     # placeholder for function to set a ``trio.Event`` on debugger exit
-    # pdb_release_hook: Optional[Callable] = None
+    # pdb_release_hook: Callable | None = None
 
     _trio_handler: Callable[
-        [int, Optional[FrameType]], Any
+        [int, FrameType | None], Any
     ] | int | None = None
 
     # actor-wide variable pointing to current task name using debugger
@@ -83,23 +85,23 @@ class Lock:
     # and must be cancelled if this actor is cancelled via IPC
     # request-message otherwise deadlocks with the parent actor may
     # ensure
-    _debugger_request_cs: Optional[trio.CancelScope] = None
+    _debugger_request_cs: trio.CancelScope | None = None
 
     # NOTE: set only in the root actor for the **local** root spawned task
     # which has acquired the lock (i.e. this is on the callee side of
     # the `lock_tty_for_child()` context entry).
-    _root_local_task_cs_in_debug: Optional[trio.CancelScope] = None
+    _root_local_task_cs_in_debug: trio.CancelScope | None = None
 
     # actor tree-wide actor uid that supposedly has the tty lock
-    global_actor_in_debug: Optional[tuple[str, str]] = None
+    global_actor_in_debug: tuple[str, str] = None
 
-    local_pdb_complete: Optional[trio.Event] = None
-    no_remote_has_tty: Optional[trio.Event] = None
+    local_pdb_complete: trio.Event | None = None
+    no_remote_has_tty: trio.Event | None = None
 
     # lock in root actor preventing multi-access to local tty
     _debug_lock: trio.StrictFIFOLock = trio.StrictFIFOLock()
 
-    _orig_sigint_handler: Optional[Callable] = None
+    _orig_sigint_handler: Callable | None = None
     _blocked: set[tuple[str, str]] = set()
 
     @classmethod
@@ -110,6 +112,7 @@ class Lock:
         )
 
     @classmethod
+    @pdbp.hideframe  # XXX NOTE XXX see below in `.pause_from_sync()`
     def unshield_sigint(cls):
         # always restore ``trio``'s sigint handler. see notes below in
         # the pdb factory about the nightmare that is that code swapping
@@ -129,10 +132,6 @@ class Lock:
             if owner:
                 raise
 
-        # actor-local state, irrelevant for non-root.
-        cls.global_actor_in_debug = None
-        cls.local_task_in_debug = None
-
         try:
             # sometimes the ``trio`` might already be terminated in
             # which case this call will raise.
@@ -143,6 +142,11 @@ class Lock:
             cls.unshield_sigint()
             cls.repl = None
 
+            # actor-local state, irrelevant for non-root.
+            cls.global_actor_in_debug = None
+            cls.local_task_in_debug = None
+
+
 
 class TractorConfig(pdbp.DefaultConfig):
     '''
@@ -151,7 +155,7 @@ class TractorConfig(pdbp.DefaultConfig):
     '''
     use_pygments: bool = True
     sticky_by_default: bool = False
-    enable_hidden_frames: bool = False
+    enable_hidden_frames: bool = True
 
     # much thanks @mdmintz for the hot tip!
     # fixes line spacing issue when resizing terminal B)
@@ -228,26 +232,23 @@ async def _acquire_debug_lock_from_root_task(
     to the ``pdb`` repl.
 
     '''
-    task_name = trio.lowlevel.current_task().name
+    task_name: str = trio.lowlevel.current_task().name
+    we_acquired: bool = False
 
     log.runtime(
         f"Attempting to acquire TTY lock, remote task: {task_name}:{uid}"
     )
-
-    we_acquired = False
-
     try:
         log.runtime(
             f"entering lock checkpoint, remote task: {task_name}:{uid}"
         )
-        we_acquired = True
-
         # NOTE: if the surrounding cancel scope from the
         # `lock_tty_for_child()` caller is cancelled, this line should
         # unblock and NOT leave us in some kind of
         # a "child-locked-TTY-but-child-is-uncontactable-over-IPC"
         # condition.
         await Lock._debug_lock.acquire()
+        we_acquired = True
 
         if Lock.no_remote_has_tty is None:
             # mark the tty lock as being in use so that the runtime
@@ -374,7 +375,7 @@ async def wait_for_parent_stdin_hijack(
 
     This function is used by any sub-actor to acquire mutex access to
     the ``pdb`` REPL and thus the root's TTY for interactive debugging
-    (see below inside ``_breakpoint()``). It can be used to ensure that
+    (see below inside ``_pause()``). It can be used to ensure that
     an intermediate nursery-owning actor does not clobber its children
     if they are in debug (see below inside
     ``maybe_wait_for_debugger()``).
@@ -440,17 +441,29 @@ def mk_mpdb() -> tuple[MultiActorPdb, Callable]:
     return pdb, Lock.unshield_sigint
 
 
-async def _breakpoint(
+async def _pause(
 
-    debug_func,
+    debug_func: Callable | None = None,
+    release_lock_signal: trio.Event | None = None,
 
     # TODO:
     # shield: bool = False
+    task_status: TaskStatus[trio.Event] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
     '''
-    Breakpoint entry for engaging debugger instance sync-interaction,
-    from async code, executing in actor runtime (task).
+    A pause point (more commonly known as a "breakpoint") interrupt
+    instruction for engaging a blocking debugger instance to
+    conduct manual console-based-REPL-interaction from within
+    `tractor`'s async runtime, normally from some single-threaded
+    and currently executing actor-hosted-`trio`-task in some
+    (remote) process.
+
+    NOTE: we use the semantics "pause" since it better encompasses
+    the entirety of the necessary global-runtime-state-mutation any
+    actor-task must access and lock in order to get full isolated
+    control over the process tree's root TTY:
+    https://en.wikipedia.org/wiki/Breakpoint
 
     '''
     __tracebackhide__ = True
@@ -559,10 +572,23 @@ async def _breakpoint(
         Lock.repl = pdb
 
     try:
-        # block here one (at the appropriate frame *up*) where
-        # ``breakpoint()`` was awaited and begin handling stdio.
-        log.debug("Entering the synchronous world of pdb")
-        debug_func(actor, pdb)
+        # breakpoint()
+        if debug_func is None:
+            # assert release_lock_signal, (
+            #     'Must pass `release_lock_signal: trio.Event` if no '
+            #     'trace func provided!'
+            # )
+            print(f"{actor.uid} ENTERING WAIT")
+            task_status.started()
+
+            # with trio.CancelScope(shield=True):
+            #     await release_lock_signal.wait()
+
+        else:
+            # block here one (at the appropriate frame *up*) where
+            # ``breakpoint()`` was awaited and begin handling stdio.
+            log.debug("Entering the synchronous world of pdb")
+            debug_func(actor, pdb)
 
     except bdb.BdbQuit:
         Lock.release()
@@ -583,7 +609,7 @@ async def _breakpoint(
 def shield_sigint_handler(
     signum: int,
     frame: 'frame',  # type: ignore # noqa
-    # pdb_obj: Optional[MultiActorPdb] = None,
+    # pdb_obj: MultiActorPdb | None = None,
     *args,
 
 ) -> None:
@@ -597,7 +623,7 @@ def shield_sigint_handler(
     '''
     __tracebackhide__ = True
 
-    uid_in_debug = Lock.global_actor_in_debug
+    uid_in_debug: tuple[str, str] | None = Lock.global_actor_in_debug
 
     actor = tractor.current_actor()
     # print(f'{actor.uid} in HANDLER with ')
@@ -615,14 +641,14 @@ def shield_sigint_handler(
         else:
             raise KeyboardInterrupt
 
-    any_connected = False
+    any_connected: bool = False
 
     if uid_in_debug is not None:
         # try to see if the supposed (sub)actor in debug still
         # has an active connection to *this* actor, and if not
         # it's likely they aren't using the TTY lock / debugger
         # and we should propagate SIGINT normally.
-        chans = actor._peers.get(tuple(uid_in_debug))
+        chans: list[tractor.Channel] = actor._peers.get(tuple(uid_in_debug))
         if chans:
             any_connected = any(chan.connected() for chan in chans)
             if not any_connected:
@@ -635,7 +661,7 @@ def shield_sigint_handler(
                 return do_cancel()
 
     # only set in the actor actually running the REPL
-    pdb_obj = Lock.repl
+    pdb_obj: MultiActorPdb | None = Lock.repl
 
     # root actor branch that reports whether or not a child
     # has locked debugger.
@@ -693,7 +719,7 @@ def shield_sigint_handler(
             )
             return do_cancel()
 
-        task = Lock.local_task_in_debug
+        task: str | None = Lock.local_task_in_debug
         if (
             task
             and pdb_obj
@@ -708,8 +734,8 @@ def shield_sigint_handler(
         # elif debug_mode():
 
     else:  # XXX: shouldn't ever get here?
-        print("WTFWTFWTF")
-        raise KeyboardInterrupt
+        raise RuntimeError("WTFWTFWTF")
+        # raise KeyboardInterrupt("WTFWTFWTF")
 
     # NOTE: currently (at least on ``fancycompleter`` 0.9.2)
     # it looks to be that the last command that was run (eg. ll)
@@ -737,21 +763,18 @@ def shield_sigint_handler(
         # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
-        # XXX LEGACY: lol, see ``pdbpp`` issue:
-        # https://github.com/pdbpp/pdbpp/issues/496
-
 
 def _set_trace(
     actor: tractor.Actor | None = None,
     pdb: MultiActorPdb | None = None,
 ):
     __tracebackhide__ = True
-    actor = actor or tractor.current_actor()
+    actor: tractor.Actor = actor or tractor.current_actor()
 
     # start 2 levels up in user code
-    frame: Optional[FrameType] = sys._getframe()
+    frame: FrameType | None = sys._getframe()
     if frame:
-        frame = frame.f_back  # type: ignore
+        frame: FrameType = frame.f_back  # type: ignore
 
     if (
         frame
@@ -771,12 +794,76 @@ def _set_trace(
         Lock.local_task_in_debug = 'sync'
 
     pdb.set_trace(frame=frame)
+    # undo_
 
 
-breakpoint = partial(
-    _breakpoint,
+# TODO: allow pausing from sync code, normally by remapping
+# python's builtin breakpoint() hook to this runtime aware version.
+def pause_from_sync() -> None:
+    print("ENTER SYNC PAUSE")
+    import greenback
+    __tracebackhide__ = True
+
+    actor: tractor.Actor = tractor.current_actor()
+    # task_can_release_tty_lock = trio.Event()
+
+    # spawn bg task which will lock out the TTY, we poll
+    # just below until the release event is reporting that task as
+    # waiting.. not the most ideal but works for now ;)
+    greenback.await_(
+        actor._service_n.start(partial(
+            _pause,
+            debug_func=None,
+            # release_lock_signal=task_can_release_tty_lock,
+        ))
+    )
+
+    db, undo_sigint = mk_mpdb()
+    Lock.local_task_in_debug = 'sync'
+    # db.config.enable_hidden_frames = True
+
+    # we entered the global ``breakpoint()`` built-in from sync
+    # code?
+    frame: FrameType | None = sys._getframe()
+    # print(f'FRAME: {str(frame)}')
+    # assert not db._is_hidden(frame)
+
+    frame: FrameType = frame.f_back  # type: ignore
+    # print(f'FRAME: {str(frame)}')
+    # if not db._is_hidden(frame):
+    #     pdbp.set_trace()
+    # db._hidden_frames.append(
+    #     (frame, frame.f_lineno)
+    # )
+    db.set_trace(frame=frame)
+    # NOTE XXX: see the `@pdbp.hideframe` decoration
+    # on `Lock.unshield_sigint()`.. I have NO CLUE why
+    # the next instruction's def frame is being shown
+    # in the tb but it seems to be something wonky with
+    # the way `pdb` core works?
+    # undo_sigint()
+
+    # Lock.global_actor_in_debug = actor.uid
+    # Lock.release()
+    # task_can_release_tty_lock.set()
+
+
+# using the "pause" semantics instead since
+# that better covers actually somewhat "pausing the runtime"
+# for this particular paralell task to do debugging B)
+pause = partial(
+    _pause,
     _set_trace,
 )
+pp = pause  # short-hand for "pause point"
+
+
+async def breakpoint(**kwargs):
+    log.warning(
+        '`tractor.breakpoint()` is deprecated!\n'
+        'Please use `tractor.pause()` instead!\n'
+    )
+    await pause(**kwargs)
 
 
 def _post_mortem(
@@ -801,7 +888,7 @@ def _post_mortem(
 
 
 post_mortem = partial(
-    _breakpoint,
+    _pause,
     _post_mortem,
 )
 
@@ -883,8 +970,7 @@ async def maybe_wait_for_debugger(
         # will make the pdb repl unusable.
         # Instead try to wait for pdb to be released before
         # tearing down.
-
-        sub_in_debug = None
+        sub_in_debug: tuple[str, str] | None = None
 
         for _ in range(poll_steps):
 
@@ -904,13 +990,15 @@ async def maybe_wait_for_debugger(
 
                 debug_complete = Lock.no_remote_has_tty
                 if (
-                    (debug_complete and
-                     not debug_complete.is_set())
+                    debug_complete
+                    and sub_in_debug is not None
+                    and not debug_complete.is_set()
                 ):
-                    log.debug(
+                    log.pdb(
                         'Root has errored but pdb is in use by '
                         f'child {sub_in_debug}\n'
-                        'Waiting on tty lock to release..')
+                        'Waiting on tty lock to release..'
+                    )
 
                     await debug_complete.wait()
 

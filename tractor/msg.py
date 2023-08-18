@@ -43,38 +43,62 @@ Built-in messaging patterns, types, APIs and helpers.
 # - https://github.com/msgpack/msgpack-python#packingunpacking-of-custom-data-type
 
 from __future__ import annotations
+from inspect import isfunction
 from pkgutil import resolve_name
 
 
 class NamespacePath(str):
     '''
-    A serializeable description of a (function) Python object location
-    described by the target's module path and namespace key meant as
-    a message-native "packet" to allows actors to point-and-load objects
-    by absolute reference.
+    A serializeable description of a (function) Python object
+    location described by the target's module path and namespace
+    key meant as a message-native "packet" to allows actors to
+    point-and-load objects by an absolute ``str`` (and thus
+    serializable) reference.
 
     '''
-    _ref: object = None
+    _ref: object | type | None = None
 
-    def load_ref(self) -> object:
+    def load_ref(self) -> object | type:
         if self._ref is None:
             self._ref = resolve_name(self)
         return self._ref
 
-    def to_tuple(
-        self,
+    @staticmethod
+    def _mk_fqnp(ref: type | object) -> tuple[str, str]:
+        '''
+        Generate a minial ``str`` pair which describes a python
+        object's namespace path and object/type name.
 
-    ) -> tuple[str, str]:
-        ref = self.load_ref()
-        return ref.__module__, getattr(ref, '__name__', '')
+        In more precise terms something like:
+          - 'py.namespace.path:object_name',
+          - eg.'tractor.msg:NamespacePath' will be the ``str`` form
+            of THIS type XD
+
+        '''
+        if (
+            isinstance(ref, object)
+            and not isfunction(ref)
+        ):
+            name: str = type(ref).__name__
+        else:
+            name: str = getattr(ref, '__name__')
+
+        # fully qualified namespace path, tuple.
+        fqnp: tuple[str, str] = (
+            ref.__module__,
+            name,
+        )
+        return fqnp
 
     @classmethod
     def from_ref(
         cls,
-        ref,
+        ref: type | object,
 
     ) -> NamespacePath:
-        return cls(':'.join(
-            (ref.__module__,
-             getattr(ref, '__name__', ''))
-        ))
+
+        fqnp: tuple[str, str] = cls._mk_fqnp(ref)
+        return cls(':'.join(fqnp))
+
+    def to_tuple(self) -> tuple[str, str]:
+        return self._mk_fqnp(self.load_ref())

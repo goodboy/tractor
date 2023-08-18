@@ -3,8 +3,8 @@
 |gh_actions|
 |docs|
 
-``tractor`` is a `structured concurrent`_, multi-processing_ runtime
-built on trio_.
+``tractor`` is a `structured concurrent`_, (optionally
+distributed_) multi-processing_ runtime built on trio_.
 
 Fundamentally, ``tractor`` gives you parallelism via
 ``trio``-"*actors*": independent Python processes (aka
@@ -17,11 +17,20 @@ protocol" constructed on top of multiple Pythons each running a ``trio``
 scheduled runtime - a call to ``trio.run()``.
 
 We believe the system adheres to the `3 axioms`_ of an "`actor model`_"
-but likely *does not* look like what *you* probably think an "actor
-model" looks like, and that's *intentional*.
+but likely **does not** look like what **you** probably *think* an "actor
+model" looks like, and that's **intentional**.
 
-The first step to grok ``tractor`` is to get the basics of ``trio`` down.
-A great place to start is the `trio docs`_ and this `blog post`_.
+
+Where do i start!?
+------------------
+The first step to grok ``tractor`` is to get an intermediate
+knowledge of ``trio`` and **structured concurrency** B)
+
+Some great places to start are,
+- the seminal `blog post`_
+- obviously the `trio docs`_
+- wikipedia's nascent SC_ page
+- the fancy diagrams @ libdill-docs_
 
 
 Features
@@ -593,6 +602,7 @@ matrix seems too hip, we're also mostly all in the the `trio gitter
 channel`_!
 
 .. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
+.. _distributed: https://en.wikipedia.org/wiki/Distributed_computing
 .. _multi-processing: https://en.wikipedia.org/wiki/Multiprocessing
 .. _trio: https://github.com/python-trio/trio
 .. _nurseries: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/#nurseries-a-structured-replacement-for-go-statements
@@ -611,8 +621,9 @@ channel`_!
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
 .. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
+.. _SC: https://en.wikipedia.org/wiki/Structured_concurrency
+.. _libdill-docs: https://sustrik.github.io/libdill/structured-concurrency.html
 .. _structured chadcurrency: https://en.wikipedia.org/wiki/Structured_concurrency
-.. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
 .. _async generators: https://www.python.org/dev/peps/pep-0525/
 .. _trio-parallel: https://github.com/richardsheridan/trio-parallel

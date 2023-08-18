@@ -21,7 +21,6 @@ tractor: structured concurrent ``trio``-"actors".
 from exceptiongroup import BaseExceptionGroup
 
 from ._clustering import open_actor_cluster
-from ._ipc import Channel
 from ._context import (
     Context,
     context,
@@ -48,6 +47,8 @@ from ._exceptions import (
 )
 from ._debug import (
     breakpoint,
+    pause,
+    pause_from_sync,
     post_mortem,
 )
 from . import msg
@@ -55,31 +56,35 @@ from ._root import (
     run_daemon,
     open_root_actor,
 )
+from ._ipc import Channel
 from ._portal import Portal
 from ._runtime import Actor
 
 
 __all__ = [
     'Actor',
+    'BaseExceptionGroup',
     'Channel',
     'Context',
     'ContextCancelled',
     'ModuleNotExposed',
     'MsgStream',
-    'BaseExceptionGroup',
     'Portal',
     'RemoteActorError',
     'breakpoint',
     'context',
     'current_actor',
     'find_actor',
+    'query_actor',
     'get_arbiter',
     'is_root_process',
     'msg',
     'open_actor_cluster',
     'open_nursery',
     'open_root_actor',
+    'pause',
     'post_mortem',
+    'pause_from_sync',
     'query_actor',
     'run_daemon',
     'stream',

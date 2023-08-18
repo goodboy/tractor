@@ -89,7 +89,7 @@ async def open_root_actor(
     # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
     builtin_bp_handler = sys.breakpointhook
     orig_bp_path: str | None = os.environ.get('PYTHONBREAKPOINT', None)
-    os.environ['PYTHONBREAKPOINT'] = 'tractor._debug._set_trace'
+    os.environ['PYTHONBREAKPOINT'] = 'tractor._debug.pause_from_sync'
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
@@ -235,9 +235,10 @@ async def open_root_actor(
                 BaseExceptionGroup,
             ) as err:
 
-                entered = await _debug._maybe_enter_pm(err)
-
-                if not entered and not is_multi_cancelled(err):
+                if (
+                    not (await _debug._maybe_enter_pm(err))
+                    and not is_multi_cancelled(err)
+                ):
                     logger.exception("Root actor crashed:")
 
                 # always re-raise

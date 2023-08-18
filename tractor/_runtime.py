@@ -95,6 +95,10 @@ async def _invoke(
     treat_as_gen: bool = False
     failed_resp: bool = False
 
+    if _state.debug_mode():
+        import greenback
+        await greenback.ensure_portal()
+
     # possibly a traceback (not sure what typing is for this..)
     tb = None
 
@@ -448,17 +452,18 @@ class Actor:
     (swappable) network protocols.
 
 
-    Each "actor" is ``trio.run()`` scheduled "runtime" composed of many
-    concurrent tasks in a single thread. The "runtime" tasks conduct
-    a slew of low(er) level functions to make it possible for message
-    passing between actors as well as the ability to create new actors
-    (aka new "runtimes" in new processes which are supervised via
-    a nursery construct). Each task which sends messages to a task in
-    a "peer" (not necessarily a parent-child, depth hierarchy)) is able
-    to do so via an "address", which maps IPC connections across memory
-    boundaries, and task request id which allows for per-actor
-    tasks to send and receive messages to specific peer-actor tasks with
-    which there is an ongoing RPC/IPC dialog.
+    Each "actor" is ``trio.run()`` scheduled "runtime" composed of
+    many concurrent tasks in a single thread. The "runtime" tasks
+    conduct a slew of low(er) level functions to make it possible
+    for message passing between actors as well as the ability to
+    create new actors (aka new "runtimes" in new processes which
+    are supervised via a nursery construct). Each task which sends
+    messages to a task in a "peer" (not necessarily a parent-child,
+    depth hierarchy) is able to do so via an "address", which maps
+    IPC connections across memory boundaries, and a task request id
+    which allows for per-actor tasks to send and receive messages
+    to specific peer-actor tasks with which there is an ongoing
+    RPC/IPC dialog.
 
     '''
     # ugh, we need to get rid of this and replace with a "registry" sys
@@ -756,6 +761,7 @@ class Actor:
                             # deliver response to local caller/waiter
                             await self._push_result(chan, cid, msg)
 
+                    log.runtime('Waiting on actor nursery to exit..')
                     await local_nursery.exited.wait()
 
                 if disconnected:
@@ -810,7 +816,7 @@ class Actor:
                         db_cs
                         and not db_cs.cancel_called
                     ):
-                        log.warning(
+                        log.critical(
                             f'STALE DEBUG LOCK DETECTED FOR {uid}'
                         )
                         # TODO: figure out why this breaks tests..
@@ -1862,4 +1868,6 @@ class Arbiter(Actor):
 
     ) -> None:
         uid = (str(uid[0]), str(uid[1]))
-        self._registry.pop(uid)
+        entry: tuple = self._registry.pop(uid, None)
+        if entry is None:
+            log.warning(f'Request to de-register {uid} failed?')
