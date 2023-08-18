@@ -448,17 +448,18 @@ class Actor:
     (swappable) network protocols.
 
 
-    Each "actor" is ``trio.run()`` scheduled "runtime" composed of many
-    concurrent tasks in a single thread. The "runtime" tasks conduct
-    a slew of low(er) level functions to make it possible for message
-    passing between actors as well as the ability to create new actors
-    (aka new "runtimes" in new processes which are supervised via
-    a nursery construct). Each task which sends messages to a task in
-    a "peer" (not necessarily a parent-child, depth hierarchy)) is able
-    to do so via an "address", which maps IPC connections across memory
-    boundaries, and task request id which allows for per-actor
-    tasks to send and receive messages to specific peer-actor tasks with
-    which there is an ongoing RPC/IPC dialog.
+    Each "actor" is ``trio.run()`` scheduled "runtime" composed of
+    many concurrent tasks in a single thread. The "runtime" tasks
+    conduct a slew of low(er) level functions to make it possible
+    for message passing between actors as well as the ability to
+    create new actors (aka new "runtimes" in new processes which
+    are supervised via a nursery construct). Each task which sends
+    messages to a task in a "peer" (not necessarily a parent-child,
+    depth hierarchy) is able to do so via an "address", which maps
+    IPC connections across memory boundaries, and a task request id
+    which allows for per-actor tasks to send and receive messages
+    to specific peer-actor tasks with which there is an ongoing
+    RPC/IPC dialog.
 
     '''
     # ugh, we need to get rid of this and replace with a "registry" sys
