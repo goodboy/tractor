@@ -19,7 +19,6 @@ tractor: structured concurrent ``trio``-"actors".
 
 """
 from ._clustering import open_actor_cluster
-from ._ipc import Channel
 from ._context import (
     Context,  # the type
     context,  # a func-decorator
@@ -47,7 +46,6 @@ from ._exceptions import (
 from ._debug import (
     breakpoint,
     pause,
-    pp,
     pause_from_sync,
     post_mortem,
 )
@@ -56,6 +54,7 @@ from ._root import (
     run_daemon,
     open_root_actor,
 )
+from ._ipc import Channel
 from ._portal import Portal
 from ._runtime import Actor
 
@@ -74,6 +73,7 @@ __all__ = [
     'context',
     'current_actor',
     'find_actor',
+    'query_actor',
     'get_arbiter',
     'is_root_process',
     'msg',
@@ -82,8 +82,7 @@ __all__ = [
     'open_root_actor',
     'pause',
     'post_mortem',
-    'pp',
-    'pause_from_sync'
+    'pause_from_sync',
     'query_actor',
     'run_daemon',
     'stream',
