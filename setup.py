@@ -41,6 +41,9 @@ setup(
     ],
     install_requires=[
 
+        # discovery subsys
+        'bidict',
+
         # trio related
         # proper range spec:
         # https://packaging.python.org/en/latest/discussions/install-requires-vs-requirements/#id5
