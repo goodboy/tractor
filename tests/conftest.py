@@ -219,7 +219,8 @@ def daemon(
     arb_addr: tuple[str, int],
 ):
     '''
-    Run a daemon actor as a "remote arbiter".
+    Run a daemon actor as a "remote registrar" and/or plain ol
+    separate actor (service) tree.
 
     '''
     if loglevel in ('trace', 'debug'):
