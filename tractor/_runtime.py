@@ -1998,9 +1998,18 @@ class Arbiter(Actor):
         self,
         sockaddr: tuple[str, int|str],
     ) -> tuple[str, str]:
-        uid: tuple = self._registry.inverse.pop(sockaddr)
+        uid: tuple | None = self._registry.inverse.pop(
+            sockaddr,
+            None,
+        )
+        if uid:
+            report: str = 'Deleting registry-entry for,\n'
+        else:
+            report: str = 'No registry entry for,\n'
+
         log.warning(
-            f'Deleting registry-entry for,\n'
+            report
+            +
             f'{sockaddr!r}@{uid!r}'
         )
         return uid
