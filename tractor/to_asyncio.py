@@ -216,7 +216,7 @@ def _run_asyncio_task(
         try:
             result = await coro
         except BaseException as aio_err:
-            log.exception('asyncio task errored')
+            # log.exception('asyncio task errored:')
             chan._aio_err = aio_err
             raise
 
@@ -300,7 +300,7 @@ def _run_asyncio_task(
             elif task_err is None:
                 assert aio_err
                 aio_err.with_traceback(aio_err.__traceback__)
-                log.error('infected task errorred')
+                # log.error('infected task errorred')
 
             # XXX: alway cancel the scope on error
             # in case the trio task is blocking
@@ -356,7 +356,7 @@ async def translate_aio_errors(
         # relay cancel through to called ``asyncio`` task
         assert chan._aio_task
         chan._aio_task.cancel(
-            msg=f'the `trio` caller task was cancelled: {trio_task.name}'
+            msg=f'`trio`-side caller task cancelled: {trio_task.name}'
         )
         raise
 
@@ -366,7 +366,7 @@ async def translate_aio_errors(
         trio.ClosedResourceError,
         # trio.BrokenResourceError,
     ):
-        aio_err = chan._aio_err
+        aio_err: BaseException = chan._aio_err
         if (
             task.cancelled() and
             type(aio_err) is CancelledError
