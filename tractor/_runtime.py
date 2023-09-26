@@ -40,6 +40,7 @@ from contextlib import ExitStack
 import warnings
 
 from async_generator import aclosing
+from bidict import bidict
 from exceptiongroup import BaseExceptionGroup
 import trio  # type: ignore
 from trio_typing import TaskStatus
@@ -1774,10 +1775,10 @@ class Arbiter(Actor):
 
     def __init__(self, *args, **kwargs) -> None:
 
-        self._registry: dict[
+        self._registry: bidict[
             tuple[str, str],
             tuple[str, int],
-        ] = {}
+        ] = bidict({})
         self._waiters: dict[
             str,
             # either an event to sync to receiving an actor uid (which
@@ -1871,3 +1872,23 @@ class Arbiter(Actor):
         entry: tuple = self._registry.pop(uid, None)
         if entry is None:
             log.warning(f'Request to de-register {uid} failed?')
+
+
+    async def delete_sockaddr(
+        self,
+        sockaddr: tuple[str, int],
+
+    ) -> tuple[str, str]:
+        uid: tuple | None = self._registry.inverse.pop(
+            sockaddr,
+            None,
+        )
+        if uid:
+            log.warning(
+                f'Deleting registry entry for {sockaddr}@{uid}!'
+            )
+        else:
+            log.warning(
+                f'No registry entry for {sockaddr}@{uid}!'
+            )
+        return uid

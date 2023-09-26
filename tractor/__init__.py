@@ -31,6 +31,7 @@ from ._streaming import (
 )
 from ._discovery import (
     get_arbiter,
+    get_registrar,
     find_actor,
     wait_for_actor,
     query_actor,
@@ -77,6 +78,7 @@ __all__ = [
     'find_actor',
     'query_actor',
     'get_arbiter',
+    'get_registrar',
     'is_root_process',
     'msg',
     'open_actor_cluster',
