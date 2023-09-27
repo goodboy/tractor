@@ -467,7 +467,9 @@ class Channel:
 
 @asynccontextmanager
 async def _connect_chan(
-    host: str, port: int
+    host: str,
+    port: int
+
 ) -> typing.AsyncGenerator[Channel, None]:
     '''
     Create and connect a channel with disconnect on context manager
