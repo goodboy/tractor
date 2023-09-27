@@ -47,8 +47,8 @@ log = get_logger(__name__)
 
 def _mp_main(
 
-    actor: Actor,  # type: ignore
-    accept_addr: tuple[str, int],
+    actor: Actor,
+    accept_addrs: list[tuple[str, int]],
     forkserver_info: tuple[Any, Any, Any, Any, Any],
     start_method: SpawnMethodKey,
     parent_addr: tuple[str, int] | None = None,
@@ -77,8 +77,8 @@ def _mp_main(
     log.debug(f"parent_addr is {parent_addr}")
     trio_main = partial(
         async_main,
-        actor,
-        accept_addr,
+        actor=actor,
+        accept_addrs=accept_addrs,
         parent_addr=parent_addr
     )
     try:
@@ -96,7 +96,7 @@ def _mp_main(
 
 def _trio_main(
 
-    actor: Actor,  # type: ignore
+    actor: Actor,
     *,
     parent_addr: tuple[str, int] | None = None,
     infect_asyncio: bool = False,

@@ -22,10 +22,7 @@ from contextlib import asynccontextmanager as acm
 from functools import partial
 import inspect
 from pprint import pformat
-from typing import (
-    Optional,
-    TYPE_CHECKING,
-)
+from typing import TYPE_CHECKING
 import typing
 import warnings
 
@@ -97,7 +94,7 @@ class ActorNursery:
             tuple[
                 Actor,
                 trio.Process | mp.Process,
-                Optional[Portal],
+                Portal | None,
             ]
         ] = {}
         # portals spawned with ``run_in_actor()`` are
@@ -121,12 +118,12 @@ class ActorNursery:
         self,
         name: str,
         *,
-        bind_addr: tuple[str, int] = _default_bind_addr,
+        bind_addrs: list[tuple[str, int]] = [_default_bind_addr],
         rpc_module_paths: list[str] | None = None,
         enable_modules: list[str] | None = None,
         loglevel: str | None = None,  # set log level per subactor
         nursery: trio.Nursery | None = None,
-        debug_mode: Optional[bool] | None = None,
+        debug_mode: bool | None = None,
         infect_asyncio: bool = False,
     ) -> Portal:
         '''
@@ -161,7 +158,9 @@ class ActorNursery:
             # modules allowed to invoked funcs from
             enable_modules=enable_modules,
             loglevel=loglevel,
-            arbiter_addr=current_actor()._arb_addr,
+
+            # verbatim relay this actor's registrar addresses
+            registry_addrs=current_actor()._reg_addrs,
         )
         parent_addr = self._actor.accept_addr
         assert parent_addr
@@ -178,7 +177,7 @@ class ActorNursery:
                 self,
                 subactor,
                 self.errors,
-                bind_addr,
+                bind_addrs,
                 parent_addr,
                 _rtv,  # run time vars
                 infect_asyncio=infect_asyncio,
@@ -191,8 +190,8 @@ class ActorNursery:
         fn: typing.Callable,
         *,
 
-        name: Optional[str] = None,
-        bind_addr: tuple[str, int] = _default_bind_addr,
+        name: str | None = None,
+        bind_addrs: tuple[str, int] = [_default_bind_addr],
         rpc_module_paths: list[str] | None = None,
         enable_modules: list[str] | None = None,
         loglevel: str | None = None,  # set log level per subactor
@@ -221,7 +220,7 @@ class ActorNursery:
             enable_modules=[mod_path] + (
                 enable_modules or rpc_module_paths or []
             ),
-            bind_addr=bind_addr,
+            bind_addrs=bind_addrs,
             loglevel=loglevel,
             # use the run_in_actor nursery
             nursery=self._ria_nursery,

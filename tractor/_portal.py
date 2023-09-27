@@ -461,7 +461,12 @@ class LocalPortal:
     actor: 'Actor'  # type: ignore # noqa
     channel: Channel
 
-    async def run_from_ns(self, ns: str, func_name: str, **kwargs) -> Any:
+    async def run_from_ns(
+        self,
+        ns: str,
+        func_name: str,
+        **kwargs,
+    ) -> Any:
         '''
         Run a requested local function from a namespace path and
         return it's result.
