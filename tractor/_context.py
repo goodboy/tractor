@@ -868,6 +868,9 @@ class Context:
 
         # TODO: maybe we should also call `._res_scope.cancel()` if it
         # exists to support cancelling any drain loop hangs?
+        # NOTE: this usage actually works here B)
+        # from .devx._debug import breakpoint
+        # await breakpoint()
 
     # TODO: add to `Channel`?
     @property

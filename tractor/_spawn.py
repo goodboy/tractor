@@ -34,7 +34,7 @@ from typing import (
 import trio
 from trio import TaskStatus
 
-from ._debug import (
+from .devx._debug import (
     maybe_wait_for_debugger,
     acquire_debug_lock,
 )

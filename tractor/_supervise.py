@@ -31,7 +31,7 @@ import warnings
 
 import trio
 
-from ._debug import maybe_wait_for_debugger
+from .devx._debug import maybe_wait_for_debugger
 from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
 from ._runtime import Actor

@@ -38,7 +38,7 @@ from ._runtime import (
     # Arbiter as Registry,
     async_main,
 )
-from . import _debug
+from .devx import _debug
 from . import _spawn
 from . import _state
 from . import log
@@ -90,7 +90,7 @@ async def open_root_actor(
     # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
     builtin_bp_handler = sys.breakpointhook
     orig_bp_path: str | None = os.environ.get('PYTHONBREAKPOINT', None)
-    os.environ['PYTHONBREAKPOINT'] = 'tractor._debug.pause_from_sync'
+    os.environ['PYTHONBREAKPOINT'] = 'tractor.devx._debug.pause_from_sync'
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
@@ -138,7 +138,7 @@ async def open_root_actor(
 
         # expose internal debug module to every actor allowing
         # for use of ``await tractor.breakpoint()``
-        enable_modules.append('tractor._debug')
+        enable_modules.append('tractor.devx._debug')
 
         # if debug mode get's enabled *at least* use that level of
         # logging for some informative console prompts.
