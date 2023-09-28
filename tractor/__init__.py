@@ -45,7 +45,7 @@ from ._exceptions import (
     ModuleNotExposed,
     ContextCancelled,
 )
-from ._debug import (
+from .devx import (
     breakpoint,
     pause,
     pause_from_sync,

@@ -58,7 +58,7 @@ from ._exceptions import (
     ContextCancelled,
     TransportClosed,
 )
-from . import _debug
+from .devx import _debug
 from ._discovery import get_registry
 from ._portal import Portal
 from . import _state
@@ -264,7 +264,6 @@ async def _invoke(
                 cs: trio.CancelScope = ctx._scope
                 if cs.cancel_called:
                     canceller = ctx._cancelled_remote
-                    # await _debug.breakpoint()
 
                     # NOTE / TODO: if we end up having
                     # ``Actor._cancel_task()`` call
@@ -536,7 +535,7 @@ class Actor:
         self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
 
         # always include debugging tools module
-        enable_modules.append('tractor._debug')
+        enable_modules.append('tractor.devx._debug')
 
         self.enable_modules: dict[str, str] = {}
         for name in enable_modules:

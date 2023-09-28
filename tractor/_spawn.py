@@ -35,7 +35,7 @@ from exceptiongroup import BaseExceptionGroup
 import trio
 from trio_typing import TaskStatus
 
-from ._debug import (
+from .devx._debug import (
     maybe_wait_for_debugger,
     acquire_debug_lock,
 )

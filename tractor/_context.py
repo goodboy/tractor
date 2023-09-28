@@ -222,7 +222,7 @@ class Context:
             )
 
             if self._cancel_called:
-                # from ._debug import breakpoint
+                # from .devx._debug import breakpoint
                 # await breakpoint()
 
                 # this is an expected cancel request response message
@@ -247,7 +247,7 @@ class Context:
             self._scope.cancel()
 
             # NOTE: this usage actually works here B)
-            # from ._debug import breakpoint
+            # from .devx._debug import breakpoint
             # await breakpoint()
 
         # XXX: this will break early callee results sending
@@ -277,7 +277,7 @@ class Context:
         log.cancel(f'Cancelling {side} side of context to {self.chan.uid}')
 
         self._cancel_called = True
-        # await _debug.breakpoint()
+        # await devx._debug.breakpoint()
         # breakpoint()
 
         if side == 'caller':

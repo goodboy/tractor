@@ -482,7 +482,7 @@ class Portal:
             # were initiated by *this* side's task.
             if not ctx._cancel_called:
                 # XXX: this should NEVER happen!
-                # from ._debug import breakpoint
+                # from .devx._debug import breakpoint
                 # await breakpoint()
                 raise
 
@@ -564,7 +564,7 @@ class Portal:
             # a "stop" msg for a stream), this can result in a deadlock
             # where the root is waiting on the lock to clear but the
             # child has already cleared it and clobbered IPC.
-            from ._debug import maybe_wait_for_debugger
+            from .devx._debug import maybe_wait_for_debugger
             await maybe_wait_for_debugger()
 
             # remove the context from runtime tracking

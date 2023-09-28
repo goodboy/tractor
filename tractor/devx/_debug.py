@@ -28,6 +28,7 @@ from functools import (
     cached_property,
 )
 from contextlib import asynccontextmanager as acm
+from contextlib import contextmanager as cm
 from typing import (
     Any,
     Callable,
@@ -44,22 +45,25 @@ from trio_typing import (
     # Task,
 )
 
-from .log import get_logger
-from ._discovery import get_root
-from ._state import (
+from ..log import get_logger
+from .._discovery import get_root
+from .._state import (
     is_root_process,
     debug_mode,
 )
-from ._exceptions import (
+from .._exceptions import (
     is_multi_cancelled,
     ContextCancelled,
 )
-from ._ipc import Channel
+from .._ipc import Channel
 
 log = get_logger(__name__)
 
 
-__all__ = ['breakpoint', 'post_mortem']
+__all__ = [
+    'breakpoint',
+    'post_mortem',
+]
 
 
 class Lock:
@@ -390,7 +394,7 @@ async def wait_for_parent_stdin_hijack(
                 # this syncs to child's ``Context.started()`` call.
                 async with portal.open_context(
 
-                    tractor._debug.lock_tty_for_child,
+                    lock_tty_for_child,
                     subactor_uid=actor_uid,
 
                 ) as (ctx, val):
@@ -855,7 +859,7 @@ pause = partial(
     _pause,
     _set_trace,
 )
-pp = pause  # short-hand for "pause point"
+# pp = pause  # short-hand for "pause point"
 
 
 async def breakpoint(**kwargs):
@@ -1008,3 +1012,32 @@ async def maybe_wait_for_debugger(
             log.debug(
                     'Root acquired TTY LOCK'
             )
+
+
+# TODO: better naming and what additionals?
+# - optional runtime plugging?
+# - detection for sync vs. async code?
+# - specialized REPL entry when in distributed mode?
+@cm
+def open_crash_handler(
+    catch: set[BaseException] = {
+        Exception,
+        BaseException,
+    }
+):
+    '''
+    Generic "post mortem" crash handler using `pdbp` REPL debugger.
+
+    We expose this as a CLI framework addon to both `click` and
+    `typer` users so they can quickly wrap cmd endpoints which get
+    automatically wrapped to use the runtime's `debug_mode: bool`
+    AND `pdbp.pm()` around any code that is PRE-runtime entry
+    - any sync code which runs BEFORE the main call to
+      `trio.run()`.
+
+    '''
+    try:
+        yield
+    except tuple(catch):
+        pdbp.xpm()
+        raise
