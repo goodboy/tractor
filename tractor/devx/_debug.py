@@ -27,8 +27,10 @@ from functools import (
     partial,
     cached_property,
 )
-from contextlib import asynccontextmanager as acm
-from contextlib import contextmanager as cm
+from contextlib import (
+    asynccontextmanager as acm,
+    contextmanager as cm,
+)
 from typing import (
     Any,
     Callable,
