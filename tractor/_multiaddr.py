@@ -96,21 +96,30 @@ def iter_prot_layers(
         yield prot, params
 
 
-def parse_addr(
+def parse_maddr(
     multiaddr: str,
 ) -> dict[str, str | int | dict]:
     '''
     Parse a libp2p style "multiaddress" into it's distinct protocol
-    segments where each segment:
+    segments where each segment is of the form:
 
         `../<protocol>/<param0>/<param1>/../<paramN>`
 
-    is loaded into a layers `dict[str, dict[str, Any]` which holds
-    each prot segment of the path as a separate entry sortable by
-    it's approx OSI "layer number".
+    and is loaded into a (order preserving) `layers: dict[str,
+    dict[str, Any]` which holds each protocol-layer-segment of the
+    original `str` path as a separate entry according to its approx
+    OSI "layer number".
 
-    Any `paramN` in the path must be distinctly defined in order
-    according to the (global) `prot_params` table in this module.
+    Any `paramN` in the path must be distinctly defined by a str-token in the
+    (module global) `prot_params` table.
+
+    For eg. for wireguard which requires an address, port number and publickey
+    the protocol params are specified as the entry:
+
+        'wg': ('addr', 'port', 'pubkey'),
+
+    and are thus parsed from a maddr in that order:
+        `'/wg/1.1.1.1/51820/<pubkey>'`
 
     '''
     layers: dict[str, str | int | dict] = {}
