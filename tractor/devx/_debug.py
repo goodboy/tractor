@@ -30,6 +30,7 @@ from functools import (
 from contextlib import (
     asynccontextmanager as acm,
     contextmanager as cm,
+    nullcontext,
 )
 from typing import (
     Any,
@@ -1043,3 +1044,20 @@ def open_crash_handler(
     except tuple(catch):
         pdbp.xpm()
         raise
+
+
+@cm
+def maybe_open_crash_handler(pdb: bool = False):
+    '''
+    Same as `open_crash_handler()` but with bool input flag
+    to allow conditional handling.
+
+    Normally this is used with CLI endpoints such that if the --pdb
+    flag is passed the pdb REPL is engaed on any crashes B)
+    '''
+    rtctx = nullcontext
+    if pdb:
+        rtctx = open_crash_handler
+
+    with rtctx():
+        yield

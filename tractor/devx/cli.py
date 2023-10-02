@@ -25,7 +25,6 @@ Currently popular frameworks supported are:
 from __future__ import annotations
 from contextlib import (
     # asynccontextmanager as acm,
-    nullcontext,
     contextmanager as cm,
 )
 from typing import (
@@ -135,15 +134,3 @@ def load_runtime_vars(
         )
         ctx.params = {'ctx': ctx}
         cmd.invoke(ctx)
-
-
-@cm
-def maybe_open_crash_handler(pdb: bool = False):
-    # if the --pdb flag is passed always engage
-    # the pdb REPL on any crashes B)
-    rtctx = nullcontext
-    if pdb:
-        rtctx = open_crash_handler
-
-    with rtctx():
-        yield
