@@ -29,6 +29,7 @@ from ._debug import (
     shield_sigint_handler,
     MultiActorPdb,
     open_crash_handler,
+    maybe_open_crash_handler,
     post_mortem,
 )
 
@@ -41,5 +42,6 @@ __all__ = [
     'shield_sigint_handler',
     'MultiActorPdb',
     'open_crash_handler',
+    'maybe_open_crash_handler',
     'post_mortem',
 ]
