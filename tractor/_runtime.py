@@ -1514,13 +1514,22 @@ async def async_main(
                 # - root actor: the ``accept_addr`` passed to this method
                 assert accept_addrs
 
-                actor._server_n = await service_nursery.start(
-                    partial(
-                        actor._serve_forever,
-                        service_nursery,
-                        listen_sockaddrs=accept_addrs,
+                try:
+                    actor._server_n = await service_nursery.start(
+                        partial(
+                            actor._serve_forever,
+                            service_nursery,
+                            listen_sockaddrs=accept_addrs,
+                        )
                     )
-                )
+                except OSError as oserr:
+                    # NOTE: always allow runtime hackers to debug
+                    # tranport address bind errors - normally it's
+                    # something silly like the wrong socket-address
+                    # passed via a config or CLI Bo
+                    entered_debug = await _debug._maybe_enter_pm(oserr)
+                    raise
+
                 accept_addrs: list[tuple[str, int]] = actor.accept_addrs
 
                 # NOTE: only set the loopback addr for the 

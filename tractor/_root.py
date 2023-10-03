@@ -280,10 +280,14 @@ async def open_root_actor(
         # start the actor runtime in a new task
         async with trio.open_nursery() as nursery:
 
-            # ``_runtime.async_main()`` creates an internal nursery and
-            # thus blocks here until the entire underlying actor tree has
-            # terminated thereby conducting structured concurrency.
-
+            # ``_runtime.async_main()`` creates an internal nursery
+            # and blocks here until any underlying actor(-process)
+            # tree has terminated thereby conducting so called
+            # "end-to-end" structured concurrency throughout an
+            # entire hierarchical python sub-process set; all
+            # "actor runtime" primitives are SC-compat and thus all
+            # transitively spawned actors/processes must be as
+            # well.
             await nursery.start(
                 partial(
                     async_main,
