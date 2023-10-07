@@ -124,10 +124,10 @@ async def open_root_actor(
 
     registry_addrs: list[tuple[str, int]] = (
         registry_addrs
-        or [  # default on localhost
+        or [(  # default on localhost
             _default_arbiter_host,
             _default_arbiter_port,
-        ]
+         )]
     )
 
     loglevel = (loglevel or log._default_loglevel).upper()
