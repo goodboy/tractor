@@ -194,8 +194,12 @@ def test_peer_canceller():
                     # canceller should not have been remotely
                     # cancelled.
                     assert canceller_ctx.cancel_called_remote is None
+
+                    # NOTE: will only enter if you wrap in
+                    # a shielded cs..
+                    # await tractor.pause()  # TODO: shield=True)
+
                     assert sleeper_ctx.canceller == 'canceller'
-                    await tractor.pause(shield=True)
                     assert not sleep_ctx.cancelled_caught
 
                     raise
