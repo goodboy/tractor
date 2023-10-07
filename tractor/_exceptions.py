@@ -39,8 +39,11 @@ class ActorFailure(Exception):
 
 
 class RemoteActorError(Exception):
+    '''
+    Remote actor exception bundled locally
+
+    '''
     # TODO: local recontruction of remote exception deats
-    "Remote actor exception bundled locally"
     def __init__(
         self,
         message: str,
@@ -149,13 +152,13 @@ def unpack_error(
     error = msg['error']
 
     tb_str = error.get('tb_str', '')
-    message = f"{chan.uid}\n" + tb_str
+    message = f'{chan.uid}\n' + tb_str
     type_name = error['type_str']
     suberror_type: Type[BaseException] = Exception
 
     if type_name == 'ContextCancelled':
         err_type = ContextCancelled
-        suberror_type = RemoteActorError
+        suberror_type = err_type
 
     else:  # try to lookup a suitable local error type
         for ns in [
