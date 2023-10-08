@@ -191,7 +191,15 @@ class Portal:
 
     ) -> bool:
         '''
-        Cancel the actor on the other end of this portal.
+        Cancel the actor runtime (and thus process) on the far
+        end of this portal.
+
+        **NOTE** THIS CANCELS THE ENTIRE RUNTIME AND THE
+        SUBPROCESS, it DOES NOT just cancel the remote task. If you
+        want to have a handle to cancel a remote ``tri.Task`` look
+        at `.open_context()` and the definition of
+        `._context.Context.cancel()` which CAN be used for this
+        purpose.
 
         '''
         if not self.channel.connected():
