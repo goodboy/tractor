@@ -631,6 +631,7 @@ def _set_trace(
         # no f!#$&* idea, but when we're in async land
         # we need 2x frames up?
         frame = frame.f_back
+        # frame = frame.f_back
 
         # if shield:
         #     frame = frame.f_back
@@ -646,17 +647,19 @@ def _set_trace(
     # undo_
 
 
-
 async def pause(
 
     debug_func: Callable = _set_trace,
     release_lock_signal: trio.Event | None = None,
 
-    # allow caller to pause despite task cancellation,
+    # TODO: allow caller to pause despite task cancellation,
     # exactly the same as wrapping with:
     # with CancelScope(shield=True):
     #     await pause()
-    shield: bool = False,
+    # => the REMAINING ISSUE is that the scope's .__exit__() frame
+    # is always show in the debugger on entry.. and there seems to
+    # be no way to override it?..
+    # shield: bool = False,
 
     # TODO:
     # shield: bool = False
@@ -689,133 +692,142 @@ async def pause(
     ):
         Lock.local_pdb_complete = trio.Event()
 
-    if shield:
-        debug_func = partial(
-            debug_func,
-            shield=shield,
-        )
+    # if shield:
+    debug_func = partial(
+        debug_func,
+        # shield=shield,
+    )
 
-    with trio.CancelScope(shield=shield):
+    # def _exit(self, *args, **kwargs):
+    #     __tracebackhide__: bool = True
+    #     super().__exit__(*args, **kwargs)
+
+    # trio.CancelScope.__exit__.__tracebackhide__ = True
+
+    # import types
+    # with trio.CancelScope(shield=shield) as cs:
+        # cs.__exit__ = types.MethodType(_exit, cs)
+        # cs.__exit__.__tracebackhide__ = True
 
         # TODO: need a more robust check for the "root" actor
-        if (
-            not is_root_process()
-            and actor._parent_chan  # a connected child
-        ):
+    if (
+        not is_root_process()
+        and actor._parent_chan  # a connected child
+    ):
 
-            if Lock.local_task_in_debug:
+        if Lock.local_task_in_debug:
 
-                # Recurrence entry case: this task already has the lock and
-                # is likely recurrently entering a breakpoint
-                if Lock.local_task_in_debug == task_name:
-                    # noop on recurrent entry case but we want to trigger
-                    # a checkpoint to allow other actors error-propagate and
-                    # potetially avoid infinite re-entries in some subactor.
-                    await trio.lowlevel.checkpoint()
-                    return
-
-                # if **this** actor is already in debug mode block here
-                # waiting for the control to be released - this allows
-                # support for recursive entries to `tractor.breakpoint()`
-                log.warning(f"{actor.uid} already has a debug lock, waiting...")
-
-                await Lock.local_pdb_complete.wait()
-                await trio.sleep(0.1)
-
-            # mark local actor as "in debug mode" to avoid recurrent
-            # entries/requests to the root process
-            Lock.local_task_in_debug = task_name
-
-            # this **must** be awaited by the caller and is done using the
-            # root nursery so that the debugger can continue to run without
-            # being restricted by the scope of a new task nursery.
-
-            # TODO: if we want to debug a trio.Cancelled triggered exception
-            # we have to figure out how to avoid having the service nursery
-            # cancel on this task start? I *think* this works below:
-            # ```python
-            #   actor._service_n.cancel_scope.shield = shield
-            # ```
-            # but not entirely sure if that's a sane way to implement it?
-            try:
-                with trio.CancelScope(shield=True):
-                    await actor._service_n.start(
-                        wait_for_parent_stdin_hijack,
-                        actor.uid,
-                    )
-                    Lock.repl = pdb
-            except RuntimeError:
-                Lock.release()
-
-                if actor._cancel_called:
-                    # service nursery won't be usable and we
-                    # don't want to lock up the root either way since
-                    # we're in (the midst of) cancellation.
-                    return
-
-                raise
-
-        elif is_root_process():
-
-            # we also wait in the root-parent for any child that
-            # may have the tty locked prior
-            # TODO: wait, what about multiple root tasks acquiring it though?
-            if Lock.global_actor_in_debug == actor.uid:
-                # re-entrant root process already has it: noop.
+            # Recurrence entry case: this task already has the lock and
+            # is likely recurrently entering a breakpoint
+            if Lock.local_task_in_debug == task_name:
+                # noop on recurrent entry case but we want to trigger
+                # a checkpoint to allow other actors error-propagate and
+                # potetially avoid infinite re-entries in some subactor.
+                await trio.lowlevel.checkpoint()
                 return
 
-            # XXX: since we need to enter pdb synchronously below,
-            # we have to release the lock manually from pdb completion
-            # callbacks. Can't think of a nicer way then this atm.
-            if Lock._debug_lock.locked():
-                log.warning(
-                    'Root actor attempting to shield-acquire active tty lock'
-                    f' owned by {Lock.global_actor_in_debug}')
+            # if **this** actor is already in debug mode block here
+            # waiting for the control to be released - this allows
+            # support for recursive entries to `tractor.breakpoint()`
+            log.warning(f"{actor.uid} already has a debug lock, waiting...")
 
-                # must shield here to avoid hitting a ``Cancelled`` and
-                # a child getting stuck bc we clobbered the tty
-                with trio.CancelScope(shield=True):
-                    await Lock._debug_lock.acquire()
-            else:
-                # may be cancelled
-                await Lock._debug_lock.acquire()
+            await Lock.local_pdb_complete.wait()
+            await trio.sleep(0.1)
 
-            Lock.global_actor_in_debug = actor.uid
-            Lock.local_task_in_debug = task_name
-            Lock.repl = pdb
+        # mark local actor as "in debug mode" to avoid recurrent
+        # entries/requests to the root process
+        Lock.local_task_in_debug = task_name
 
+        # this **must** be awaited by the caller and is done using the
+        # root nursery so that the debugger can continue to run without
+        # being restricted by the scope of a new task nursery.
+
+        # TODO: if we want to debug a trio.Cancelled triggered exception
+        # we have to figure out how to avoid having the service nursery
+        # cancel on this task start? I *think* this works below:
+        # ```python
+        #   actor._service_n.cancel_scope.shield = shield
+        # ```
+        # but not entirely sure if that's a sane way to implement it?
         try:
-            if debug_func is None:
-                # assert release_lock_signal, (
-                #     'Must pass `release_lock_signal: trio.Event` if no '
-                #     'trace func provided!'
-                # )
-                print(f"{actor.uid} ENTERING WAIT")
-                task_status.started()
-
-                # with trio.CancelScope(shield=True):
-                #     await release_lock_signal.wait()
-
-            else:
-                # block here one (at the appropriate frame *up*) where
-                # ``breakpoint()`` was awaited and begin handling stdio.
-                log.debug("Entering the synchronous world of pdb")
-                debug_func(actor, pdb)
-
-        except bdb.BdbQuit:
+            with trio.CancelScope(shield=True):
+                await actor._service_n.start(
+                    wait_for_parent_stdin_hijack,
+                    actor.uid,
+                )
+                Lock.repl = pdb
+        except RuntimeError:
             Lock.release()
+
+            if actor._cancel_called:
+                # service nursery won't be usable and we
+                # don't want to lock up the root either way since
+                # we're in (the midst of) cancellation.
+                return
+
             raise
 
-        # XXX: apparently we can't do this without showing this frame
-        # in the backtrace on first entry to the REPL? Seems like an odd
-        # behaviour that should have been fixed by now. This is also why
-        # we scrapped all the @cm approaches that were tried previously.
-        # finally:
-        #     __tracebackhide__ = True
-        #     # frame = sys._getframe()
-        #     # last_f = frame.f_back
-        #     # last_f.f_globals['__tracebackhide__'] = True
-        #     # signal.signal = pdbp.hideframe(signal.signal)
+    elif is_root_process():
+
+        # we also wait in the root-parent for any child that
+        # may have the tty locked prior
+        # TODO: wait, what about multiple root tasks acquiring it though?
+        if Lock.global_actor_in_debug == actor.uid:
+            # re-entrant root process already has it: noop.
+            return
+
+        # XXX: since we need to enter pdb synchronously below,
+        # we have to release the lock manually from pdb completion
+        # callbacks. Can't think of a nicer way then this atm.
+        if Lock._debug_lock.locked():
+            log.warning(
+                'Root actor attempting to shield-acquire active tty lock'
+                f' owned by {Lock.global_actor_in_debug}')
+
+            # must shield here to avoid hitting a ``Cancelled`` and
+            # a child getting stuck bc we clobbered the tty
+            with trio.CancelScope(shield=True):
+                await Lock._debug_lock.acquire()
+        else:
+            # may be cancelled
+            await Lock._debug_lock.acquire()
+
+        Lock.global_actor_in_debug = actor.uid
+        Lock.local_task_in_debug = task_name
+        Lock.repl = pdb
+
+    try:
+        if debug_func is None:
+            # assert release_lock_signal, (
+            #     'Must pass `release_lock_signal: trio.Event` if no '
+            #     'trace func provided!'
+            # )
+            print(f"{actor.uid} ENTERING WAIT")
+            task_status.started()
+
+            # with trio.CancelScope(shield=True):
+            #     await release_lock_signal.wait()
+
+        else:
+            # block here one (at the appropriate frame *up*) where
+            # ``breakpoint()`` was awaited and begin handling stdio.
+            log.debug("Entering the synchronous world of pdb")
+            debug_func(actor, pdb)
+
+    except bdb.BdbQuit:
+        Lock.release()
+        raise
+
+    # XXX: apparently we can't do this without showing this frame
+    # in the backtrace on first entry to the REPL? Seems like an odd
+    # behaviour that should have been fixed by now. This is also why
+    # we scrapped all the @cm approaches that were tried previously.
+    # finally:
+    #     __tracebackhide__ = True
+    #     # frame = sys._getframe()
+    #     # last_f = frame.f_back
+    #     # last_f.f_globals['__tracebackhide__'] = True
+    #     # signal.signal = pdbp.hideframe(signal.signal)
 
 
 # TODO: allow pausing from sync code.
