@@ -102,10 +102,14 @@ class Context:
     _remote_error: BaseException | None = None
 
     # cancellation state
-    _cancel_called: bool = False
-    _cancelled_remote: tuple | None = None
+    _cancel_called: bool = False  # did WE cancel the far end?
+    _cancelled_remote: tuple[str, str] | None = None
     _cancel_msg: str | None = None
     _scope: trio.CancelScope | None = None
+
+    # NOTE:  this is set by the `.devx._debug` machinery
+    # to indicate whether code in `._runtime` should handle
+    # cancelled context crashes in the pdbp REPL.
     _enter_debugger_on_cancel: bool = True
 
     @property
@@ -207,7 +211,7 @@ class Context:
         # XXX: set the remote side's error so that after we cancel
         # whatever task is the opener of this context it can raise
         # that error as the reason.
-        self._remote_error = error
+        self._remote_error: BaseException = error
 
         # always record the remote actor's uid since its cancellation
         # state is directly linked to ours (the local one).
@@ -488,11 +492,7 @@ class Context:
         assert self._portal, "Context.result() can not be called from callee!"
         assert self._recv_chan
 
-        # from . import _debug
-        # await _debug.breakpoint()
-
-        re = self._remote_error
-        if re:
+        if re := self._remote_error:
             self._maybe_raise_remote_err(re)
             return re
 
@@ -507,7 +507,7 @@ class Context:
             while True:
                 msg = await self._recv_chan.receive()
                 try:
-                    self._result = msg['return']
+                    self._result: Any = msg['return']
 
                     # NOTE: we don't need to do this right?
                     # XXX: only close the rx mem chan AFTER
@@ -516,6 +516,21 @@ class Context:
                     #     await self._recv_chan.aclose()
 
                     break
+
+                # NOTE: we get here if the far end was
+                # `ContextCancelled` in 2 cases:
+                # - we requested the cancellation and thus
+                #   SHOULD NOT raise that far end error,
+                # - WE DID NOT REQUEST that cancel and thus
+                #   SHOULD RAISE HERE!
+                except trio.Cancelled:
+                    if not self._cancel_called:
+                        raise self._remote_error
+                    else:
+                        # if we DID request the cancel we simply
+                        # continue as normal.
+                        raise
+
                 except KeyError:  # as msgerr:
 
                     if 'yield' in msg:
@@ -537,7 +552,7 @@ class Context:
                     )  # from msgerr
 
                     err = self._maybe_raise_remote_err(err)
-                    self._remote_err = err
+                    self._remote_error = err
 
         return self._remote_error or self._result
 
