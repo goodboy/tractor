@@ -23,8 +23,8 @@ from exceptiongroup import BaseExceptionGroup
 from ._clustering import open_actor_cluster
 from ._ipc import Channel
 from ._context import (
-    Context,
-    context,
+    Context,  # the type
+    context,  # a func-decorator
 )
 from ._streaming import (
     MsgStream,
