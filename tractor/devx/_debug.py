@@ -1041,15 +1041,19 @@ async def maybe_wait_for_debugger(
 
 
 # TODO: better naming and what additionals?
-# - optional runtime plugging?
-# - detection for sync vs. async code?
-# - specialized REPL entry when in distributed mode?
+# - [ ] optional runtime plugging?
+# - [ ] detection for sync vs. async code?
+# - [ ] specialized REPL entry when in distributed mode?
+# - [x] allow ignoring kbi Bo
 @cm
 def open_crash_handler(
     catch: set[BaseException] = {
         Exception,
         BaseException,
-    }
+    },
+    ignore: set[BaseException] = {
+        KeyboardInterrupt,
+    },
 ):
     '''
     Generic "post mortem" crash handler using `pdbp` REPL debugger.
@@ -1064,8 +1068,11 @@ def open_crash_handler(
     '''
     try:
         yield
-    except tuple(catch):
-        pdbp.xpm()
+    except tuple(catch) as err:
+
+        if type(err) not in ignore:
+            pdbp.xpm()
+
         raise
 
 
