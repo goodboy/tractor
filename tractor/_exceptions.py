@@ -113,18 +113,24 @@ class AsyncioCancelled(Exception):
 
 def pack_error(
     exc: BaseException,
-    tb=None,
+    tb: str | None = None,
 
-) -> dict[str, Any]:
-    """Create an "error message" for tranmission over
-    a channel (aka the wire).
-    """
+) -> dict[str, dict]:
+    '''
+    Create an "error message" encoded for wire transport via an IPC
+    `Channel`; expected to be unpacked on the receiver side using
+    `unpack_error()` below.
+
+    '''
     if tb:
         tb_str = ''.join(traceback.format_tb(tb))
     else:
         tb_str = traceback.format_exc()
 
-    error_msg = {
+    error_msg: dict[
+        str,
+        str | tuple[str, str]
+    ] = {
         'tb_str': tb_str,
         'type_str': type(exc).__name__,
         'src_actor_uid': current_actor().uid,
@@ -142,18 +148,28 @@ def unpack_error(
     chan=None,
     err_type=RemoteActorError
 
-) -> Exception:
+) -> None | Exception:
     '''
     Unpack an 'error' message from the wire
-    into a local ``RemoteActorError``.
+    into a local `RemoteActorError` (subtype).
+
+    NOTE: this routine DOES not RAISE the embedded remote error,
+    which is the responsibilitiy of the caller.
 
     '''
-    __tracebackhide__ = True
-    error = msg['error']
+    __tracebackhide__: bool = True
 
-    tb_str = error.get('tb_str', '')
-    message = f'{chan.uid}\n' + tb_str
-    type_name = error['type_str']
+    error_dict: dict[str, dict] | None
+    if (
+        error_dict := msg.get('error')
+    ) is None:
+        # no error field, nothing to unpack.
+        return None
+
+    # retrieve the remote error's msg encoded details
+    tb_str: str = error_dict.get('tb_str', '')
+    message: str = f'{chan.uid}\n' + tb_str
+    type_name: str = error_dict['type_str']
     suberror_type: Type[BaseException] = Exception
 
     if type_name == 'ContextCancelled':
@@ -167,18 +183,19 @@ def unpack_error(
             eg,
             trio,
         ]:
-            try:
-                suberror_type = getattr(ns, type_name)
+            if suberror_type := getattr(
+                ns,
+                type_name,
+                False,
+            ):
                 break
-            except AttributeError:
-                continue
 
     exc = err_type(
         message,
         suberror_type=suberror_type,
 
         # unpack other fields into error type init
-        **msg['error'],
+        **error_dict,
     )
 
     return exc
