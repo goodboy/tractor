@@ -74,7 +74,7 @@ log = get_logger('tractor')
 
 async def _invoke(
 
-    actor: 'Actor',
+    actor: Actor,
     cid: str,
     chan: Channel,
     func: Callable,
@@ -1419,6 +1419,8 @@ async def async_main(
                     # something silly like the wrong socket-address
                     # passed via a config or CLI Bo
                     entered_debug = await _debug._maybe_enter_pm(oserr)
+                    if entered_debug:
+                        log.runtime('Exited debug REPL..')
                     raise
 
                 accept_addrs: list[tuple[str, int]] = actor.accept_addrs
