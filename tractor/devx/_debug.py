@@ -49,7 +49,6 @@ from trio_typing import (
 )
 
 from ..log import get_logger
-from .._discovery import get_root
 from .._state import (
     is_root_process,
     debug_mode,
@@ -331,7 +330,7 @@ async def lock_tty_for_child(
             f'Actor {subactor_uid} is blocked from acquiring debug lock\n'
             f"remote task: {task_name}:{subactor_uid}"
         )
-        ctx._enter_debugger_on_cancel = False
+        ctx._enter_debugger_on_cancel: bool = False
         await ctx.cancel(f'Debug lock blocked for {subactor_uid}')
         return 'pdb_lock_blocked'
 
@@ -388,6 +387,8 @@ async def wait_for_parent_stdin_hijack(
     ``maybe_wait_for_debugger()``).
 
     '''
+    from .._discovery import get_root
+
     with trio.CancelScope(shield=True) as cs:
         Lock._debugger_request_cs = cs
 
@@ -611,7 +612,7 @@ def _set_trace(
     pdb: MultiActorPdb | None = None,
     shield: bool = False,
 ):
-    __tracebackhide__ = True
+    __tracebackhide__: bool = True
     actor: tractor.Actor = actor or tractor.current_actor()
 
     # start 2 levels up in user code
