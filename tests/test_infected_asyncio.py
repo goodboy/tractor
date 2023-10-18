@@ -47,7 +47,7 @@ async def trio_cancels_single_aio_task():
         await tractor.to_asyncio.run_task(sleep_forever)
 
 
-def test_trio_cancels_aio_on_actor_side(arb_addr):
+def test_trio_cancels_aio_on_actor_side(reg_addr):
     '''
     Spawn an infected actor that is cancelled by the ``trio`` side
     task using std cancel scope apis.
@@ -55,7 +55,7 @@ def test_trio_cancels_aio_on_actor_side(arb_addr):
     '''
     async def main():
         async with tractor.open_nursery(
-            arbiter_addr=arb_addr
+            registry_addrs=[reg_addr]
         ) as n:
             await n.run_in_actor(
                 trio_cancels_single_aio_task,
@@ -94,7 +94,7 @@ async def asyncio_actor(
         raise
 
 
-def test_aio_simple_error(arb_addr):
+def test_aio_simple_error(reg_addr):
     '''
     Verify a simple remote asyncio error propagates back through trio
     to the parent actor.
@@ -103,7 +103,7 @@ def test_aio_simple_error(arb_addr):
     '''
     async def main():
         async with tractor.open_nursery(
-            arbiter_addr=arb_addr
+            registry_addrs=[reg_addr]
         ) as n:
             await n.run_in_actor(
                 asyncio_actor,
@@ -120,7 +120,7 @@ def test_aio_simple_error(arb_addr):
     assert err.type == AssertionError
 
 
-def test_tractor_cancels_aio(arb_addr):
+def test_tractor_cancels_aio(reg_addr):
     '''
     Verify we can cancel a spawned asyncio task gracefully.
 
@@ -139,7 +139,7 @@ def test_tractor_cancels_aio(arb_addr):
     trio.run(main)
 
 
-def test_trio_cancels_aio(arb_addr):
+def test_trio_cancels_aio(reg_addr):
     '''
     Much like the above test with ``tractor.Portal.cancel_actor()``
     except we just use a standard ``trio`` cancellation api.
@@ -194,7 +194,7 @@ async def trio_ctx(
     ids='parent_actor_cancels_child={}'.format
 )
 def test_context_spawns_aio_task_that_errors(
-    arb_addr,
+    reg_addr,
     parent_cancels: bool,
 ):
     '''
@@ -258,7 +258,7 @@ async def aio_cancel():
     await sleep_forever()
 
 
-def test_aio_cancelled_from_aio_causes_trio_cancelled(arb_addr):
+def test_aio_cancelled_from_aio_causes_trio_cancelled(reg_addr):
 
     async def main():
         async with tractor.open_nursery() as n:
@@ -395,7 +395,7 @@ async def stream_from_aio(
     'fan_out', [False, True],
     ids='fan_out_w_chan_subscribe={}'.format
 )
-def test_basic_interloop_channel_stream(arb_addr, fan_out):
+def test_basic_interloop_channel_stream(reg_addr, fan_out):
     async def main():
         async with tractor.open_nursery() as n:
             portal = await n.run_in_actor(
@@ -409,7 +409,7 @@ def test_basic_interloop_channel_stream(arb_addr, fan_out):
 
 
 # TODO: parametrize the above test and avoid the duplication here?
-def test_trio_error_cancels_intertask_chan(arb_addr):
+def test_trio_error_cancels_intertask_chan(reg_addr):
     async def main():
         async with tractor.open_nursery() as n:
             portal = await n.run_in_actor(
@@ -428,7 +428,7 @@ def test_trio_error_cancels_intertask_chan(arb_addr):
         assert exc.type == Exception
 
 
-def test_trio_closes_early_and_channel_exits(arb_addr):
+def test_trio_closes_early_and_channel_exits(reg_addr):
     async def main():
         async with tractor.open_nursery() as n:
             portal = await n.run_in_actor(
@@ -443,7 +443,7 @@ def test_trio_closes_early_and_channel_exits(arb_addr):
     trio.run(main)
 
 
-def test_aio_errors_and_channel_propagates_and_closes(arb_addr):
+def test_aio_errors_and_channel_propagates_and_closes(reg_addr):
     async def main():
         async with tractor.open_nursery() as n:
             portal = await n.run_in_actor(
@@ -520,7 +520,7 @@ async def trio_to_aio_echo_server(
     ids='raise_error={}'.format,
 )
 def test_echoserver_detailed_mechanics(
-    arb_addr,
+    reg_addr,
     raise_error_mid_stream,
 ):
 

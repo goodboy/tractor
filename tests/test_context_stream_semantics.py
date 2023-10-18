@@ -5,7 +5,7 @@ Verify the we raise errors when streams are opened prior to
 sync-opening a ``tractor.Context`` beforehand.
 
 '''
-from contextlib import asynccontextmanager as acm
+# from contextlib import asynccontextmanager as acm
 from itertools import count
 import platform
 from typing import Optional
