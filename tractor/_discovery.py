@@ -192,8 +192,11 @@ async def find_actor(
                 yield None
 
     if not registry_addrs:
-        from ._root import _default_lo_addrs
-        registry_addrs = _default_lo_addrs
+        # XXX NOTE: make sure to dynamically read the value on
+        # every call since something may change it globally (eg.
+        # like in our discovery test suite)!
+        from . import _root
+        registry_addrs = _root._default_lo_addrs
 
     maybe_portals: list[
         AsyncContextManager[tuple[str, int]]
