@@ -65,21 +65,28 @@ async def aggregate(seed):
     print("AGGREGATOR COMPLETE!")
 
 
-# this is the main actor and *arbiter*
-async def main():
-    # a nursery which spawns "actors"
-    async with tractor.open_nursery(
-        arbiter_addr=('127.0.0.1', 1616)
-    ) as nursery:
+async def main() -> list[int]:
+    '''
+    This is the "root" actor's main task's entrypoint.
+
+    By default (and if not otherwise specified) that root process
+    also acts as a "registry actor" / "registrar" on the localhost
+    for the purposes of multi-actor "service discovery".
+
+    '''
+    # yes, a nursery which spawns `trio`-"actors" B)
+    nursery: tractor.ActorNursery
+    async with tractor.open_nursery() as nursery:
 
         seed = int(1e3)
         pre_start = time.time()
 
-        portal = await nursery.start_actor(
+        portal: tractor.Portal = await nursery.start_actor(
             name='aggregator',
             enable_modules=[__name__],
         )
 
+        stream: tractor.MsgStream
         async with portal.open_stream_from(
             aggregate,
             seed=seed,
