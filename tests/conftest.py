@@ -114,12 +114,18 @@ _reg_addr: tuple[str, int] = (
     '127.0.0.1',
     random.randint(1000, 9999),
 )
-_arb_addr = _reg_addr
 
 
 @pytest.fixture(scope='session')
-def arb_addr():
-    return _arb_addr
+def reg_addr() -> tuple[str, int]:
+
+    # globally override the runtime to the per-test-session-dynamic
+    # addr so that all tests never conflict with any other actor
+    # tree using the default.
+    from tractor import _root
+    _root._default_lo_addrs = [_reg_addr]
+
+    return _reg_addr
 
 
 def pytest_generate_tests(metafunc):
@@ -161,30 +167,35 @@ def sig_prog(proc, sig):
 def daemon(
     loglevel: str,
     testdir,
-    arb_addr: tuple[str, int],
+    reg_addr: tuple[str, int],
 ):
     '''
-    Run a daemon actor as a "remote arbiter".
+    Run a daemon root actor as a separate actor-process tree and
+    "remote registrar" for discovery-protocol related tests.
 
     '''
     if loglevel in ('trace', 'debug'):
-        # too much logging will lock up the subproc (smh)
-        loglevel = 'info'
+        # XXX: too much logging will lock up the subproc (smh)
+        loglevel: str = 'info'
 
-    cmdargs = [
-        sys.executable, '-c',
-        "import tractor; tractor.run_daemon([], registry_addr={}, loglevel={})"
-        .format(
-            arb_addr,
-            "'{}'".format(loglevel) if loglevel else None)
+    code: str = (
+            "import tractor; "
+            "tractor.run_daemon([], registry_addrs={reg_addrs}, loglevel={ll})"
+    ).format(
+        reg_addrs=str([reg_addr]),
+        ll="'{}'".format(loglevel) if loglevel else None,
+    )
+    cmd: list[str] = [
+        sys.executable,
+        '-c', code,
     ]
-    kwargs = dict()
+    kwargs = {}
     if platform.system() == 'Windows':
         # without this, tests hang on windows forever
         kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
 
     proc = testdir.popen(
-        cmdargs,
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         **kwargs,
