@@ -199,6 +199,10 @@ async def do_hard_kill(
     proc: trio.Process,
     terminate_after: int = 3,
 
+    # NOTE: for mucking with `.pause()`-ing inside the runtime
+    # whilst also hacking on it XD
+    # terminate_after: int = 99999,
+
 ) -> None:
     # NOTE: this timeout used to do nothing since we were shielding
     # the ``.wait()`` inside ``new_proc()`` which will pretty much
