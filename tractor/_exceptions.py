@@ -20,6 +20,7 @@ Our classy exception set.
 """
 import builtins
 import importlib
+from pprint import pformat
 from typing import (
     Any,
     Type,
@@ -38,12 +39,17 @@ class ActorFailure(Exception):
     "General actor failure"
 
 
+# TODO: rename to just `RemoteError`?
 class RemoteActorError(Exception):
     '''
-    Remote actor exception bundled locally
+    A box(ing) type which bundles a remote actor `BaseException` for
+    (near identical, and only if possible,) local object/instance
+    re-construction in the local process memory domain.
+
+    Normally each instance is expected to be constructed from
+    a special "error" IPC msg sent by some remote actor-runtime.
 
     '''
-    # TODO: local recontruction of remote exception deats
     def __init__(
         self,
         message: str,
@@ -53,12 +59,35 @@ class RemoteActorError(Exception):
     ) -> None:
         super().__init__(message)
 
-        self.type = suberror_type
-        self.msgdata = msgdata
+        # TODO: maybe a better name?
+        # - .errtype
+        # - .retype
+        # - .boxed_errtype
+        # - .boxed_type
+        # - .remote_type
+        # also pertains to our long long oustanding issue XD
+        # https://github.com/goodboy/tractor/issues/5
+        self.type: str = suberror_type
+        self.msgdata: dict[str, Any] = msgdata
 
     @property
     def src_actor_uid(self) -> tuple[str, str] | None:
         return self.msgdata.get('src_actor_uid')
+
+    def __repr__(self) -> str:
+        if remote_tb := self.msgdata.get('tb_str'):
+            pformat(remote_tb)
+            return (
+                f'{type(self).__name__}(\n'
+                f'msgdata={pformat(self.msgdata)}\n'
+                ')'
+            )
+
+        return super().__repr__(self)
+
+    # TODO: local recontruction of remote exception deats
+    # def unbox(self) -> BaseException:
+    #     ...
 
 
 class InternalActorError(RemoteActorError):
