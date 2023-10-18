@@ -47,8 +47,14 @@ from ._exceptions import is_multi_cancelled
 
 
 # set at startup and after forks
-_default_arbiter_host: str = '127.0.0.1'
-_default_arbiter_port: int = 1616
+_default_lo_host: str = '127.0.0.1'
+_default_port: int = 1616
+
+# default registry always on localhost
+_default_lo_addrs: list[tuple[str, int]] = [(
+    _default_lo_host,
+    _default_port,
+)]
 
 
 logger = log.get_logger('tractor')
@@ -125,10 +131,8 @@ async def open_root_actor(
 
     registry_addrs: list[tuple[str, int]] = (
         registry_addrs
-        or [(  # default on localhost
-            _default_arbiter_host,
-            _default_arbiter_port,
-         )]
+        or     
+        _default_lo_addrs
     )
 
     loglevel = (
@@ -350,9 +354,7 @@ def run_daemon(
 
     # runtime kwargs
     name: str | None = 'root',
-    registry_addrs: list[tuple[str, int]] = [
-        (_default_arbiter_host, _default_arbiter_port)
-    ],
+    registry_addrs: list[tuple[str, int]] = _default_lo_addrs,
 
     start_method: str | None = None,
     debug_mode: bool = False,
