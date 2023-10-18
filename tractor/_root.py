@@ -47,12 +47,12 @@ from ._exceptions import is_multi_cancelled
 
 
 # set at startup and after forks
-_default_lo_host: str = '127.0.0.1'
+_default_host: str = '127.0.0.1'
 _default_port: int = 1616
 
 # default registry always on localhost
 _default_lo_addrs: list[tuple[str, int]] = [(
-    _default_lo_host,
+    _default_host,
     _default_port,
 )]
 
@@ -134,6 +134,7 @@ async def open_root_actor(
         or     
         _default_lo_addrs
     )
+    assert registry_addrs
 
     loglevel = (
         loglevel
