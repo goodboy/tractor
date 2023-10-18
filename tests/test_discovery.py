@@ -15,19 +15,19 @@ from conftest import tractor_test
 
 
 @tractor_test
-async def test_reg_then_unreg(arb_addr):
+async def test_reg_then_unreg(reg_addr):
     actor = tractor.current_actor()
     assert actor.is_arbiter
     assert len(actor._registry) == 1  # only self is registered
 
     async with tractor.open_nursery(
-        arbiter_addr=arb_addr,
+        registry_addrs=[reg_addr],
     ) as n:
 
         portal = await n.start_actor('actor', enable_modules=[__name__])
         uid = portal.channel.uid
 
-        async with tractor.get_arbiter(*arb_addr) as aportal:
+        async with tractor.get_arbiter(*reg_addr) as aportal:
             # this local actor should be the arbiter
             assert actor is aportal.actor
 
@@ -53,15 +53,27 @@ async def hi():
     return the_line.format(tractor.current_actor().name)
 
 
-async def say_hello(other_actor):
+async def say_hello(
+    other_actor: str,
+    reg_addr: tuple[str, int],
+):
     await trio.sleep(1)  # wait for other actor to spawn
-    async with tractor.find_actor(other_actor) as portal:
+    async with tractor.find_actor(
+        other_actor,
+        registry_addrs=[reg_addr],
+    ) as portal:
         assert portal is not None
         return await portal.run(__name__, 'hi')
 
 
-async def say_hello_use_wait(other_actor):
-    async with tractor.wait_for_actor(other_actor) as portal:
+async def say_hello_use_wait(
+    other_actor: str,
+    reg_addr: tuple[str, int],
+):
+    async with tractor.wait_for_actor(
+        other_actor,
+        registry_addr=reg_addr,
+    ) as portal:
         assert portal is not None
         result = await portal.run(__name__, 'hi')
         return result
@@ -69,21 +81,29 @@ async def say_hello_use_wait(other_actor):
 
 @tractor_test
 @pytest.mark.parametrize('func', [say_hello, say_hello_use_wait])
-async def test_trynamic_trio(func, start_method, arb_addr):
-    """Main tractor entry point, the "master" process (for now
-    acts as the "director").
-    """
+async def test_trynamic_trio(
+    func,
+    start_method,
+    reg_addr,
+):
+    '''
+    Root actor acting as the "director" and running one-shot-task-actors
+    for the directed subs.
+
+    '''
     async with tractor.open_nursery() as n:
         print("Alright... Action!")
 
         donny = await n.run_in_actor(
             func,
             other_actor='gretchen',
+            reg_addr=reg_addr,
             name='donny',
         )
         gretchen = await n.run_in_actor(
             func,
             other_actor='donny',
+            reg_addr=reg_addr,
             name='gretchen',
         )
         print(await gretchen.result())
@@ -131,7 +151,7 @@ async def unpack_reg(actor_or_portal):
 
 
 async def spawn_and_check_registry(
-    arb_addr: tuple,
+    reg_addr: tuple,
     use_signal: bool,
     remote_arbiter: bool = False,
     with_streaming: bool = False,
@@ -139,9 +159,9 @@ async def spawn_and_check_registry(
 ) -> None:
 
     async with tractor.open_root_actor(
-        arbiter_addr=arb_addr,
+        registry_addrs=[reg_addr],
     ):
-        async with tractor.get_arbiter(*arb_addr) as portal:
+        async with tractor.get_arbiter(*reg_addr) as portal:
             # runtime needs to be up to call this
             actor = tractor.current_actor()
 
@@ -213,17 +233,19 @@ async def spawn_and_check_registry(
 def test_subactors_unregister_on_cancel(
     start_method,
     use_signal,
-    arb_addr,
+    reg_addr,
     with_streaming,
 ):
-    """Verify that cancelling a nursery results in all subactors
+    '''
+    Verify that cancelling a nursery results in all subactors
     deregistering themselves with the arbiter.
-    """
+
+    '''
     with pytest.raises(KeyboardInterrupt):
         trio.run(
             partial(
                 spawn_and_check_registry,
-                arb_addr,
+                reg_addr,
                 use_signal,
                 remote_arbiter=False,
                 with_streaming=with_streaming,
@@ -237,7 +259,7 @@ def test_subactors_unregister_on_cancel_remote_daemon(
     daemon,
     start_method,
     use_signal,
-    arb_addr,
+    reg_addr,
     with_streaming,
 ):
     """Verify that cancelling a nursery results in all subactors
@@ -248,7 +270,7 @@ def test_subactors_unregister_on_cancel_remote_daemon(
         trio.run(
             partial(
                 spawn_and_check_registry,
-                arb_addr,
+                reg_addr,
                 use_signal,
                 remote_arbiter=True,
                 with_streaming=with_streaming,
@@ -262,7 +284,7 @@ async def streamer(agen):
 
 
 async def close_chans_before_nursery(
-    arb_addr: tuple,
+    reg_addr: tuple,
     use_signal: bool,
     remote_arbiter: bool = False,
 ) -> None:
@@ -275,9 +297,9 @@ async def close_chans_before_nursery(
         entries_at_end = 1
 
     async with tractor.open_root_actor(
-        arbiter_addr=arb_addr,
+        registry_addrs=[reg_addr],
     ):
-        async with tractor.get_arbiter(*arb_addr) as aportal:
+        async with tractor.get_arbiter(*reg_addr) as aportal:
             try:
                 get_reg = partial(unpack_reg, aportal)
 
@@ -329,7 +351,7 @@ async def close_chans_before_nursery(
 def test_close_channel_explicit(
     start_method,
     use_signal,
-    arb_addr,
+    reg_addr,
 ):
     """Verify that closing a stream explicitly and killing the actor's
     "root nursery" **before** the containing nursery tears down also
@@ -339,7 +361,7 @@ def test_close_channel_explicit(
         trio.run(
             partial(
                 close_chans_before_nursery,
-                arb_addr,
+                reg_addr,
                 use_signal,
                 remote_arbiter=False,
             ),
@@ -351,7 +373,7 @@ def test_close_channel_explicit_remote_arbiter(
     daemon,
     start_method,
     use_signal,
-    arb_addr,
+    reg_addr,
 ):
     """Verify that closing a stream explicitly and killing the actor's
     "root nursery" **before** the containing nursery tears down also
@@ -361,7 +383,7 @@ def test_close_channel_explicit_remote_arbiter(
         trio.run(
             partial(
                 close_chans_before_nursery,
-                arb_addr,
+                reg_addr,
                 use_signal,
                 remote_arbiter=True,
             ),

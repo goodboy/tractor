@@ -28,9 +28,9 @@ def test_abort_on_sigint(daemon):
 
 
 @tractor_test
-async def test_cancel_remote_arbiter(daemon, arb_addr):
+async def test_cancel_remote_arbiter(daemon, reg_addr):
     assert not tractor.current_actor().is_arbiter
-    async with tractor.get_arbiter(*arb_addr) as portal:
+    async with tractor.get_arbiter(*reg_addr) as portal:
         await portal.cancel_actor()
 
     time.sleep(0.1)
@@ -39,16 +39,16 @@ async def test_cancel_remote_arbiter(daemon, arb_addr):
 
     # no arbiter socket should exist
     with pytest.raises(OSError):
-        async with tractor.get_arbiter(*arb_addr) as portal:
+        async with tractor.get_arbiter(*reg_addr) as portal:
             pass
 
 
-def test_register_duplicate_name(daemon, arb_addr):
+def test_register_duplicate_name(daemon, reg_addr):
 
     async def main():
 
         async with tractor.open_nursery(
-            arbiter_addr=arb_addr,
+            registry_addrs=[reg_addr],
         ) as n:
 
             assert not tractor.current_actor().is_arbiter

@@ -24,7 +24,7 @@ async def test_no_runtime():
 
 
 @tractor_test
-async def test_self_is_registered(arb_addr):
+async def test_self_is_registered(reg_addr):
     "Verify waiting on the arbiter to register itself using the standard api."
     actor = tractor.current_actor()
     assert actor.is_arbiter
@@ -34,20 +34,20 @@ async def test_self_is_registered(arb_addr):
 
 
 @tractor_test
-async def test_self_is_registered_localportal(arb_addr):
+async def test_self_is_registered_localportal(reg_addr):
     "Verify waiting on the arbiter to register itself using a local portal."
     actor = tractor.current_actor()
     assert actor.is_arbiter
-    async with tractor.get_arbiter(*arb_addr) as portal:
+    async with tractor.get_arbiter(*reg_addr) as portal:
         assert isinstance(portal, tractor._portal.LocalPortal)
 
         with trio.fail_after(0.2):
             sockaddr = await portal.run_from_ns(
                     'self', 'wait_for_actor', name='root')
-            assert sockaddr[0] == arb_addr
+            assert sockaddr[0] == reg_addr
 
 
-def test_local_actor_async_func(arb_addr):
+def test_local_actor_async_func(reg_addr):
     """Verify a simple async function in-process.
     """
     nums = []
@@ -55,7 +55,7 @@ def test_local_actor_async_func(arb_addr):
     async def print_loop():
 
         async with tractor.open_root_actor(
-            arbiter_addr=arb_addr,
+            registry_addrs=[reg_addr],
         ):
             # arbiter is started in-proc if dne
             assert tractor.current_actor().is_arbiter

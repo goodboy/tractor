@@ -160,7 +160,7 @@ async def test_required_args(callwith_expecterror):
 )
 def test_multi_actor_subs_arbiter_pub(
     loglevel,
-    arb_addr,
+    reg_addr,
     pub_actor,
 ):
     """Try out the neato @pub decorator system.
@@ -170,7 +170,7 @@ def test_multi_actor_subs_arbiter_pub(
     async def main():
 
         async with tractor.open_nursery(
-            arbiter_addr=arb_addr,
+            registry_addrs=[reg_addr],
             enable_modules=[__name__],
         ) as n:
 
@@ -255,12 +255,12 @@ def test_multi_actor_subs_arbiter_pub(
 
 def test_single_subactor_pub_multitask_subs(
     loglevel,
-    arb_addr,
+    reg_addr,
 ):
     async def main():
 
         async with tractor.open_nursery(
-            arbiter_addr=arb_addr,
+            registry_addrs=[reg_addr],
             enable_modules=[__name__],
         ) as n:
 
