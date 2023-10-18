@@ -847,7 +847,7 @@ def pause_from_sync() -> None:
     # waiting.. not the most ideal but works for now ;)
     greenback.await_(
         actor._service_n.start(partial(
-            _pause,
+            pause,
             debug_func=None,
             # release_lock_signal=task_can_release_tty_lock,
         ))
