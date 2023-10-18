@@ -243,9 +243,7 @@ async def wait_for_actor(
             DeprecationWarning,
             stacklevel=2,
         )
-        registry_addr: list[tuple[str, int]] = [
-            arbiter_sockaddr,
-        ]
+        registry_addr: tuple[str, int] = arbiter_sockaddr
 
     # TODO: use `.trionics.gather_contexts()` like
     # above in `find_actor()` as well?
