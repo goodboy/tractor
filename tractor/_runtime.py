@@ -347,14 +347,13 @@ async def _invoke(
                     and ctx._enter_debugger_on_cancel
                 )
             ):
-                # XXX: is there any case where we'll want to debug IPC
-                # disconnects as a default?
-                #
-                # I can't think of a reason that inspecting
-                # this type of failure will be useful for respawns or
-                # recovery logic - the only case is some kind of strange bug
-                # in our transport layer itself? Going to keep this
-                # open ended for now.
+                # XXX QUESTION XXX: is there any case where we'll
+                # want to debug IPC disconnects as a default?
+                # => I can't think of a reason that inspecting this
+                # type of failure will be useful for respawns or
+                # recovery logic - the only case is some kind of
+                # strange bug in our transport layer itself? Going
+                # to keep this open ended for now.
                 entered_debug = await _debug._maybe_enter_pm(err)
 
                 if not entered_debug:
