@@ -22,6 +22,7 @@ management of (service) actors.
 from __future__ import annotations
 from typing import (
     AsyncGenerator,
+    AsyncContextManager,
     TYPE_CHECKING,
 )
 from contextlib import asynccontextmanager as acm
@@ -190,11 +191,19 @@ async def find_actor(
             else:
                 yield None
 
+    if not registry_addrs:
+        from ._root import _default_lo_addrs
+        registry_addrs = _default_lo_addrs
+
+    maybe_portals: list[
+        AsyncContextManager[tuple[str, int]]
+    ] = list(
+        maybe_open_portal_from_reg_addr(addr)
+        for addr in registry_addrs
+    )
+
     async with gather_contexts(
-        mngrs=list(
-            maybe_open_portal_from_reg_addr(addr)
-            for addr in registry_addrs
-        )
+        mngrs=maybe_portals,
     ) as maybe_portals:
         print(f'Portalz: {maybe_portals}')
         if not maybe_portals:
@@ -206,6 +215,9 @@ async def find_actor(
             yield portals[0]
 
         else:
+            # TODO: currently this may return multiple portals
+            # given there are multi-homed or multiple registrars..
+            # SO, we probably need de-duplication logic?
             yield portals
 
 
