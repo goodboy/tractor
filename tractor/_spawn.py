@@ -497,7 +497,7 @@ async def trio_proc(
         await chan.send({
             '_parent_main_data': subactor._parent_main_data,
             'enable_modules': subactor.enable_modules,
-            '_reg_addrs': subactor._reg_addrs,
+            'reg_addrs': subactor.reg_addrs,
             'bind_addrs': bind_addrs,
             '_runtime_vars': _runtime_vars,
         })

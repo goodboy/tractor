@@ -160,7 +160,7 @@ class ActorNursery:
             loglevel=loglevel,
 
             # verbatim relay this actor's registrar addresses
-            registry_addrs=current_actor()._reg_addrs,
+            registry_addrs=current_actor().reg_addrs,
         )
         parent_addr = self._actor.accept_addr
         assert parent_addr
