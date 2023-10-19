@@ -85,7 +85,7 @@ async def open_root_actor(
     enable_modules: list | None = None,
     rpc_module_paths: list | None = None,
 
-) -> typing.Any:
+) -> Actor:
     '''
     Runtime init entry point for ``tractor``.
 
@@ -130,7 +130,7 @@ async def open_root_actor(
 
     registry_addrs: list[tuple[str, int]] = (
         registry_addrs
-        or     
+        or
         _default_lo_addrs
     )
     assert registry_addrs
@@ -195,7 +195,10 @@ async def open_root_actor(
 
     async with trio.open_nursery() as tn:
         for addr in registry_addrs:
-            tn.start_soon(ping_tpt_socket, addr)
+            tn.start_soon(
+                ping_tpt_socket,
+                tuple(addr),  # TODO: just drop this requirement?
+            )
 
     trans_bind_addrs: list[tuple[str, int]] = []
 

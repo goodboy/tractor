@@ -133,14 +133,12 @@ async def query_actor(
         )
         regaddr: list[tuple[str, int]] = arbiter_sockaddr
 
-    regstr: Portal
-    async with get_registry(
-        *(regaddr or actor._reg_addrs[0])
-    ) as regstr:
-
+    reg_portal: Portal
+    regaddr: tuple[str, int] = regaddr or actor.reg_addrs[0]
+    async with get_registry(*regaddr) as reg_portal:
         # TODO: return portals to all available actors - for now
         # just the last one that registered
-        sockaddr: tuple[str, int] = await regstr.run_from_ns(
+        sockaddr: tuple[str, int] = await reg_portal.run_from_ns(
             'self',
             'find_actor',
             name=name,
@@ -155,6 +153,7 @@ async def find_actor(
     registry_addrs: list[tuple[str, int]] | None = None,
 
     only_first: bool = True,
+    raise_on_none: bool = False,
 
 ) -> AsyncGenerator[
     Portal | list[Portal] | None,
@@ -207,13 +206,20 @@ async def find_actor(
 
     async with gather_contexts(
         mngrs=maybe_portals,
-    ) as maybe_portals:
-        print(f'Portalz: {maybe_portals}')
-        if not maybe_portals:
+    ) as portals:
+        # log.runtime(
+        #     'Gathered portals:\n'
+        #     f'{portals}'
+        # )
+        if not portals:
+            if raise_on_none:
+                raise RuntimeError(
+                    f'No {name} found registered @ {registry_addrs}'
+                )
             yield None
             return
 
-        portals: list[Portal] = list(maybe_portals)
+        portals: list[Portal] = list(portals)
         if only_first:
             yield portals[0]
 
@@ -250,9 +256,9 @@ async def wait_for_actor(
 
     # TODO: use `.trionics.gather_contexts()` like
     # above in `find_actor()` as well?
-    async with get_registry(
-        *(registry_addr or actor._reg_addrs[0]),  # first if not passed
-    ) as reg_portal:
+    reg_portal: Portal
+    regaddr: tuple[str, int] = registry_addr or actor.reg_addrs[0]
+    async with get_registry(*regaddr) as reg_portal:
         sockaddrs = await reg_portal.run_from_ns(
             'self',
             'wait_for_actor',
