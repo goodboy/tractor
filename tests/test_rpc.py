@@ -13,9 +13,19 @@ async def sleep_back_actor(
     func_name,
     func_defined,
     exposed_mods,
+    *,
+    reg_addr: tuple,
 ):
     if actor_name:
-        async with tractor.find_actor(actor_name) as portal:
+        async with tractor.find_actor(
+            actor_name,
+            # NOTE: must be set manually since
+            # the subactor doesn't have the reg_addr
+            # fixture code run in it!
+            # TODO: maybe we should just set this once in the
+            # _state mod and derive to all children?
+            registry_addrs=[reg_addr],
+        ) as portal:
             try:
                 await portal.run(__name__, func_name)
             except tractor.RemoteActorError as err:
@@ -45,11 +55,17 @@ async def short_sleep():
     ids=['no_mods', 'this_mod', 'this_mod_bad_func', 'fail_to_import',
          'fail_on_syntax'],
 )
-def test_rpc_errors(reg_addr, to_call, testdir):
-    """Test errors when making various RPC requests to an actor
+def test_rpc_errors(
+    reg_addr,
+    to_call,
+    testdir,
+):
+    '''
+    Test errors when making various RPC requests to an actor
     that either doesn't have the requested module exposed or doesn't define
     the named function.
-    """
+
+    '''
     exposed_mods, funcname, inside_err = to_call
     subactor_exposed_mods = []
     func_defined = globals().get(funcname, False)
@@ -77,8 +93,13 @@ def test_rpc_errors(reg_addr, to_call, testdir):
 
         # spawn a subactor which calls us back
         async with tractor.open_nursery(
-            arbiter_addr=reg_addr,
+            registry_addrs=[reg_addr],
             enable_modules=exposed_mods.copy(),
+
+            # NOTE: will halt test in REPL if uncommented, so only
+            # do that if actually debugging subactor but keep it
+            # disabled for the test.
+            # debug_mode=True,
         ) as n:
 
             actor = tractor.current_actor()
@@ -95,6 +116,7 @@ def test_rpc_errors(reg_addr, to_call, testdir):
                 exposed_mods=exposed_mods,
                 func_defined=True if func_defined else False,
                 enable_modules=subactor_exposed_mods,
+                reg_addr=reg_addr,
             )
 
     def run():

@@ -32,8 +32,7 @@ async def spawn(
 
         if actor.is_arbiter:
 
-            async with tractor.open_nursery(
-            ) as nursery:
+            async with tractor.open_nursery() as nursery:
 
                 # forks here
                 portal = await nursery.run_in_actor(
@@ -55,7 +54,9 @@ async def spawn(
             return 10
 
 
-def test_local_arbiter_subactor_global_state(reg_addr):
+def test_local_arbiter_subactor_global_state(
+    reg_addr,
+):
     result = trio.run(
         spawn,
         True,

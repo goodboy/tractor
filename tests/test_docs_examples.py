@@ -21,7 +21,7 @@ from conftest import (
 def run_example_in_subproc(
     loglevel: str,
     testdir,
-    arb_addr: tuple[str, int],
+    reg_addr: tuple[str, int],
 ):
 
     @contextmanager
