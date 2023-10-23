@@ -83,7 +83,7 @@ class RemoteActorError(Exception):
                 ')'
             )
 
-        return super().__repr__(self)
+        return super().__repr__()
 
     # TODO: local recontruction of remote exception deats
     # def unbox(self) -> BaseException:
@@ -138,6 +138,9 @@ class AsyncioCancelled(Exception):
     to be raised in the ``trio`` side task
 
     '''
+
+class MessagingError(Exception):
+    'Some kind of unexpected SC messaging dialog issue'
 
 
 def pack_error(
