@@ -294,9 +294,11 @@ class Channel:
         self._agen = self._aiter_recv()
         self._exc: Optional[Exception] = None  # set if far end actor errors
         self._closed: bool = False
-        # flag set on ``Portal.cancel_actor()`` indicating
-        # remote (peer) cancellation of the far end actor runtime.
-        self._cancel_called: bool = False  # set on ``Portal.cancel_actor()``
+
+        # flag set by ``Portal.cancel_actor()`` indicating remote
+        # (possibly peer) cancellation of the far end actor
+        # runtime.
+        self._cancel_called: bool = False
 
     @classmethod
     def from_stream(
