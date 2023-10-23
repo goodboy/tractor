@@ -86,12 +86,14 @@ async def _invoke(
     ] = trio.TASK_STATUS_IGNORED,
 ):
     '''
-    Invoke local func and deliver result(s) over provided channel.
+    Schedule a `trio` task-as-func and deliver result(s) over
+    connected IPC channel.
 
-    This is the core "RPC task" starting machinery.
+    This is the core "RPC" `trio.Task` scheduling machinery used to start every
+    remotely invoked function, normally in `Actor._service_n: trio.Nursery`.
 
     '''
-    __tracebackhide__ = True
+    __tracebackhide__: bool = True
     treat_as_gen: bool = False
     failed_resp: bool = False
 
@@ -199,6 +201,8 @@ async def _invoke(
                 # far end async gen to tear down
                 await chan.send({'stop': True, 'cid': cid})
 
+        # TODO: every other "func type" should be implemented from
+        # a special case of a context eventually!
         elif context:
             # context func with support for bi-dir streaming
             await chan.send({'functype': 'context', 'cid': cid})
@@ -209,21 +213,30 @@ async def _invoke(
                     ctx._scope = nurse.cancel_scope
                     task_status.started(ctx)
                     res = await coro
-                    await chan.send({'return': res, 'cid': cid})
+                    await chan.send({
+                        'return': res,
+                        'cid': cid
+                    })
 
             # XXX: do we ever trigger this block any more?
             except (
                 BaseExceptionGroup,
                 trio.Cancelled,
-            ):
-                # if a context error was set then likely
-                # thei multierror was raised due to that
-                if ctx._remote_error is not None:
-                    raise ctx._remote_error
+            ) as scope_error:
 
-                # maybe TODO: pack in ``trio.Cancelled.__traceback__`` here
-                # so they can be unwrapped and displayed on the caller
-                # side?
+                # always set this (callee) side's exception as the
+                # local error on the context
+                ctx._local_error: BaseException = scope_error
+
+                # if a remote error was set then likely the
+                # exception group was raised due to that, so
+                # and we instead raise that error immediately!
+                if re := ctx._remote_error:
+                    ctx._maybe_raise_remote_err(re)
+
+                # maybe TODO: pack in
+                # ``trio.Cancelled.__traceback__`` here so they can
+                # be unwrapped and displayed on the caller side?
                 raise
 
             finally:
@@ -234,11 +247,11 @@ async def _invoke(
                 # don't pop the local context until we know the
                 # associated child isn't in debug any more
                 await _debug.maybe_wait_for_debugger()
-                ctx = actor._contexts.pop((chan.uid, cid))
-                if ctx:
-                    log.runtime(
-                        f'Context entrypoint {func} was terminated:\n{ctx}'
-                    )
+                ctx: Context = actor._contexts.pop((chan.uid, cid))
+                log.runtime(
+                    f'Context entrypoint {func} was terminated:\n'
+                    f'{ctx}'
+                )
 
             if ctx.cancelled_caught:
 
@@ -246,44 +259,43 @@ async def _invoke(
                 # before raising any context cancelled case
                 # so that real remote errors don't get masked as
                 # ``ContextCancelled``s.
-                re = ctx._remote_error
-                if re:
+                if re := ctx._remote_error:
                     ctx._maybe_raise_remote_err(re)
 
-                fname = func.__name__
+                fname: str = func.__name__
                 cs: trio.CancelScope = ctx._scope
                 if cs.cancel_called:
-                    canceller = ctx._cancelled_remote
-                    # await _debug.breakpoint()
+                    canceller: tuple = ctx.canceller
+                    msg: str = (
+                        f'`{fname}()`@{actor.uid} cancelled by '
+                    )
 
                     # NOTE / TODO: if we end up having
                     # ``Actor._cancel_task()`` call
                     # ``Context.cancel()`` directly, we're going to
-                    # need to change this logic branch since it will
-                    # always enter..
+                    # need to change this logic branch since it
+                    # will always enter..
                     if ctx._cancel_called:
-                        msg = f'`{fname}()`@{actor.uid} cancelled itself'
-
-                    else:
-                        msg = (
-                            f'`{fname}()`@{actor.uid} '
-                            'was remotely cancelled by '
-                        )
+                        msg += 'itself '
 
                     # if the channel which spawned the ctx is the
                     # one that cancelled it then we report that, vs.
                     # it being some other random actor that for ex.
                     # some actor who calls `Portal.cancel_actor()`
                     # and by side-effect cancels this ctx.
-                    if canceller == ctx.chan.uid:
-                        msg += f'its caller {canceller}'
+                    elif canceller == ctx.chan.uid:
+                        msg += f'its caller {canceller} '
+
                     else:
                         msg += f'remote actor {canceller}'
 
                     # TODO: does this ever get set any more or can
                     # we remove it?
                     if ctx._cancel_msg:
-                        msg += f' with msg:\n{ctx._cancel_msg}'
+                        msg += (
+                            ' with msg:\n'
+                            f'{ctx._cancel_msg}'
+                        )
 
                     # task-contex was either cancelled by request using
                     # ``Portal.cancel_actor()`` or ``Context.cancel()``
@@ -296,10 +308,13 @@ async def _invoke(
                         canceller=canceller,
                     )
 
+        # regular async function
         else:
-            # regular async function
             try:
-                await chan.send({'functype': 'asyncfunc', 'cid': cid})
+                await chan.send({
+                    'functype': 'asyncfunc',
+                    'cid': cid
+                })
             except trio.BrokenResourceError:
                 failed_resp = True
                 if is_rpc:
@@ -313,7 +328,7 @@ async def _invoke(
                 ctx._scope = cs
                 task_status.started(ctx)
                 result = await coro
-                fname = func.__name__
+                fname: str = func.__name__
                 log.runtime(f'{fname}() result: {result}')
                 if not failed_resp:
                     # only send result if we know IPC isn't down
@@ -1073,7 +1088,12 @@ class Actor:
             - return control the parent channel message loop
 
         '''
-        log.cancel(f"{self.uid} is trying to cancel")
+        log.cancel(
+            f'{self.uid} requested to cancel by:\n'
+            f'{requesting_uid}'
+        )
+
+        # TODO: what happens here when we self-cancel tho?
         self._cancel_called_by_remote: tuple = requesting_uid
         self._cancel_called = True
 
@@ -1088,7 +1108,9 @@ class Actor:
                 dbcs.cancel()
 
             # kill all ongoing tasks
-            await self.cancel_rpc_tasks(requesting_uid=requesting_uid)
+            await self.cancel_rpc_tasks(
+                requesting_uid=requesting_uid,
+            )
 
             # stop channel server
             self.cancel_server()
@@ -1118,8 +1140,8 @@ class Actor:
         self,
         cid: str,
         chan: Channel,
-
         requesting_uid: tuple[str, str] | None = None,
+
     ) -> bool:
         '''
         Cancel a local task by call-id / channel.
@@ -1136,7 +1158,7 @@ class Actor:
             # this ctx based lookup ensures the requested task to
             # be cancelled was indeed spawned by a request from this channel
             ctx, func, is_complete = self._rpc_tasks[(chan, cid)]
-            scope = ctx._scope
+            scope: trio.CancelScope = ctx._scope
         except KeyError:
             log.cancel(f"{cid} has already completed/terminated?")
             return True
@@ -1146,10 +1168,10 @@ class Actor:
             f"peer: {chan.uid}\n")
 
         if (
-            ctx._cancelled_remote is None
+            ctx._canceller is None
             and requesting_uid
         ):
-            ctx._cancelled_remote: tuple = requesting_uid
+            ctx._canceller: tuple = requesting_uid
 
         # don't allow cancelling this function mid-execution
         # (is this necessary?)
@@ -1159,6 +1181,7 @@ class Actor:
         # TODO: shouldn't we eventually be calling ``Context.cancel()``
         # directly here instead (since that method can handle both
         # side's calls into it?
+        # await ctx.cancel()
         scope.cancel()
 
         # wait for _invoke to mark the task complete
@@ -1186,9 +1209,12 @@ class Actor:
         registered for each.
 
         '''
-        tasks = self._rpc_tasks
+        tasks: dict = self._rpc_tasks
         if tasks:
-            log.cancel(f"Cancelling all {len(tasks)} rpc tasks:\n{tasks} ")
+            log.cancel(
+                f'Cancelling all {len(tasks)} rpc tasks:\n'
+                f'{tasks}'
+            )
             for (
                 (chan, cid),
                 (ctx, func, is_complete),
@@ -1206,7 +1232,9 @@ class Actor:
                     )
 
             log.cancel(
-                f"Waiting for remaining rpc tasks to complete {tasks}")
+                'Waiting for remaining rpc tasks to complete:\n'
+                f'{tasks}'
+            )
             await self._ongoing_rpc_tasks.wait()
 
     def cancel_server(self) -> None:
