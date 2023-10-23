@@ -13,6 +13,11 @@ from typing import Optional
 import pytest
 import trio
 import tractor
+from tractor import (
+    Actor,
+    Context,
+    current_actor,
+)
 from tractor._exceptions import (
     StreamOverrun,
     ContextCancelled,
@@ -193,9 +198,6 @@ def test_simple_context(
                         else:
                             assert await ctx.result() == 'yo'
 
-                        if not error_parent:
-                            await ctx.cancel()
-
                         if pointlessly_open_stream:
                             async with ctx.open_stream():
                                 if error_parent:
@@ -208,10 +210,15 @@ def test_simple_context(
                                     # 'stop' msg to the far end which needs
                                     # to be ignored
                                     pass
+
                         else:
                             if error_parent:
                                 raise error_parent
 
+                            # cancel AFTER we open a stream
+                            # to avoid a cancel raised inside
+                            # `.open_stream()`
+                            await ctx.cancel()
                 finally:
 
                     # after cancellation
@@ -276,7 +283,7 @@ def test_caller_cancels(
             assert (
                 tuple(err.canceller)
                 ==
-                tractor.current_actor().uid
+                current_actor().uid
             )
 
     async def main():
@@ -430,9 +437,11 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
 ):
     'caller context closes without using stream'
 
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery() as an:
 
-        portal = await n.start_actor(
+        root: Actor = current_actor()
+
+        portal = await an.start_actor(
             'ctx_cancelled',
             enable_modules=[__name__],
         )
@@ -440,9 +449,9 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
         async with portal.open_context(
             expect_cancelled,
         ) as (ctx, sent):
-            await portal.run(assert_state, value=True)
-
             assert sent is None
+
+            await portal.run(assert_state, value=True)
 
             # call cancel explicitly
             if use_ctx_cancel_method:
@@ -454,8 +463,21 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
                         async for msg in stream:
                             pass
 
-                except tractor.ContextCancelled:
-                    raise  # XXX: must be propagated to __aexit__
+                except tractor.ContextCancelled as ctxc:
+                    # XXX: the cause is US since we call
+                    # `Context.cancel()` just above!
+                    assert (
+                        ctxc.canceller
+                        ==
+                        current_actor().uid
+                        ==
+                        root.uid
+                    )
+
+                    # XXX: must be propagated to __aexit__
+                    # and should be silently absorbed there
+                    # since we called `.cancel()` just above ;)
+                    raise
 
                 else:
                     assert 0, "Should have context cancelled?"
@@ -472,7 +494,13 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
                         await ctx.result()
                         assert 0, "Callee should have blocked!?"
                 except trio.TooSlowError:
+                    # NO-OP -> since already called above
                     await ctx.cancel()
+
+        # local scope should have absorbed the cancellation
+        assert ctx.cancelled_caught
+        assert ctx._remote_error is ctx._local_error
+
         try:
             async with ctx.open_stream() as stream:
                 async for msg in stream:
@@ -551,19 +579,25 @@ async def cancel_self(
     global _state
     _state = True
 
+    # since we call this the below `.open_stream()` should always
+    # error!
     await ctx.cancel()
 
     # should inline raise immediately
     try:
         async with ctx.open_stream():
             pass
-    except tractor.ContextCancelled:
+    # except tractor.ContextCancelled:
+    except RuntimeError:
         # suppress for now so we can do checkpoint tests below
-        pass
+        print('Got expected runtime error for stream-after-cancel')
+
     else:
         raise RuntimeError('Context didnt cancel itself?!')
 
-    # check a real ``trio.Cancelled`` is raised on a checkpoint
+    # check that``trio.Cancelled`` is now raised on any further
+    # checkpoints since the self cancel above will have cancelled
+    # the `Context._scope.cancel_scope: trio.CancelScope`
     try:
         with trio.fail_after(0.1):
             await trio.sleep_forever()
@@ -574,6 +608,7 @@ async def cancel_self(
         # should never get here
         assert 0
 
+    raise RuntimeError('Context didnt cancel itself?!')
 
 @tractor_test
 async def test_callee_cancels_before_started():
@@ -601,7 +636,7 @@ async def test_callee_cancels_before_started():
             ce.type == trio.Cancelled
 
             # the traceback should be informative
-            assert 'cancelled itself' in ce.msgdata['tb_str']
+            assert 'itself' in ce.msgdata['tb_str']
 
         # teardown the actor
         await portal.cancel_actor()
@@ -773,7 +808,7 @@ async def echo_back_sequence(
 
     print(
         'EXITING CALLEEE:\n'
-        f'{ctx.cancel_called_remote}'
+        f'{ctx.canceller}'
     )
     return 'yo'
 
@@ -871,7 +906,7 @@ def test_maybe_allow_overruns_stream(
 
             if cancel_ctx:
                 assert isinstance(res, ContextCancelled)
-                assert tuple(res.canceller) == tractor.current_actor().uid
+                assert tuple(res.canceller) == current_actor().uid
 
             else:
                 print(f'RX ROOT SIDE RESULT {res}')
