@@ -225,7 +225,7 @@ def test_context_spawns_aio_task_that_errors(
 
                     await trio.sleep_forever()
 
-        return await ctx.result()
+                return await ctx.result()
 
     if parent_cancels:
         # bc the parent made the cancel request,
