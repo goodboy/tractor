@@ -100,7 +100,7 @@ def parse_maddr(
     multiaddr: str,
 ) -> dict[str, str | int | dict]:
     '''
-    Parse a libp2p style "multiaddress" into it's distinct protocol
+    Parse a libp2p style "multiaddress" into its distinct protocol
     segments where each segment is of the form:
 
         `../<protocol>/<param0>/<param1>/../<paramN>`
