@@ -211,10 +211,14 @@ async def find_actor(
         #     'Gathered portals:\n'
         #     f'{portals}'
         # )
-        if not portals:
+        # NOTE: `gather_contexts()` will return a
+        # `tuple[None, None, ..., None]` if no contact
+        # can be made with any regstrar at any of the
+        # N provided addrs!
+        if not any(portals):
             if raise_on_none:
                 raise RuntimeError(
-                    f'No {name} found registered @ {registry_addrs}'
+                    f'No actor "{name}" found registered @ {registry_addrs}'
                 )
             yield None
             return
