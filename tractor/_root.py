@@ -86,6 +86,10 @@ async def open_root_actor(
     enable_modules: list | None = None,
     rpc_module_paths: list | None = None,
 
+    # NOTE: allow caller to ensure that only one registry exists
+    # and that this call creates it.
+    ensure_registry: bool = False,
+
 ) -> Actor:
     '''
     Runtime init entry point for ``tractor``.
@@ -225,6 +229,12 @@ async def open_root_actor(
     # Create a new local root-actor instance which IS NOT THE
     # REGISTRAR
     if ponged_addrs:
+
+        if ensure_registry:
+            raise RuntimeError(
+                 f'Failed to open `{name}`@{ponged_addrs}: '
+                'registry socket(s) already bound'
+            )
 
         # we were able to connect to an arbiter
         logger.info(
