@@ -76,8 +76,18 @@ async def get_registry(
             yield regstr_ptl
 
 
-# TODO: deprecate and remove _arbiter form
-get_arbiter = get_registry
+
+# TODO: deprecate and this remove _arbiter form!
+@acm
+async def get_arbiter(*args, **kwargs):
+    warnings.warn(
+        '`tractor.get_arbiter()` is now deprecated!\n'
+        'Use `.get_registry()` instead!',
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    async with get_registry(*args, **kwargs) as to_yield:
+        yield to_yield
 
 
 @acm
