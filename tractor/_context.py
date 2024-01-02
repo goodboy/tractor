@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
+# TODO: make this a msgspec.Struct!
 @dataclass
 class Context:
     '''
@@ -491,15 +492,15 @@ class Context:
         if self._cancel_called:
 
             # XXX NOTE: ALWAYS RAISE any remote error here even if
-            # it's an expected `ContextCancelled` (after some local
-            # task having called `.cancel()` !
+            # it's an expected `ContextCancelled` due to a local
+            # task having called `.cancel()`!
             #
             # WHY: we expect the error to always bubble up to the
             # surrounding `Portal.open_context()` call and be
             # absorbed there (silently) and we DO NOT want to
             # actually try to stream - a cancel msg was already
             # sent to the other side!
-            if re := self._remote_error:
+            if self._remote_error:
                 raise self._remote_error
 
             # XXX NOTE: if no `ContextCancelled` has been responded
