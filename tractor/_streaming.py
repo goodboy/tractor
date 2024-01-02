@@ -23,7 +23,6 @@ The machinery and types behind ``Context.open_stream()``
 from __future__ import annotations
 import inspect
 from contextlib import asynccontextmanager as acm
-from pprint import pformat
 from typing import (
     Any,
     Callable,
@@ -35,8 +34,7 @@ import warnings
 import trio
 
 from ._exceptions import (
-    unpack_error,
-    MessagingError,
+    _raise_from_no_key_in_msg,
 )
 from .log import get_logger
 from .trionics import (
@@ -55,71 +53,6 @@ log = get_logger(__name__)
 # - generic typing like trio's receive channel but with msgspec
 #   messages? class ReceiveChannel(AsyncResource, Generic[ReceiveType]):
 # - use __slots__ on ``Context``?
-
-def _raise_from_no_yield_msg(
-    stream: MsgStream,
-    msg: dict,
-    src_err: KeyError,
-
-) -> bool:
-    '''
-    Raise an appopriate local error when a `MsgStream` msg arrives
-    which does not contain the expected (under normal operation)
-    `'yield'` field.
-
-    '''
-    __tracebackhide__: bool = True
-
-    # internal error should never get here
-    assert msg.get('cid'), ("Received internal error at portal?")
-
-    # TODO: handle 2 cases with 3.10+ match syntax
-    # - 'stop'
-    # - 'error'
-    # possibly just handle msg['stop'] here!
-    # breakpoint()
-
-    if stream._closed:
-        raise trio.ClosedResourceError('This stream was closed')
-
-    if (
-        msg.get('stop')
-        or stream._eoc
-    ):
-        log.debug(f'{stream} was stopped at remote end')
-
-        # XXX: important to set so that a new ``.receive()``
-        # call (likely by another task using a broadcast receiver)
-        # doesn't accidentally pull the ``return`` message
-        # value out of the underlying feed mem chan!
-        stream._eoc: bool = True
-
-        # # when the send is closed we assume the stream has
-        # # terminated and signal this local iterator to stop
-        # await stream.aclose()
-
-        # XXX: this causes ``ReceiveChannel.__anext__()`` to
-        # raise a ``StopAsyncIteration`` **and** in our catch
-        # block below it will trigger ``.aclose()``.
-        raise trio.EndOfChannel(
-                'Stream ended due to msg:\n'
-                f'{pformat(msg)}'
-        ) from src_err
-
-    # TODO: test that shows stream raising an expected error!!!
-    elif msg.get('error'):
-        # raise the error message
-        raise unpack_error(msg, stream._ctx.chan)
-
-    # always re-raise the source error if no translation error case
-    # is activated above.
-    raise MessagingError(
-        f'Context received unexpected non-error msg!?\n'
-        f'cid: {cid}\n'
-        'received msg:\n'
-        f'{pformat(msg)}'
-    ) from src_err
-
 
 class MsgStream(trio.abc.Channel):
     '''
@@ -160,10 +93,13 @@ class MsgStream(trio.abc.Channel):
         try:
             return msg['yield']
         except KeyError as kerr:
-            _raise_from_no_yield_msg(
-                stream=self,
+            _raise_from_no_key_in_msg(
+                ctx=self._ctx,
                 msg=msg,
                 src_err=kerr,
+                log=log,
+                expect_key='yield',
+                stream=self,
             )
 
     async def receive(self):
@@ -196,10 +132,13 @@ class MsgStream(trio.abc.Channel):
             return msg['yield']
 
         except KeyError as kerr:
-            _raise_from_no_yield_msg(
-                stream=self,
+            _raise_from_no_key_in_msg(
+                ctx=self._ctx,
                 msg=msg,
                 src_err=kerr,
+                log=log,
+                expect_key='yield',
+                stream=self,
             )
 
         except (

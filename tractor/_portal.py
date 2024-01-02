@@ -33,7 +33,6 @@ from typing import (
 )
 from functools import partial
 from dataclasses import dataclass
-from pprint import pformat
 import warnings
 
 import trio
@@ -45,13 +44,17 @@ from ._ipc import Channel
 from .log import get_logger
 from .msg import NamespacePath
 from ._exceptions import (
+    _raise_from_no_key_in_msg,
     unpack_error,
     NoResult,
     ContextCancelled,
-    MessagingError,
 )
-from ._context import Context
-from ._streaming import MsgStream
+from ._context import (
+    Context,
+)
+from ._streaming import (
+    MsgStream,
+)
 
 
 log = get_logger(__name__)
@@ -464,26 +467,15 @@ class Portal:
             first: Any = msg['started']
             ctx._started_called: bool = True
 
-        except KeyError:
+        except KeyError as src_error:
 
-            # TODO: can we maybe factor this into the new raiser
-            # `_streaming._raise_from_no_yield_msg()` and make that
-            # helper more generic, say with a `_no_<blah>_msg()`?
-            if not (cid := msg.get('cid')):
-                raise MessagingError(
-                    'Received internal error at context?\n'
-                    'No call-id (cid) in startup msg?'
-                )
-
-            if msg.get('error'):
-                # NOTE: mask the key error with the remote one
-                raise unpack_error(msg, self.channel) from None
-            else:
-                raise MessagingError(
-                    f'Context for {cid} was expecting a `started` message'
-                    ' but received a non-error msg:\n'
-                    f'{pformat(msg)}'
-                )
+            _raise_from_no_key_in_msg(
+                ctx=ctx,
+                msg=msg,
+                src_err=src_error,
+                log=log,
+                expect_key='started',
+            )
 
         ctx._portal: Portal = self
         uid: tuple = self.channel.uid
