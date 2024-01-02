@@ -48,12 +48,15 @@ LOG_FORMAT = (
 
 DATE_FORMAT = '%b %d %H:%M:%S'
 
-LEVELS = {
+LEVELS: dict[str, int] = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
     'CANCEL': 16,
     'PDB': 500,
 }
+# _custom_levels: set[str] = {
+#     lvlname.lower for lvlname in LEVELS.keys()
+# }
 
 STD_PALETTE = {
     'CRITICAL': 'red',
@@ -102,7 +105,11 @@ class StackLevelAdapter(logging.LoggerAdapter):
         Cancellation logging, mostly for runtime reporting.
 
         '''
-        return self.log(16, msg)
+        return self.log(
+            level=16,
+            msg=msg,
+            # stacklevel=4,
+        )
 
     def pdb(
         self,
@@ -114,14 +121,37 @@ class StackLevelAdapter(logging.LoggerAdapter):
         '''
         return self.log(500, msg)
 
-    def log(self, level, msg, *args, **kwargs):
-        """
+    def log(
+        self,
+        level,
+        msg,
+        *args,
+        **kwargs,
+    ):
+        '''
         Delegate a log call to the underlying logger, after adding
         contextual information from this adapter instance.
-        """
+
+        '''
         if self.isEnabledFor(level):
+            stacklevel: int = 3
+            if (
+                level in LEVELS.values()
+                # or level in _custom_levels
+            ):
+                stacklevel: int = 4
+
             # msg, kwargs = self.process(msg, kwargs)
-            self._log(level, msg, args, **kwargs)
+            self._log(
+                level=level,
+                msg=msg,
+                args=args,
+                # NOTE: not sure how this worked before but, it
+                # seems with our custom level methods defined above
+                # we do indeed (now) require another stack level??
+                stacklevel=stacklevel,
+                **kwargs,
+            )
 
     # LOL, the stdlib doesn't allow passing through ``stacklevel``..
     def _log(
@@ -134,12 +164,15 @@ class StackLevelAdapter(logging.LoggerAdapter):
         stack_info=False,
 
         # XXX: bit we added to show fileinfo from actual caller.
-        # this level then ``.log()`` then finally the caller's level..
-        stacklevel=3,
+        # - this level
+        # - then ``.log()``
+        # - then finally the caller's level..
+        stacklevel=4,
     ):
-        """
+        '''
         Low-level log implementation, proxied to allow nested logger adapters.
-        """
+
+        '''
         return self.logger._log(
             level,
             msg,
