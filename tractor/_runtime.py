@@ -1010,7 +1010,7 @@ class Actor:
         # (host, port) to bind for channel server
         listen_sockaddrs: list[tuple[str, int]] | None = None,
 
-        task_status: TaskStatus[trio.Nursery] = trio.TASK_STATUS_IGNORED,
+        task_status: TaskStatus[Nursery] = trio.TASK_STATUS_IGNORED,
     ) -> None:
         '''
         Start the IPC transport server, begin listening for new connections.
@@ -1566,7 +1566,9 @@ async def async_main(
                     # tranport address bind errors - normally it's
                     # something silly like the wrong socket-address
                     # passed via a config or CLI Bo
-                    entered_debug = await _debug._maybe_enter_pm(oserr)
+                    entered_debug: bool = await _debug._maybe_enter_pm(oserr)
+                    if not entered_debug:
+                        log.exception('Failed to init IPC channel server !?\n')
                     raise
 
                 accept_addrs: list[tuple[str, int]] = actor.accept_addrs
