@@ -44,9 +44,11 @@ import warnings
 import trio
 
 from ._exceptions import (
+    # _raise_from_no_key_in_msg,
     unpack_error,
     pack_error,
     ContextCancelled,
+    # MessagingError,
     StreamOverrun,
 )
 from .log import get_logger

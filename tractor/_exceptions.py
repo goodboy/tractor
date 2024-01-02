@@ -14,16 +14,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""
+'''
 Our classy exception set.
 
-"""
+'''
+from __future__ import annotations
 import builtins
 import importlib
 from pprint import pformat
 from typing import (
     Any,
     Type,
+    TYPE_CHECKING,
 )
 import traceback
 
@@ -31,6 +33,11 @@ import exceptiongroup as eg
 import trio
 
 from ._state import current_actor
+
+if TYPE_CHECKING:
+    from ._context import Context
+    from ._stream import MsgStream
+    from .log import StackLevelAdapter
 
 _this_mod = importlib.import_module(__name__)
 
@@ -246,3 +253,88 @@ def is_multi_cancelled(exc: BaseException) -> bool:
         ) is not None
 
     return False
+
+
+def _raise_from_no_key_in_msg(
+    ctx: Context,
+    msg: dict,
+    src_err: KeyError,
+    log: StackLevelAdapter,  # caller specific `log` obj
+    expect_key: str = 'yield',
+    stream: MsgStream | None = None,
+
+) -> bool:
+    '''
+    Raise an appopriate local error when a `MsgStream` msg arrives
+    which does not contain the expected (under normal operation)
+    `'yield'` field.
+
+    '''
+    __tracebackhide__: bool = True
+
+    # internal error should never get here
+    try:
+        cid: str = msg['cid']
+    except KeyError as src_err:
+        raise MessagingError(
+            f'IPC `Context` rx-ed msg without a ctx-id (cid)!?\n'
+            f'cid: {cid}\n'
+            'received msg:\n'
+            f'{pformat(msg)}\n'
+        ) from src_err
+
+    # TODO: test that shows stream raising an expected error!!!
+    if msg.get('error'):
+        # raise the error message
+        raise unpack_error(
+            msg,
+            ctx.chan,
+        ) from None
+
+    elif (
+        msg.get('stop')
+        or (
+            stream
+            and stream._eoc
+        )
+    ):
+        log.debug(
+            f'Context[{cid}] stream was stopped by remote side\n'
+            f'cid: {cid}\n'
+        )
+
+        # XXX: important to set so that a new ``.receive()``
+        # call (likely by another task using a broadcast receiver)
+        # doesn't accidentally pull the ``return`` message
+        # value out of the underlying feed mem chan!
+        stream._eoc: bool = True
+
+        # # when the send is closed we assume the stream has
+        # # terminated and signal this local iterator to stop
+        # await stream.aclose()
+
+        # XXX: this causes ``ReceiveChannel.__anext__()`` to
+        # raise a ``StopAsyncIteration`` **and** in our catch
+        # block below it will trigger ``.aclose()``.
+        raise trio.EndOfChannel(
+                'Context[{cid}] stream ended due to msg:\n'
+                f'{pformat(msg)}'
+        ) from src_err
+
+
+    if (
+        stream
+        and stream._closed
+    ):
+        raise trio.ClosedResourceError('This stream was closed')
+
+
+    # always re-raise the source error if no translation error case
+    # is activated above.
+    _type: str = 'Stream' if stream else 'Context'
+    raise MessagingError(
+        f'{_type} was expecting a `{expect_key}` message'
+        ' BUT received a non-`error` msg:\n'
+        f'cid: {cid}\n'
+        '{pformat(msg)}'
+    ) from src_err
