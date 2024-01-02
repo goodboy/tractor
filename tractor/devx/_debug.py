@@ -682,7 +682,7 @@ async def pause(
     https://en.wikipedia.org/wiki/Breakpoint
 
     '''
-    __tracebackhide__ = True
+    # __tracebackhide__ = True
     actor = tractor.current_actor()
     pdb, undo_sigint = mk_mpdb()
     task_name = trio.lowlevel.current_task().name
@@ -836,25 +836,32 @@ async def pause(
 # runtime aware version which takes care of all .
 def pause_from_sync() -> None:
     print("ENTER SYNC PAUSE")
-    try:
-        import greenback
-        __tracebackhide__ = True
+    actor: tractor.Actor = tractor.current_actor(
+        err_on_no_runtime=False,
+    )
+    if actor:
+        try:
+            import greenback
+            # __tracebackhide__ = True
 
-        actor: tractor.Actor = tractor.current_actor()
-        # task_can_release_tty_lock = trio.Event()
 
-        # spawn bg task which will lock out the TTY, we poll
-        # just below until the release event is reporting that task as
-        # waiting.. not the most ideal but works for now ;)
-        greenback.await_(
-            actor._service_n.start(partial(
-                pause,
-                debug_func=None,
-                # release_lock_signal=task_can_release_tty_lock,
-            ))
-        )
-    except ModuleNotFoundError:
-        log.warning('NO GREENBACK FOUND')
+            # task_can_release_tty_lock = trio.Event()
+
+            # spawn bg task which will lock out the TTY, we poll
+            # just below until the release event is reporting that task as
+            # waiting.. not the most ideal but works for now ;)
+            greenback.await_(
+                actor._service_n.start(partial(
+                    pause,
+                    debug_func=None,
+                    # release_lock_signal=task_can_release_tty_lock,
+                ))
+            )
+
+        except ModuleNotFoundError:
+            log.warning('NO GREENBACK FOUND')
+    else:
+        log.warning('Not inside actor-runtime')
 
     db, undo_sigint = mk_mpdb()
     Lock.local_task_in_debug = 'sync'
