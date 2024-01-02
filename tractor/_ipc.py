@@ -329,8 +329,11 @@ class Channel:
     def __repr__(self) -> str:
         if self.msgstream:
             return repr(
-                self.msgstream.stream.socket._sock).replace(  # type: ignore
-                        "socket.socket", "Channel")
+                self.msgstream.stream.socket._sock
+            ).replace(  # type: ignore
+                "socket.socket",
+                "Channel",
+            )
         return object.__repr__(self)
 
     @property
