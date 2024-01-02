@@ -18,8 +18,6 @@
 This is the "bootloader" for actors started using the native trio backend.
 
 """
-import sys
-import trio
 import argparse
 
 from ast import literal_eval
@@ -36,8 +34,6 @@ def parse_ipaddr(arg):
     host, port = literal_eval(arg)
     return (str(host), int(port))
 
-
-from ._entry import _trio_main
 
 if __name__ == "__main__":
 
