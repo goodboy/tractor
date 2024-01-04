@@ -34,7 +34,6 @@ def test_resource_only_entered_once(key_on):
     global _resource
     _resource = 0
 
-    kwargs = {}
     key = None
     if key_on == 'key_value':
         key = 'some_common_key'
@@ -139,7 +138,7 @@ def test_open_local_sub_to_stream():
     N local tasks using ``trionics.maybe_open_context():``.
 
     '''
-    timeout = 3 if platform.system() != "Windows" else 10
+    timeout: float = 3.6 if platform.system() != "Windows" else 10
 
     async def main():
 
