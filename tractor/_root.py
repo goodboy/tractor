@@ -25,7 +25,6 @@ import logging
 import signal
 import sys
 import os
-import typing
 import warnings
 
 
@@ -37,7 +36,7 @@ from ._runtime import (
     Arbiter,
     async_main,
 )
-from . import _debug
+from .devx import _debug
 from . import _spawn
 from . import _state
 from . import log
@@ -46,8 +45,14 @@ from ._exceptions import is_multi_cancelled
 
 
 # set at startup and after forks
-_default_arbiter_host: str = '127.0.0.1'
-_default_arbiter_port: int = 1616
+_default_host: str = '127.0.0.1'
+_default_port: int = 1616
+
+# default registry always on localhost
+_default_lo_addrs: list[tuple[str, int]] = [(
+    _default_host,
+    _default_port,
+)]
 
 
 logger = log.get_logger('tractor')
@@ -58,10 +63,10 @@ async def open_root_actor(
 
     *,
     # defaults are above
-    arbiter_addr: tuple[str, int] | None = None,
+    registry_addrs: list[tuple[str, int]] | None = None,
 
     # defaults are above
-    registry_addr: tuple[str, int] | None = None,
+    arbiter_addr: tuple[str, int] | None = None,
 
     name: str | None = 'root',
 
@@ -79,7 +84,11 @@ async def open_root_actor(
     enable_modules: list | None = None,
     rpc_module_paths: list | None = None,
 
-) -> typing.Any:
+    # NOTE: allow caller to ensure that only one registry exists
+    # and that this call creates it.
+    ensure_registry: bool = False,
+
+) -> Actor:
     '''
     Runtime init entry point for ``tractor``.
 
@@ -89,7 +98,7 @@ async def open_root_actor(
     # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
     builtin_bp_handler = sys.breakpointhook
     orig_bp_path: str | None = os.environ.get('PYTHONBREAKPOINT', None)
-    os.environ['PYTHONBREAKPOINT'] = 'tractor._debug.pause_from_sync'
+    os.environ['PYTHONBREAKPOINT'] = 'tractor.devx._debug.pause_from_sync'
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
@@ -115,20 +124,19 @@ async def open_root_actor(
 
     if arbiter_addr is not None:
         warnings.warn(
-            '`arbiter_addr` is now deprecated and has been renamed to'
-            '`registry_addr`.\nUse that instead..',
+            '`arbiter_addr` is now deprecated\n'
+            'Use `registry_addrs: list[tuple]` instead..',
             DeprecationWarning,
             stacklevel=2,
         )
+        registry_addrs = [arbiter_addr]
 
-    registry_addr = (host, port) = (
-        registry_addr
-        or arbiter_addr
-        or (
-            _default_arbiter_host,
-            _default_arbiter_port,
-        )
+    registry_addrs: list[tuple[str, int]] = (
+        registry_addrs
+        or
+        _default_lo_addrs
     )
+    assert registry_addrs
 
     loglevel = (loglevel or log._default_loglevel).upper()
 
@@ -137,7 +145,7 @@ async def open_root_actor(
 
         # expose internal debug module to every actor allowing
         # for use of ``await tractor.breakpoint()``
-        enable_modules.append('tractor._debug')
+        enable_modules.append('tractor.devx._debug')
 
         # if debug mode get's enabled *at least* use that level of
         # logging for some informative console prompts.
@@ -157,73 +165,131 @@ async def open_root_actor(
 
     log.get_console_log(loglevel)
 
-    try:
-        # make a temporary connection to see if an arbiter exists,
-        # if one can't be made quickly we assume none exists.
-        arbiter_found = False
+    # closed into below ping task-func
+    ponged_addrs: list[tuple[str, int]] = []
 
-        # TODO: this connect-and-bail forces us to have to carefully
-        # rewrap TCP 104-connection-reset errors as EOF so as to avoid
-        # propagating cancel-causing errors to the channel-msg loop
-        # machinery.  Likely it would be better to eventually have
-        # a "discovery" protocol with basic handshake instead.
-        with trio.move_on_after(1):
-            async with _connect_chan(host, port):
-                arbiter_found = True
+    async def ping_tpt_socket(
+        addr: tuple[str, int],
+        timeout: float = 1,
+    ) -> None:
+        '''
+        Attempt temporary connection to see if a registry is
+        listening at the requested address by a tranport layer
+        ping.
 
-    except OSError:
-        # TODO: make this a "discovery" log level?
-        logger.warning(f"No actor registry found @ {host}:{port}")
+        If a connection can't be made quickly we assume none no
+        server is listening at that addr.
 
-    # create a local actor and start up its main routine/task
-    if arbiter_found:
+        '''
+        try:
+            # TODO: this connect-and-bail forces us to have to
+            # carefully rewrap TCP 104-connection-reset errors as
+            # EOF so as to avoid propagating cancel-causing errors
+            # to the channel-msg loop machinery. Likely it would
+            # be better to eventually have a "discovery" protocol
+            # with basic handshake instead?
+            with trio.move_on_after(timeout):
+                async with _connect_chan(*addr):
+                    ponged_addrs.append(addr)
+
+        except OSError:
+            # TODO: make this a "discovery" log level?
+            logger.warning(f'No actor registry found @ {addr}')
+
+    async with trio.open_nursery() as tn:
+        for addr in registry_addrs:
+            tn.start_soon(
+                ping_tpt_socket,
+                tuple(addr),  # TODO: just drop this requirement?
+            )
+
+    trans_bind_addrs: list[tuple[str, int]] = []
+
+    # Create a new local root-actor instance which IS NOT THE
+    # REGISTRAR
+    if ponged_addrs:
+
+        if ensure_registry:
+            raise RuntimeError(
+                 f'Failed to open `{name}`@{ponged_addrs}: '
+                'registry socket(s) already bound'
+            )
 
         # we were able to connect to an arbiter
-        logger.info(f"Arbiter seems to exist @ {host}:{port}")
+        logger.info(
+            f'Registry(s) seem(s) to exist @ {ponged_addrs}'
+        )
 
         actor = Actor(
-            name or 'anonymous',
-            arbiter_addr=registry_addr,
+            name=name or 'anonymous',
+            registry_addrs=ponged_addrs,
             loglevel=loglevel,
             enable_modules=enable_modules,
         )
-        host, port = (host, 0)
+        # DO NOT use the registry_addrs as the transport server
+        # addrs for this new non-registar, root-actor.
+        for host, port in ponged_addrs:
+            # NOTE: zero triggers dynamic OS port allocation
+            trans_bind_addrs.append((host, 0))
 
+    # Start this local actor as the "registrar", aka a regular
+    # actor who manages the local registry of "mailboxes" of
+    # other process-tree-local sub-actors.
     else:
-        # start this local actor as the arbiter (aka a regular actor who
-        # manages the local registry of "mailboxes")
 
-        # Note that if the current actor is the arbiter it is desirable
-        # for it to stay up indefinitely until a re-election process has
-        # taken place - which is not implemented yet FYI).
+        # NOTE that if the current actor IS THE REGISTAR, the
+        # following init steps are taken:
+        # - the tranport layer server is bound to each (host, port)
+        #   pair defined in provided registry_addrs, or the default.
+        trans_bind_addrs = registry_addrs
+
+        # - it is normally desirable for any registrar to stay up
+        #   indefinitely until either all registered (child/sub)
+        #   actors are terminated (via SC supervision) or,
+        #   a re-election process has taken place. 
+        # NOTE: all of ^ which is not implemented yet - see:
+        # https://github.com/goodboy/tractor/issues/216
+        # https://github.com/goodboy/tractor/pull/348
+        # https://github.com/goodboy/tractor/issues/296
 
         actor = Arbiter(
-            name or 'arbiter',
-            arbiter_addr=registry_addr,
+            name or 'registrar',
+            registry_addrs=registry_addrs,
             loglevel=loglevel,
             enable_modules=enable_modules,
         )
 
+    # Start up main task set via core actor-runtime nurseries.
     try:
         # assign process-local actor
         _state._current_actor = actor
 
         # start local channel-server and fake the portal API
         # NOTE: this won't block since we provide the nursery
-        logger.info(f"Starting local {actor} @ {host}:{port}")
+        ml_addrs_str: str = '\n'.join(
+            f'@{addr}' for addr in trans_bind_addrs
+        )
+        logger.info(
+            f'Starting local {actor.uid} on the following transport addrs:\n'
+            f'{ml_addrs_str}'
+        )
 
         # start the actor runtime in a new task
         async with trio.open_nursery() as nursery:
 
-            # ``_runtime.async_main()`` creates an internal nursery and
-            # thus blocks here until the entire underlying actor tree has
-            # terminated thereby conducting structured concurrency.
-
+            # ``_runtime.async_main()`` creates an internal nursery
+            # and blocks here until any underlying actor(-process)
+            # tree has terminated thereby conducting so called
+            # "end-to-end" structured concurrency throughout an
+            # entire hierarchical python sub-process set; all
+            # "actor runtime" primitives are SC-compat and thus all
+            # transitively spawned actors/processes must be as
+            # well.
             await nursery.start(
                 partial(
                     async_main,
                     actor,
-                    accept_addr=(host, port),
+                    accept_addrs=trans_bind_addrs,
                     parent_addr=None
                 )
             )
@@ -235,13 +301,16 @@ async def open_root_actor(
                 BaseExceptionGroup,
             ) as err:
 
+                entered: bool = await _debug._maybe_enter_pm(err)
+
                 if (
-                    not (await _debug._maybe_enter_pm(err))
+                    not entered
                     and not is_multi_cancelled(err)
                 ):
                     logger.exception("Root actor crashed:")
 
-                # always re-raise
+                # ALWAYS re-raise any error bubbled up from the
+                # runtime!
                 raise
 
             finally:
@@ -261,7 +330,7 @@ async def open_root_actor(
     finally:
         _state._current_actor = None
 
-        # restore breakpoint hook state
+        # restore built-in `breakpoint()` hook state
         sys.breakpointhook = builtin_bp_handler
         if orig_bp_path is not None:
             os.environ['PYTHONBREAKPOINT'] = orig_bp_path
@@ -277,10 +346,7 @@ def run_daemon(
 
     # runtime kwargs
     name: str | None = 'root',
-    registry_addr: tuple[str, int] = (
-        _default_arbiter_host,
-        _default_arbiter_port,
-    ),
+    registry_addrs: list[tuple[str, int]] = _default_lo_addrs,
 
     start_method: str | None = None,
     debug_mode: bool = False,
@@ -304,7 +370,7 @@ def run_daemon(
     async def _main():
 
         async with open_root_actor(
-            registry_addr=registry_addr,
+            registry_addrs=registry_addrs,
             name=name,
             start_method=start_method,
             debug_mode=debug_mode,

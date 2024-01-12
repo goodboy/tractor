@@ -14,15 +14,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""
+'''
 Our classy exception set.
 
-"""
+'''
+from __future__ import annotations
 import builtins
 import importlib
+from pprint import pformat
 from typing import (
     Any,
     Type,
+    TYPE_CHECKING,
 )
 import traceback
 
@@ -31,6 +34,11 @@ import trio
 
 from ._state import current_actor
 
+if TYPE_CHECKING:
+    from ._context import Context
+    from ._stream import MsgStream
+    from .log import StackLevelAdapter
+
 _this_mod = importlib.import_module(__name__)
 
 
@@ -38,9 +46,17 @@ class ActorFailure(Exception):
     "General actor failure"
 
 
+# TODO: rename to just `RemoteError`?
 class RemoteActorError(Exception):
-    # TODO: local recontruction of remote exception deats
-    "Remote actor exception bundled locally"
+    '''
+    A box(ing) type which bundles a remote actor `BaseException` for
+    (near identical, and only if possible,) local object/instance
+    re-construction in the local process memory domain.
+
+    Normally each instance is expected to be constructed from
+    a special "error" IPC msg sent by some remote actor-runtime.
+
+    '''
     def __init__(
         self,
         message: str,
@@ -50,12 +66,35 @@ class RemoteActorError(Exception):
     ) -> None:
         super().__init__(message)
 
-        self.type = suberror_type
-        self.msgdata = msgdata
+        # TODO: maybe a better name?
+        # - .errtype
+        # - .retype
+        # - .boxed_errtype
+        # - .boxed_type
+        # - .remote_type
+        # also pertains to our long long oustanding issue XD
+        # https://github.com/goodboy/tractor/issues/5
+        self.type: str = suberror_type
+        self.msgdata: dict[str, Any] = msgdata
 
     @property
     def src_actor_uid(self) -> tuple[str, str] | None:
         return self.msgdata.get('src_actor_uid')
+
+    def __repr__(self) -> str:
+        if remote_tb := self.msgdata.get('tb_str'):
+            pformat(remote_tb)
+            return (
+                f'{type(self).__name__}(\n'
+                f'msgdata={pformat(self.msgdata)}\n'
+                ')'
+            )
+
+        return super().__repr__()
+
+    # TODO: local recontruction of remote exception deats
+    # def unbox(self) -> BaseException:
+    #     ...
 
 
 class InternalActorError(RemoteActorError):
@@ -107,21 +146,30 @@ class AsyncioCancelled(Exception):
 
     '''
 
+class MessagingError(Exception):
+    'Some kind of unexpected SC messaging dialog issue'
+
 
 def pack_error(
     exc: BaseException,
-    tb=None,
+    tb: str | None = None,
 
-) -> dict[str, Any]:
-    """Create an "error message" for tranmission over
-    a channel (aka the wire).
-    """
+) -> dict[str, dict]:
+    '''
+    Create an "error message" encoded for wire transport via an IPC
+    `Channel`; expected to be unpacked on the receiver side using
+    `unpack_error()` below.
+
+    '''
     if tb:
         tb_str = ''.join(traceback.format_tb(tb))
     else:
         tb_str = traceback.format_exc()
 
-    error_msg = {
+    error_msg: dict[
+        str,
+        str | tuple[str, str]
+    ] = {
         'tb_str': tb_str,
         'type_str': type(exc).__name__,
         'src_actor_uid': current_actor().uid,
@@ -139,23 +187,33 @@ def unpack_error(
     chan=None,
     err_type=RemoteActorError
 
-) -> Exception:
+) -> None | Exception:
     '''
     Unpack an 'error' message from the wire
-    into a local ``RemoteActorError``.
+    into a local `RemoteActorError` (subtype).
+
+    NOTE: this routine DOES not RAISE the embedded remote error,
+    which is the responsibilitiy of the caller.
 
     '''
-    __tracebackhide__ = True
-    error = msg['error']
+    __tracebackhide__: bool = True
 
-    tb_str = error.get('tb_str', '')
-    message = f"{chan.uid}\n" + tb_str
-    type_name = error['type_str']
+    error_dict: dict[str, dict] | None
+    if (
+        error_dict := msg.get('error')
+    ) is None:
+        # no error field, nothing to unpack.
+        return None
+
+    # retrieve the remote error's msg encoded details
+    tb_str: str = error_dict.get('tb_str', '')
+    message: str = f'{chan.uid}\n' + tb_str
+    type_name: str = error_dict['type_str']
     suberror_type: Type[BaseException] = Exception
 
     if type_name == 'ContextCancelled':
         err_type = ContextCancelled
-        suberror_type = RemoteActorError
+        suberror_type = err_type
 
     else:  # try to lookup a suitable local error type
         for ns in [
@@ -164,18 +222,19 @@ def unpack_error(
             eg,
             trio,
         ]:
-            try:
-                suberror_type = getattr(ns, type_name)
+            if suberror_type := getattr(
+                ns,
+                type_name,
+                False,
+            ):
                 break
-            except AttributeError:
-                continue
 
     exc = err_type(
         message,
         suberror_type=suberror_type,
 
         # unpack other fields into error type init
-        **msg['error'],
+        **error_dict,
     )
 
     return exc
@@ -194,3 +253,88 @@ def is_multi_cancelled(exc: BaseException) -> bool:
         ) is not None
 
     return False
+
+
+def _raise_from_no_key_in_msg(
+    ctx: Context,
+    msg: dict,
+    src_err: KeyError,
+    log: StackLevelAdapter,  # caller specific `log` obj
+    expect_key: str = 'yield',
+    stream: MsgStream | None = None,
+
+) -> bool:
+    '''
+    Raise an appopriate local error when a `MsgStream` msg arrives
+    which does not contain the expected (under normal operation)
+    `'yield'` field.
+
+    '''
+    __tracebackhide__: bool = True
+
+    # internal error should never get here
+    try:
+        cid: str = msg['cid']
+    except KeyError as src_err:
+        raise MessagingError(
+            f'IPC `Context` rx-ed msg without a ctx-id (cid)!?\n'
+            f'cid: {cid}\n'
+            'received msg:\n'
+            f'{pformat(msg)}\n'
+        ) from src_err
+
+    # TODO: test that shows stream raising an expected error!!!
+    if msg.get('error'):
+        # raise the error message
+        raise unpack_error(
+            msg,
+            ctx.chan,
+        ) from None
+
+    elif (
+        msg.get('stop')
+        or (
+            stream
+            and stream._eoc
+        )
+    ):
+        log.debug(
+            f'Context[{cid}] stream was stopped by remote side\n'
+            f'cid: {cid}\n'
+        )
+
+        # XXX: important to set so that a new ``.receive()``
+        # call (likely by another task using a broadcast receiver)
+        # doesn't accidentally pull the ``return`` message
+        # value out of the underlying feed mem chan!
+        stream._eoc: bool = True
+
+        # # when the send is closed we assume the stream has
+        # # terminated and signal this local iterator to stop
+        # await stream.aclose()
+
+        # XXX: this causes ``ReceiveChannel.__anext__()`` to
+        # raise a ``StopAsyncIteration`` **and** in our catch
+        # block below it will trigger ``.aclose()``.
+        raise trio.EndOfChannel(
+                'Context[{cid}] stream ended due to msg:\n'
+                f'{pformat(msg)}'
+        ) from src_err
+
+
+    if (
+        stream
+        and stream._closed
+    ):
+        raise trio.ClosedResourceError('This stream was closed')
+
+
+    # always re-raise the source error if no translation error case
+    # is activated above.
+    _type: str = 'Stream' if stream else 'Context'
+    raise MessagingError(
+        f'{_type} was expecting a `{expect_key}` message'
+        ' BUT received a non-`error` msg:\n'
+        f'cid: {cid}\n'
+        '{pformat(msg)}'
+    ) from src_err

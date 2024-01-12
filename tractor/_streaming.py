@@ -34,7 +34,7 @@ import warnings
 import trio
 
 from ._exceptions import (
-    unpack_error,
+    _raise_from_no_key_in_msg,
 )
 from .log import get_logger
 from .trionics import (
@@ -53,7 +53,6 @@ log = get_logger(__name__)
 # - generic typing like trio's receive channel but with msgspec
 #   messages? class ReceiveChannel(AsyncResource, Generic[ReceiveType]):
 # - use __slots__ on ``Context``?
-
 
 class MsgStream(trio.abc.Channel):
     '''
@@ -91,13 +90,35 @@ class MsgStream(trio.abc.Channel):
     # delegate directly to underlying mem channel
     def receive_nowait(self):
         msg = self._rx_chan.receive_nowait()
-        return msg['yield']
+        try:
+            return msg['yield']
+        except KeyError as kerr:
+            _raise_from_no_key_in_msg(
+                ctx=self._ctx,
+                msg=msg,
+                src_err=kerr,
+                log=log,
+                expect_key='yield',
+                stream=self,
+            )
 
     async def receive(self):
-        '''Async receive a single msg from the IPC transport, the next
-        in sequence for this stream.
+        '''
+        Receive a single msg from the IPC transport, the next in
+        sequence sent by the far end task (possibly in order as
+        determined by the underlying protocol).
 
         '''
+        # NOTE: `trio.ReceiveChannel` implements
+        # EOC handling as follows (aka uses it
+        # to gracefully exit async for loops):
+        #
+        # async def __anext__(self) -> ReceiveType:
+        #     try:
+        #         return await self.receive()
+        #     except trio.EndOfChannel:
+        #         raise StopAsyncIteration
+
         # see ``.aclose()`` for notes on the old behaviour prior to
         # introducing this
         if self._eoc:
@@ -110,43 +131,15 @@ class MsgStream(trio.abc.Channel):
             msg = await self._rx_chan.receive()
             return msg['yield']
 
-        except KeyError as err:
-            # internal error should never get here
-            assert msg.get('cid'), ("Received internal error at portal?")
-
-            # TODO: handle 2 cases with 3.10 match syntax
-            # - 'stop'
-            # - 'error'
-            # possibly just handle msg['stop'] here!
-
-            if self._closed:
-                raise trio.ClosedResourceError('This stream was closed')
-
-            if msg.get('stop') or self._eoc:
-                log.debug(f"{self} was stopped at remote end")
-
-                # XXX: important to set so that a new ``.receive()``
-                # call (likely by another task using a broadcast receiver)
-                # doesn't accidentally pull the ``return`` message
-                # value out of the underlying feed mem chan!
-                self._eoc = True
-
-                # # when the send is closed we assume the stream has
-                # # terminated and signal this local iterator to stop
-                # await self.aclose()
-
-                # XXX: this causes ``ReceiveChannel.__anext__()`` to
-                # raise a ``StopAsyncIteration`` **and** in our catch
-                # block below it will trigger ``.aclose()``.
-                raise trio.EndOfChannel from err
-
-            # TODO: test that shows stream raising an expected error!!!
-            elif msg.get('error'):
-                # raise the error message
-                raise unpack_error(msg, self._ctx.chan)
-
-            else:
-                raise
+        except KeyError as kerr:
+            _raise_from_no_key_in_msg(
+                ctx=self._ctx,
+                msg=msg,
+                src_err=kerr,
+                log=log,
+                expect_key='yield',
+                stream=self,
+            )
 
         except (
             trio.ClosedResourceError,  # by self._rx_chan

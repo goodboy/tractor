@@ -141,7 +141,7 @@ async def open_actor_local_nursery(
 )
 def test_actor_managed_trio_nursery_task_error_cancels_aio(
     asyncio_mode: bool,
-    arb_addr
+    reg_addr: tuple,
 ):
     '''
     Verify that a ``trio`` nursery created managed in a child actor

@@ -78,7 +78,7 @@ has_nested_actors = pytest.mark.has_nested_actors
 def spawn(
     start_method,
     testdir,
-    arb_addr,
+    reg_addr,
 ) -> 'pexpect.spawn':
 
     if start_method != 'trio':
@@ -166,7 +166,7 @@ def ctlc(
         # XXX: disable pygments highlighting for auto-tests
         # since some envs (like actions CI) will struggle
         # the the added color-char encoding..
-        from tractor._debug import TractorConfig
+        from tractor.devx._debug import TractorConfig
         TractorConfig.use_pygements = False
 
     yield use_ctlc
@@ -607,7 +607,7 @@ def test_multi_daemon_subactors(
     # now the root actor won't clobber the bp_forever child
     # during it's first access to the debug lock, but will instead
     # wait for the lock to release, by the edge triggered
-    # ``_debug.Lock.no_remote_has_tty`` event before sending cancel messages
+    # ``devx._debug.Lock.no_remote_has_tty`` event before sending cancel messages
     # (via portals) to its underlings B)
 
     # at some point here there should have been some warning msg from

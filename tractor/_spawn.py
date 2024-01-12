@@ -35,7 +35,7 @@ from exceptiongroup import BaseExceptionGroup
 import trio
 from trio_typing import TaskStatus
 
-from ._debug import (
+from .devx._debug import (
     maybe_wait_for_debugger,
     acquire_debug_lock,
 )
@@ -199,7 +199,26 @@ async def do_hard_kill(
     proc: trio.Process,
     terminate_after: int = 3,
 
+    # NOTE: for mucking with `.pause()`-ing inside the runtime
+    # whilst also hacking on it XD
+    # terminate_after: int = 99999,
+
 ) -> None:
+    '''
+    Un-gracefully terminate an OS level `trio.Process` after timeout.
+
+    Used in 2 main cases:
+
+    - "unknown remote runtime state": a hanging/stalled actor that
+      isn't responding after sending a (graceful) runtime cancel
+      request via an IPC msg.
+    - "cancelled during spawn": a process who's actor runtime was
+      cancelled before full startup completed (such that
+      cancel-request-handling machinery was never fully
+      initialized) and thus a "cancel request msg" is never going
+      to be handled.
+
+    '''
     # NOTE: this timeout used to do nothing since we were shielding
     # the ``.wait()`` inside ``new_proc()`` which will pretty much
     # never release until the process exits, now it acts as
@@ -215,6 +234,9 @@ async def do_hard_kill(
         # and wait for it to exit. If cancelled, kills the process and
         # waits for it to finish exiting before propagating the
         # cancellation.
+        #
+        # This code was originally triggred by ``proc.__aexit__()``
+        # but now must be called manually.
         with trio.CancelScope(shield=True):
             if proc.stdin is not None:
                 await proc.stdin.aclose()
@@ -230,10 +252,14 @@ async def do_hard_kill(
                 with trio.CancelScope(shield=True):
                     await proc.wait()
 
+    # XXX NOTE XXX: zombie squad dispatch:
+    # (should ideally never, but) If we do get here it means
+    # graceful termination of a process failed and we need to
+    # resort to OS level signalling to interrupt and cancel the
+    # (presumably stalled or hung) actor. Since we never allow
+    # zombies (as a feature) we ask the OS to do send in the
+    # removal swad as the last resort.
     if cs.cancelled_caught:
-        # XXX: should pretty much never get here unless we have
-        # to move the bits from ``proc.__aexit__()`` out and
-        # into here.
         log.critical(f"#ZOMBIE_LORD_IS_HERE: {proc}")
         proc.kill()
 
@@ -248,10 +274,13 @@ async def soft_wait(
     portal: Portal,
 
 ) -> None:
-    # Wait for proc termination but **dont' yet** call
-    # ``trio.Process.__aexit__()`` (it tears down stdio
-    # which will kill any waiting remote pdb trace).
-    # This is a "soft" (cancellable) join/reap.
+    '''
+    Wait for proc termination but **dont' yet** teardown
+    std-streams (since it will clobber any ongoing pdb REPL
+    session). This is our "soft" (and thus itself cancellable)
+    join/reap on an actor-runtime-in-process.
+
+    '''
     uid = portal.channel.uid
     try:
         log.cancel(f'Soft waiting on actor:\n{uid}')
@@ -274,7 +303,13 @@ async def soft_wait(
                 await wait_func(proc)
                 n.cancel_scope.cancel()
 
+            # start a task to wait on the termination of the
+            # process by itself waiting on a (caller provided) wait
+            # function which should unblock when the target process
+            # has terminated.
             n.start_soon(cancel_on_proc_deth)
+
+            # send the actor-runtime a cancel request.
             await portal.cancel_actor()
 
             if proc.poll() is None:  # type: ignore
@@ -294,7 +329,7 @@ async def new_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addr: tuple[str, int],
+    bind_addrs: list[tuple[str, int]],
     parent_addr: tuple[str, int],
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
 
@@ -316,7 +351,7 @@ async def new_proc(
         actor_nursery,
         subactor,
         errors,
-        bind_addr,
+        bind_addrs,
         parent_addr,
         _runtime_vars,  # run time vars
         infect_asyncio=infect_asyncio,
@@ -331,7 +366,7 @@ async def trio_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addr: tuple[str, int],
+    bind_addrs: list[tuple[str, int]],
     parent_addr: tuple[str, int],
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
@@ -417,12 +452,11 @@ async def trio_proc(
 
         # send additional init params
         await chan.send({
-            "_parent_main_data": subactor._parent_main_data,
-            "enable_modules": subactor.enable_modules,
-            "_arb_addr": subactor._arb_addr,
-            "bind_host": bind_addr[0],
-            "bind_port": bind_addr[1],
-            "_runtime_vars": _runtime_vars,
+            '_parent_main_data': subactor._parent_main_data,
+            'enable_modules': subactor.enable_modules,
+            'reg_addrs': subactor.reg_addrs,
+            'bind_addrs': bind_addrs,
+            '_runtime_vars': _runtime_vars,
         })
 
         # track subactor in current nursery
@@ -509,7 +543,7 @@ async def mp_proc(
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
     # passed through to actor main
-    bind_addr: tuple[str, int],
+    bind_addrs: list[tuple[str, int]],
     parent_addr: tuple[str, int],
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
@@ -567,7 +601,7 @@ async def mp_proc(
         target=_mp_main,
         args=(
             subactor,
-            bind_addr,
+            bind_addrs,
             fs_info,
             _spawn_method,
             parent_addr,
