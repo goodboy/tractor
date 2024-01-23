@@ -68,10 +68,10 @@ def _unwrap_msg(
     __tracebackhide__ = True
     try:
         return msg['return']
-    except KeyError:
+    except KeyError as ke:
         # internal error should never get here
         assert msg.get('cid'), "Received internal error at portal?"
-        raise unpack_error(msg, channel) from None
+        raise unpack_error(msg, channel) from ke
 
 
 class Portal:
