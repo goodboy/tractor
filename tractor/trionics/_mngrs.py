@@ -225,6 +225,7 @@ async def maybe_open_context(
 
     # yielded output
     yielded: Any = None
+    lock_registered: bool = False
 
     # Lock resource acquisition around task racing  / ``trio``'s
     # scheduler protocol.
@@ -232,6 +233,7 @@ async def maybe_open_context(
     # to allow re-entrant use cases where one `maybe_open_context()`
     # wrapped factor may want to call into another.
     lock = _Cache.locks.setdefault(fid, trio.Lock())
+    lock_registered: bool = True
     await lock.acquire()
 
     # XXX: one singleton nursery per actor and we want to
@@ -291,4 +293,9 @@ async def maybe_open_context(
                     _, no_more_users = entry
                     no_more_users.set()
 
-                _Cache.locks.pop(fid)
+                if lock_registered:
+                    maybe_lock = _Cache.locks.pop(fid, None)
+                    if maybe_lock is None:
+                        log.error(
+                            f'Resource lock for {fid} ALREADY POPPED?'
+                        )
