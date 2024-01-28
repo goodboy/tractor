@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Built-in messaging patterns, types, APIs and helpers.
+IPC-compat cross-mem-boundary object pointer.
 
 '''
 
