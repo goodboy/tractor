@@ -185,7 +185,8 @@ def unpack_error(
 
     msg: dict[str, Any],
     chan=None,
-    err_type=RemoteActorError
+    err_type=RemoteActorError,
+    hide_tb: bool = True,
 
 ) -> None | Exception:
     '''
@@ -196,7 +197,7 @@ def unpack_error(
     which is the responsibilitiy of the caller.
 
     '''
-    __tracebackhide__: bool = True
+    __tracebackhide__: bool = hide_tb
 
     error_dict: dict[str, dict] | None
     if (
@@ -309,6 +310,11 @@ def _raise_from_no_key_in_msg(
         # value out of the underlying feed mem chan!
         stream._eoc: bool = True
 
+        # TODO: if the a local task is already blocking on
+        # a `Context.result()` and thus a `.receive()` on the
+        # rx-chan, we close the chan and set state ensuring that
+        # an eoc is raised!
+
         # # when the send is closed we assume the stream has
         # # terminated and signal this local iterator to stop
         # await stream.aclose()
@@ -317,8 +323,8 @@ def _raise_from_no_key_in_msg(
         # raise a ``StopAsyncIteration`` **and** in our catch
         # block below it will trigger ``.aclose()``.
         raise trio.EndOfChannel(
-                'Context[{cid}] stream ended due to msg:\n'
-                f'{pformat(msg)}'
+            f'Context stream ended due to msg:\n'
+            f'{pformat(msg)}'
         ) from src_err
 
 
