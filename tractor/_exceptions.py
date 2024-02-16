@@ -134,8 +134,19 @@ class NoRuntime(RuntimeError):
     "The root actor has not been initialized yet"
 
 
-class StreamOverrun(trio.TooSlowError):
-    "This stream was overrun by sender"
+class StreamOverrun(
+    RemoteActorError,
+    trio.TooSlowError,
+):
+    '''
+    This stream was overrun by sender
+
+    '''
+    @property
+    def sender(self) -> tuple[str, str] | None:
+        value = self.msgdata.get('sender')
+        if value:
+            return tuple(value)
 
 
 class AsyncioCancelled(Exception):
@@ -175,7 +186,15 @@ def pack_error(
         'src_actor_uid': current_actor().uid,
     }
 
-    if isinstance(exc, ContextCancelled):
+    # TODO: ?just wholesale proxy `.msgdata: dict`?
+    # XXX WARNING, when i swapped these ctx-semantics
+    # tests started hanging..???!!!???
+    # if msgdata := exc.getattr('msgdata', {}):
+    #     error_msg.update(msgdata)
+    if (
+        isinstance(exc, ContextCancelled)
+        or isinstance(exc, StreamOverrun)
+    ):
         error_msg.update(exc.msgdata)
 
     return {'error': error_msg}
