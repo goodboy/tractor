@@ -163,13 +163,15 @@ class MessagingError(Exception):
 
 def pack_error(
     exc: BaseException,
-    tb: str | None = None,
+    tb: str|None = None,
+    cid: str|None = None,
 
 ) -> dict[str, dict]:
     '''
-    Create an "error message" encoded for wire transport via an IPC
-    `Channel`; expected to be unpacked on the receiver side using
-    `unpack_error()` below.
+    Create an "error message" which boxes a locally caught
+    exception's meta-data and encodes it for wire transport via an
+    IPC `Channel`; expected to be unpacked (and thus unboxed) on
+    the receiver side using `unpack_error()` below.
 
     '''
     if tb:
@@ -197,7 +199,12 @@ def pack_error(
     ):
         error_msg.update(exc.msgdata)
 
-    return {'error': error_msg}
+
+    pkt: dict = {'error': error_msg}
+    if cid:
+        pkt['cid'] = cid
+
+    return pkt
 
 
 def unpack_error(
@@ -207,7 +214,7 @@ def unpack_error(
     err_type=RemoteActorError,
     hide_tb: bool = True,
 
-) -> None | Exception:
+) -> None|Exception:
     '''
     Unpack an 'error' message from the wire
     into a local `RemoteActorError` (subtype).
@@ -358,8 +365,7 @@ def _raise_from_no_key_in_msg(
     # is activated above.
     _type: str = 'Stream' if stream else 'Context'
     raise MessagingError(
-        f'{_type} was expecting a `{expect_key}` message'
-        ' BUT received a non-`error` msg:\n'
-        f'cid: {cid}\n'
-        '{pformat(msg)}'
+        f"{_type} was expecting a '{expect_key}' message"
+        " BUT received a non-error msg:\n"
+        f'{pformat(msg)}'
     ) from src_err
