@@ -19,13 +19,14 @@ Inter-process comms abstractions
 
 """
 from __future__ import annotations
-import platform
 import struct
-import typing
+import platform
+from pprint import pformat
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
 )
+import typing
 from typing import (
     Any,
     runtime_checkable,
@@ -370,7 +371,10 @@ class Channel:
 
     async def send(self, item: Any) -> None:
 
-        log.transport(f"send `{item}`")  # type: ignore
+        log.transport(
+            '=> send IPC msg:\n\n'
+            f'{pformat(item)}\n'
+        )  # type: ignore
         assert self.msgstream
 
         await self.msgstream.send(item)
