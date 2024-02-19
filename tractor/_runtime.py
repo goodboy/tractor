@@ -1047,23 +1047,32 @@ class Actor:
                         db_cs.cancel()
 
             # XXX: is this necessary (GC should do it)?
-            if chan.connected():
-                # if the channel is still connected it may mean the far
-                # end has not closed and we may have gotten here due to
-                # an error and so we should at least try to terminate
-                # the channel from this end gracefully.
+            # XXX WARNING XXX
+            # Be AWARE OF THE INDENT LEVEL HERE
+            # -> ONLY ENTER THIS BLOCK WHEN ._peers IS
+            # EMPTY!!!!
+            if (
+                not self._peers
+                and chan.connected()
+            ):
+                    # if the channel is still connected it may mean the far
+                    # end has not closed and we may have gotten here due to
+                    # an error and so we should at least try to terminate
+                    # the channel from this end gracefully.
+                    log.runtime(
+                        'Terminating channel with `None` setinel msg\n'
+                        f'|_{chan}\n'
+                    )
+                    try:
+                        # send a msg loop terminate sentinel
+                        await chan.send(None)
 
-                log.runtime(f"Disconnecting channel {chan}")
-                try:
-                    # send a msg loop terminate sentinel
-                    await chan.send(None)
+                        # XXX: do we want this?
+                        # causes "[104] connection reset by peer" on other end
+                        # await chan.aclose()
 
-                    # XXX: do we want this?
-                    # causes "[104] connection reset by peer" on other end
-                    # await chan.aclose()
-
-                except trio.BrokenResourceError:
-                    log.runtime(f"Channel {chan.uid} was already closed")
+                    except trio.BrokenResourceError:
+                        log.runtime(f"Channel {chan.uid} was already closed")
 
     async def _push_result(
         self,
