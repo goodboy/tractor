@@ -39,7 +39,15 @@ import trio
 from async_generator import asynccontextmanager
 
 from .trionics import maybe_open_nursery
-from ._state import current_actor
+from .devx import (
+    # acquire_debug_lock,
+    # pause,
+    maybe_wait_for_debugger,
+)
+from ._state import (
+    current_actor,
+    debug_mode,
+)
 from ._ipc import Channel
 from .log import get_logger
 from .msg import NamespacePath
@@ -48,6 +56,7 @@ from ._exceptions import (
     unpack_error,
     NoResult,
     ContextCancelled,
+    RemoteActorError,
 )
 from ._context import (
     Context,
@@ -468,7 +477,6 @@ class Portal:
             ctx._started_called: bool = True
 
         except KeyError as src_error:
-
             _raise_from_no_key_in_msg(
                 ctx=ctx,
                 msg=msg,
@@ -492,6 +500,33 @@ class Portal:
                 # deliver context instance and .started() msg value
                 # in enter tuple.
                 yield ctx, first
+
+                # between the caller exiting and arriving here the
+                # far end may have sent a ctxc-msg or other error,
+                # so check for it here immediately and maybe raise
+                # so as to engage the ctxc handling block below!
+                # if re := ctx._remote_error:
+                #     maybe_ctxc: ContextCancelled|None = ctx._maybe_raise_remote_err(
+                #         re,
+
+                #         # TODO: do we want this to always raise?
+                #         # - means that on self-ctxc, if/when the
+                #         #   block is exited before the msg arrives
+                #         #   but then the msg during __exit__
+                #         #   calling we may not activate the
+                #         #   ctxc-handler block below? should we
+                #         #   be?
+                #         # - if there's a remote error that arrives
+                #         #   after the child has exited, we won't
+                #         #   handle until the `finally:` block
+                #         #   where `.result()` is always called,
+                #         #   again in which case we handle it
+                #         #   differently then in the handler block
+                #         #   that would normally engage from THIS
+                #         #   block?
+                #         raise_ctxc_from_self_call=True,
+                #     )
+                #     assert maybe_ctxc
 
                 # when in allow_overruns mode there may be
                 # lingering overflow sender tasks remaining?
@@ -538,7 +573,7 @@ class Portal:
         #   `.canceller: tuple[str, str]` to be same value as
         #   caught here in a `ContextCancelled.canceller`.
         #
-        # Again, there are 2 cases:
+        # AGAIN to restate the above, there are 2 cases:
         #
         # 1-some other context opened in this `.open_context()`
         #   block cancelled due to a self or peer cancellation
@@ -554,6 +589,16 @@ class Portal:
         except ContextCancelled as ctxc:
             scope_err = ctxc
 
+            # XXX TODO XXX: FIX THIS debug_mode BUGGGG!!!
+            # using this code and then resuming the REPL will
+            # cause a SIGINT-ignoring HANG!
+            # -> prolly due to a stale debug lock entry..
+            # -[ ] USE `.stackscope` to demonstrate that (possibly
+            #   documenting it as a definittive example of
+            #   debugging the tractor-runtime itself using it's
+            #   own `.devx.` tooling!
+            # await pause()
+
             # CASE 2: context was cancelled by local task calling
             # `.cancel()`, we don't raise and the exit block should
             # exit silently.
@@ -561,18 +606,23 @@ class Portal:
                 ctx._cancel_called
                 and (
                     ctxc is ctx._remote_error
-                    or
-                    ctxc.canceller is self.canceller
+                    # ctxc.msgdata == ctx._remote_error.msgdata
+
+                    # TODO: uhh `Portal.canceller` ain't a thangg
+                    # dawg? (was `self.canceller` before?!?)
+                    and
+                    ctxc.canceller == self.actor.uid
                 )
             ):
-                log.debug(
-                    f'Context {ctx} cancelled gracefully with:\n'
+                log.cancel(
+                    f'Context (cid=[{ctx.cid[-6:]}..] cancelled gracefully with:\n'
                     f'{ctxc}'
                 )
             # CASE 1: this context was never cancelled via a local
             # task (tree) having called `Context.cancel()`, raise
             # the error since it was caused by someone else!
             else:
+                # await pause()
                 raise
 
         # the above `._scope` can be cancelled due to:
@@ -601,8 +651,8 @@ class Portal:
             trio.Cancelled,  # NOTE: NOT from inside the ctx._scope
             KeyboardInterrupt,
 
-        ) as err:
-            scope_err = err
+        ) as caller_err:
+            scope_err = caller_err
 
             # XXX: ALWAYS request the context to CANCEL ON any ERROR.
             # NOTE: `Context.cancel()` is conversely NEVER CALLED in
@@ -610,11 +660,26 @@ class Portal:
             # handled in the block above!
             log.cancel(
                 'Context cancelled for task due to\n'
-                f'{err}\n'
+                f'{caller_err}\n'
                 'Sending cancel request..\n'
                 f'task:{cid}\n'
                 f'actor:{uid}'
             )
+
+            if debug_mode():
+                log.pdb(
+                    'Delaying `ctx.cancel()` until debug lock '
+                    'acquired..'
+                )
+                # async with acquire_debug_lock(self.actor.uid):
+                #     pass
+                # TODO: factor ^ into below for non-root cases?
+                await maybe_wait_for_debugger()
+                log.pdb(
+                    'Acquired debug lock! '
+                    'Calling `ctx.cancel()`!'
+                )
+
             try:
                 await ctx.cancel()
             except trio.BrokenResourceError:
@@ -628,6 +693,33 @@ class Portal:
 
         # no local scope error, the "clean exit with a result" case.
         else:
+            # between the caller exiting and arriving here the
+            # far end may have sent a ctxc-msg or other error,
+            # so check for it here immediately and maybe raise
+            # so as to engage the ctxc handling block below!
+            # if re := ctx._remote_error:
+            #     maybe_ctxc: ContextCancelled|None = ctx._maybe_raise_remote_err(
+            #         re,
+
+            #         # TODO: do we want this to always raise?
+            #         # - means that on self-ctxc, if/when the
+            #         #   block is exited before the msg arrives
+            #         #   but then the msg during __exit__
+            #         #   calling we may not activate the
+            #         #   ctxc-handler block below? should we
+            #         #   be?
+            #         # - if there's a remote error that arrives
+            #         #   after the child has exited, we won't
+            #         #   handle until the `finally:` block
+            #         #   where `.result()` is always called,
+            #         #   again in which case we handle it
+            #         #   differently then in the handler block
+            #         #   that would normally engage from THIS
+            #         #   block?
+            #         raise_ctxc_from_self_call=True,
+            #     )
+            #     assert maybe_ctxc
+
             if ctx.chan.connected():
                 log.info(
                     'Waiting on final context-task result for\n'
@@ -644,13 +736,8 @@ class Portal:
                 # As per `Context._deliver_msg()`, that error IS
                 # ALWAYS SET any time "callee" side fails and causes "caller
                 # side" cancellation via a `ContextCancelled` here.
-                # result = await ctx.result()
                 try:
-                    result = await ctx.result()
-                    log.runtime(
-                        f'Context {fn_name} returned value from callee:\n'
-                        f'`{result}`'
-                    )
+                    result_or_err: Exception|Any = await ctx.result()
                 except BaseException as berr:
                     # on normal teardown, if we get some error
                     # raised in `Context.result()` we still want to
@@ -662,7 +749,48 @@ class Portal:
                     scope_err = berr
                     raise
 
+                # an exception type boxed in a `RemoteActorError`
+                # is returned (meaning it was obvi not raised).
+                msgdata: str|None = getattr(
+                    result_or_err,
+                    'msgdata',
+                    None
+                )
+                # yes! this worx Bp
+                # from .devx import _debug
+                # await _debug.pause()
+                match (msgdata, result_or_err):
+                    case (
+                        {'tb_str': tbstr},
+                        ContextCancelled(),
+                    ):
+                        log.cancel(tbstr)
+
+                    case (
+                        {'tb_str': tbstr},
+                        RemoteActorError(),
+                    ):
+                        log.exception(
+                            f'Context `{fn_name}` remotely errored:\n'
+                            f'`{tbstr}`'
+                        )
+                    case (None, _):
+                        log.runtime(
+                            f'Context {fn_name} returned value from callee:\n'
+                            f'`{result_or_err}`'
+                        )
+
         finally:
+            # XXX: (MEGA IMPORTANT) if this is a root opened process we
+            # wait for any immediate child in debug before popping the
+            # context from the runtime msg loop otherwise inside
+            # ``Actor._push_result()`` the msg will be discarded and in
+            # the case where that msg is global debugger unlock (via
+            # a "stop" msg for a stream), this can result in a deadlock
+            # where the root is waiting on the lock to clear but the
+            # child has already cleared it and clobbered IPC.
+            await maybe_wait_for_debugger()
+
             # though it should be impossible for any tasks
             # operating *in* this scope to have survived
             # we tear down the runtime feeder chan last
@@ -707,6 +835,10 @@ class Portal:
                 # out any exception group or legit (remote) ctx
                 # error that sourced from the remote task or its
                 # runtime.
+                #
+                # NOTE: further, this should be the only place the
+                # underlying feeder channel is
+                # once-and-only-CLOSED!
                 with trio.CancelScope(shield=True):
                     await ctx._recv_chan.aclose()
 
@@ -747,6 +879,9 @@ class Portal:
 
             # FINALLY, remove the context from runtime tracking and
             # exit!
+            log.runtime(
+                f'Exiting context opened with {ctx.chan.uid}'
+            )
             self.actor._contexts.pop(
                 (self.channel.uid, ctx.cid),
                 None,
