@@ -58,6 +58,11 @@ class NamespacePath(str):
     '''
     _ref: object | type | None = None
 
+    # TODO: support providing the ns instance in
+    # order to support 'self.<meth>` style to make
+    # `Portal.run_from_ns()` work!
+    # _ns: ModuleType|type|None = None
+
     def load_ref(self) -> object | type:
         if self._ref is None:
             self._ref = resolve_name(self)
@@ -100,5 +105,13 @@ class NamespacePath(str):
         fqnp: tuple[str, str] = cls._mk_fqnp(ref)
         return cls(':'.join(fqnp))
 
-    def to_tuple(self) -> tuple[str, str]:
-        return self._mk_fqnp(self.load_ref())
+    def to_tuple(
+        self,
+
+        # TODO: could this work re `self:<meth>` case from above?
+        # load_ref: bool = True,
+
+    ) -> tuple[str, str]:
+        return self._mk_fqnp(
+            self.load_ref()
+        )
