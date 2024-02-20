@@ -1,18 +1,19 @@
 # tractor: structured concurrent "actors".
 # Copyright 2018-eternity Tyler Goodlet.
 
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# This program is free software: you can redistribute it and/or
+# modify it under the terms of the GNU Affero General Public License
+# as published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
 
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Affero General Public License for more details.
 
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# You should have received a copy of the GNU Affero General Public
+# License along with this program.  If not, see
+# <https://www.gnu.org/licenses/>.
 
 """
 Multi-core debugging for da peeps!
@@ -43,6 +44,7 @@ from types import FrameType
 import pdbp
 import tractor
 import trio
+from trio.lowlevel import current_task
 from trio_typing import (
     TaskStatus,
     # Task,
@@ -50,6 +52,7 @@ from trio_typing import (
 
 from ..log import get_logger
 from .._state import (
+    current_actor,
     is_root_process,
     debug_mode,
 )
@@ -238,7 +241,7 @@ async def _acquire_debug_lock_from_root_task(
     to the ``pdb`` repl.
 
     '''
-    task_name: str = trio.lowlevel.current_task().name
+    task_name: str = current_task().name
     we_acquired: bool = False
 
     log.runtime(
@@ -323,8 +326,7 @@ async def lock_tty_for_child(
     highly reliable at releasing the mutex complete!
 
     '''
-    task_name = trio.lowlevel.current_task().name
-
+    task_name: str = current_task().name
     if tuple(subactor_uid) in Lock._blocked:
         log.warning(
             f'Actor {subactor_uid} is blocked from acquiring debug lock\n'
@@ -407,11 +409,13 @@ async def wait_for_parent_stdin_hijack(
                     assert val == 'Locked'
 
                     async with ctx.open_stream() as stream:
-                        # unblock local caller
-
                         try:
+                            # unblock local caller
                             assert Lock.local_pdb_complete
                             task_status.started(cs)
+
+                            # wait for local task to exit and
+                            # release the REPL
                             await Lock.local_pdb_complete.wait()
 
                         finally:
@@ -468,7 +472,7 @@ def shield_sigint_handler(
 
     uid_in_debug: tuple[str, str] | None = Lock.global_actor_in_debug
 
-    actor = tractor.current_actor()
+    actor = current_actor()
     # print(f'{actor.uid} in HANDLER with ')
 
     def do_cancel():
@@ -613,7 +617,7 @@ def _set_trace(
     shield: bool = False,
 ):
     __tracebackhide__: bool = True
-    actor: tractor.Actor = actor or tractor.current_actor()
+    actor: tractor.Actor = actor or current_actor()
 
     # start 2 levels up in user code
     frame: FrameType | None = sys._getframe()
@@ -683,9 +687,9 @@ async def pause(
 
     '''
     # __tracebackhide__ = True
-    actor = tractor.current_actor()
+    actor = current_actor()
     pdb, undo_sigint = mk_mpdb()
-    task_name = trio.lowlevel.current_task().name
+    task_name: str = trio.lowlevel.current_task().name
 
     if (
         not Lock.local_pdb_complete
@@ -836,7 +840,7 @@ async def pause(
 # runtime aware version which takes care of all .
 def pause_from_sync() -> None:
     print("ENTER SYNC PAUSE")
-    actor: tractor.Actor = tractor.current_actor(
+    actor: tractor.Actor = current_actor(
         err_on_no_runtime=False,
     )
     if actor:
@@ -971,9 +975,10 @@ async def acquire_debug_lock(
     '''
     Grab root's debug lock on entry, release on exit.
 
-    This helper is for actor's who don't actually need
-    to acquired the debugger but want to wait until the
-    lock is free in the process-tree root.
+    This helper is for actor's who don't actually need to acquired
+    the debugger but want to wait until the lock is free in the
+    process-tree root such that they don't clobber an ongoing pdb
+    REPL session in some peer or child!
 
     '''
     if not debug_mode():
@@ -1013,43 +1018,71 @@ async def maybe_wait_for_debugger(
         # tearing down.
         sub_in_debug: tuple[str, str] | None = None
 
-        for _ in range(poll_steps):
+        for istep in range(poll_steps):
 
-            if Lock.global_actor_in_debug:
-                sub_in_debug = tuple(Lock.global_actor_in_debug)
-
-            log.debug('Root polling for debug')
-
-            with trio.CancelScope(shield=True):
-                await trio.sleep(poll_delay)
-
-                # TODO: could this make things more deterministic?  wait
-                # to see if a sub-actor task will be scheduled and grab
-                # the tty lock on the next tick?
-                # XXX: doesn't seem to work
+            if sub_in_debug := Lock.global_actor_in_debug:
+                log.pdb(
+                    f'Lock in use by {sub_in_debug}'
+                )
+                # TODO: could this make things more deterministic?
+                # wait to see if a sub-actor task will be
+                # scheduled and grab the tty lock on the next
+                # tick?
+                # XXX => but it doesn't seem to work..
                 # await trio.testing.wait_all_tasks_blocked(cushion=0)
 
-                debug_complete = Lock.no_remote_has_tty
-                if (
-                    debug_complete
-                    and sub_in_debug is not None
-                    and not debug_complete.is_set()
-                ):
-                    log.pdb(
-                        'Root has errored but pdb is in use by '
-                        f'child {sub_in_debug}\n'
-                        'Waiting on tty lock to release..'
-                    )
+            debug_complete: trio.Event|None = Lock.no_remote_has_tty
+            if (
+                debug_complete
+                and not debug_complete.is_set()
+                and sub_in_debug is not None
+            ):
+                log.pdb(
+                    'Root has errored but pdb is in use by child\n'
+                    'Waiting on tty lock to release..\n'
+                    f'uid: {sub_in_debug}\n'
+                )
+                await debug_complete.wait()
+                log.pdb(
+                    f'Child subactor released debug lock!\n'
+                    f'uid: {sub_in_debug}\n'
+                )
+                if debug_complete.is_set():
+                    break
 
-                    await debug_complete.wait()
+            # is no subactor locking debugger currently?
+            elif (
+                debug_complete is None
+                or sub_in_debug is None
+            ):
+                log.pdb(
+                    'Root acquired debug TTY LOCK from child\n'
+                    f'uid: {sub_in_debug}'
+                )
+                break
 
-                await trio.sleep(poll_delay)
-                continue
+            else:
+                # TODO: don't need this right?
+                # await trio.lowlevel.checkpoint()
+
+                log.debug(
+                    'Root polling for debug:\n'
+                    f'poll step: {istep}\n'
+                    f'poll delya: {poll_delay}'
+                )
+                with trio.CancelScope(shield=True):
+                    await trio.sleep(poll_delay)
+                    continue
         else:
-            log.debug(
-                    'Root acquired TTY LOCK'
-            )
+            log.pdb('Root acquired debug TTY LOCK')
 
+    # else:
+    #     # TODO: non-root call for #320?
+    #     this_uid: tuple[str, str] = current_actor().uid
+    #     async with acquire_debug_lock(
+    #         subactor_uid=this_uid,
+    #     ):
+    #         pass
 
 # TODO: better naming and what additionals?
 # - [ ] optional runtime plugging?
