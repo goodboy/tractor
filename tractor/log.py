@@ -289,11 +289,19 @@ def get_console_log(
     if not level:
         return log
 
-    log.setLevel(level.upper() if not isinstance(level, int) else level)
+    log.setLevel(
+        level.upper()
+        if not isinstance(level, int)
+        else level
+    )
 
     if not any(
         handler.stream == sys.stderr  # type: ignore
-        for handler in logger.handlers if getattr(handler, 'stream', None)
+        for handler in logger.handlers if getattr(
+            handler,
+            'stream',
+            None,
+        )
     ):
         handler = logging.StreamHandler()
         formatter = colorlog.ColoredFormatter(
