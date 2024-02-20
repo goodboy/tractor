@@ -123,7 +123,9 @@ async def error_before_started(
                 await peer_ctx.cancel()
 
 
-def test_do_not_swallow_error_before_started_by_remote_contextcancelled():
+def test_do_not_swallow_error_before_started_by_remote_contextcancelled(
+    debug_mode: bool,
+):
     '''
     Verify that an error raised in a remote context which itself
     opens YET ANOTHER remote context, which it then cancels, does not
@@ -132,7 +134,9 @@ def test_do_not_swallow_error_before_started_by_remote_contextcancelled():
 
     '''
     async def main():
-        async with tractor.open_nursery() as n:
+        async with tractor.open_nursery(
+            debug_mode=debug_mode,
+        ) as n:
             portal = await n.start_actor(
                 'errorer',
                 enable_modules=[__name__],
@@ -225,13 +229,16 @@ async def stream_from_peer(
     # NOTE: cancellation of the (sleeper) peer should always
     # cause a `ContextCancelled` raise in this streaming
     # actor.
-    except ContextCancelled as ctxerr:
-        err = ctxerr
+    except ContextCancelled as ctxc:
+        ctxerr = ctxc
+
         assert peer_ctx._remote_error is ctxerr
+        assert peer_ctx._remote_error.msgdata == ctxerr.msgdata
         assert peer_ctx.canceller == ctxerr.canceller
 
         # caller peer should not be the cancel requester
         assert not ctx.cancel_called
+
         # XXX can never be true since `._invoke` only
         # sets this AFTER the nursery block this task
         # was started in, exits.
@@ -269,9 +276,7 @@ async def stream_from_peer(
         # assert ctx.canceller[0] == 'root'
         # assert peer_ctx.canceller[0] == 'sleeper'
 
-    raise RuntimeError(
-        'peer never triggered local `ContextCancelled`?'
-    )
+    raise RuntimeError('Never triggered local `ContextCancelled` ?!?')
 
 
 @pytest.mark.parametrize(
@@ -280,6 +285,7 @@ async def stream_from_peer(
 )
 def test_peer_canceller(
     error_during_ctxerr_handling: bool,
+    debug_mode: bool,
 ):
     '''
     Verify that a cancellation triggered by an in-actor-tree peer
@@ -336,7 +342,7 @@ def test_peer_canceller(
     async def main():
         async with tractor.open_nursery(
             # NOTE: to halt the peer tasks on ctxc, uncomment this.
-            # debug_mode=True
+            debug_mode=debug_mode,
         ) as an:
             canceller: Portal = await an.start_actor(
                 'canceller',
@@ -377,7 +383,8 @@ def test_peer_canceller(
 
                     try:
                         print('PRE CONTEXT RESULT')
-                        await sleeper_ctx.result()
+                        res = await sleeper_ctx.result()
+                        assert res
 
                         # should never get here
                         pytest.fail(
@@ -387,7 +394,10 @@ def test_peer_canceller(
                     # should always raise since this root task does
                     # not request the sleeper cancellation ;)
                     except ContextCancelled as ctxerr:
-                        print(f'CAUGHT REMOTE CONTEXT CANCEL {ctxerr}')
+                        print(
+                            'CAUGHT REMOTE CONTEXT CANCEL FOM\n'
+                            f'{ctxerr}'
+                        )
 
                         # canceller and caller peers should not
                         # have been remotely cancelled.
@@ -410,16 +420,31 @@ def test_peer_canceller(
 
                     # XXX SHOULD NEVER EVER GET HERE XXX
                     except BaseException as berr:
-                        err = berr
-                        pytest.fail('did not rx ctx-cancelled error?')
+                        raise
+
+                        # XXX if needed to debug failure
+                        # _err = berr
+                        # await tractor.pause()
+                        # await trio.sleep_forever()
+
+                        pytest.fail(
+                            'did not rx ctxc ?!?\n\n'
+
+                            f'{berr}\n'
+                        )
+
                     else:
-                        pytest.fail('did not rx ctx-cancelled error?')
+                        pytest.fail(
+                            'did not rx ctxc ?!?\n\n'
+
+                            f'{ctxs}\n'
+                        )
 
             except (
                 ContextCancelled,
                 RuntimeError,
-            )as ctxerr:
-                _err = ctxerr
+            )as loc_err:
+                _loc_err = loc_err
 
                 # NOTE: the main state to check on `Context` is:
                 # - `.cancelled_caught` (maps to nursery cs)
@@ -436,7 +461,7 @@ def test_peer_canceller(
                 # `ContextCancelled` inside `.open_context()`
                 # block
                 if error_during_ctxerr_handling:
-                    assert isinstance(ctxerr, RuntimeError)
+                    assert isinstance(loc_err, RuntimeError)
 
                     # NOTE: this root actor task should have
                     # called `Context.cancel()` on the
@@ -472,9 +497,10 @@ def test_peer_canceller(
 
                 # CASE: standard teardown inside in `.open_context()` block
                 else:
-                    assert ctxerr.canceller == sleeper_ctx.canceller
+                    assert isinstance(loc_err, ContextCancelled)
+                    assert loc_err.canceller == sleeper_ctx.canceller
                     assert (
-                        ctxerr.canceller[0]
+                        loc_err.canceller[0]
                         ==
                         sleeper_ctx.canceller[0]
                         ==
@@ -484,7 +510,7 @@ def test_peer_canceller(
                     # the sleeper's remote error is the error bubbled
                     # out of the context-stack above!
                     re = sleeper_ctx._remote_error
-                    assert re is ctxerr
+                    assert re is loc_err
 
                     for ctx in ctxs:
                         re: BaseException | None = ctx._remote_error
@@ -554,3 +580,14 @@ def test_peer_canceller(
 
         assert excinfo.value.type == ContextCancelled
         assert excinfo.value.canceller[0] == 'canceller'
+
+
+def test_client_tree_spawns_and_cancels_service_subactor():
+    ...
+# TODO: test for the modden `mod wks open piker` bug!
+# -> start actor-tree (server) that offers sub-actor spawns via
+#   context API
+# -> start another full actor-tree (client) which requests to the first to
+#   spawn over its `@context` ep / api.
+# -> client actor cancels the context and should exit gracefully
+#   and the server's spawned child should cancel and terminate!
