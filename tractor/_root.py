@@ -131,13 +131,19 @@ async def open_root_actor(
         )
     )
 
-    loglevel = (loglevel or log._default_loglevel).upper()
+    loglevel = (
+        loglevel
+        or log._default_loglevel
+    ).upper()
 
-    if debug_mode and _spawn._spawn_method == 'trio':
+    if (
+        debug_mode
+        and _spawn._spawn_method == 'trio'
+    ):
         _state._runtime_vars['_debug_mode'] = True
 
-        # expose internal debug module to every actor allowing
-        # for use of ``await tractor.breakpoint()``
+        # expose internal debug module to every actor allowing for
+        # use of ``await tractor.pause()``
         enable_modules.append('tractor.devx._debug')
 
         # if debug mode get's enabled *at least* use that level of
@@ -156,7 +162,20 @@ async def open_root_actor(
             "Debug mode is only supported for the `trio` backend!"
         )
 
-    log.get_console_log(loglevel)
+    assert loglevel
+    _log = log.get_console_log(loglevel)
+    assert _log
+
+    # TODO: factor this into `.devx._stackscope`!!
+    if debug_mode:
+        try:
+            logger.info('Enabling `stackscope` traces on SIGUSR1')
+            from .devx import enable_stack_on_sig
+            enable_stack_on_sig()
+        except ImportError:
+            logger.warning(
+                '`stackscope` not installed for use in debug mode!'
+            )
 
     try:
         # make a temporary connection to see if an arbiter exists,
