@@ -32,6 +32,9 @@ from ._debug import (
     maybe_open_crash_handler,
     post_mortem,
 )
+from ._stackscope import (
+    enable_stack_on_sig as enable_stack_on_sig,
+)
 
 __all__ = [
     'maybe_wait_for_debugger',
