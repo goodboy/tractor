@@ -157,7 +157,7 @@ class ActorNursery:
 
         # start a task to spawn a process
         # blocks until process has been started and a portal setup
-        nursery = nursery or self._da_nursery
+        nursery: trio.Nursery = nursery or self._da_nursery
 
         # XXX: the type ignore is actually due to a `mypy` bug
         return await nursery.start(  # type: ignore
@@ -233,12 +233,14 @@ class ActorNursery:
         return portal
 
     async def cancel(self, hard_kill: bool = False) -> None:
-        """Cancel this nursery by instructing each subactor to cancel
+        '''
+        Cancel this nursery by instructing each subactor to cancel
         itself and wait for all subactors to terminate.
 
         If ``hard_killl`` is set to ``True`` then kill the processes
         directly without any far end graceful ``trio`` cancellation.
-        """
+
+        '''
         self.cancelled = True
 
         log.cancel(f"Cancelling nursery in {self._actor.uid}")
@@ -246,7 +248,14 @@ class ActorNursery:
 
             async with trio.open_nursery() as nursery:
 
-                for subactor, proc, portal in self._children.values():
+                subactor: Actor
+                proc: trio.Process
+                portal: Portal
+                for (
+                    subactor,
+                    proc,
+                    portal,
+                ) in self._children.values():
 
                     # TODO: are we ever even going to use this or
                     # is the spawning backend responsible for such
@@ -286,8 +295,16 @@ class ActorNursery:
         # then hard kill all sub-processes
         if cs.cancelled_caught:
             log.error(
-                f"Failed to cancel {self}\nHard killing process tree!")
-            for subactor, proc, portal in self._children.values():
+                f'Failed to cancel {self}\nHard killing process tree!'
+            )
+            subactor: Actor
+            proc: trio.Process
+            portal: Portal
+            for (
+                subactor,
+                proc,
+                portal,
+            ) in self._children.values():
                 log.warning(f"Hard killing process {proc}")
                 proc.terminate()
 
@@ -384,7 +401,17 @@ async def _open_and_supervise_one_cancels_all_nursery(
                         else:
                             log.exception(
                                 f"Nursery for {current_actor().uid} "
-                                f"errored with")
+                                "errored with\n"
+
+                                # TODO: same thing as in
+                                # `._invoke()` to compute how to
+                                # place this div-line in the
+                                # middle of the above msg
+                                # content..
+                                # -[ ] prolly helper-func it too
+                                #   in our `.log` module..
+                                # '------ - ------'
+                            )
 
                         # cancel all subactors
                         await anursery.cancel()
