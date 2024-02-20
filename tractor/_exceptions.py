@@ -33,11 +33,14 @@ import exceptiongroup as eg
 import trio
 
 from ._state import current_actor
+from .log import get_logger
 
 if TYPE_CHECKING:
     from ._context import Context
     from ._stream import MsgStream
     from .log import StackLevelAdapter
+
+log = get_logger('tractor')
 
 _this_mod = importlib.import_module(__name__)
 
@@ -112,10 +115,35 @@ class ContextCancelled(RemoteActorError):
 
     '''
     @property
-    def canceller(self) -> tuple[str, str] | None:
+    def canceller(self) -> tuple[str, str]|None:
+        '''
+        Return the (maybe) `Actor.uid` for the requesting-author
+        of this ctxc.
+
+        Emit a warning msg when `.canceller` has not been set,
+        which usually idicates that a `None` msg-loop setinel was
+        sent before expected in the runtime. This can happen in
+        a few situations:
+
+        - (simulating) an IPC transport network outage
+        - a (malicious) pkt sent specifically to cancel an actor's
+          runtime non-gracefully without ensuring ongoing RPC tasks are 
+          incrementally cancelled as is done with:
+          `Actor`
+          |_`.cancel()`
+          |_`.cancel_soon()`
+          |_`._cancel_task()`
+
+        '''
         value = self.msgdata.get('canceller')
         if value:
             return tuple(value)
+
+        log.warning(
+            'IPC Context cancelled without a requesting actor?\n'
+            'Maybe the IPC transport ended abruptly?\n\n'
+            f'{self}'
+        )
 
 
 class TransportClosed(trio.ClosedResourceError):
@@ -198,7 +226,6 @@ def pack_error(
         or isinstance(exc, StreamOverrun)
     ):
         error_msg.update(exc.msgdata)
-
 
     pkt: dict = {'error': error_msg}
     if cid:
@@ -349,8 +376,8 @@ def _raise_from_no_key_in_msg(
         # raise a ``StopAsyncIteration`` **and** in our catch
         # block below it will trigger ``.aclose()``.
         raise trio.EndOfChannel(
-            f'Context stream ended due to msg:\n'
-            f'{pformat(msg)}'
+            f'Context stream ended due to msg:\n\n'
+            f'{pformat(msg)}\n'
         ) from src_err
 
 
