@@ -401,7 +401,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                         else:
                             log.exception(
                                 f"Nursery for {current_actor().uid} "
-                                "errored with\n"
+                                "errored with:"
 
                                 # TODO: same thing as in
                                 # `._invoke()` to compute how to
