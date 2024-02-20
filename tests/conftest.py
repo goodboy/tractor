@@ -41,20 +41,41 @@ no_windows = pytest.mark.skipif(
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--ll", action="store", dest='loglevel',
+        "--ll",
+        action="store",
+        dest='loglevel',
         default='ERROR', help="logging level to set when testing"
     )
 
     parser.addoption(
-        "--spawn-backend", action="store", dest='spawn_backend',
+        "--spawn-backend",
+        action="store",
+        dest='spawn_backend',
         default='trio',
         help="Processing spawning backend to use for test run",
+    )
+
+    parser.addoption(
+        "--tpdb", "--debug-mode",
+        action="store_true",
+        dest='tractor_debug_mode',
+        # default=False,
+        help=(
+            'Enable a flag that can be used by tests to to set the '
+            '`debug_mode: bool` for engaging the internal '
+            'multi-proc debugger sys.'
+        ),
     )
 
 
 def pytest_configure(config):
     backend = config.option.spawn_backend
     tractor._spawn.try_set_start_method(backend)
+
+
+@pytest.fixture(scope='session')
+def debug_mode(request):
+    return request.config.option.tractor_debug_mode
 
 
 @pytest.fixture(scope='session', autouse=True)
