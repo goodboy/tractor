@@ -371,6 +371,8 @@ def _raise_from_no_key_in_msg(
         ) from None
 
     # `MsgStream` termination msg.
+    # TODO: does it make more sense to pack 
+    # the stream._eoc outside this in the calleer always?
     elif (
         msg.get('stop')
         or (
