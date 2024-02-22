@@ -364,7 +364,6 @@ def test_local_task_fanout_from_stream(
                 'inf_streamer',
                 enable_modules=[__name__],
             )
-            # with trio.fail_after(3):
             async with (
                 p.open_context(inf_streamer) as (ctx, _),
                 ctx.open_stream() as stream,

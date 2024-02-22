@@ -253,9 +253,7 @@ async def open_root_actor(
                 #         tempn.start_soon(an.exited.wait)
 
                 logger.cancel("Shutting down root actor")
-                await actor.cancel(
-                    requesting_uid=actor.uid,
-                )
+                await actor.cancel(None)  # self cancel
     finally:
         _state._current_actor = None
 
