@@ -95,9 +95,6 @@ class MsgStream(trio.abc.Channel):
         try:
             return msg['yield']
         except KeyError as kerr:
-            # if 'return' in msg:
-            #     return msg
-
             _raise_from_no_key_in_msg(
                 ctx=self._ctx,
                 msg=msg,
@@ -128,13 +125,9 @@ class MsgStream(trio.abc.Channel):
         # introducing this
         if self._eoc:
             raise self._eoc
-            # raise trio.EndOfChannel
 
         if self._closed:
             raise self._closed
-            # raise trio.ClosedResourceError(
-            #     'This stream was already closed'
-            # )
 
         src_err: Exception|None = None
         try:
@@ -143,6 +136,7 @@ class MsgStream(trio.abc.Channel):
                 return msg['yield']
 
             except KeyError as kerr:
+                # log.exception('GOT KEYERROR')
                 src_err = kerr
 
                 # NOTE: may raise any of the below error types
@@ -161,9 +155,9 @@ class MsgStream(trio.abc.Channel):
             # trio.ClosedResourceError,  # by self._rx_chan
             trio.EndOfChannel,  # by self._rx_chan or `stop` msg from far end
         ) as eoc:
+            # log.exception('GOT EOC')
             src_err = eoc
             self._eoc = eoc
-            # await trio.sleep(1)
 
             # a ``ClosedResourceError`` indicates that the internal
             # feeder memory receive channel was closed likely by the
@@ -201,6 +195,7 @@ class MsgStream(trio.abc.Channel):
             # raise eoc
 
         except trio.ClosedResourceError as cre:  # by self._rx_chan
+            # log.exception('GOT CRE')
             src_err = cre
             log.warning(
                 '`Context._rx_chan` was already closed?'
@@ -211,6 +206,8 @@ class MsgStream(trio.abc.Channel):
         # terminated and signal this local iterator to stop
         drained: list[Exception|dict] = await self.aclose()
         if drained:
+            # from .devx import pause
+            # await pause()
             log.warning(
                 'Drained context msgs during closure:\n'
                 f'{drained}'
@@ -237,31 +234,32 @@ class MsgStream(trio.abc.Channel):
         Cancel associated remote actor task and local memory channel on
         close.
 
+        Notes: 
+         - REMEMBER that this is also called by `.__aexit__()` so
+           careful consideration must be made to handle whatever
+           internal stsate is mutated, particuarly in terms of
+           draining IPC msgs!
+
+         - more or less we try to maintain adherance to trio's `.aclose()` semantics:
+           https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
         '''
-        # XXX: keep proper adherance to trio's `.aclose()` semantics:
-        # https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
-        rx_chan = self._rx_chan
 
-        if (
-            rx_chan._closed
-            or
-            self._closed
-        ):
-            log.cancel(
-                f'`MsgStream` is already closed\n'
-                f'.cid: {self._ctx.cid}\n'
-                f'._rx_chan`: {rx_chan}\n'
-                f'._eoc: {self._eoc}\n'
-                f'._closed: {self._eoc}\n'
-            )
+        # rx_chan = self._rx_chan
 
+        # XXX NOTE XXX
+        # it's SUPER IMPORTANT that we ensure we don't DOUBLE
+        # DRAIN msgs on closure so avoid getting stuck handing on
+        # the `._rx_chan` since we call this method on
+        # `.__aexit__()` as well!!!
+        # => SO ENSURE WE CATCH ALL TERMINATION STATES in this
+        # block including the EoC..
+        if self.closed:
             # this stream has already been closed so silently succeed as
             # per ``trio.AsyncResource`` semantics.
             # https://trio.readthedocs.io/en/stable/reference-io.html#trio.abc.AsyncResource.aclose
             return []
 
         ctx: Context = self._ctx
-        # caught_eoc: bool = False
         drained: list[Exception|dict] = []
         while not drained:
             try:
@@ -274,17 +272,26 @@ class MsgStream(trio.abc.Channel):
                     # TODO: inject into parent `Context` buf?
                     drained.append(maybe_final_msg)
 
+            # NOTE: we only need these handlers due to the
+            # `.receive_nowait()` call above which may re-raise
+            # one of these errors on a msg key error!
+
             except trio.WouldBlock as be:
                 drained.append(be)
                 break
 
             except trio.EndOfChannel as eoc:
+                self._eoc: Exception = eoc
                 drained.append(eoc)
-                # caught_eoc = True
-                self._eoc: bool = eoc
+                break
+
+            except trio.ClosedResourceError as cre:
+                self._closed = cre
+                drained.append(cre)
                 break
 
             except ContextCancelled as ctxc:
+                # log.exception('GOT CTXC')
                 log.cancel(
                     'Context was cancelled during stream closure:\n'
                     f'canceller: {ctxc.canceller}\n'
@@ -339,8 +346,11 @@ class MsgStream(trio.abc.Channel):
         #     with trio.CancelScope(shield=True):
         #         await rx_chan.aclose()
 
-        # self._eoc: bool = caught_eoc
-
+        if not self._eoc:
+            self._eoc: bool = trio.EndOfChannel(
+                f'Context stream closed by {self._ctx.side}\n'
+                f'|_{self}\n'
+            )
         # ?XXX WAIT, why do we not close the local mem chan `._rx_chan` XXX?
         # => NO, DEFINITELY NOT! <=
         # if we're a bi-dir ``MsgStream`` BECAUSE this same
@@ -378,6 +388,26 @@ class MsgStream(trio.abc.Channel):
         # end (eg. for ``Context.result()``).
         # self._closed = True
         return drained
+
+    @property
+    def closed(self) -> bool:
+        if (
+            (rxc := self._rx_chan._closed)
+            or
+            (_closed := self._closed)
+            or
+            (_eoc := self._eoc)
+        ):
+            log.runtime(
+                f'`MsgStream` is already closed\n'
+                f'{self}\n'
+                f' |_cid: {self._ctx.cid}\n'
+                f' |_rx_chan._closed: {type(rxc)} = {rxc}\n'
+                f' |_closed: {type(_closed)} = {_closed}\n'
+                f' |_eoc: {type(_eoc)} = {_eoc}'
+            )
+            return True
+        return False
 
     @acm
     async def subscribe(

@@ -69,18 +69,35 @@ from ._streaming import (
 log = get_logger(__name__)
 
 
+# TODO: rename to `unwrap_result()` and use
+# `._raise_from_no_key_in_msg()` (after tweak to
+# accept a `chan: Channel` arg) in key block!
 def _unwrap_msg(
     msg: dict[str, Any],
-    channel: Channel
+    channel: Channel,
+
+    hide_tb: bool = True,
 
 ) -> Any:
-    __tracebackhide__ = True
+    '''
+    Unwrap a final result from a `{return: <Any>}` IPC msg.
+
+    '''
+    __tracebackhide__: bool = hide_tb
+
     try:
         return msg['return']
     except KeyError as ke:
+
         # internal error should never get here
-        assert msg.get('cid'), "Received internal error at portal?"
-        raise unpack_error(msg, channel) from ke
+        assert msg.get('cid'), (
+            "Received internal error at portal?"
+        )
+
+        raise unpack_error(
+            msg,
+            channel
+        ) from ke
 
 
 class Portal:
@@ -107,7 +124,7 @@ class Portal:
     cancel_timeout: float = 0.5
 
     def __init__(self, channel: Channel) -> None:
-        self.channel = channel
+        self.chan = channel
         # during the portal's lifetime
         self._result_msg: Optional[dict] = None
 
@@ -118,6 +135,18 @@ class Portal:
         self._streams: set[MsgStream] = set()
         self.actor = current_actor()
 
+    @property
+    def channel(self) -> Channel:
+        '''
+        Proxy to legacy attr name..
+
+        Consider the shorter `Portal.chan` instead of `.channel` ;)
+        '''
+        log.debug(
+            'Consider the shorter `Portal.chan` instead of `.channel` ;)'
+        )
+        return self.chan
+
     async def _submit_for_result(
         self,
         ns: str,
@@ -125,14 +154,14 @@ class Portal:
         **kwargs
     ) -> None:
 
-        assert self._expect_result is None, \
-                "A pending main result has already been submitted"
+        assert self._expect_result is None, (
+            "A pending main result has already been submitted"
+        )
 
         self._expect_result = await self.actor.start_remote_task(
             self.channel,
-            ns,
-            func,
-            kwargs
+            nsf=NamespacePath(f'{ns}:{func}'),
+            kwargs=kwargs
         )
 
     async def _return_once(
@@ -173,7 +202,10 @@ class Portal:
                 self._expect_result
             )
 
-        return _unwrap_msg(self._result_msg, self.channel)
+        return _unwrap_msg(
+            self._result_msg,
+            self.channel,
+        )
 
     async def _cancel_streams(self):
         # terminate all locally running async generator
@@ -215,26 +247,33 @@ class Portal:
         purpose.
 
         '''
-        if not self.channel.connected():
-            log.cancel("This channel is already closed can't cancel")
+        chan: Channel = self.channel
+        if not chan.connected():
+            log.runtime(
+                'This channel is already closed, skipping cancel request..'
+            )
             return False
 
+        reminfo: str = (
+            f'uid: {self.channel.uid}\n'
+            f'    |_{chan}\n'
+        )
         log.cancel(
-            f"Sending actor cancel request to {self.channel.uid} on "
-            f"{self.channel}")
+            f'Sending actor cancel request to peer\n'
+            f'{reminfo}'
+        )
 
-        self.channel._cancel_called = True
-
+        self.channel._cancel_called: bool = True
         try:
             # send cancel cmd - might not get response
             # XXX: sure would be nice to make this work with
             # a proper shield
             with trio.move_on_after(
                 timeout
-                or self.cancel_timeout
+                or
+                self.cancel_timeout
             ) as cs:
-                cs.shield = True
-
+                cs.shield: bool = True
                 await self.run_from_ns(
                     'self',
                     'cancel',
@@ -242,7 +281,10 @@ class Portal:
                 return True
 
             if cs.cancelled_caught:
-                log.cancel(f"May have failed to cancel {self.channel.uid}")
+                log.cancel(
+                    'May have failed to cancel peer?\n'
+                    f'{reminfo}'
+                )
 
             # if we get here some weird cancellation case happened
             return False
@@ -272,27 +314,33 @@ class Portal:
 
         Note::
 
-            A special namespace `self` can be used to invoke `Actor`
-            instance methods in the remote runtime. Currently this
-            should only be used solely for ``tractor`` runtime
-            internals.
+          A special namespace `self` can be used to invoke `Actor`
+          instance methods in the remote runtime. Currently this
+          should only ever be used for `Actor` (method) runtime
+          internals!
 
         '''
+        nsf = NamespacePath(
+            f'{namespace_path}:{function_name}'
+        )
         ctx = await self.actor.start_remote_task(
-            self.channel,
-            namespace_path,
-            function_name,
-            kwargs,
+            chan=self.channel,
+            nsf=nsf,
+            kwargs=kwargs,
         )
         ctx._portal = self
         msg = await self._return_once(ctx)
-        return _unwrap_msg(msg, self.channel)
+        return _unwrap_msg(
+            msg,
+            self.channel,
+        )
 
     async def run(
         self,
         func: str,
-        fn_name: Optional[str] = None,
+        fn_name: str|None = None,
         **kwargs
+
     ) -> Any:
         '''
         Submit a remote function to be scheduled and run by actor, in
@@ -311,8 +359,9 @@ class Portal:
                 DeprecationWarning,
                 stacklevel=2,
             )
-            fn_mod_path = func
+            fn_mod_path: str = func
             assert isinstance(fn_name, str)
+            nsf = NamespacePath(f'{fn_mod_path}:{fn_name}')
 
         else:  # function reference was passed directly
             if (
@@ -325,13 +374,12 @@ class Portal:
                 raise TypeError(
                     f'{func} must be a non-streaming async function!')
 
-            fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
+            nsf = NamespacePath.from_ref(func)
 
         ctx = await self.actor.start_remote_task(
             self.channel,
-            fn_mod_path,
-            fn_name,
-            kwargs,
+            nsf=nsf,
+            kwargs=kwargs,
         )
         ctx._portal = self
         return _unwrap_msg(
@@ -355,15 +403,10 @@ class Portal:
                 raise TypeError(
                     f'{async_gen_func} must be an async generator function!')
 
-        fn_mod_path, fn_name = NamespacePath.from_ref(
-            async_gen_func
-        ).to_tuple()
-
-        ctx = await self.actor.start_remote_task(
+        ctx: Context = await self.actor.start_remote_task(
             self.channel,
-            fn_mod_path,
-            fn_name,
-            kwargs
+            nsf=NamespacePath.from_ref(async_gen_func),
+            kwargs=kwargs,
         )
         ctx._portal = self
 
@@ -405,7 +448,10 @@ class Portal:
 
         self,
         func: Callable,
+
         allow_overruns: bool = False,
+
+        # proxied to RPC
         **kwargs,
 
     ) -> AsyncGenerator[tuple[Context, Any], None]:
@@ -448,13 +494,12 @@ class Portal:
         # TODO: i think from here onward should probably
         # just be factored into an `@acm` inside a new
         # a new `_context.py` mod.
-        fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
+        nsf = NamespacePath.from_ref(func)
 
-        ctx = await self.actor.start_remote_task(
+        ctx: Context = await self.actor.start_remote_task(
             self.channel,
-            fn_mod_path,
-            fn_name,
-            kwargs,
+            nsf=nsf,
+            kwargs=kwargs,
 
             # NOTE: it's imporant to expose this since you might
             # get the case where the parent who opened the context does
@@ -721,10 +766,10 @@ class Portal:
             #     assert maybe_ctxc
 
             if ctx.chan.connected():
-                log.info(
-                    'Waiting on final context-task result for\n'
-                    f'task: {cid}\n'
-                    f'actor: {uid}'
+                log.runtime(
+                    'Waiting on final context result for\n'
+                    f'peer: {uid}\n'
+                    f'|_{ctx._task}\n'
                 )
                 # XXX NOTE XXX: the below call to
                 # `Context.result()` will ALWAYS raise
@@ -771,13 +816,19 @@ class Portal:
                         RemoteActorError(),
                     ):
                         log.exception(
-                            f'Context `{fn_name}` remotely errored:\n'
-                            f'`{tbstr}`'
+                            'Context remotely errored!\n'
+                            f'<= peer: {uid}\n'
+                            f'  |_ {nsf}()\n\n'
+
+                            f'{tbstr}'
                         )
                     case (None, _):
                         log.runtime(
-                            f'Context {fn_name} returned value from callee:\n'
-                            f'`{result_or_err}`'
+                            'Context returned final result from callee task:\n'
+                            f'<= peer: {uid}\n'
+                            f'  |_ {nsf}()\n\n'
+
+                            f'`{result_or_err}`\n'
                         )
 
         finally:
@@ -855,17 +906,20 @@ class Portal:
                 # CASE 2
                 if ctx._cancel_called:
                     log.cancel(
-                        f'Context {fn_name} cancelled by caller with\n'
+                        'Context cancelled by caller task\n'
+                        f'|_{ctx._task}\n\n'
+
                         f'{etype}'
                     )
 
                 # CASE 1
                 else:
                     log.cancel(
-                        f'Context cancelled by callee with {etype}\n'
-                        f'target: `{fn_name}`\n'
-                        f'task:{cid}\n'
-                        f'actor:{uid}'
+                        f'Context cancelled by remote callee task\n'
+                        f'peer: {uid}\n'
+                        f'|_ {nsf}()\n\n'
+
+                        f'{etype}\n'
                     )
 
             # XXX: (MEGA IMPORTANT) if this is a root opened process we
@@ -880,10 +934,12 @@ class Portal:
             # FINALLY, remove the context from runtime tracking and
             # exit!
             log.runtime(
-                f'Exiting context opened with {ctx.chan.uid}'
+                'Removing IPC ctx opened with peer\n'
+                f'{uid}\n'
+                f'|_{ctx}\n'
             )
             self.actor._contexts.pop(
-                (self.channel.uid, ctx.cid),
+                (uid, cid),
                 None,
             )
 

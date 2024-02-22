@@ -47,6 +47,7 @@ import trio
 #     maybe_wait_for_debugger,
 #     pause,
 # )
+from .msg import NamespacePath
 from ._exceptions import (
     # _raise_from_no_key_in_msg,
     unpack_error,
@@ -71,12 +72,23 @@ log = get_logger(__name__)
 
 async def _drain_to_final_msg(
     ctx: Context,
-) -> list[dict]:
 
-# ) -> tuple[
-#     Any|Exception,
-#     list[dict],
-# ]:
+    msg_limit: int = 6,
+
+) -> list[dict]:
+    '''
+    Drain IPC msgs delivered to the underlying rx-mem-chan
+    `Context._recv_chan` from the runtime in search for a final
+    result or error msg.
+
+    The motivation here is to ideally capture errors during ctxc
+    conditions where a canc-request/or local error is sent but the
+    local task also excepts and enters the
+    `Portal.open_context().__aexit__()` block wherein we prefer to
+    capture and raise any remote error or ctxc-ack as part of the
+    `ctx.result()` cleanup and teardown sequence.
+
+    '''
     raise_overrun: bool = not ctx._allow_overruns
 
     # wait for a final context result by collecting (but
@@ -88,14 +100,14 @@ async def _drain_to_final_msg(
             # NOTE: this REPL usage actually works here dawg! Bo
             # from .devx._debug import pause
             # await pause()
-            # if re := ctx._remote_error:
-            #     ctx._maybe_raise_remote_err(
-            #         re,
-            #         # NOTE: obvi we don't care if we
-            #         # overran the far end if we're already
-            #         # waiting on a final result (msg).
-            #         raise_overrun_from_self=raise_overrun,
-            #     )
+            if re := ctx._remote_error:
+                ctx._maybe_raise_remote_err(
+                    re,
+                    # NOTE: obvi we don't care if we
+                    # overran the far end if we're already
+                    # waiting on a final result (msg).
+                    raise_overrun_from_self=raise_overrun,
+                )
 
             # TODO: bad idea?
             # with trio.CancelScope() as res_cs:
@@ -108,7 +120,7 @@ async def _drain_to_final_msg(
             msg: dict = await ctx._recv_chan.receive()
             ctx._result: Any = msg['return']
             log.runtime(
-                'Context delivered final result msg:\n'
+                'Context delivered final draining msg:\n'
                 f'{pformat(msg)}'
             )
             pre_result_drained.append(msg)
@@ -142,9 +154,47 @@ async def _drain_to_final_msg(
 
             if 'yield' in msg:
                 # far end task is still streaming to us so discard
-                log.warning(f'Discarding std "yield"\n{msg}')
-                pre_result_drained.append(msg)
-                continue
+                # and report per local context state.
+                if (
+                    (ctx._stream.closed
+                     and (reason := 'stream was already closed')
+                    )
+                    or (ctx._cancel_called
+                        and (reason := 'ctx called `.cancel()`')
+                    )
+                    or (ctx._cancelled_caught
+                        and (reason := 'ctx caught a cancel')
+                    )
+                    or (len(pre_result_drained) > msg_limit
+                        and (reason := f'"yield" limit={msg_limit}')
+                    )
+                ):
+                    log.cancel(
+                        'Cancelling `MsgStream` drain since '
+                        f'{reason}\n\n'
+                        f'<= {ctx.chan.uid}\n'
+                        f'  |_{ctx._nsf}()\n\n'
+                        f'=> {ctx._task}\n'
+                        f'  |_{ctx._stream}\n\n'
+
+                        f'{pformat(msg)}\n'
+                    )
+                    return pre_result_drained
+
+                # drain up to the `msg_limit` hoping to get
+                # a final result or error/ctxc.
+                else:
+                    log.warning(
+                        'Ignoring "yield" msg during `ctx.result()` drain..\n'
+                        f'<= {ctx.chan.uid}\n'
+                        f'  |_{ctx._nsf}()\n\n'
+                        f'=> {ctx._task}\n'
+                        f'  |_{ctx._stream}\n\n'
+
+                        f'{pformat(msg)}\n'
+                    )
+                    pre_result_drained.append(msg)
+                    continue
 
             # TODO: work out edge cases here where
             # a stream is open but the task also calls
@@ -153,8 +203,8 @@ async def _drain_to_final_msg(
             #   right?
             elif 'stop' in msg:
                 log.cancel(
-                    'Remote stream terminated due to "stop" msg:\n'
-                    f'{msg}'
+                    'Remote stream terminated due to "stop" msg:\n\n'
+                    f'{pformat(msg)}\n'
                 )
                 pre_result_drained.append(msg)
                 continue
@@ -260,11 +310,13 @@ class Context:
     '''
     chan: Channel
     cid: str  # "context id", more or less a unique linked-task-pair id
-
     # the "feeder" channels for delivering message values to the
     # local task from the runtime's msg processing loop.
     _recv_chan: trio.MemoryReceiveChannel
     _send_chan: trio.MemorySendChannel
+
+    # full "namespace-path" to target RPC function
+    _nsf: NamespacePath
 
     # the "invocation type" of the far end task-entry-point
     # function, normally matching a logic block inside
@@ -281,6 +333,7 @@ class Context:
     # which is exactly the primitive that allows for
     # cross-actor-task-supervision and thus SC.
     _scope: trio.CancelScope | None = None
+    _task: trio.lowlevel.Task|None = None
     # _res_scope: trio.CancelScope|None = None
 
     # on a clean exit there should be a final value
@@ -384,6 +437,7 @@ class Context:
     # init and streaming state
     _started_called: bool = False
     _stream_opened: bool = False
+    _stream: MsgStream|None = None
 
     # overrun handling machinery
     # NOTE: none of this provides "backpressure" to the remote
@@ -577,12 +631,13 @@ class Context:
 
         '''
         side: str = self.side
-        log.cancel(
-            f'Cancelling {side} side of context to {self.chan.uid}'
-        )
-
-        # await pause()
         self._cancel_called: bool = True
+
+        header: str = f'Cancelling "{side.upper()}"-side of ctx with peer\n'
+        reminfo: str = (
+            f'uid: {self.chan.uid}\n'
+            f'    |_ {self._nsf}()\n'
+        )
 
         # caller side who entered `Portal.open_context()`
         # NOTE: on the call side we never manually call
@@ -601,8 +656,9 @@ class Context:
             with trio.move_on_after(timeout) as cs:
                 cs.shield = True
                 log.cancel(
-                    f'Cancelling stream {cid} to '
-                    f'{self._portal.channel.uid}'
+                    header
+                    +
+                    reminfo
                 )
 
                 # NOTE: we're telling the far end actor to cancel a task
@@ -621,13 +677,13 @@ class Context:
                 # if not self._portal.channel.connected():
                 if not self.chan.connected():
                     log.cancel(
-                        'May have failed to cancel remote task '
-                        f'{cid} for {self._portal.channel.uid}'
+                        'May have failed to cancel remote task?\n'
+                        f'{reminfo}'
                     )
                 else:
                     log.cancel(
-                        'Timed out on cancel request of remote task '
-                        f'{cid} for {self._portal.channel.uid}'
+                        'Timed out on cancel request of remote task?\n'
+                        f'{reminfo}'
                     )
 
         # callee side remote task
@@ -635,6 +691,11 @@ class Context:
         # the caller expects a `ContextCancelled` to be sent from
         # `._runtime._invoke()` back to the other side.
         else:
+            log.cancel(
+                header
+                +
+                reminfo
+            )
             # TODO: should we have an explicit cancel message
             # or is relaying the local `trio.Cancelled` as an
             # {'error': trio.Cancelled, cid: "blah"} enough?
@@ -720,8 +781,9 @@ class Context:
         # single-direction-stream case you'll get a lookup error
         # currently.
         ctx: Context = actor.get_context(
-            self.chan,
-            self.cid,
+            chan=self.chan,
+            cid=self.cid,
+            nsf=self._nsf,
             msg_buffer_size=msg_buffer_size,
             allow_overruns=allow_overruns,
         )
@@ -735,7 +797,7 @@ class Context:
 
         if ctx._recv_chan._closed:
             raise trio.ClosedResourceError(
-                'The underlying channel for this stream was already closed!?'
+                'The underlying channel for this stream was already closed!\n'
             )
 
         # NOTE: implicitly this will call `MsgStream.aclose()` on
@@ -764,6 +826,7 @@ class Context:
 
             try:
                 self._stream_opened: bool = True
+                self._stream = stream
 
                 # XXX: do we need this?
                 # ensure we aren't cancelled before yielding the stream
@@ -1174,35 +1237,47 @@ class Context:
         self,
         msg: dict,
 
-        # draining: bool = False,
-
     ) -> bool:
         '''
         Deliver an IPC msg received from a transport-channel to
-        this context's underlying mem chan for handling by
-        user operating tasks; deliver a bool indicating whether the
-        msg was immediately sent.
+        this context's underlying mem chan for handling by local
+        user application tasks; deliver `bool` indicating whether
+        the msg was able to be delivered.
 
         If `._allow_overruns == True` (maybe) append the msg to an
         "overflow queue" and start a "drainer task" (inside the
         `._scope_nursery: trio.Nursery`) which ensures that such
-        messages are eventually sent if possible.
+        messages are queued up and eventually sent if possible.
 
         '''
         cid: str = self.cid
         chan: Channel = self.chan
         from_uid: tuple[str, str]  = chan.uid
         send_chan: trio.MemorySendChannel = self._send_chan
+        nsf: NamespacePath = self._nsf
 
+        re: Exception|None
         if re := unpack_error(
             msg,
             self.chan,
         ):
             log.error(
-                f'Delivering error-msg from {from_uid} to caller {cid}'
-                f'{re}'
+                f'Delivering error-msg to caller\n'
+                f'<= peer: {from_uid}\n'
+                f'  |_ {nsf}()\n\n'
+
+                f'=> cid: {cid}\n'
+                f'  |_{self._task}\n\n'
+
+                f'{pformat(re)}\n'
             )
-            self._cancel_msg = msg
+            self._cancel_msg: dict = msg
+
+            # NOTE: this will not raise an error, merely set
+            # `._remote_error` and maybe cancel any task currently
+            # entered in `Portal.open_context()` presuming the
+            # error is "cancel causing" (i.e. `ContextCancelled`
+            # or `RemoteActorError`).
             self._maybe_cancel_and_set_remote_error(re)
 
             # XXX NEVER do this XXX..!!
@@ -1218,26 +1293,44 @@ class Context:
 
         if self._in_overrun:
             log.warning(
-                f'Capturing overrun-msg from {from_uid} to caller {cid}'
-                f'{msg}'
+                f'Queueing OVERRUN msg on caller task:\n'
+                f'<= peer: {from_uid}\n'
+                f'  |_ {nsf}()\n\n'
+
+                f'=> cid: {cid}\n'
+                f'  |_{self._task}\n\n'
+
+                f'{pformat(msg)}\n'
             )
             self._overflow_q.append(msg)
             return False
 
         try:
             log.runtime(
-                f'Delivering IPC `Context` msg:\n'
+                f'Delivering msg from IPC ctx:\n'
                 f'<= {from_uid}\n'
-                f'=> caller: {cid}\n'
-                f'{msg}'
+                f'  |_ {nsf}()\n\n'
+
+                f'=> {self._task}\n'
+                f'  |_cid={self.cid}\n\n'
+
+                f'{pformat(msg)}\n'
             )
             # from .devx._debug import pause
             # await pause()
+
+            # NOTE: if an error is deteced we should always still
+            # send it through the feeder-mem-chan and expect
+            # it to be raised by any context (stream) consumer
+            # task via the consumer APIs on both the `Context` and
+            # `MsgStream`!
+            #
+            # XXX the reason is that this method is always called
+            # by the IPC msg handling runtime task and that is not
+            # normally the task that should get cancelled/error
+            # from some remote fault!
             send_chan.send_nowait(msg)
             return True
-            # if an error is deteced we should always
-            # expect it to be raised by any context (stream)
-            # consumer task
 
         except trio.BrokenResourceError:
             # TODO: what is the right way to handle the case where the
@@ -1248,7 +1341,13 @@ class Context:
 
             # XXX: local consumer has closed their side
             # so cancel the far end streaming task
-            log.warning(f"{send_chan} consumer is already closed")
+            log.warning(
+                'Rx chan for `Context` alfready closed?\n'
+                f'cid: {self.cid}\n'
+                'Failed to deliver msg:\n'
+                f'send_chan: {send_chan}\n\n'
+                f'{pformat(msg)}\n'
+            )
             return False
 
         # NOTE XXX: by default we do **not** maintain context-stream
@@ -1257,44 +1356,54 @@ class Context:
         # msg handling loop which calls into this method!
         except trio.WouldBlock:
 
-            # XXX: always push an error even if the local
-            # receiver is in overrun state.
-            # self._maybe_cancel_and_set_remote_error(msg)
+            # XXX: always push an error even if the local receiver
+            # is in overrun state - i.e. if an 'error' msg is
+            # delivered then
+            # `._maybe_cancel_and_set_remote_error(msg)` should
+            # have already been called above!
+            #
+            # XXX QUESTION XXX: if we rx an error while in an
+            # overrun state and that msg isn't stuck in an
+            # overflow queue what happens?!?
 
             local_uid = current_actor().uid
-            lines = [
-                f'OVERRUN on actor-task context {cid}@{local_uid}!\n'
-                # TODO: put remote task name here if possible?
-                f'sender: {from_uid}',
-                f'msg: {msg}',
-                # TODO: put task func name here and maybe an arrow
-                # from sender to overrunner?
-                # f'local task {self.func_name}'
-            ]
-            if not self._stream_opened:
-                lines.insert(
-                    1,
-                    f'\n*** No stream open on `{local_uid[0]}` side! ***\n'
-                )
+            txt: str = (
+                'on IPC context:\n'
 
-            text = '\n'.join(lines)
+                f'<= sender: {from_uid}\n'
+                f'  |_ {self._nsf}()\n\n'
+
+                f'=> overrun: {local_uid}\n'
+                f'  |_cid: {cid}\n'
+                f'  |_task: {self._task}\n'
+            )
+            if not self._stream_opened:
+                txt += (
+                    f'\n*** No stream open on `{local_uid[0]}` side! ***\n\n'
+                    f'{msg}\n'
+                )
 
             # XXX: lul, this really can't be backpressure since any
             # blocking here will block the entire msg loop rpc sched for
             # a whole channel.. maybe we should rename it?
             if self._allow_overruns:
-                text += f'\nStarting overflow queuing task on msg: {msg}'
-                log.warning(text)
+                txt += (
+                    '\n*** Starting overflow queuing task on msg ***\n\n'
+                    f'{msg}\n'
+                )
+                log.warning(txt)
                 if (
                     not self._in_overrun
                 ):
                     self._overflow_q.append(msg)
-                    n = self._scope_nursery
-                    assert not n.child_tasks
+                    tn: trio.Nursery = self._scope_nursery
+                    assert not tn.child_tasks
                     try:
-                        n.start_soon(
+                        tn.start_soon(
                             self._drain_overflows,
                         )
+                        return True
+
                     except RuntimeError:
                         # if the nursery is already cancelled due to
                         # this context exiting or in error, we ignore
@@ -1302,11 +1411,12 @@ class Context:
                         # anything different.
                         return False
             else:
+                txt += f'\n{msg}\n'
                 # raise local overrun and immediately pack as IPC
                 # msg for far end.
                 try:
                     raise StreamOverrun(
-                        text,
+                        txt,
                         sender=from_uid,
                     )
                 except StreamOverrun as err:
@@ -1314,20 +1424,28 @@ class Context:
                         err,
                         cid=cid,
                     )
-                    # err_msg['cid']: str = cid
                     try:
+                        # relay condition to sender side remote task
                         await chan.send(err_msg)
+                        return True
+
                     except trio.BrokenResourceError:
                         # XXX: local consumer has closed their side
                         # so cancel the far end streaming task
-                        log.warning(f"{chan} is already closed")
+                        log.warning(
+                            'Channel for ctx is already closed?\n'
+                            f'|_{chan}\n'
+                        )
 
+            # ow, indicate unable to deliver by default
             return False
 
 
 def mk_context(
     chan: Channel,
     cid: str,
+    nsf: NamespacePath,
+
     msg_buffer_size: int = 2**6,
 
     **kwargs,
@@ -1345,10 +1463,12 @@ def mk_context(
     send_chan, recv_chan = trio.open_memory_channel(msg_buffer_size)
 
     ctx = Context(
-        chan,
-        cid,
+        chan=chan,
+        cid=cid,
         _send_chan=send_chan,
         _recv_chan=recv_chan,
+        _nsf=nsf,
+        _task=trio.lowlevel.current_task(),
         **kwargs,
     )
     ctx._result: int | Any = id(ctx)
