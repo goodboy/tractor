@@ -999,6 +999,8 @@ async def maybe_wait_for_debugger(
     poll_delay: float = 0.1,
     child_in_debug: bool = False,
 
+    header_msg: str = '',
+
 ) -> None:
 
     if (
@@ -1007,6 +1009,8 @@ async def maybe_wait_for_debugger(
     ):
         return
 
+
+    msg: str = header_msg
     if (
         is_root_process()
     ):
@@ -1016,48 +1020,59 @@ async def maybe_wait_for_debugger(
         # will make the pdb repl unusable.
         # Instead try to wait for pdb to be released before
         # tearing down.
-        sub_in_debug: tuple[str, str] | None = None
+        sub_in_debug: tuple[str, str]|None = Lock.global_actor_in_debug
+        debug_complete: trio.Event|None = Lock.no_remote_has_tty
+
+        if sub_in_debug := Lock.global_actor_in_debug:
+            msg += (
+                'Debug `Lock` in use by subactor\n'
+                f'|_{sub_in_debug}\n'
+            )
+            # TODO: could this make things more deterministic?
+            # wait to see if a sub-actor task will be
+            # scheduled and grab the tty lock on the next
+            # tick?
+            # XXX => but it doesn't seem to work..
+            # await trio.testing.wait_all_tasks_blocked(cushion=0)
+        else:
+            log.pdb(
+                msg
+                +
+                'Root immediately acquired debug TTY LOCK'
+            )
+            return
 
         for istep in range(poll_steps):
 
-            if sub_in_debug := Lock.global_actor_in_debug:
-                log.pdb(
-                    f'Lock in use by {sub_in_debug}'
-                )
-                # TODO: could this make things more deterministic?
-                # wait to see if a sub-actor task will be
-                # scheduled and grab the tty lock on the next
-                # tick?
-                # XXX => but it doesn't seem to work..
-                # await trio.testing.wait_all_tasks_blocked(cushion=0)
 
-            debug_complete: trio.Event|None = Lock.no_remote_has_tty
             if (
                 debug_complete
                 and not debug_complete.is_set()
                 and sub_in_debug is not None
             ):
                 log.pdb(
-                    'Root has errored but pdb is in use by child\n'
-                    'Waiting on tty lock to release..\n'
-                    f'uid: {sub_in_debug}\n'
+                    msg
+                    +
+                    'Root is waiting on tty lock to release..\n'
                 )
                 await debug_complete.wait()
                 log.pdb(
-                    f'Child subactor released debug lock!\n'
-                    f'uid: {sub_in_debug}\n'
+                    f'Child subactor released debug lock:'
+                    f'|_{sub_in_debug}\n'
                 )
-                if debug_complete.is_set():
-                    break
 
             # is no subactor locking debugger currently?
-            elif (
-                debug_complete is None
-                or sub_in_debug is None
+            if (
+                 sub_in_debug is None
+                and (
+                    debug_complete is None
+                    or debug_complete.is_set()
+                )
             ):
                 log.pdb(
-                    'Root acquired debug TTY LOCK from child\n'
-                    f'uid: {sub_in_debug}'
+                    msg
+                    +
+                    'Root acquired tty lock!'
                 )
                 break
 
@@ -1073,8 +1088,14 @@ async def maybe_wait_for_debugger(
                 with trio.CancelScope(shield=True):
                     await trio.sleep(poll_delay)
                     continue
+
+        # fallthrough on failure to acquire..
         else:
-            log.pdb('Root acquired debug TTY LOCK')
+            raise RuntimeError(
+                msg
+                +
+                'Root actor failed to acquire debug lock?'
+            )
 
     # else:
     #     # TODO: non-root call for #320?
