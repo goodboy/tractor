@@ -911,11 +911,6 @@ class Actor:
                     # Attempt to wait for the far end to close the channel
                     # and bail after timeout (2-generals on closure).
                     assert chan.msgstream
-
-                    log.warning(
-                        f'Draining lingering msgs from stream {chan.msgstream}'
-                    )
-
                     async for msg in chan.msgstream.drain():
                         # try to deliver any lingering msgs
                         # before we destroy the channel.
@@ -925,8 +920,11 @@ class Actor:
                         # delivered the local calling task.
                         # TODO: factor this into a helper?
                         log.warning(
-                            'Draining msg from disconnected\n'
-                            f'peer:  {chan.uid}]\n\n'
+                            'Draining msg from disconnected peer\n'
+                            f'{chan.uid}\n'
+                            f'|_{chan}\n'
+                            f'  |_{chan.msgstream}\n\n'
+
                             f'{pformat(msg)}\n'
                         )
                         cid = msg.get('cid')
@@ -1593,8 +1591,7 @@ class Actor:
         if not tasks:
             log.warning(
                 'Actor has no cancellable RPC tasks?\n'
-                f'<= cancel requester: {req_uid}\n'
-                f'=> {self}\n\n'
+                f'<= canceller: {req_uid}\n'
             )
             return
 
