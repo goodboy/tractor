@@ -48,11 +48,13 @@ async def do_nuthin():
     ids=['no_args', 'unexpected_args'],
 )
 def test_remote_error(reg_addr, args_err):
-    """Verify an error raised in a subactor that is propagated
+    '''
+    Verify an error raised in a subactor that is propagated
     to the parent nursery, contains the underlying boxed builtin
     error type info and causes cancellation and reraising all the
     way up the stack.
-    """
+
+    '''
     args, errtype = args_err
 
     async def main():
@@ -65,7 +67,9 @@ def test_remote_error(reg_addr, args_err):
             # an exception group outside the nursery since the error
             # here and the far end task error are one in the same?
             portal = await nursery.run_in_actor(
-                assert_err, name='errorer', **args
+                assert_err,
+                name='errorer',
+                **args
             )
 
             # get result(s) from main task
