@@ -27,6 +27,7 @@ from typing import (
     Type,
     TYPE_CHECKING,
 )
+import textwrap
 import traceback
 
 import exceptiongroup as eg
@@ -37,8 +38,9 @@ from .log import get_logger
 
 if TYPE_CHECKING:
     from ._context import Context
-    from ._stream import MsgStream
     from .log import StackLevelAdapter
+    from ._stream import MsgStream
+    from ._ipc import Channel
 
 log = get_logger('tractor')
 
@@ -47,6 +49,25 @@ _this_mod = importlib.import_module(__name__)
 
 class ActorFailure(Exception):
     "General actor failure"
+
+
+class InternalError(RuntimeError):
+    '''
+    Entirely unexpected internal machinery error indicating
+    a completely invalid state or interface.
+
+    '''
+
+_body_fields: list[str] = [
+    'src_actor_uid',
+    'canceller',
+    'sender',
+]
+
+_msgdata_keys: list[str] = [
+    'type_str',
+] + _body_fields
+
 
 
 # TODO: rename to just `RemoteError`?
@@ -60,6 +81,10 @@ class RemoteActorError(Exception):
     a special "error" IPC msg sent by some remote actor-runtime.
 
     '''
+    reprol_fields: list[str] = [
+        'src_actor_uid',
+    ]
+
     def __init__(
         self,
         message: str,
@@ -77,23 +102,82 @@ class RemoteActorError(Exception):
         # - .remote_type
         # also pertains to our long long oustanding issue XD
         # https://github.com/goodboy/tractor/issues/5
-        self.type: str = suberror_type
+        self.boxed_type: str = suberror_type
         self.msgdata: dict[str, Any] = msgdata
 
     @property
-    def src_actor_uid(self) -> tuple[str, str] | None:
+    def type(self) -> str:
+        return self.boxed_type
+
+    @property
+    def type_str(self) -> str:
+        return str(type(self.boxed_type).__name__)
+
+    @property
+    def src_actor_uid(self) -> tuple[str, str]|None:
         return self.msgdata.get('src_actor_uid')
 
-    def __repr__(self) -> str:
+    @property
+    def tb_str(
+        self,
+        indent: str = ' '*3,
+    ) -> str:
         if remote_tb := self.msgdata.get('tb_str'):
-            pformat(remote_tb)
-            return (
-                f'{type(self).__name__}(\n'
-                f'msgdata={pformat(self.msgdata)}\n'
-                ')'
+            return textwrap.indent(
+                remote_tb,
+                prefix=indent,
             )
 
-        return super().__repr__()
+        return ''
+
+    def reprol(self) -> str:
+        '''
+        Represent this error for "one line" display, like in
+        a field of our `Context.__repr__()` output.
+
+        '''
+        _repr: str = f'{type(self).__name__}('
+        for key in self.reprol_fields:
+            val: Any|None = self.msgdata.get(key)
+            if val:
+                _repr += f'{key}={repr(val)} '
+
+        return _repr
+
+    def __repr__(self) -> str:
+
+        fields: str = ''
+        for key in _body_fields:
+            val: str|None = self.msgdata.get(key)
+            if val:
+                fields += f'{key}={val}\n'
+
+        fields: str = textwrap.indent(
+            fields,
+            # prefix=' '*2,
+            prefix=' |_',
+        )
+        indent: str = ''*1
+        body: str = (
+            f'{fields}'
+            f'  |\n'
+            f'   ------ - ------\n\n'
+            f'{self.tb_str}\n'
+            f'   ------ - ------\n'
+            f' _|\n'
+        )
+            # f'|\n'
+            # f'         |\n'
+        if indent:
+            body: str = textwrap.indent(
+                body,
+                prefix=indent,
+            )
+        return (
+            f'<{type(self).__name__}(\n'
+            f'{body}'
+            ')>'
+        )
 
     # TODO: local recontruction of remote exception deats
     # def unbox(self) -> BaseException:
@@ -102,8 +186,9 @@ class RemoteActorError(Exception):
 
 class InternalActorError(RemoteActorError):
     '''
-    Remote internal ``tractor`` error indicating
-    failure of some primitive or machinery.
+    (Remote) internal `tractor` error indicating failure of some
+    primitive, machinery state or lowlevel task that should never
+    occur.
 
     '''
 
@@ -114,6 +199,9 @@ class ContextCancelled(RemoteActorError):
     ``Portal.cancel_actor()`` or ``Context.cancel()``.
 
     '''
+    reprol_fields: list[str] = [
+        'canceller',
+    ]
     @property
     def canceller(self) -> tuple[str, str]|None:
         '''
@@ -145,6 +233,9 @@ class ContextCancelled(RemoteActorError):
             f'{self}'
         )
 
+    # to make `.__repr__()` work uniformly
+    # src_actor_uid = canceller
+
 
 class TransportClosed(trio.ClosedResourceError):
     "Underlying channel transport was closed prior to use"
@@ -166,6 +257,9 @@ class StreamOverrun(
     RemoteActorError,
     trio.TooSlowError,
 ):
+    reprol_fields: list[str] = [
+        'sender',
+    ]
     '''
     This stream was overrun by sender
 
@@ -213,6 +307,7 @@ def pack_error(
     ] = {
         'tb_str': tb_str,
         'type_str': type(exc).__name__,
+        'boxed_type': type(exc).__name__,
         'src_actor_uid': current_actor().uid,
     }
 
@@ -238,8 +333,8 @@ def unpack_error(
 
     msg: dict[str, Any],
 
-    chan=None,
-    err_type=RemoteActorError,
+    chan: Channel|None = None,
+    box_type: RemoteActorError = RemoteActorError,
 
     hide_tb: bool = True,
 
@@ -264,12 +359,15 @@ def unpack_error(
     # retrieve the remote error's msg encoded details
     tb_str: str = error_dict.get('tb_str', '')
     message: str = f'{chan.uid}\n' + tb_str
-    type_name: str = error_dict['type_str']
+    type_name: str = (
+        error_dict.get('type_str')
+        or error_dict['boxed_type']
+    )
     suberror_type: Type[BaseException] = Exception
 
     if type_name == 'ContextCancelled':
-        err_type = ContextCancelled
-        suberror_type = err_type
+        box_type = ContextCancelled
+        suberror_type = box_type
 
     else:  # try to lookup a suitable local error type
         for ns in [
@@ -285,7 +383,7 @@ def unpack_error(
             ):
                 break
 
-    exc = err_type(
+    exc = box_type(
         message,
         suberror_type=suberror_type,
 
