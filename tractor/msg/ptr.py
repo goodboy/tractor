@@ -43,17 +43,24 @@ IPC-compat cross-mem-boundary object pointer.
 # - https://github.com/msgpack/msgpack-python#packingunpacking-of-custom-data-type
 
 from __future__ import annotations
-from inspect import isfunction
+from inspect import (
+    isfunction,
+    ismethod,
+)
 from pkgutil import resolve_name
 
 
 class NamespacePath(str):
     '''
-    A serializeable description of a (function) Python object
-    location described by the target's module path and namespace
-    key meant as a message-native "packet" to allows actors to
-    point-and-load objects by an absolute ``str`` (and thus
-    serializable) reference.
+    A serializeable `str`-subtype implementing a "namespace
+    pointer" to any Python object reference (like a function)
+    using the same format as the built-in `pkgutil.resolve_name()`
+    system.
+
+    A value describes a target's module-path and namespace-key
+    separated by a ':' and thus can be easily used as
+    a IPC-message-native reference-type allowing memory isolated
+    actors to point-and-load objects via a minimal `str` value.
 
     '''
     _ref: object | type | None = None
@@ -81,12 +88,22 @@ class NamespacePath(str):
 
         '''
         if (
-            isinstance(ref, object)
-            and not isfunction(ref)
+            isfunction(ref)
         ):
-            name: str = type(ref).__name__
-        else:
             name: str = getattr(ref, '__name__')
+
+        elif ismethod(ref):
+            # build out the path manually i guess..?
+            # TODO: better way?
+            name: str = '.'.join([
+                type(ref.__self__).__name__,
+                ref.__func__.__name__,
+            ])
+
+        else:  # object or other?
+            # isinstance(ref, object)
+            # and not isfunction(ref)
+            name: str = type(ref).__name__
 
         # fully qualified namespace path, tuple.
         fqnp: tuple[str, str] = (
