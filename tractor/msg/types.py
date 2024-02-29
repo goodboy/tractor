@@ -35,6 +35,24 @@ from msgspec import (
     structs,
 )
 
+# TODO: auto-gen type sig for input func both for
+# type-msgs and logging of RPC tasks?
+# taken and modified from:
+# https://stackoverflow.com/a/57110117
+# import inspect
+# from typing import List
+
+# def my_function(input_1: str, input_2: int) -> list[int]:
+#     pass
+
+# def types_of(func):
+#     specs = inspect.getfullargspec(func)
+#     return_type = specs.annotations['return']
+#     input_types = [t.__name__ for s, t in specs.annotations.items() if s != 'return']
+#     return f'{func.__name__}({": ".join(input_types)}) -> {return_type}'
+
+# types_of(my_function)
+
 
 class DiffDump(UserList):
     '''
@@ -161,6 +179,7 @@ class Struct(
                 # https://docs.python.org/3.11/library/pprint.html#pprint.saferepr
                 val_str: str = saferepr(v)
 
+            # TODO: LOLOL use `textwrap.indent()` instead dawwwwwg!
             obj_str += (field_ws + f'{k}: {typ_name} = {val_str},\n')
 
         return (
