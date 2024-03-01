@@ -196,16 +196,16 @@ async def cancel_on_completion(
     result: Any|Exception = await exhaust_portal(portal, actor)
     if isinstance(result, Exception):
         errors[actor.uid]: Exception = result
-        log.warning(
-            'Cancelling subactor due to error:\n'
-            f'uid: {portal.channel.uid}\n'
+        log.cancel(
+            'Cancelling subactor runtime due to error:\n\n'
+            f'Portal.cancel_actor() => {portal.channel.uid}\n\n'
             f'error: {result}\n'
         )
 
     else:
         log.runtime(
-            'Cancelling subactor gracefully:\n'
-            f'uid: {portal.channel.uid}\n'
+            'Cancelling subactor gracefully:\n\n'
+            f'Portal.cancel_actor() => {portal.channel.uid}\n\n'
             f'result: {result}\n'
         )
 
@@ -213,7 +213,7 @@ async def cancel_on_completion(
     await portal.cancel_actor()
 
 
-async def do_hard_kill(
+async def hard_kill(
     proc: trio.Process,
     terminate_after: int = 3,
 
@@ -288,7 +288,7 @@ async def do_hard_kill(
         proc.kill()
 
 
-async def soft_wait(
+async def soft_kill(
 
     proc: ProcessType,
     wait_func: Callable[
@@ -299,17 +299,20 @@ async def soft_wait(
 
 ) -> None:
     '''
-    Wait for proc termination but **dont' yet** teardown
-    std-streams (since it will clobber any ongoing pdb REPL
-    session). This is our "soft" (and thus itself cancellable)
-    join/reap on an actor-runtime-in-process.
+    Wait for proc termination but **don't yet** teardown
+    std-streams since it will clobber any ongoing pdb REPL
+    session.
+
+    This is our "soft"/graceful, and thus itself also cancellable,
+    join/reap on an actor-runtime-in-process shutdown; it is
+    **not** the same as a "hard kill" via an OS signal (for that
+    see `.hard_kill()`).
 
     '''
     uid: tuple[str, str] = portal.channel.uid
     try:
         log.cancel(
-            'Soft waiting on sub-actor proc:\n'
-            f'uid: {uid}\n'
+            'Soft killing sub-actor via `Portal.cancel_actor()`\n'
             f'|_{proc}\n'
         )
         # wait on sub-proc to signal termination
@@ -326,8 +329,9 @@ async def soft_wait(
 
             async def cancel_on_proc_deth():
                 '''
-                "Cancel the (actor) cancel" request if we detect
-                that that the underlying sub-process terminated.
+                "Cancel-the-cancel" request: if we detect that the
+                underlying sub-process exited prior to
+                a `Portal.cancel_actor()` call completing .
 
                 '''
                 await wait_func(proc)
@@ -439,19 +443,22 @@ async def trio_proc(
         spawn_cmd.append("--asyncio")
 
     cancelled_during_spawn: bool = False
-    proc: trio.Process | None = None
+    proc: trio.Process|None = None
     try:
         try:
             # TODO: needs ``trio_typing`` patch?
             proc = await trio.lowlevel.open_process(spawn_cmd)
-
-            log.runtime(f"Started {proc}")
+            log.runtime(
+                'Started new sub-proc\n'
+                f'|_{proc}\n'
+            )
 
             # wait for actor to spawn and connect back to us
             # channel should have handshake completed by the
             # local actor by the time we get a ref to it
             event, chan = await actor_nursery._actor.wait_for_peer(
-                subactor.uid)
+                subactor.uid
+            )
 
         except trio.Cancelled:
             cancelled_during_spawn = True
@@ -513,7 +520,7 @@ async def trio_proc(
             # This is a "soft" (cancellable) join/reap which
             # will remote cancel the actor on a ``trio.Cancelled``
             # condition.
-            await soft_wait(
+            await soft_kill(
                 proc,
                 trio.Process.wait,
                 portal
@@ -574,7 +581,7 @@ async def trio_proc(
 
                 if proc.poll() is None:
                     log.cancel(f"Attempting to hard kill {proc}")
-                    await do_hard_kill(proc)
+                    await hard_kill(proc)
 
                 log.debug(f"Joined {proc}")
         else:
@@ -718,7 +725,7 @@ async def mp_proc(
             # This is a "soft" (cancellable) join/reap which
             # will remote cancel the actor on a ``trio.Cancelled``
             # condition.
-            await soft_wait(
+            await soft_kill(
                 proc,
                 proc_waiter,
                 portal
