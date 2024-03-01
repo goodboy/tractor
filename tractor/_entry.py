@@ -106,24 +106,24 @@ def _trio_main(
     Entry point for a `trio_run_in_process` subactor.
 
     '''
-    log.info(f"Started new trio process for {actor.uid}")
-
-    if actor.loglevel is not None:
-        log.info(
-            f"Setting loglevel for {actor.uid} to {actor.loglevel}")
-        get_console_log(actor.loglevel)
-
-    log.info(
-        f"Started {actor.uid}")
-
     _state._current_actor = actor
-
-    log.debug(f"parent_addr is {parent_addr}")
     trio_main = partial(
         async_main,
         actor,
         parent_addr=parent_addr
     )
+
+    if actor.loglevel is not None:
+        get_console_log(actor.loglevel)
+        import os
+        log.info(
+            'Started new trio process:\n'
+            f'|_{actor}\n'
+            f'  uid: {actor.uid}\n'
+            f'  pid: {os.getpid()}\n'
+            f'  parent_addr: {parent_addr}\n'
+            f'  loglevel: {actor.loglevel}\n'
+        )
 
     try:
         if infect_asyncio:
@@ -132,7 +132,9 @@ def _trio_main(
         else:
             trio.run(trio_main)
     except KeyboardInterrupt:
-        log.cancel(f"Actor {actor.uid} received KBI")
+        log.cancel(
+            f'@{actor.uid} received KBI'
+        )
 
     finally:
         log.info(f"Actor {actor.uid} terminated")
