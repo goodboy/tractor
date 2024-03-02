@@ -25,6 +25,7 @@ import logging
 import signal
 import sys
 import os
+import typing
 import warnings
 
 
@@ -236,8 +237,11 @@ async def open_root_actor(
 
                 entered = await _debug._maybe_enter_pm(err)
 
-                if not entered and not is_multi_cancelled(err):
-                    logger.exception("Root actor crashed:")
+                if (
+                    not entered
+                    and not is_multi_cancelled(err)
+                ):
+                    logger.exception('Root actor crashed:\n')
 
                 # always re-raise
                 raise

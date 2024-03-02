@@ -265,7 +265,7 @@ class MsgStream(trio.abc.Channel):
             try:
                 maybe_final_msg = self.receive_nowait()
                 if maybe_final_msg:
-                    log.cancel(
+                    log.debug(
                         'Drained un-processed stream msg:\n'
                         f'{pformat(maybe_final_msg)}'
                     )
