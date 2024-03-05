@@ -116,13 +116,17 @@ def _trio_main(
     if actor.loglevel is not None:
         get_console_log(actor.loglevel)
         import os
-        log.info(
-            'Started new trio process:\n'
+        actor_info: str = (
             f'|_{actor}\n'
             f'  uid: {actor.uid}\n'
             f'  pid: {os.getpid()}\n'
             f'  parent_addr: {parent_addr}\n'
             f'  loglevel: {actor.loglevel}\n'
+        )
+        log.info(
+            'Started new trio process:\n'
+            +
+            actor_info
         )
 
     try:
@@ -133,8 +137,14 @@ def _trio_main(
             trio.run(trio_main)
     except KeyboardInterrupt:
         log.cancel(
-            f'@{actor.uid} received KBI'
+            'Actor received KBI\n'
+            +
+            actor_info
         )
 
     finally:
-        log.info(f"Actor {actor.uid} terminated")
+        log.info(
+            'Actor terminated\n'
+            +
+            actor_info
+        )

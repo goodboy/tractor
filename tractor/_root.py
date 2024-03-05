@@ -256,7 +256,9 @@ async def open_root_actor(
                 #     for an in nurseries:
                 #         tempn.start_soon(an.exited.wait)
 
-                logger.cancel("Shutting down root actor")
+                logger.info(
+                    'Closing down root actor'
+                )
                 await actor.cancel(None)  # self cancel
     finally:
         _state._current_actor = None
