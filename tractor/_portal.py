@@ -257,7 +257,7 @@ class Portal:
             return False
 
         reminfo: str = (
-            f'{self.channel.uid}\n'
+            f'`Portal.cancel_actor()` => {self.channel.uid}\n'
             f' |_{chan}\n'
         )
         log.cancel(
@@ -949,9 +949,13 @@ class Portal:
 
                 # CASE 1
                 else:
+                    outcome_str: str = ctx.repr_outcome(
+                        show_error_fields=True,
+                        # type_only=True,
+                    )
                     log.cancel(
-                        f'Context terminated due to local scope error:\n'
-                        f'{etype.__name__}\n'
+                        f'Context terminated due to local scope error:\n\n'
+                        f'{ctx.chan.uid} => {outcome_str}\n'
                     )
 
             # XXX: (MEGA IMPORTANT) if this is a root opened process we
