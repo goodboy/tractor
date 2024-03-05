@@ -112,7 +112,7 @@ def test_rpc_errors(reg_addr, to_call, testdir):
         value = err.value
 
         # might get multiple `trio.Cancelled`s as well inside an inception
-        if isinstance(value, trio.MultiError):
+        if isinstance(value, ExceptionGroup):
             value = next(itertools.dropwhile(
                 lambda exc: not isinstance(exc, tractor.RemoteActorError),
                 value.exceptions

@@ -329,7 +329,7 @@ async def inf_streamer(
 
             # close out the stream gracefully
             except trio.ClosedResourceError:
-                print('msgstream closed on streamer side!')
+                print('transport closed on streamer side!')
                 assert stream.closed
                 break
         else:

@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager as acm
 
 import pytest
 import trio
-from trio_typing import TaskStatus
 import tractor
 from tractor import RemoteActorError
 from async_generator import aclosing
