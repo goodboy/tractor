@@ -23,10 +23,6 @@ Currently popular frameworks supported are:
 
 """
 from __future__ import annotations
-from contextlib import (
-    # asynccontextmanager as acm,
-    contextmanager as cm,
-)
 from typing import (
     Any,
     Callable,
@@ -34,9 +30,6 @@ from typing import (
 from typing_extensions import Annotated
 
 import typer
-
-
-from ._debug import open_crash_handler
 
 
 _runtime_vars: dict[str, Any] = {}

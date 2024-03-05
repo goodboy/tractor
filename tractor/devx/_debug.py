@@ -21,18 +21,19 @@ Multi-core debugging for da peeps!
 """
 from __future__ import annotations
 import bdb
-import os
-import sys
-import signal
-from functools import (
-    partial,
-    cached_property,
-)
 from contextlib import (
     asynccontextmanager as acm,
     contextmanager as cm,
     nullcontext,
 )
+from functools import (
+    partial,
+    cached_property,
+)
+import os
+import signal
+import sys
+import traceback
 from typing import (
     Any,
     Callable,
@@ -611,6 +612,9 @@ def shield_sigint_handler(
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
 
+_pause_msg: str = 'Attaching to pdb REPL in actor'
+
+
 def _set_trace(
     actor: tractor.Actor | None = None,
     pdb: MultiActorPdb | None = None,
@@ -632,7 +636,13 @@ def _set_trace(
         ) or shield
     ):
         # pdbp.set_trace()
-        log.pdb(f"\nAttaching pdb to actor: {actor.uid}\n")
+        # TODO: maybe print the actor supervion tree up to the
+        # root here? Bo
+        log.pdb(
+            f'{_pause_msg}\n'
+            '|\n'
+            f'|_ {actor.uid}\n'
+        )
         # no f!#$&* idea, but when we're in async land
         # we need 2x frames up?
         frame = frame.f_back
@@ -911,6 +921,11 @@ async def breakpoint(**kwargs):
     await pause(**kwargs)
 
 
+_crash_msg: str = (
+    'Attaching to pdb REPL in crashed actor'
+)
+
+
 def _post_mortem(
     actor: tractor.Actor,
     pdb: MultiActorPdb,
@@ -921,15 +936,23 @@ def _post_mortem(
     debugger instance.
 
     '''
-    log.pdb(f"\nAttaching to pdb in crashed actor: {actor.uid}\n")
+    # TODO: print the actor supervion tree up to the root
+    # here! Bo
+    log.pdb(
+        f'{_crash_msg}\n'
+        '|\n'
+        f'|_ {actor.uid}\n'
+    )
 
-    # TODO: you need ``pdbpp`` master (at least this commit
-    # https://github.com/pdbpp/pdbpp/commit/b757794857f98d53e3ebbe70879663d7d843a6c2)
-    # to fix this and avoid the hang it causes. See issue:
-    # https://github.com/pdbpp/pdbpp/issues/480
-    # TODO: help with a 3.10+ major release if/when it arrives.
-
-    pdbp.xpm(Pdb=lambda: pdb)
+    # TODO: only replacing this to add the
+    # `end=''` to the print XD
+    # pdbp.xpm(Pdb=lambda: pdb)
+    info = sys.exc_info()
+    print(traceback.format_exc(), end='')
+    pdbp.post_mortem(
+        t=info[2],
+        Pdb=lambda: pdb,
+    )
 
 
 post_mortem = partial(
@@ -1001,13 +1024,13 @@ async def maybe_wait_for_debugger(
 
     header_msg: str = '',
 
-) -> None:
+) -> bool:  # was locked and we polled?
 
     if (
         not debug_mode()
         and not child_in_debug
     ):
-        return
+        return False
 
 
     msg: str = header_msg
@@ -1025,8 +1048,7 @@ async def maybe_wait_for_debugger(
 
         if sub_in_debug := Lock.global_actor_in_debug:
             msg += (
-                'Debug `Lock` in use by subactor\n'
-                f'|_{sub_in_debug}\n'
+                f'Debug `Lock` in use by subactor: {sub_in_debug}\n'
             )
             # TODO: could this make things more deterministic?
             # wait to see if a sub-actor task will be
@@ -1035,12 +1057,12 @@ async def maybe_wait_for_debugger(
             # XXX => but it doesn't seem to work..
             # await trio.testing.wait_all_tasks_blocked(cushion=0)
         else:
-            log.pdb(
+            log.debug(
                 msg
                 +
                 'Root immediately acquired debug TTY LOCK'
             )
-            return
+            return False
 
         for istep in range(poll_steps):
 
@@ -1090,12 +1112,13 @@ async def maybe_wait_for_debugger(
                     continue
 
         # fallthrough on failure to acquire..
-        else:
-            raise RuntimeError(
-                msg
-                +
-                'Root actor failed to acquire debug lock?'
-            )
+        # else:
+        #     raise RuntimeError(
+        #         msg
+        #         +
+        #         'Root actor failed to acquire debug lock?'
+        #     )
+        return True
 
     # else:
     #     # TODO: non-root call for #320?
@@ -1104,6 +1127,7 @@ async def maybe_wait_for_debugger(
     #         subactor_uid=this_uid,
     #     ):
     #         pass
+    return False
 
 # TODO: better naming and what additionals?
 # - [ ] optional runtime plugging?
