@@ -40,6 +40,7 @@ setup(
         'tractor.trionics',  # trio extensions
         'tractor.msg',  # lowlevel data types
         'tractor._testing',  # internal cross-subsys suite utils
+        'tractor.devx',  # "dev-experience"
     ],
     install_requires=[
 
