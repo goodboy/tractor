@@ -292,6 +292,7 @@ async def stream_from_peer(
 @pytest.mark.parametrize(
     'error_during_ctxerr_handling',
     [False, True],
+    ids=lambda item: f'rte_during_ctxerr={item}',
 )
 def test_peer_canceller(
     error_during_ctxerr_handling: bool,
@@ -492,6 +493,15 @@ def test_peer_canceller(
                 #   should be cancelled by US.
                 #
                 if error_during_ctxerr_handling:
+                    # since we do a rte reraise above, the
+                    # `.open_context()` error handling should have
+                    # raised a local rte, thus the internal
+                    # `.open_context()` enterer task's
+                    # cancel-scope should have raised the RTE, NOT
+                    # a `trio.Cancelled` due to a local
+                    # `._scope.cancel()` call.
+                    assert not sleeper_ctx._scope.cancelled_caught
+
                     assert isinstance(loc_err, RuntimeError)
                     print(f'_loc_err: {_loc_err}\n')
                     # assert sleeper_ctx._local_error is _loc_err
@@ -558,6 +568,13 @@ def test_peer_canceller(
                 #   propagated
                 #
                 else:
+                    # since sleeper_ctx.result() IS called above
+                    # we should have (silently) absorbed the
+                    # corresponding `ContextCancelled` for it and
+                    # `._scope.cancel()` should never have been
+                    # called.
+                    assert not sleeper_ctx._scope.cancelled_caught
+
                     assert isinstance(loc_err, ContextCancelled)
                     assert loc_err.canceller == sleeper_ctx.canceller
                     assert (
@@ -625,20 +642,31 @@ def test_peer_canceller(
 
                             assert not ctx._remote_error
 
-                            # the `canceller_ctx` shouldn't
-                            # have called `ctx.cancel()` either!
+                            # neither of the `caller/canceller_ctx` should
+                            # have called `ctx.cancel()` bc the
+                            # canceller's task internally issues
+                            # a `Portal.cancel_actor()` to the
+                            # sleeper and thus never should call
+                            # `ctx.cancel()` per say UNLESS the
+                            # sleeper's `.result()` call above
+                            # ctxc exception results in the
+                            # canceller's
+                            # `.open_context().__aexit__()` error
+                            # handling to kick in BEFORE a remote
+                            # error is delivered - which since
+                            # we're asserting what we are above,
+                            # that should normally be the case
+                            # right?
                             #
-                            # since its context was remotely
-                            # cancelled, we never needed to call
-                            # `Context.cancel()` bc the far end
-                            # task already done by the peer and
-                            # also we never 
                             assert not ctx.cancel_called
+                            #
+                            # assert ctx.cancel_called
+                            # orig ^
 
                             # TODO: figure out the details of this..?
                             # if you look the `._local_error` here
                             # is a multi of ctxc + 2 Cancelleds?
-                            # assert not ctx.cancelled_caught
+                            # assert not ctx._scope.cancelled_caught
 
                             assert (
                                 not ctx.cancel_called
