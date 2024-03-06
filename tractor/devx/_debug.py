@@ -619,13 +619,15 @@ def _set_trace(
     actor: tractor.Actor | None = None,
     pdb: MultiActorPdb | None = None,
     shield: bool = False,
+
+    extra_frames_up_when_async: int = 1,
 ):
     __tracebackhide__: bool = True
     actor: tractor.Actor = actor or current_actor()
 
-    # start 2 levels up in user code
-    frame: FrameType | None = sys._getframe()
-    if frame:
+    # always start 1 level up from THIS in user code.
+    frame: FrameType|None
+    if frame := sys._getframe():
         frame: FrameType = frame.f_back  # type: ignore
 
     if (
@@ -633,23 +635,39 @@ def _set_trace(
         and (
             pdb
             and actor is not None
-        ) or shield
+        )
+        # or shield
     ):
+        msg: str = _pause_msg
+        if shield:
+            # log.warning(
+            msg = (
+                '\n\n'
+                '            ------ - ------\n'
+                'Debugger invoked with `shield=True` so an extra\n'
+                '`trio.CancelScope.__exit__()` frame is shown..\n'
+                '\n'
+                'Try going up one frame to see your pause point!\n'
+                '\n'
+                '          SORRY we need to fix this!\n'
+                '            ------ - ------\n\n'
+            ) + msg
+
         # pdbp.set_trace()
         # TODO: maybe print the actor supervion tree up to the
         # root here? Bo
         log.pdb(
-            f'{_pause_msg}\n'
+            f'{msg}\n'
             '|\n'
             f'|_ {actor.uid}\n'
         )
         # no f!#$&* idea, but when we're in async land
         # we need 2x frames up?
-        frame = frame.f_back
-        # frame = frame.f_back
-
-        # if shield:
-        #     frame = frame.f_back
+        for i in range(extra_frames_up_when_async):
+            frame: FrameType = frame.f_back
+            log.debug(
+                f'Going up frame {i} -> {frame}\n'
+            )
 
     else:
         pdb, undo_sigint = mk_mpdb()
@@ -659,10 +677,9 @@ def _set_trace(
         Lock.local_task_in_debug = 'sync'
 
     pdb.set_trace(frame=frame)
-    # undo_
 
 
-async def pause(
+async def _pause(
 
     debug_func: Callable = _set_trace,
     release_lock_signal: trio.Event | None = None,
@@ -676,27 +693,19 @@ async def pause(
     # be no way to override it?..
     # shield: bool = False,
 
-    # TODO:
-    # shield: bool = False
+    shield: bool = False,
     task_status: TaskStatus[trio.Event] = trio.TASK_STATUS_IGNORED
 
 ) -> None:
     '''
-    A pause point (more commonly known as a "breakpoint") interrupt
-    instruction for engaging a blocking debugger instance to
-    conduct manual console-based-REPL-interaction from within
-    `tractor`'s async runtime, normally from some single-threaded
-    and currently executing actor-hosted-`trio`-task in some
-    (remote) process.
+    Inner impl for `pause()` to avoid the `trio.CancelScope.__exit__()`
+    stack frame when not shielded (since apparently i can't figure out
+    how to hide it using the normal mechanisms..)
 
-    NOTE: we use the semantics "pause" since it better encompasses
-    the entirety of the necessary global-runtime-state-mutation any
-    actor-task must access and lock in order to get full isolated
-    control over the process tree's root TTY:
-    https://en.wikipedia.org/wiki/Breakpoint
+    Hopefully we won't need this in the long run.
 
     '''
-    # __tracebackhide__ = True
+    __tracebackhide__: bool = True
     actor = current_actor()
     pdb, undo_sigint = mk_mpdb()
     task_name: str = trio.lowlevel.current_task().name
@@ -707,24 +716,11 @@ async def pause(
     ):
         Lock.local_pdb_complete = trio.Event()
 
-    # if shield:
     debug_func = partial(
         debug_func,
-        # shield=shield,
     )
 
-    # def _exit(self, *args, **kwargs):
-    #     __tracebackhide__: bool = True
-    #     super().__exit__(*args, **kwargs)
-
-    # trio.CancelScope.__exit__.__tracebackhide__ = True
-
-    # import types
-    # with trio.CancelScope(shield=shield) as cs:
-        # cs.__exit__ = types.MethodType(_exit, cs)
-        # cs.__exit__.__tracebackhide__ = True
-
-        # TODO: need a more robust check for the "root" actor
+    # TODO: need a more robust check for the "root" actor
     if (
         not is_root_process()
         and actor._parent_chan  # a connected child
@@ -818,7 +814,7 @@ async def pause(
             #     'trace func provided!'
             # )
             print(f"{actor.uid} ENTERING WAIT")
-            task_status.started()
+            task_status.started(cs)
 
             # with trio.CancelScope(shield=True):
             #     await release_lock_signal.wait()
@@ -827,22 +823,103 @@ async def pause(
             # block here one (at the appropriate frame *up*) where
             # ``breakpoint()`` was awaited and begin handling stdio.
             log.debug("Entering the synchronous world of pdb")
-            debug_func(actor, pdb)
+            debug_func(
+                actor,
+                pdb,
+                extra_frames_up_when_async=2,
+                shield=shield,
+            )
+            assert cs
 
     except bdb.BdbQuit:
         Lock.release()
         raise
 
-    # XXX: apparently we can't do this without showing this frame
-    # in the backtrace on first entry to the REPL? Seems like an odd
-    # behaviour that should have been fixed by now. This is also why
-    # we scrapped all the @cm approaches that were tried previously.
-    # finally:
-    #     __tracebackhide__ = True
-    #     # frame = sys._getframe()
-    #     # last_f = frame.f_back
-    #     # last_f.f_globals['__tracebackhide__'] = True
-    #     # signal.signal = pdbp.hideframe(signal.signal)
+# XXX: apparently we can't do this without showing this frame
+# in the backtrace on first entry to the REPL? Seems like an odd
+# behaviour that should have been fixed by now. This is also why
+# we scrapped all the @cm approaches that were tried previously.
+# finally:
+#     __tracebackhide__ = True
+#     # frame = sys._getframe()
+#     # last_f = frame.f_back
+#     # last_f.f_globals['__tracebackhide__'] = True
+#     # signal.signal = pdbp.hideframe(signal.signal)
+
+
+async def pause(
+
+    debug_func: Callable = _set_trace,
+    release_lock_signal: trio.Event | None = None,
+
+    # TODO: allow caller to pause despite task cancellation,
+    # exactly the same as wrapping with:
+    # with CancelScope(shield=True):
+    #     await pause()
+    # => the REMAINING ISSUE is that the scope's .__exit__() frame
+    # is always show in the debugger on entry.. and there seems to
+    # be no way to override it?..
+    # shield: bool = False,
+
+    shield: bool = False,
+    task_status: TaskStatus[trio.Event] = trio.TASK_STATUS_IGNORED
+
+) -> None:
+    '''
+    A pause point (more commonly known as a "breakpoint") interrupt
+    instruction for engaging a blocking debugger instance to
+    conduct manual console-based-REPL-interaction from within
+    `tractor`'s async runtime, normally from some single-threaded
+    and currently executing actor-hosted-`trio`-task in some
+    (remote) process.
+
+    NOTE: we use the semantics "pause" since it better encompasses
+    the entirety of the necessary global-runtime-state-mutation any
+    actor-task must access and lock in order to get full isolated
+    control over the process tree's root TTY:
+    https://en.wikipedia.org/wiki/Breakpoint
+
+    '''
+    __tracebackhide__: bool = True
+
+    if shield:
+        # NOTE XXX: even hard coding this inside the `class CancelScope:`
+        # doesn't seem to work for me!?
+        # ^ XXX ^
+
+        # def _exit(self, *args, **kwargs):
+        #     __tracebackhide__: bool = True
+        #     super().__exit__(*args, **kwargs)
+
+        trio.CancelScope.__enter__.__tracebackhide__ = True
+        trio.CancelScope.__exit__.__tracebackhide__ = True
+
+        # import types
+        # with trio.CancelScope(shield=shield) as cs:
+            # cs.__exit__ = types.MethodType(_exit, cs)
+            # cs.__exit__.__tracebackhide__ = True
+
+        with trio.CancelScope(shield=shield) as cs:
+            # setattr(cs.__exit__.__func__, '__tracebackhide__', True)
+            # setattr(cs.__enter__.__func__, '__tracebackhide__', True)
+
+            # NOTE: so the caller can always cancel even if shielded
+            task_status.started(cs)
+            await _pause(
+                debug_func=debug_func,
+                release_lock_signal=release_lock_signal,
+                shield=True,
+                task_status=task_status,
+            )
+    else:
+        await _pause(
+            debug_func=debug_func,
+            release_lock_signal=release_lock_signal,
+            shield=False,
+            task_status=task_status,
+        )
+
+
 
 
 # TODO: allow pausing from sync code.
@@ -1043,12 +1120,20 @@ async def maybe_wait_for_debugger(
         # will make the pdb repl unusable.
         # Instead try to wait for pdb to be released before
         # tearing down.
-        sub_in_debug: tuple[str, str]|None = Lock.global_actor_in_debug
+        in_debug: tuple[str, str]|None = Lock.global_actor_in_debug
         debug_complete: trio.Event|None = Lock.no_remote_has_tty
 
-        if sub_in_debug := Lock.global_actor_in_debug:
+        if in_debug == current_actor().uid:
+            log.debug(
+                msg
+                +
+                'Root already owns the TTY LOCK'
+            )
+            return True
+
+        elif in_debug:
             msg += (
-                f'Debug `Lock` in use by subactor: {sub_in_debug}\n'
+                f'Debug `Lock` in use by subactor: {in_debug}\n'
             )
             # TODO: could this make things more deterministic?
             # wait to see if a sub-actor task will be
@@ -1065,27 +1150,26 @@ async def maybe_wait_for_debugger(
             return False
 
         for istep in range(poll_steps):
-
-
             if (
                 debug_complete
                 and not debug_complete.is_set()
-                and sub_in_debug is not None
+                and in_debug is not None
             ):
                 log.pdb(
                     msg
                     +
                     'Root is waiting on tty lock to release..\n'
                 )
-                await debug_complete.wait()
+                with trio.CancelScope(shield=True):
+                    await debug_complete.wait()
                 log.pdb(
                     f'Child subactor released debug lock:'
-                    f'|_{sub_in_debug}\n'
+                    f'|_{in_debug}\n'
                 )
 
             # is no subactor locking debugger currently?
             if (
-                 sub_in_debug is None
+                in_debug is None
                 and (
                     debug_complete is None
                     or debug_complete.is_set()
