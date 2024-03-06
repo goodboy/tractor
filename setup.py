@@ -36,8 +36,9 @@ setup(
     platforms=['linux', 'windows'],
     packages=[
         'tractor',
-        'tractor.experimental',
-        'tractor.trionics',
+        'tractor.experimental',  # wacky ideas
+        'tractor.trionics',  # trio extensions
+        'tractor.msg',  # lowlevel data types
     ],
     install_requires=[
 
