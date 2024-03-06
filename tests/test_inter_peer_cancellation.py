@@ -220,11 +220,12 @@ async def stream_from_peer(
             # - what about IPC-transport specific errors, should
             #   they bubble from the async for and trigger
             #   other special cases?
+            #
             # NOTE: current ctl flow:
             # - stream raises `trio.EndOfChannel` and
             #   exits the loop
-            # - `.open_context()` will raise the ctxcanc
-            #   received from the sleeper.
+            # - `.open_context()` will raise the ctxc received
+            #   from the sleeper.
             async for msg in stream:
                 assert msg is not None
                 print(msg)
@@ -383,11 +384,11 @@ def test_peer_canceller(
                     ) as (canceller_ctx, sent),
 
                 ):
-                    ctxs: list[Context] = [
-                        sleeper_ctx,
-                        caller_ctx,
-                        canceller_ctx,
-                    ]
+                    ctxs: dict[str, Context] = {
+                        'sleeper': sleeper_ctx,
+                        'caller': caller_ctx,
+                        'canceller': canceller_ctx,
+                    }
 
                     try:
                         print('PRE CONTEXT RESULT')
@@ -505,14 +506,17 @@ def test_peer_canceller(
                     # NOTE: this root actor task should have
                     # called `Context.cancel()` on the
                     # `.__aexit__()` to every opened ctx.
-                    for ctx in ctxs:
-                        assert ctx.cancel_called
+                    for name, ctx in ctxs.items():
 
                         # this root actor task should have
                         # cancelled all opened contexts except the
                         # sleeper which is obvi by the "canceller"
                         # peer.
                         re = ctx._remote_error
+                        le = ctx._local_error
+
+                        assert ctx.cancel_called
+
                         if (
                             ctx is sleeper_ctx
                             or ctx is caller_ctx
@@ -566,32 +570,43 @@ def test_peer_canceller(
 
                     # the sleeper's remote error is the error bubbled
                     # out of the context-stack above!
-                    re = sleeper_ctx.outcome
+                    final_err = sleeper_ctx.outcome
                     assert (
-                        re is loc_err
+                        final_err is loc_err
                         is sleeper_ctx.maybe_error
                         is sleeper_ctx._remote_error
                     )
 
-                    for ctx in ctxs:
+                    for name, ctx in ctxs.items():
+
                         re: BaseException|None = ctx._remote_error
-                        re: BaseException|None = ctx.outcome
-                        assert (
-                            re and
-                            (
-                                re is ctx.maybe_error
-                                is ctx._remote_error
-                            )
-                        )
-                        le: trio.MultiError = ctx._local_error
+                        le: BaseException|None = ctx._local_error
+                        err = ctx.maybe_error
+                        out = ctx.outcome
+
+                        # every ctx should error!
+                        assert out is err
+
+                        # the recorded local erro should always be
+                        # the same as the one raised by the
+                        # `sleeper_ctx.result()` call
                         assert (
                             le
-                            and ctx._local_error
+                            and
+                            le is loc_err
                         )
 
                         # root doesn't cancel sleeper since it's
                         # cancelled by its peer.
                         if ctx is sleeper_ctx:
+                            assert re
+                            assert (
+                                ctx._remote_error
+                                is ctx.maybe_error
+                                is ctx.outcome
+                                is ctx._local_error
+                            )
+
                             assert not ctx.cancel_called
                             assert not ctx.cancel_acked
 
@@ -601,21 +616,38 @@ def test_peer_canceller(
                             # `ContextCancelled` for it and thus
                             # the logic inside `.cancelled_caught`
                             # should trigger!
-                            assert ctx._scope.cancelled_caught
+                            assert not ctx._scope.cancelled_caught
 
-                        elif ctx is caller_ctx:
+                        elif ctx in (
+                            caller_ctx,
+                            canceller_ctx,
+                        ):
+
+                            assert not ctx._remote_error
+
+                            # the `canceller_ctx` shouldn't
+                            # have called `ctx.cancel()` either!
+                            #
                             # since its context was remotely
-                            # cancelled, we never needed to
-                            # call `Context.cancel()` bc it was
-                            # done by the peer and also we never 
-                            assert ctx.cancel_called
+                            # cancelled, we never needed to call
+                            # `Context.cancel()` bc the far end
+                            # task already done by the peer and
+                            # also we never 
+                            assert not ctx.cancel_called
 
                             # TODO: figure out the details of this..?
                             # if you look the `._local_error` here
                             # is a multi of ctxc + 2 Cancelleds?
                             # assert not ctx.cancelled_caught
 
-                        elif ctx is canceller_ctx:
+                            assert (
+                                not ctx.cancel_called
+                                and not ctx.cancel_acked
+                            )
+                            assert not ctx._scope.cancelled_caught
+
+                        # elif ctx is canceller_ctx:
+                        #     assert not ctx._remote_error
 
                             # XXX NOTE XXX: ONLY the canceller
                             # will get a self-cancelled outcome
@@ -626,11 +658,6 @@ def test_peer_canceller(
                             # .cancel() whenever an interpeer
                             # cancel takes place since each
                             # reception of a ctxc
-                            assert (
-                                ctx.cancel_called
-                                and ctx.cancel_acked
-                            )
-                            assert not ctx._scope.cancelled_caught
 
                         else:
                             pytest.fail(
@@ -663,7 +690,7 @@ def test_peer_canceller(
                 # `.open_context()` block has exited and should be
                 # set in both outcomes including the case where
                 # ctx-cancel handling itself errors.
-                assert sleeper_ctx._scope.cancelled_caught
+                assert not sleeper_ctx._scope.cancelled_caught
                 assert _loc_err is sleeper_ctx._local_error
                 assert (
                     sleeper_ctx.outcome
