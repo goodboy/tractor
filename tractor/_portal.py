@@ -30,7 +30,7 @@ from typing import (
     Any,
     Callable,
     AsyncGenerator,
-    Type,
+    # Type,
 )
 from functools import partial
 from dataclasses import dataclass
@@ -41,8 +41,7 @@ from async_generator import asynccontextmanager
 
 from .trionics import maybe_open_nursery
 from .devx import (
-    # acquire_debug_lock,
-    # pause,
+    # _debug,
     maybe_wait_for_debugger,
 )
 from ._state import (
@@ -673,6 +672,7 @@ class Portal:
         #   `Nursery.cancel_scope.cancel()`)
         except ContextCancelled as ctxc:
             scope_err = ctxc
+            ctx._local_error: BaseException = scope_err
             ctxc_from_callee = ctxc
 
             # XXX TODO XXX: FIX THIS debug_mode BUGGGG!!!
@@ -684,7 +684,7 @@ class Portal:
             #   debugging the tractor-runtime itself using it's
             #   own `.devx.` tooling!
             # 
-            # await pause()
+            # await _debug.pause()
 
             # CASE 2: context was cancelled by local task calling
             # `.cancel()`, we don't raise and the exit block should
@@ -745,18 +745,20 @@ class Portal:
 
         ) as caller_err:
             scope_err = caller_err
+            ctx._local_error: BaseException = scope_err
 
             # XXX: ALWAYS request the context to CANCEL ON any ERROR.
             # NOTE: `Context.cancel()` is conversely NEVER CALLED in
             # the `ContextCancelled` "self cancellation absorbed" case
             # handled in the block above ^^^ !!
+            # await _debug.pause()
             log.cancel(
                 'Context terminated due to\n\n'
-                f'{caller_err}\n'
+                f'.outcome => {ctx.repr_outcome()}\n'
             )
 
             if debug_mode():
-                # async with acquire_debug_lock(self.actor.uid):
+                # async with _debug.acquire_debug_lock(self.actor.uid):
                 #     pass
                 # TODO: factor ^ into below for non-root cases?
                 was_acquired: bool = await maybe_wait_for_debugger(
@@ -818,6 +820,7 @@ class Portal:
                     # this task didn't know until final teardown
                     # / value collection.
                     scope_err = berr
+                    ctx._local_error: BaseException = scope_err
                     raise
 
                 # yes! this worx Bp
@@ -927,8 +930,10 @@ class Portal:
             # should be stored as the `Context._local_error` and
             # used in determining `Context.cancelled_caught: bool`.
             if scope_err is not None:
-                ctx._local_error: BaseException = scope_err
-                etype: Type[BaseException] = type(scope_err)
+                # sanity, tho can remove?
+                assert ctx._local_error is scope_err
+                # ctx._local_error: BaseException = scope_err
+                # etype: Type[BaseException] = type(scope_err)
 
                 # CASE 2
                 if (
