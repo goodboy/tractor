@@ -262,6 +262,7 @@ async def open_root_actor(
                 await actor.cancel(None)  # self cancel
     finally:
         _state._current_actor = None
+        _state._last_actor_terminated = actor
 
         # restore breakpoint hook state
         sys.breakpointhook = builtin_bp_handler

@@ -534,12 +534,15 @@ async def open_nursery(
 
     '''
     implicit_runtime: bool = False
-
-    actor = current_actor(err_on_no_runtime=False)
+    actor: Actor = current_actor(
+        err_on_no_runtime=False
+    )
 
     try:
-        if actor is None and is_main_process():
-
+        if (
+            actor is None
+            and is_main_process()
+        ):
             # if we are the parent process start the
             # actor runtime implicitly
             log.info("Starting actor runtime!")
