@@ -939,6 +939,7 @@ async def tell_little_bro(
 def test_peer_spawns_and_cancels_service_subactor(
     debug_mode: bool,
     raise_client_error: str,
+    reg_addr: tuple[str, int],
 ):
     # NOTE: this tests for the modden `mod wks open piker` bug
     # discovered as part of implementing workspace ctx
@@ -956,6 +957,7 @@ def test_peer_spawns_and_cancels_service_subactor(
         async with tractor.open_nursery(
             # NOTE: to halt the peer tasks on ctxc, uncomment this.
             debug_mode=debug_mode,
+            registry_addrs=[reg_addr],
         ) as an:
             server: Portal = await an.start_actor(
                 (server_name := 'spawn_server'),

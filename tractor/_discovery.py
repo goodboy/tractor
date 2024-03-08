@@ -35,7 +35,10 @@ from ._portal import (
     open_portal,
     LocalPortal,
 )
-from ._state import current_actor, _runtime_vars
+from ._state import (
+    current_actor,
+    _runtime_vars,
+)
 
 
 if TYPE_CHECKING:
@@ -205,7 +208,11 @@ async def find_actor(
         # every call since something may change it globally (eg.
         # like in our discovery test suite)!
         from . import _root
-        registry_addrs = _root._default_lo_addrs
+        registry_addrs = (
+            _runtime_vars['_registry_addrs']
+            or
+            _root._default_lo_addrs
+        )
 
     maybe_portals: list[
         AsyncContextManager[tuple[str, int]]

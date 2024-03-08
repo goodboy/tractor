@@ -168,10 +168,10 @@ class Actor:
         name: str,
         *,
         enable_modules: list[str] = [],
-        uid: str | None = None,
-        loglevel: str | None = None,
-        registry_addrs: list[tuple[str, int]] | None = None,
-        spawn_method: str | None = None,
+        uid: str|None = None,
+        loglevel: str|None = None,
+        registry_addrs: list[tuple[str, int]]|None = None,
+        spawn_method: str|None = None,
 
         # TODO: remove!
         arbiter_addr: tuple[str, int] | None = None,
@@ -257,6 +257,7 @@ class Actor:
         self._reg_addrs: list[tuple[str, int]] = []
         if registry_addrs:
             self.reg_addrs: list[tuple[str, int]] = registry_addrs
+            _state._runtime_vars['_registry_addrs'] = registry_addrs
 
     @property
     def reg_addrs(self) -> list[tuple[str, int]]:
