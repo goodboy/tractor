@@ -1676,8 +1676,8 @@ class Actor:
         self,
         cid: str,
         parent_chan: Channel,
+        requesting_uid: tuple[str, str]|None,
 
-        requesting_uid: tuple[str, str]|None = None,
         ipc_msg: dict|None|bool = False,
 
     ) -> bool:
@@ -2211,6 +2211,7 @@ async def process_messages(
                             await actor._cancel_task(
                                 cid,
                                 channel,
+                                requesting_uid=channel.uid,
 
                                 ipc_msg=msg,
                             )
