@@ -196,8 +196,8 @@ async def _drain_to_final_msg(
                     (ctx._stream.closed
                      and (reason := 'stream was already closed')
                     )
-                    or (ctx._cancelled_caught
-                        and (reason := 'ctx caught a cancel')
+                    or (ctx.cancel_acked
+                        and (reason := 'ctx cancelled other side')
                     )
                     or (ctx._cancel_called
                         and (reason := 'ctx called `.cancel()`')
