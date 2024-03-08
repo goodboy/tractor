@@ -5,7 +5,6 @@ Verify the we raise errors when streams are opened prior to
 sync-opening a ``tractor.Context`` beforehand.
 
 '''
-from contextlib import asynccontextmanager as acm
 from itertools import count
 import platform
 from pprint import pformat
@@ -26,7 +25,10 @@ from tractor._exceptions import (
     ContextCancelled,
 )
 
-from conftest import tractor_test
+from conftest import (
+    tractor_test,
+    expect_ctxc,
+)
 
 # ``Context`` semantics are as follows,
 #  ------------------------------------
@@ -194,12 +196,13 @@ def test_simple_context(
                 )
 
                 try:
-                    async with portal.open_context(
-                        simple_setup_teardown,
-                        data=10,
-                        block_forever=callee_blocks_forever,
-                    ) as (ctx, sent):
-
+                    async with (
+                        portal.open_context(
+                            simple_setup_teardown,
+                            data=10,
+                            block_forever=callee_blocks_forever,
+                        ) as (ctx, sent),
+                    ):
                         assert sent == 11
 
                         if callee_blocks_forever:
@@ -250,17 +253,6 @@ def test_simple_context(
         trio.run(main)
 
 
-@acm
-async def expect_ctxc(yay: bool) -> None:
-    if yay:
-        try:
-            yield
-        except ContextCancelled:
-            return
-    else:
-        yield
-
-
 @pytest.mark.parametrize(
     'callee_returns_early',
     [True, False],
@@ -293,6 +285,7 @@ def test_caller_cancels(
     ) -> None:
         actor: Actor = current_actor()
         uid: tuple = actor.uid
+        _ctxc: ContextCancelled|None = None
 
         if (
             cancel_method == 'portal'
@@ -303,6 +296,9 @@ def test_caller_cancels(
                 assert 0, 'Portal cancel should raise!'
 
             except ContextCancelled as ctxc:
+                # with trio.CancelScope(shield=True):
+                #     await tractor.pause()
+                _ctxc = ctxc
                 assert ctx.chan._cancel_called
                 assert ctxc.canceller == uid
                 assert ctxc is ctx.maybe_error
@@ -311,7 +307,10 @@ def test_caller_cancels(
         # case since self-cancellation should swallow the ctxc
         # silently!
         else:
-            res = await ctx.result()
+            try:
+                res = await ctx.result()
+            except ContextCancelled as ctxc:
+                pytest.fail(f'should not have raised ctxc\n{ctxc}')
 
         # we actually get a result
         if callee_returns_early:
@@ -342,6 +341,10 @@ def test_caller_cancels(
                 # await tractor.pause()
                 # assert ctx._local_error is None
 
+        # TODO: don't need this right?
+        # if _ctxc:
+        #     raise _ctxc
+
 
     async def main():
 
@@ -352,11 +355,19 @@ def test_caller_cancels(
                 'simple_context',
                 enable_modules=[__name__],
             )
-            timeout = 0.5 if not callee_returns_early else 2
+            timeout: float = (
+                0.5
+                if not callee_returns_early
+                else 2
+            )
             with trio.fail_after(timeout):
                 async with (
-
-                    expect_ctxc(yay=cancel_method == 'portal'),
+                    expect_ctxc(
+                        yay=(
+                            not callee_returns_early
+                            and cancel_method == 'portal'
+                        )
+                    ),
 
                     portal.open_context(
                         simple_setup_teardown,
@@ -372,9 +383,17 @@ def test_caller_cancels(
                         await trio.sleep(0.5)
 
                     if cancel_method == 'ctx':
+                        print('cancelling with `Context.cancel()`')
                         await ctx.cancel()
-                    else:
+
+                    elif cancel_method == 'portal':
+                        print('cancelling with `Portal.cancel_actor()`')
                         await portal.cancel_actor()
+
+                    else:
+                        pytest.fail(
+                            f'Unknown `cancel_method={cancel_method} ?'
+                        )
 
                     if chk_ctx_result_before_exit:
                         await check_canceller(ctx)
@@ -385,15 +404,22 @@ def test_caller_cancels(
             if cancel_method != 'portal':
                 await portal.cancel_actor()
 
-            # since the `.cancel_actor()` call just above
-            # will cause the `.open_context().__aexit__()` raise
-            # a ctxc which should in turn cause `ctx._scope` to
+            # XXX NOTE XXX: non-normal yet purposeful
+            # test-specific ctxc suppression is implemented!
+            #
+            # WHY: the `.cancel_actor()` case (cancel_method='portal')
+            # will cause both:
+            #  * the `ctx.result()` inside `.open_context().__aexit__()`
+            #  * AND the `ctx.result()` inside `check_canceller()`
+            # to raise ctxc.
+            #
+            #   which should in turn cause `ctx._scope` to
             # catch any cancellation?
             if (
                 not callee_returns_early
-                and cancel_method == 'portal'
+                and cancel_method != 'portal'
             ):
-                assert ctx._scope.cancelled_caught
+                assert not ctx._scope.cancelled_caught
 
     trio.run(main)
 
@@ -511,6 +537,23 @@ async def expect_cancelled(
                 await stream.send(msg)  # echo server
 
     except trio.Cancelled:
+
+        # on ctx.cancel() the internal RPC scope is cancelled but
+        # never caught until the func exits.
+        assert ctx._scope.cancel_called
+        assert not ctx._scope.cancelled_caught
+
+        # should be the RPC cmd request for `._cancel_task()`
+        assert ctx._cancel_msg
+        # which, has not yet resolved to an error outcome
+        # since this rpc func has not yet exited.
+        assert not ctx.maybe_error
+        assert not ctx._final_result_is_set()
+
+        # debug REPL if needed
+        # with trio.CancelScope(shield=True):
+        #     await tractor.pause()
+
         # expected case
         _state = False
         raise
@@ -594,16 +637,16 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
                     with trio.fail_after(0.2):
                         await ctx.result()
                         assert 0, "Callee should have blocked!?"
-
                 except trio.TooSlowError:
                     # NO-OP -> since already called above
                     await ctx.cancel()
 
         # NOTE: local scope should have absorbed the cancellation since
         # in this case we call `ctx.cancel()` and the local
-        # `._scope` gets `.cancel_called` on the ctxc ack.
+        # `._scope` does not get `.cancel_called` and thus
+        # `.cancelled_caught` neither will ever bet set.
         if use_ctx_cancel_method:
-            assert ctx._scope.cancelled_caught
+            assert not ctx._scope.cancelled_caught
 
         # rxed ctxc response from far end
         assert ctx.cancel_acked

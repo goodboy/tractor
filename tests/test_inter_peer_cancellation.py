@@ -238,7 +238,12 @@ async def stream_from_peer(
 
         assert peer_ctx._remote_error is ctxerr
         assert peer_ctx._remote_error.msgdata == ctxerr.msgdata
-        assert peer_ctx.canceller == ctxerr.canceller
+
+        # the peer ctx is the canceller even though it's canceller
+        # is the "canceller" XD
+        assert peer_name in peer_ctx.canceller
+
+        assert "canceller" in ctxerr.canceller
 
         # caller peer should not be the cancel requester
         assert not ctx.cancel_called
@@ -272,7 +277,6 @@ async def stream_from_peer(
 
         # root/parent actor task should NEVER HAVE cancelled us!
         assert not ctx.canceller
-        assert 'canceller' in peer_ctx.canceller
 
         raise
         # TODO: IN THEORY we could have other cases depending on
@@ -527,25 +531,22 @@ def test_peer_canceller(
 
                         assert ctx.cancel_called
 
-                        if (
-                            ctx is sleeper_ctx
-                            or ctx is caller_ctx
-                        ):
-                            assert (
-                                re.canceller
-                                ==
-                                ctx.canceller
-                                ==
-                                canceller.channel.uid
-                            )
+                        if ctx is sleeper_ctx:
+                            assert 'canceller' in re.canceller
+                            assert 'sleeper' in ctx.canceller
 
-                        else:
+                        if ctx is canceller_ctx:
                             assert (
                                 re.canceller
-                                ==
-                                ctx.canceller
                                 ==
                                 root.uid
+                            )
+
+                        else:  # the other 2 ctxs
+                            assert (
+                                re.canceller
+                                ==
+                                canceller.channel.uid
                             )
 
                     # since the sleeper errors while handling a
@@ -576,14 +577,16 @@ def test_peer_canceller(
                     assert not sleeper_ctx._scope.cancelled_caught
 
                     assert isinstance(loc_err, ContextCancelled)
-                    assert loc_err.canceller == sleeper_ctx.canceller
-                    assert (
-                        loc_err.canceller[0]
-                        ==
-                        sleeper_ctx.canceller[0]
-                        ==
-                        'canceller'
-                    )
+
+                    # the received remote error's `.canceller`
+                    # will of course be the "canceller" actor BUT
+                    # the canceller set on the local handle to
+                    # `sleeper_ctx` will be the "sleeper" uid
+                    # since it's the actor that relayed us the
+                    # error which was **caused** by the
+                    # "canceller".
+                    assert 'sleeper' in sleeper_ctx.canceller
+                    assert 'canceller' == loc_err.canceller[0]
 
                     # the sleeper's remote error is the error bubbled
                     # out of the context-stack above!

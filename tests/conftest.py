@@ -1,6 +1,7 @@
 """
 ``tractor`` testing!!
 """
+from contextlib import asynccontextmanager as acm
 import sys
 import subprocess
 import os
@@ -248,3 +249,26 @@ def daemon(
     time.sleep(_PROC_SPAWN_WAIT)
     yield proc
     sig_prog(proc, _INT_SIGNAL)
+
+
+@acm
+async def expect_ctxc(
+    yay: bool,
+    reraise: bool = False,
+) -> None:
+    '''
+    Small acm to catch `ContextCancelled` errors when expected
+    below it in a `async with ()` block.
+
+    '''
+    if yay:
+        try:
+            yield
+            raise RuntimeError('Never raised ctxc?')
+        except tractor.ContextCancelled:
+            if reraise:
+                raise
+            else:
+                return
+    else:
+        yield
