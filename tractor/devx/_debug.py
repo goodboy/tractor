@@ -95,12 +95,12 @@ class Lock:
     # and must be cancelled if this actor is cancelled via IPC
     # request-message otherwise deadlocks with the parent actor may
     # ensure
-    _debugger_request_cs: trio.CancelScope | None = None
+    _debugger_request_cs: trio.CancelScope|None = None
 
     # NOTE: set only in the root actor for the **local** root spawned task
     # which has acquired the lock (i.e. this is on the callee side of
     # the `lock_tty_for_child()` context entry).
-    _root_local_task_cs_in_debug: trio.CancelScope | None = None
+    _root_local_task_cs_in_debug: trio.CancelScope|None = None
 
     # actor tree-wide actor uid that supposedly has the tty lock
     global_actor_in_debug: tuple[str, str] = None
@@ -808,31 +808,44 @@ async def _pause(
         Lock.repl = pdb
 
     try:
-        if debug_func is None:
+        # TODO: do we want to support using this **just** for the
+        # locking / common code (prolly to help address #320)?
+        #
+        # if debug_func is None:
             # assert release_lock_signal, (
             #     'Must pass `release_lock_signal: trio.Event` if no '
             #     'trace func provided!'
             # )
-            print(f"{actor.uid} ENTERING WAIT")
-            task_status.started(cs)
-
+            # print(f"{actor.uid} ENTERING WAIT")
             # with trio.CancelScope(shield=True):
             #     await release_lock_signal.wait()
 
-        else:
+        # else:
             # block here one (at the appropriate frame *up*) where
             # ``breakpoint()`` was awaited and begin handling stdio.
-            log.debug("Entering the synchronous world of pdb")
+        log.debug('Entering sync world of the `pdb` REPL..')
+        try:
             debug_func(
                 actor,
                 pdb,
                 extra_frames_up_when_async=2,
                 shield=shield,
             )
-            assert cs
+        except BaseException:
+            log.exception(
+                'Failed to invoke internal `debug_func = '
+                f'{debug_func.func.__name__}`\n'
+            )
+            raise
 
     except bdb.BdbQuit:
         Lock.release()
+        raise
+
+    except BaseException:
+        log.exception(
+            'Failed to engage debugger via `_pause()` ??\n'
+        )
         raise
 
 # XXX: apparently we can't do this without showing this frame
@@ -905,14 +918,14 @@ async def pause(
 
             # NOTE: so the caller can always cancel even if shielded
             task_status.started(cs)
-            await _pause(
+            return await _pause(
                 debug_func=debug_func,
                 release_lock_signal=release_lock_signal,
                 shield=True,
                 task_status=task_status,
             )
     else:
-        await _pause(
+        return await _pause(
             debug_func=debug_func,
             release_lock_signal=release_lock_signal,
             shield=False,
@@ -1006,6 +1019,10 @@ _crash_msg: str = (
 def _post_mortem(
     actor: tractor.Actor,
     pdb: MultiActorPdb,
+    shield: bool = False,
+
+    # only for compat with `._set_trace()`..
+    extra_frames_up_when_async=0,
 
 ) -> None:
     '''
@@ -1034,7 +1051,7 @@ def _post_mortem(
 
 post_mortem = partial(
     pause,
-    _post_mortem,
+    debug_func=_post_mortem,
 )
 
 
@@ -1163,7 +1180,7 @@ async def maybe_wait_for_debugger(
                 with trio.CancelScope(shield=True):
                     await debug_complete.wait()
                 log.pdb(
-                    f'Child subactor released debug lock:'
+                    f'Child subactor released debug lock\n'
                     f'|_{in_debug}\n'
                 )
 
