@@ -19,6 +19,8 @@ from tractor import (
 )
 from tractor.trionics import BroadcastReceiver
 
+from conftest import expect_ctxc
+
 
 async def sleep_and_err(
     sleep_for: float = 0.1,
@@ -190,7 +192,8 @@ async def trio_ctx(
 
 
 @pytest.mark.parametrize(
-    'parent_cancels', [False, True],
+    'parent_cancels',
+    ['context', 'actor', False],
     ids='parent_actor_cancels_child={}'.format
 )
 def test_context_spawns_aio_task_that_errors(
@@ -214,18 +217,36 @@ def test_context_spawns_aio_task_that_errors(
                     # debug_mode=True,
                     loglevel='cancel',
                 )
-                async with p.open_context(
-                    trio_ctx,
-                ) as (ctx, first):
+                async with (
+                    expect_ctxc(
+                        yay=parent_cancels == 'actor',
+                    ),
+                    p.open_context(
+                        trio_ctx,
+                    ) as (ctx, first),
+                ):
 
                     assert first == 'start'
 
-                    if parent_cancels:
+                    if parent_cancels == 'actor':
                         await p.cancel_actor()
 
-                    await trio.sleep_forever()
+                    elif parent_cancels == 'context':
+                        await ctx.cancel()
 
-                return await ctx.result()
+                    else:
+                        await trio.sleep_forever()
+
+                async with expect_ctxc(
+                    yay=parent_cancels == 'actor',
+                ):
+                    await ctx.result()
+
+                if parent_cancels == 'context':
+                    # to tear down sub-acor
+                    await p.cancel_actor()
+
+        return ctx.outcome
 
     if parent_cancels:
         # bc the parent made the cancel request,
