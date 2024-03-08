@@ -1485,7 +1485,11 @@ class Context:
         TODO: implement this using `outcome.Outcome` types?
 
         '''
-        return self.maybe_error or self._result
+        return (
+            self.maybe_error
+            or
+            self._result
+        )
 
     # @property
     def repr_outcome(
@@ -1520,16 +1524,28 @@ class Context:
                 #
                 # just the type name for now to avoid long lines
                 # when tons of cancels..
-                return type(merr).__name__
+                return (
+                    str(type(merr).__name__)
+                    or
+                    repr(merr)
+                )
 
             # just the type name
             # else:  # but wen?
             #     return type(merr).__name__
 
             # for all other errors show their regular output
-            return str(merr)
+            return (
+                str(merr)
+                or
+                repr(merr)
+            )
 
-        return str(self._result)
+        return (
+            str(self._result)
+            or
+            repr(self._result)
+        )
 
     async def started(
         self,
