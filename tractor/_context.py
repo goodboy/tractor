@@ -1101,6 +1101,8 @@ class Context:
             chan=self.chan,
             cid=self.cid,
             nsf=self._nsf,
+            # side=self.side,
+
             msg_buffer_size=msg_buffer_size,
             allow_overruns=allow_overruns,
         )
@@ -1298,7 +1300,7 @@ class Context:
         # https://docs.python.org/3/reference/simple_stmts.html#the-raise-statement
         # https://stackoverflow.com/a/24752607
         __tracebackhide__: bool = True
-        raise remote_error from None
+        raise remote_error # from None
 
     # TODO: change  to `.wait_for_result()`?
     async def result(

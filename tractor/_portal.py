@@ -514,6 +514,16 @@ class Portal:
         # a new `_context.py` mod.
         nsf = NamespacePath.from_ref(func)
 
+        # XXX NOTE XXX: currenly we do NOT allow opening a contex
+        # with "self" since the local feeder mem-chan processing
+        # is not built for it.
+        if self.channel.uid == self.actor.uid:
+            raise RuntimeError(
+                '** !! Invalid Operation !! **\n'
+                'Can not open an IPC ctx with the local actor!\n'
+                f'|_{self.actor}\n'
+            )
+
         ctx: Context = await self.actor.start_remote_task(
             self.channel,
             nsf=nsf,

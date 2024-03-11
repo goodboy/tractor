@@ -1024,6 +1024,8 @@ def test_maybe_allow_overruns_stream(
     cancel_ctx: bool,
     slow_side: str,
     allow_overruns_side: str,
+
+    # conftest wide
     loglevel: str,
     debug_mode: bool,
 ):
@@ -1147,3 +1149,52 @@ def test_maybe_allow_overruns_stream(
         # if this hits the logic blocks from above are not
         # exhaustive..
         pytest.fail('PARAMETRIZED CASE GEN PROBLEM YO')
+
+
+def test_ctx_with_self_actor(
+    loglevel: str,
+    debug_mode: bool,
+):
+    '''
+    NOTE: for now this is an INVALID OP!
+
+    BUT, eventually presuming we add a "side" key to `Actor.get_context()`,
+    we might be able to get this working symmetrically, but should we??
+
+    Open a context back to the same actor and ensure all cancellation
+    and error semantics hold the same.
+
+    '''
+    async def main():
+        async with tractor.open_nursery(
+            debug_mode=debug_mode,
+            enable_modules=[__name__],
+        ) as an:
+            assert an
+            async with (
+                tractor.find_actor('root') as portal,
+                portal.open_context(
+                    expect_cancelled,
+                    # echo_back_sequence,
+                    # seq=seq,
+                    # wait_for_cancel=cancel_ctx,
+                    # be_slow=(slow_side == 'child'),
+                    # allow_overruns_side=allow_overruns_side,
+
+                ) as (ctx, sent),
+                ctx.open_stream() as ipc,
+            ):
+                assert sent is None
+
+                seq = list(range(10))
+                for i in seq:
+                    await ipc.send(i)
+                    rx: int = await ipc.receive()
+                    assert rx == i
+
+                await ctx.cancel()
+
+    with pytest.raises(RuntimeError) as excinfo:
+        trio.run(main)
+
+    assert 'Invalid Operation' in repr(excinfo.value)

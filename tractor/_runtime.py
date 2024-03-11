@@ -427,6 +427,10 @@ async def _invoke(
         chan=chan,
         cid=cid,
         nsf=NamespacePath.from_ref(func),
+
+        # TODO: if we wanted to get cray and support it?
+        # side='callee',
+
         # We shouldn't ever need to pass this through right?
         # it's up to the soon-to-be called rpc task to
         # open the stream with this option.
@@ -679,9 +683,11 @@ async def _invoke(
             # don't pop the local context until we know the
             # associated child isn't in debug any more
             await _debug.maybe_wait_for_debugger()
-            ctx: Context = actor._contexts.pop(
-                (chan.uid, cid)
-            )
+            ctx: Context = actor._contexts.pop((
+                chan.uid,
+                cid,
+                # ctx.side,
+            ))
 
             merr: Exception|None = ctx.maybe_error
 
@@ -860,7 +866,11 @@ class Actor:
 
         # map {actor uids -> Context}
         self._contexts: dict[
-            tuple[tuple[str, str], str],
+            tuple[
+                tuple[str, str],  # .uid
+                str,  # .cid
+                str,  # .side
+            ],
             Context
         ] = {}
 
@@ -1302,7 +1312,13 @@ class Actor:
         uid: tuple[str, str] = chan.uid
         assert uid, f"`chan.uid` can't be {uid}"
         try:
-            ctx: Context = self._contexts[(uid, cid)]
+            ctx: Context = self._contexts[(
+                uid,
+                cid,
+
+                # TODO: how to determine this tho?
+                # side,
+            )]
         except KeyError:
             log.warning(
                 'Ignoring invalid IPC ctx msg!\n\n'
@@ -1321,6 +1337,16 @@ class Actor:
         cid: str,
         nsf: NamespacePath,
 
+        # TODO: support lookup by `Context.side: str` ?
+        # -> would allow making a self-context which might have
+        # certain special use cases where RPC isolation is wanted
+        # between 2 tasks running in the same process?
+        # => prolly needs some deeper though on the real use cases
+        # and whether or not such things should be better
+        # implemented using a `TaskManager` style nursery..
+        #
+        # side: str|None = None,
+
         msg_buffer_size: int | None = None,
         allow_overruns: bool = False,
 
@@ -1336,7 +1362,11 @@ class Actor:
         actor_uid = chan.uid
         assert actor_uid
         try:
-            ctx = self._contexts[(actor_uid, cid)]
+            ctx = self._contexts[(
+                actor_uid,
+                cid,
+                # side,
+            )]
             log.runtime(
                 f'Retreived cached IPC ctx for\n'
                 f'peer: {chan.uid}\n'
@@ -1362,7 +1392,11 @@ class Actor:
                 msg_buffer_size=msg_buffer_size or self.msg_buffer_size,
                 _allow_overruns=allow_overruns,
             )
-            self._contexts[(actor_uid, cid)] = ctx
+            self._contexts[(
+                actor_uid,
+                cid,
+                # side,
+            )] = ctx
 
         return ctx
 
@@ -1393,6 +1427,8 @@ class Actor:
             chan=chan,
             cid=cid,
             nsf=nsf,
+
+            # side='caller',
             msg_buffer_size=msg_buffer_size,
             allow_overruns=allow_overruns,
         )
