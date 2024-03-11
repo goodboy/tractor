@@ -64,26 +64,26 @@ async def open_root_actor(
 
     *,
     # defaults are above
-    registry_addrs: list[tuple[str, int]] | None = None,
+    registry_addrs: list[tuple[str, int]]|None = None,
 
     # defaults are above
-    arbiter_addr: tuple[str, int] | None = None,
+    arbiter_addr: tuple[str, int]|None = None,
 
-    name: str | None = 'root',
+    name: str|None = 'root',
 
     # either the `multiprocessing` start method:
     # https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
     # OR `trio` (the new default).
-    start_method: _spawn.SpawnMethodKey | None = None,
+    start_method: _spawn.SpawnMethodKey|None = None,
 
     # enables the multi-process debugger support
     debug_mode: bool = False,
 
     # internal logging
-    loglevel: str | None = None,
+    loglevel: str|None = None,
 
-    enable_modules: list | None = None,
-    rpc_module_paths: list | None = None,
+    enable_modules: list|None = None,
+    rpc_module_paths: list|None = None,
 
     # NOTE: allow caller to ensure that only one registry exists
     # and that this call creates it.
@@ -109,7 +109,11 @@ async def open_root_actor(
     _state._runtime_vars['_is_root'] = True
 
     # caps based rpc list
-    enable_modules = enable_modules or []
+    enable_modules = (
+        enable_modules
+        or
+        []
+    )
 
     if rpc_module_paths:
         warnings.warn(

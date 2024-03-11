@@ -162,8 +162,8 @@ async def query_actor(
 @acm
 async def find_actor(
     name: str,
-    arbiter_sockaddr: tuple[str, int] | None = None,
-    registry_addrs: list[tuple[str, int]] | None = None,
+    arbiter_sockaddr: tuple[str, int]|None = None,
+    registry_addrs: list[tuple[str, int]]|None = None,
 
     only_first: bool = True,
     raise_on_none: bool = False,
