@@ -70,7 +70,7 @@ def test_trio_cancels_aio_on_actor_side(reg_addr):
 async def asyncio_actor(
 
     target: str,
-    expect_err: Optional[Exception] = None
+    expect_err: Exception|None = None
 
 ) -> None:
 
@@ -114,10 +114,21 @@ def test_aio_simple_error(reg_addr):
                 infect_asyncio=True,
             )
 
-    with pytest.raises(RemoteActorError) as excinfo:
+    with pytest.raises(
+        expected_exception=(RemoteActorError, ExceptionGroup),
+    ) as excinfo:
         trio.run(main)
 
     err = excinfo.value
+
+    # might get multiple `trio.Cancelled`s as well inside an inception
+    if isinstance(err, ExceptionGroup):
+        err = next(itertools.dropwhile(
+            lambda exc: not isinstance(exc, tractor.RemoteActorError),
+            err.exceptions
+        ))
+        assert err
+
     assert isinstance(err, RemoteActorError)
     assert err.type == AssertionError
 
@@ -290,11 +301,22 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(reg_addr):
                 infect_asyncio=True,
             )
 
-    with pytest.raises(RemoteActorError) as excinfo:
+    with pytest.raises(
+        expected_exception=(RemoteActorError, ExceptionGroup),
+    ) as excinfo:
         trio.run(main)
 
+    # might get multiple `trio.Cancelled`s as well inside an inception
+    err = excinfo.value
+    if isinstance(err, ExceptionGroup):
+        err = next(itertools.dropwhile(
+            lambda exc: not isinstance(exc, tractor.RemoteActorError),
+            err.exceptions
+        ))
+        assert err
+
     # ensure boxed error is correct
-    assert excinfo.value.type == to_asyncio.AsyncioCancelled
+    assert err.type == to_asyncio.AsyncioCancelled
 
 
 # TODO: verify open_channel_from will fail on this..

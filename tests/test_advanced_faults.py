@@ -18,7 +18,10 @@ from conftest import (
 @pytest.mark.parametrize(
     'debug_mode',
     [False, True],
-    ids=['no_debug_mode', 'debug_mode'],
+    ids=[
+        'no_debug_mode',
+        'debug_mode',
+    ],
 )
 @pytest.mark.parametrize(
     'ipc_break',

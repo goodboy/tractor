@@ -6,6 +6,7 @@ from collections import Counter
 import itertools
 import platform
 
+import pytest
 import trio
 import tractor
 
@@ -143,8 +144,16 @@ def test_dynamic_pub_sub():
 
     try:
         trio.run(main)
-    except trio.TooSlowError:
-        pass
+    except (
+        trio.TooSlowError,
+        ExceptionGroup,
+    ) as err:
+        if isinstance(err, ExceptionGroup):
+            for suberr in err.exceptions:
+                if isinstance(suberr, trio.TooSlowError):
+                    break
+            else:
+                pytest.fail('Never got a `TooSlowError` ?')
 
 
 @tractor.context
