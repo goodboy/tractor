@@ -18,8 +18,7 @@ from tractor import (
     ContextCancelled,
 )
 from tractor.trionics import BroadcastReceiver
-
-from conftest import expect_ctxc
+from tractor._testing import expect_ctxc
 
 
 async def sleep_and_err(

@@ -25,7 +25,7 @@ from tractor._exceptions import (
     ContextCancelled,
 )
 
-from conftest import (
+from tractor._testing import (
     tractor_test,
     expect_ctxc,
 )

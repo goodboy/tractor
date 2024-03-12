@@ -11,11 +11,9 @@ TODO:
 
 """
 import itertools
-from os import path
 from typing import Optional
 import platform
 import pathlib
-import sys
 import time
 
 import pytest
@@ -25,8 +23,10 @@ from pexpect.exceptions import (
     EOF,
 )
 
-from conftest import (
+from tractor._testing import (
     examples_dir,
+)
+from conftest import (
     _ci_env,
 )
 

@@ -5,8 +5,7 @@ import pytest
 import trio
 import tractor
 from tractor.experimental import msgpub
-
-from conftest import tractor_test
+from tractor._testing import tractor_test
 
 
 def test_type_checks():

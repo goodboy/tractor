@@ -7,8 +7,10 @@ import time
 import pytest
 import trio
 import tractor
-from conftest import (
+from tractor._testing import (
     tractor_test,
+)
+from conftest import (
     sig_prog,
     _INT_SIGNAL,
     _INT_RETURN_CODE,

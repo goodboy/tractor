@@ -5,9 +5,7 @@ import trio
 import tractor
 from tractor import open_actor_cluster
 from tractor.trionics import gather_contexts
-
-from conftest import tractor_test
-
+from tractor._testing import tractor_test
 
 MESSAGE = 'tractoring at full speed'
 

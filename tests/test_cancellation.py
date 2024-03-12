@@ -15,8 +15,10 @@ from exceptiongroup import (
 import pytest
 import trio
 import tractor
-
-from conftest import tractor_test, no_windows
+from tractor._testing import (
+    tractor_test,
+)
+from conftest import no_windows
 
 
 def is_win():

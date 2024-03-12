@@ -11,8 +11,7 @@ import platform
 import shutil
 
 import pytest
-
-from conftest import (
+from tractor._testing import (
     examples_dir,
 )
 
