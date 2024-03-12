@@ -534,10 +534,8 @@ async def open_nursery(
 
     '''
     implicit_runtime: bool = False
-    actor: Actor = current_actor(
-        err_on_no_runtime=False
-    )
-
+    actor: Actor = current_actor(err_on_no_runtime=False)
+    an: ActorNursery|None = None
     try:
         if (
             actor is None
