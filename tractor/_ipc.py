@@ -19,13 +19,14 @@ Inter-process comms abstractions
 
 """
 from __future__ import annotations
-import struct
-import platform
-from pprint import pformat
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
 )
+from contextlib import asynccontextmanager as acm
+import platform
+from pprint import pformat
+import struct
 import typing
 from typing import (
     Any,
@@ -35,18 +36,16 @@ from typing import (
     TypeVar,
 )
 
-from tricycle import BufferedReceiveStream
 import msgspec
+from tricycle import BufferedReceiveStream
 import trio
-from async_generator import asynccontextmanager
 
-from .log import get_logger
-from ._exceptions import TransportClosed
+from tractor.log import get_logger
+from tractor._exceptions import TransportClosed
+
 log = get_logger(__name__)
-
 
 _is_windows = platform.system() == 'Windows'
-log = get_logger(__name__)
 
 
 def get_stream_addrs(stream: trio.SocketStream) -> tuple:
@@ -206,7 +205,17 @@ class MsgpackTCPStream(MsgTransport):
                 else:
                     raise
 
-    async def send(self, msg: Any) -> None:
+    async def send(
+        self,
+        msg: Any,
+
+        # hide_tb: bool = False,
+    ) -> None:
+        '''
+        Send a msgpack coded blob-as-msg over TCP.
+
+        '''
+        # __tracebackhide__: bool = hide_tb
         async with self._send_lock:
 
             bytes_data: bytes = self.encode(msg)
@@ -388,15 +397,28 @@ class Channel:
         )
         return transport
 
-    async def send(self, item: Any) -> None:
+    async def send(
+        self,
+        payload: Any,
 
+        # hide_tb: bool = False,
+
+    ) -> None:
+        '''
+        Send a coded msg-blob over the transport.
+
+        '''
+        # __tracebackhide__: bool = hide_tb
         log.transport(
             '=> send IPC msg:\n\n'
-            f'{pformat(item)}\n'
+            f'{pformat(payload)}\n'
         )  # type: ignore
         assert self._transport
 
-        await self._transport.send(item)
+        await self._transport.send(
+            payload,
+            # hide_tb=hide_tb,
+        )
 
     async def recv(self) -> Any:
         assert self._transport
@@ -493,7 +515,7 @@ class Channel:
         return self._transport.connected() if self._transport else False
 
 
-@asynccontextmanager
+@acm
 async def _connect_chan(
     host: str, port: int
 ) -> typing.AsyncGenerator[Channel, None]:

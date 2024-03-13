@@ -114,13 +114,19 @@ class MsgStream(trio.abc.Channel):
                     stream=self,
                 )
 
-    async def receive(self):
+    async def receive(
+        self,
+
+        hide_tb: bool = True,
+    ):
         '''
         Receive a single msg from the IPC transport, the next in
         sequence sent by the far end task (possibly in order as
         determined by the underlying protocol).
 
         '''
+        __tracebackhide__: bool = hide_tb
+
         # NOTE: `trio.ReceiveChannel` implements
         # EOC handling as follows (aka uses it
         # to gracefully exit async for loops):
@@ -139,7 +145,7 @@ class MsgStream(trio.abc.Channel):
         if self._closed:
             raise self._closed
 
-        src_err: Exception|None = None
+        src_err: Exception|None = None  # orig tb
         try:
             try:
                 msg = await self._rx_chan.receive()
@@ -186,7 +192,7 @@ class MsgStream(trio.abc.Channel):
 
             # TODO: Locally, we want to close this stream gracefully, by
             # terminating any local consumers tasks deterministically.
-            # One we have broadcast support, we **don't** want to be
+            # Once we have broadcast support, we **don't** want to be
             # closing this stream and not flushing a final value to
             # remaining (clone) consumers who may not have been
             # scheduled to receive it yet.
@@ -237,7 +243,12 @@ class MsgStream(trio.abc.Channel):
                 raise_ctxc_from_self_call=True,
             )
 
-        raise src_err  # propagate
+        # propagate any error but hide low-level frames from
+        # caller by default.
+        if hide_tb:
+            raise type(src_err)(*src_err.args) from src_err
+        else:
+            raise src_err
 
     async def aclose(self) -> list[Exception|dict]:
         '''
@@ -475,23 +486,39 @@ class MsgStream(trio.abc.Channel):
 
     async def send(
         self,
-        data: Any
+        data: Any,
+
+        hide_tb: bool = True,
     ) -> None:
         '''
         Send a message over this stream to the far end.
 
         '''
-        if self._ctx._remote_error:
-            raise self._ctx._remote_error  # from None
+        __tracebackhide__: bool = hide_tb
 
+        self._ctx.maybe_raise()
         if self._closed:
             raise self._closed
-            # raise trio.ClosedResourceError('This stream was already closed')
 
-        await self._ctx.chan.send({
-            'yield': data,
-            'cid': self._ctx.cid,
-        })
+        try:
+            await self._ctx.chan.send(
+                payload={
+                    'yield': data,
+                    'cid': self._ctx.cid,
+                },
+                # hide_tb=hide_tb,
+            )
+        except (
+            trio.ClosedResourceError,
+            trio.BrokenResourceError,
+            BrokenPipeError,
+        ) as trans_err:
+            if hide_tb:
+                raise type(trans_err)(
+                    *trans_err.args
+                ) from trans_err
+            else:
+                raise
 
 
 def stream(func: Callable) -> Callable:

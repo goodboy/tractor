@@ -1198,8 +1198,12 @@ class Context:
     # TODO: replace all the instances of this!! XD
     def maybe_raise(
         self,
+
+        hide_tb: bool = True,
         **kwargs,
+
     ) -> Exception|None:
+        __tracebackhide__: bool = hide_tb
         if re := self._remote_error:
             return self._maybe_raise_remote_err(
                 re,
@@ -1209,8 +1213,10 @@ class Context:
     def _maybe_raise_remote_err(
         self,
         remote_error: Exception,
+
         raise_ctxc_from_self_call: bool = False,
         raise_overrun_from_self: bool = True,
+        hide_tb: bool = True,
 
     ) -> (
         ContextCancelled  # `.cancel()` request to far side
@@ -1222,6 +1228,7 @@ class Context:
         a  cancellation (if any).
 
         '''
+        __tracebackhide__: bool = hide_tb
         our_uid: tuple = self.chan.uid
 
         # XXX NOTE XXX: `ContextCancelled`/`StreamOverrun` absorption
@@ -1305,7 +1312,7 @@ class Context:
     # TODO: change  to `.wait_for_result()`?
     async def result(
         self,
-        hide_tb: bool = False,
+        hide_tb: bool = True,
 
     ) -> Any|Exception:
         '''

@@ -215,7 +215,7 @@ async def cancel_on_completion(
 
 async def hard_kill(
     proc: trio.Process,
-    terminate_after: int = 3,
+    terminate_after: int = 1.6,
 
     # NOTE: for mucking with `.pause()`-ing inside the runtime
     # whilst also hacking on it XD
@@ -281,8 +281,11 @@ async def hard_kill(
     # zombies (as a feature) we ask the OS to do send in the
     # removal swad as the last resort.
     if cs.cancelled_caught:
+        # TODO: toss in the skynet-logo face as ascii art?
         log.critical(
-            'Well, the #ZOMBIE_LORD_IS_HERE# to collect\n'
+            # 'Well, the #ZOMBIE_LORD_IS_HERE# to collect\n'
+            '#T-800 deployed to collect zombie B0\n'
+            f'|\n'
             f'|_{proc}\n'
         )
         proc.kill()

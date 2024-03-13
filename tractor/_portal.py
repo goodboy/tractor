@@ -465,7 +465,7 @@ class Portal:
         # TODO: if we set this the wrapping `@acm` body will
         # still be shown (awkwardly) on pdb REPL entry. Ideally
         # we can similarly annotate that frame to NOT show?
-        hide_tb: bool = False,
+        hide_tb: bool = True,
 
         # proxied to RPC
         **kwargs,
