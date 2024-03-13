@@ -45,7 +45,7 @@ setup(
         # trio related
         # proper range spec:
         # https://packaging.python.org/en/latest/discussions/install-requires-vs-requirements/#id5
-        'trio >= 0.22',
+        'trio >= 0.24',
         'async_generator',
         'trio_typing',
         'exceptiongroup',
