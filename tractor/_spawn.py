@@ -31,25 +31,24 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from exceptiongroup import BaseExceptionGroup
 import trio
-from trio_typing import TaskStatus
+from trio import TaskStatus
 
 from ._debug import (
     maybe_wait_for_debugger,
     acquire_debug_lock,
 )
-from ._state import (
+from tractor._state import (
     current_actor,
     is_main_process,
     is_root_process,
     debug_mode,
 )
-from .log import get_logger
-from ._portal import Portal
-from ._runtime import Actor
-from ._entry import _mp_main
-from ._exceptions import ActorFailure
+from tractor.log import get_logger
+from tractor._portal import Portal
+from tractor._runtime import Actor
+from tractor._entry import _mp_main
+from tractor._exceptions import ActorFailure
 
 
 if TYPE_CHECKING:

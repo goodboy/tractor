@@ -60,8 +60,6 @@ import os
 import trio
 from trio import (
     CancelScope,
-)
-from trio_typing import (
     Nursery,
     TaskStatus,
 )

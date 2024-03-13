@@ -6,13 +6,15 @@ sub-sub-actor daemons.
 '''
 from typing import Optional
 import asyncio
-from contextlib import asynccontextmanager as acm
+from contextlib import (
+    asynccontextmanager as acm,
+    aclosing,
+)
 
 import pytest
 import trio
 import tractor
 from tractor import RemoteActorError
-from async_generator import aclosing
 
 
 async def aio_streamer(

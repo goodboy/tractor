@@ -31,7 +31,7 @@ from typing import (
     Callable,
 )
 from functools import partial
-from async_generator import aclosing
+from contextlib import aclosing
 
 import trio
 import wrapt

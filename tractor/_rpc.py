@@ -21,6 +21,7 @@ Remote (task) Procedure Call (scheduling) with SC transitive semantics.
 from __future__ import annotations
 from contextlib import (
     asynccontextmanager as acm,
+    aclosing,
 )
 from functools import partial
 import inspect
@@ -34,17 +35,12 @@ from typing import (
 )
 import warnings
 
-from async_generator import aclosing
-from exceptiongroup import BaseExceptionGroup
 import trio
 from trio import (
     CancelScope,
     Nursery,
     TaskStatus,
 )
-# from trio_typing import (
-#     TaskStatus,
-# )
 
 from .msg import NamespacePath
 from ._ipc import Channel

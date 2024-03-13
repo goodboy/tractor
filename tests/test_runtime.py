@@ -64,7 +64,8 @@ async def test_lifetime_stack_wipes_tmpfile(
 
     except (
         tractor.RemoteActorError,
-        tractor.BaseExceptionGroup,
+        # tractor.BaseExceptionGroup,
+        BaseExceptionGroup,
     ):
         pass
 

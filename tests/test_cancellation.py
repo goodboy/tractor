@@ -8,10 +8,6 @@ import platform
 import time
 from itertools import repeat
 
-from exceptiongroup import (
-    BaseExceptionGroup,
-    ExceptionGroup,
-)
 import pytest
 import trio
 import tractor

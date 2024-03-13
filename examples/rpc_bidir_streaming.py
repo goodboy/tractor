@@ -13,7 +13,7 @@ async def simple_rpc(
 
     '''
     # signal to parent that we're up much like
-    # ``trio_typing.TaskStatus.started()``
+    # ``trio.TaskStatus.started()``
     await ctx.started(data + 1)
 
     async with ctx.open_stream() as stream:

@@ -29,7 +29,6 @@ from typing import (
 import typing
 import warnings
 
-from exceptiongroup import BaseExceptionGroup
 import trio
 
 from ._debug import maybe_wait_for_debugger

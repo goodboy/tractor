@@ -30,11 +30,10 @@ from typing import (
 import textwrap
 import traceback
 
-import exceptiongroup as eg
 import trio
 
-from ._state import current_actor
-from .log import get_logger
+from tractor._state import current_actor
+from tractor.log import get_logger
 
 if TYPE_CHECKING:
     from ._context import Context
@@ -373,7 +372,6 @@ def unpack_error(
         for ns in [
             builtins,
             _this_mod,
-            eg,
             trio,
         ]:
             if suberror_type := getattr(
@@ -396,12 +394,13 @@ def unpack_error(
 
 def is_multi_cancelled(exc: BaseException) -> bool:
     '''
-    Predicate to determine if a possible ``eg.BaseExceptionGroup`` contains
+    Predicate to determine if a possible ``BaseExceptionGroup`` contains
     only ``trio.Cancelled`` sub-exceptions (and is likely the result of
     cancelling a collection of subtasks.
 
     '''
-    if isinstance(exc, eg.BaseExceptionGroup):
+    # if isinstance(exc, eg.BaseExceptionGroup):
+    if isinstance(exc, BaseExceptionGroup):
         return exc.subgroup(
             lambda exc: isinstance(exc, trio.Cancelled)
         ) is not None

@@ -33,10 +33,9 @@ from typing import (
 )
 
 import trio
-from trio_typing import TaskStatus
 
-from .._state import current_actor
-from ..log import get_logger
+from tractor._state import current_actor
+from tractor.log import get_logger
 
 
 log = get_logger(__name__)
@@ -184,7 +183,7 @@ class _Cache:
         cls,
         mng,
         ctx_key: tuple,
-        task_status: TaskStatus[T] = trio.TASK_STATUS_IGNORED,
+        task_status: trio.TaskStatus[T] = trio.TASK_STATUS_IGNORED,
 
     ) -> None:
         async with mng as value:

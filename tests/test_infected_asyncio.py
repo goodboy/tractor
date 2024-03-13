@@ -8,7 +8,6 @@ import builtins
 import itertools
 import importlib
 
-from exceptiongroup import BaseExceptionGroup
 import pytest
 import trio
 import tractor

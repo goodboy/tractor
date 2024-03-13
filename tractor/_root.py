@@ -29,12 +29,13 @@ import typing
 import warnings
 
 
-from exceptiongroup import BaseExceptionGroup
 import trio
 
 from ._runtime import (
     Actor,
     Arbiter,
+    # TODO: rename and make a non-actor subtype?
+    # Arbiter as Registry,
     async_main,
 )
 from . import _debug
