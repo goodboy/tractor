@@ -268,7 +268,10 @@ async def _errors_relayed_via_ipc(
                 entered_debug = await _debug._maybe_enter_pm(err)
 
                 if not entered_debug:
-                    log.exception('Actor crashed:\n')
+                    log.exception(
+                        'RPC task crashed\n'
+                        f'|_{ctx}'
+                    )
 
         # always (try to) ship RPC errors back to caller
         if is_rpc:
@@ -608,7 +611,8 @@ async def _invoke(
                     # other side.
                     ctxc = ContextCancelled(
                         msg,
-                        suberror_type=trio.Cancelled,
+                        boxed_type=trio.Cancelled,
+                        # boxed_type_str='Cancelled',
                         canceller=canceller,
                     )
                     # assign local error so that the `.outcome`
@@ -666,7 +670,7 @@ async def _invoke(
                     f'`{repr(ctx.outcome)}`',
                 )
             )
-            log.cancel(
+            log.runtime(
                 f'IPC context terminated with a final {res_type_str}\n\n'
                 f'{ctx}\n'
             )
@@ -699,12 +703,6 @@ async def try_ship_error_to_remote(
                 # TODO: special tb fmting for ctxc cases?
                 # tb=tb,
             )
-            # NOTE: the src actor should always be packed into the
-            # error.. but how should we verify this?
-            # actor: Actor = _state.current_actor()
-            # assert err_msg['src_actor_uid']
-            # if not err_msg['error'].get('src_actor_uid'):
-            #     import pdbp; pdbp.set_trace()
             await channel.send(msg)
 
         # XXX NOTE XXX in SC terms this is one of the worst things
