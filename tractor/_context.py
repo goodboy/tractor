@@ -169,8 +169,7 @@ async def _drain_to_final_msg(
             # only when we are sure the remote error is
             # the source cause of this local task's
             # cancellation.
-            if re := ctx._remote_error:
-                ctx._maybe_raise_remote_err(re)
+            ctx.maybe_raise()
 
             # CASE 1: we DID request the cancel we simply
             # continue to bubble up as normal.
@@ -257,6 +256,13 @@ async def _drain_to_final_msg(
                 )
 
             # XXX fallthrough to handle expected error XXX
+            # TODO: replace this with `ctx.maybe_raise()`
+            #
+            # TODO: would this be handier for this case maybe?
+            # async with maybe_raise_on_exit() as raises:
+            #     if raises:
+            #         log.error('some msg about raising..')
+
             re: Exception|None = ctx._remote_error
             if re:
                 log.critical(
@@ -595,7 +601,7 @@ class Context:
         if not re:
             return False
 
-        if from_uid := re.src_actor_uid:
+        if from_uid := re.src_uid:
             from_uid: tuple = tuple(from_uid)
 
         our_uid: tuple = self._actor.uid
@@ -825,7 +831,7 @@ class Context:
         # cancellation.
         maybe_error_src: tuple = getattr(
             error,
-            'src_actor_uid',
+            'src_uid',
             None,
         )
         self._canceller = (
@@ -1030,8 +1036,8 @@ class Context:
     @acm
     async def open_stream(
         self,
-        allow_overruns: bool | None = False,
-        msg_buffer_size: int | None = None,
+        allow_overruns: bool|None = False,
+        msg_buffer_size: int|None = None,
 
     ) -> AsyncGenerator[MsgStream, None]:
         '''
@@ -1071,13 +1077,16 @@ class Context:
             # absorbed there (silently) and we DO NOT want to
             # actually try to stream - a cancel msg was already
             # sent to the other side!
-            if self._remote_error:
-                # NOTE: this is diff then calling
-                # `._maybe_raise_remote_err()` specifically
-                # because any task entering this `.open_stream()`
-                # AFTER cancellation has already been requested,
-                # we DO NOT want to absorb any ctxc ACK silently!
-                raise self._remote_error
+            self.maybe_raise(
+                raise_ctxc_from_self_call=True,
+            )
+            # NOTE: this is diff then calling
+            # `._maybe_raise_remote_err()` specifically
+            # because we want to raise a ctxc on any task entering this `.open_stream()`
+            # AFTER cancellation was already been requested,
+            # we DO NOT want to absorb any ctxc ACK silently!
+            # if self._remote_error:
+            #     raise self._remote_error
 
             # XXX NOTE: if no `ContextCancelled` has been responded
             # back from the other side (yet), we raise a different
@@ -1158,7 +1167,6 @@ class Context:
                 # await trio.lowlevel.checkpoint()
                 yield stream
 
-
                 # XXX: (MEGA IMPORTANT) if this is a root opened process we
                 # wait for any immediate child in debug before popping the
                 # context from the runtime msg loop otherwise inside
@@ -1183,12 +1191,23 @@ class Context:
                 #
                 # await stream.aclose()
 
-                # if re := ctx._remote_error:
-                #     ctx._maybe_raise_remote_err(
-                #         re,
-                #         raise_ctxc_from_self_call=True,
-                #     )
-                # await trio.lowlevel.checkpoint()
+            # NOTE: absorb and do not raise any
+            # EoC received from the other side such that
+            # it is not raised inside the surrounding
+            # context block's scope!
+            except trio.EndOfChannel as eoc:
+                if (
+                    eoc
+                    and stream.closed
+                ):
+                    # sanity, can remove?
+                    assert eoc is stream._eoc
+                    # from .devx import pause
+                    # await pause()
+                    log.warning(
+                        'Stream was terminated by EoC\n\n'
+                        f'{repr(eoc)}\n'
+                    )
 
             finally:
                 if self._portal:
@@ -1204,7 +1223,6 @@ class Context:
     # TODO: replace all the instances of this!! XD
     def maybe_raise(
         self,
-
         hide_tb: bool = True,
         **kwargs,
 
@@ -1388,33 +1406,41 @@ class Context:
                 f'{drained_msgs}'
             )
 
-        if (
-            (re := self._remote_error)
-            # and self._result == res_placeholder
-        ):
-            self._maybe_raise_remote_err(
-                re,
-                # NOTE: obvi we don't care if we
-                # overran the far end if we're already
-                # waiting on a final result (msg).
-                # raise_overrun_from_self=False,
-                raise_overrun_from_self=(
-                    raise_overrun
-                    and
-                    # only when we ARE NOT the canceller
-                    # should we raise overruns, bc ow we're
-                    # raising something we know might happen
-                    # during cancellation ;)
-                    (not self._cancel_called)
-                ),
+        self.maybe_raise(
+            raise_overrun_from_self=(
+                raise_overrun
+                and
+                # only when we ARE NOT the canceller
+                # should we raise overruns, bc ow we're
+                # raising something we know might happen
+                # during cancellation ;)
+                (not self._cancel_called)
             )
+        )
+        # if (
+        #     (re := self._remote_error)
+        #     # and self._result == res_placeholder
+        # ):
+        #     self._maybe_raise_remote_err(
+        #         re,
+        #         # NOTE: obvi we don't care if we
+        #         # overran the far end if we're already
+        #         # waiting on a final result (msg).
+        #         # raise_overrun_from_self=False,
+        #         raise_overrun_from_self=(
+        #             raise_overrun
+        #             and
+        #             # only when we ARE NOT the canceller
+        #             # should we raise overruns, bc ow we're
+        #             # raising something we know might happen
+        #             # during cancellation ;)
+        #             (not self._cancel_called)
+        #         ),
+        #     )
             # if maybe_err:
             #     self._result = maybe_err
 
         return self.outcome
-            # None if self._result == res_placeholder
-            # else self._result
-        # )
 
     # TODO: switch this with above which should be named
     # `.wait_for_outcome()` and instead do
@@ -1863,8 +1889,9 @@ async def open_context_from_portal(
 
     # TODO: if we set this the wrapping `@acm` body will
     # still be shown (awkwardly) on pdb REPL entry. Ideally
-    # we can similarly annotate that frame to NOT show?
-    hide_tb: bool = True,
+    # we can similarly annotate that frame to NOT show? for now
+    # we DO SHOW this frame since it's awkward ow..
+    hide_tb: bool = False,
 
     # proxied to RPC
     **kwargs,

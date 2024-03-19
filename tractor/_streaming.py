@@ -136,7 +136,7 @@ class MsgStream(trio.abc.Channel):
         #         return await self.receive()
         #     except trio.EndOfChannel:
         #         raise StopAsyncIteration
-
+        #
         # see ``.aclose()`` for notes on the old behaviour prior to
         # introducing this
         if self._eoc:
@@ -152,7 +152,6 @@ class MsgStream(trio.abc.Channel):
                 return msg['yield']
 
             except KeyError as kerr:
-                # log.exception('GOT KEYERROR')
                 src_err = kerr
 
                 # NOTE: may raise any of the below error types
@@ -166,29 +165,19 @@ class MsgStream(trio.abc.Channel):
                     stream=self,
                 )
 
-        # XXX: we close the stream on any of these error conditions:
+        # XXX: the stream terminates on either of:
+        # - via `self._rx_chan.receive()` raising  after manual closure
+        #   by the rpc-runtime OR,
+        # - via a received `{'stop': ...}` msg from remote side.
+        #   |_ NOTE: previously this was triggered by calling
+        #   ``._rx_chan.aclose()`` on the send side of the channel inside
+        #   `Actor._push_result()`, but now the 'stop' message handling
+        #   has been put just above inside `_raise_from_no_key_in_msg()`.
         except (
-            # trio.ClosedResourceError,  # by self._rx_chan
-            trio.EndOfChannel,  # by self._rx_chan or `stop` msg from far end
+            trio.EndOfChannel,
         ) as eoc:
-            # log.exception('GOT EOC')
             src_err = eoc
             self._eoc = eoc
-
-            # a ``ClosedResourceError`` indicates that the internal
-            # feeder memory receive channel was closed likely by the
-            # runtime after the associated transport-channel
-            # disconnected or broke.
-
-            # an ``EndOfChannel`` indicates either the internal recv
-            # memchan exhausted **or** we raisesd it just above after
-            # receiving a `stop` message from the far end of the stream.
-
-            # Previously this was triggered by calling ``.aclose()`` on
-            # the send side of the channel inside
-            # ``Actor._push_result()`` (should still be commented code
-            # there - which should eventually get removed), but now the
-            # 'stop' message handling has been put just above.
 
             # TODO: Locally, we want to close this stream gracefully, by
             # terminating any local consumers tasks deterministically.
@@ -210,8 +199,11 @@ class MsgStream(trio.abc.Channel):
 
             # raise eoc
 
-        except trio.ClosedResourceError as cre:  # by self._rx_chan
-            # log.exception('GOT CRE')
+        # a ``ClosedResourceError`` indicates that the internal
+        # feeder memory receive channel was closed likely by the
+        # runtime after the associated transport-channel
+        # disconnected or broke.
+        except trio.ClosedResourceError as cre:  # by self._rx_chan.receive()
             src_err = cre
             log.warning(
                 '`Context._rx_chan` was already closed?'
@@ -237,15 +229,30 @@ class MsgStream(trio.abc.Channel):
         # over the end-of-stream connection error since likely
         # the remote error was the source cause?
         ctx: Context = self._ctx
-        if re := ctx._remote_error:
-            ctx._maybe_raise_remote_err(
-                re,
-                raise_ctxc_from_self_call=True,
-            )
+        ctx.maybe_raise(
+            raise_ctxc_from_self_call=True,
+        )
 
-        # propagate any error but hide low-level frames from
-        # caller by default.
-        if hide_tb:
+        # propagate any error but hide low-level frame details
+        # from the caller by default for debug noise reduction.
+        if (
+            hide_tb
+
+            # XXX NOTE XXX don't reraise on certain
+            # stream-specific internal error types like,
+            #
+            # - `trio.EoC` since we want to use the exact instance
+            #   to ensure that it is the error that bubbles upward
+            #   for silent absorption by `Context.open_stream()`.
+            and not self._eoc
+
+            # - `RemoteActorError` (or `ContextCancelled`) if it gets
+            #   raised from `_raise_from_no_key_in_msg()` since we
+            #   want the same (as the above bullet) for any
+            #   `.open_context()` block bubbled error raised by
+            #   any nearby ctx API remote-failures.
+            # and not isinstance(src_err, RemoteActorError)
+        ):
             raise type(src_err)(*src_err.args) from src_err
         else:
             raise src_err
@@ -370,6 +377,10 @@ class MsgStream(trio.abc.Channel):
         #         await rx_chan.aclose()
 
         if not self._eoc:
+            log.cancel(
+                'Stream closed before it received an EoC?\n'
+                'Setting eoc manually..\n..'
+            )
             self._eoc: bool = trio.EndOfChannel(
                 f'Context stream closed by {self._ctx.side}\n'
                 f'|_{self}\n'
@@ -414,13 +425,11 @@ class MsgStream(trio.abc.Channel):
 
     @property
     def closed(self) -> bool:
-        if (
-            (rxc := self._rx_chan._closed)
-            or
-            (_closed := self._closed)
-            or
-            (_eoc := self._eoc)
-        ):
+
+        rxc: bool = self._rx_chan._closed
+        _closed: bool|Exception = self._closed
+        _eoc: bool|trio.EndOfChannel = self._eoc
+        if rxc or _closed or _eoc:
             log.runtime(
                 f'`MsgStream` is already closed\n'
                 f'{self}\n'
@@ -496,7 +505,11 @@ class MsgStream(trio.abc.Channel):
         '''
         __tracebackhide__: bool = hide_tb
 
+        # raise any alreay known error immediately
         self._ctx.maybe_raise()
+        if self._eoc:
+            raise self._eoc
+
         if self._closed:
             raise self._closed
 
