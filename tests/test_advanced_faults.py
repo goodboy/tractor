@@ -85,8 +85,8 @@ def test_ipc_channel_break_during_stream(
 
     '''
     if spawn_backend != 'trio':
-    #     if debug_mode:
-    #         pytest.skip('`debug_mode` only supported on `trio` spawner')
+        if debug_mode:
+            pytest.skip('`debug_mode` only supported on `trio` spawner')
 
         # non-`trio` spawners should never hit the hang condition that
         # requires the user to do ctl-c to cancel the actor tree.
@@ -107,7 +107,10 @@ def test_ipc_channel_break_during_stream(
         # AND we tell the child to call `MsgStream.aclose()`.
         and pre_aclose_msgstream
     ):
-        expect_final_exc = trio.EndOfChannel
+        # expect_final_exc = trio.EndOfChannel
+        # ^XXX NOPE! XXX^ since now `.open_stream()` absorbs this
+        # gracefully!
+        expect_final_exc = KeyboardInterrupt
 
     # NOTE when ONLY the child breaks or it breaks BEFORE the
     # parent we expect the parent to get a closed resource error
@@ -120,11 +123,25 @@ def test_ipc_channel_break_during_stream(
         and
         ipc_break['break_parent_ipc_after'] is False
     ):
-        expect_final_exc = trio.ClosedResourceError
+        # NOTE: we DO NOT expect this any more since
+        # the child side's channel will be broken silently
+        # and nothing on the parent side will indicate this!
+        # expect_final_exc = trio.ClosedResourceError
 
-        # if child calls `MsgStream.aclose()` then expect EoC.
+        # NOTE: child will send a 'stop' msg before it breaks
+        # the transport channel BUT, that will be absorbed by the
+        # `ctx.open_stream()` block and thus the `.open_context()`
+        # should hang, after which the test script simulates
+        # a user sending ctl-c by raising a KBI.
         if pre_aclose_msgstream:
-            expect_final_exc = trio.EndOfChannel
+            expect_final_exc = KeyboardInterrupt
+
+            # XXX OLD XXX
+            # if child calls `MsgStream.aclose()` then expect EoC.
+            # ^ XXX not any more ^ since eoc is always absorbed
+            # gracefully and NOT bubbled to the `.open_context()`
+            # block!
+            # expect_final_exc = trio.EndOfChannel
 
     # BOTH but, CHILD breaks FIRST
     elif (
@@ -134,12 +151,8 @@ def test_ipc_channel_break_during_stream(
             > ipc_break['break_child_ipc_after']
         )
     ):
-        expect_final_exc = trio.ClosedResourceError
-
-        # child will send a 'stop' msg before it breaks
-        # the transport channel.
         if pre_aclose_msgstream:
-            expect_final_exc = trio.EndOfChannel
+            expect_final_exc = KeyboardInterrupt
 
     # NOTE when the parent IPC side dies (even if the child's does as well
     # but the child fails BEFORE the parent) we always expect the
@@ -160,7 +173,8 @@ def test_ipc_channel_break_during_stream(
         ipc_break['break_parent_ipc_after'] is not False
         and (
             ipc_break['break_child_ipc_after']
-            > ipc_break['break_parent_ipc_after']
+            >
+            ipc_break['break_parent_ipc_after']
         )
     ):
         expect_final_exc = trio.ClosedResourceError
@@ -224,25 +238,29 @@ def test_stream_closed_right_after_ipc_break_and_zombie_lord_engages():
 
     '''
     async def main():
-        async with tractor.open_nursery() as n:
-            portal = await n.start_actor(
-                'ipc_breaker',
-                enable_modules=[__name__],
-            )
+        with trio.fail_after(3):
+            async with tractor.open_nursery() as n:
+                portal = await n.start_actor(
+                    'ipc_breaker',
+                    enable_modules=[__name__],
+                )
 
-            with trio.move_on_after(1):
-                async with (
-                    portal.open_context(
-                        break_ipc_after_started
-                    ) as (ctx, sent),
-                ):
-                    async with ctx.open_stream():
-                        await trio.sleep(0.5)
+                with trio.move_on_after(1):
+                    async with (
+                        portal.open_context(
+                            break_ipc_after_started
+                        ) as (ctx, sent),
+                    ):
+                        async with ctx.open_stream():
+                            await trio.sleep(0.5)
 
-                    print('parent waiting on context')
+                        print('parent waiting on context')
 
-            print('parent exited context')
-            raise KeyboardInterrupt
+                print(
+                    'parent exited context\n'
+                    'parent raising KBI..\n'
+                )
+                raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
         trio.run(main)
