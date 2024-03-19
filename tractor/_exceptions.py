@@ -109,7 +109,6 @@ class RemoteActorError(Exception):
 
     '''
     reprol_fields: list[str] = [
-        # 'src_actor_uid',
         'src_uid',
         'relay_path',
         # 'relay_uid',
@@ -143,9 +142,6 @@ class RemoteActorError(Exception):
         # pre-`return` lines?
         # sanity on inceptions
         if boxed_type is RemoteActorError:
-            if self.src_type_str == 'RemoteActorError':
-                import pdbp; pdbp.set_trace()
-
             assert self.src_type_str != 'RemoteActorError'
             assert self.src_uid not in self.relay_path
 
@@ -158,7 +154,7 @@ class RemoteActorError(Exception):
         # should better emphasize that special (one off?) case
         # either by customizing `ContextCancelled.__init__()` or
         # through a special factor func?
-        else:
+        elif boxed_type:
             if not self.msgdata.get('boxed_type_str'):
                 self.msgdata['boxed_type_str'] = str(
                     type(boxed_type).__name__
@@ -206,7 +202,7 @@ class RemoteActorError(Exception):
 
         '''
         if self._boxed_type is None:
-            self._src_type = get_err_type(
+            self._boxed_type = get_err_type(
                 self.msgdata['boxed_type_str']
             )
 
@@ -235,21 +231,12 @@ class RemoteActorError(Exception):
     def src_uid(self) -> tuple[str, str]|None:
         if src_uid := (
             self.msgdata.get('src_uid')
-            # TODO: remove!
-            or
-            self.msgdata.get('src_actor_uid')
         ):
             return tuple(src_uid)
         # TODO: use path lookup instead?
         # return tuple(
         #     self.msgdata['relay_path'][0]
         # )
-
-    # TODO: deprecate this for ^!
-    @property
-    def src_actor_uid(self) -> tuple[str, str]|None:
-        log.warning('.src_actor_uid` is deprecated, use `.src_uid` instead!')
-        return self.src_uid
 
     @property
     def tb_str(
@@ -517,7 +504,8 @@ def pack_error(
     # an onion/inception we need to pack
     if (
         type(exc) is RemoteActorError
-        and exc.boxed_type != RemoteActorError
+        and (boxed := exc.boxed_type)
+        and boxed != RemoteActorError
     ):
         # sanity on source error (if needed when tweaking this)
         assert (src_type := exc.src_type) != RemoteActorError
@@ -535,13 +523,6 @@ def pack_error(
         # `boxed_type_str` and instead set it to the type of
         # the input `exc` type.
         error_msg['boxed_type_str'] = 'RemoteActorError'
-
-        # import pdbp; pdbp.set_trace()
-        # log.debug(
-        #     'INCEPTION packing!\n\n'
-        #     f'{pformat(exc.msgdata)}\n\n'
-        #     f'{exc}\n'
-        # )
 
     else:
         error_msg['src_uid'] = our_uid
@@ -566,6 +547,7 @@ def unpack_error(
 
     chan: Channel|None = None,
     box_type: RemoteActorError = RemoteActorError,
+
     hide_tb: bool = True,
 
 ) -> None|Exception:
@@ -593,15 +575,15 @@ def unpack_error(
         +
         tb_str
     )
-    boxed_type_str: str = (
-        # TODO: deprecate this!
-        error_dict.get('boxed_type_str')
-        # or error_dict['boxed_type']
-    )
-    boxed_type: Type[BaseException] = Exception
+
+    # try to lookup a suitable error type from the local runtime
+    # env then use it to construct a local instance.
+    boxed_type_str: str = error_dict['boxed_type_str']
+    boxed_type: Type[BaseException] = get_err_type(boxed_type_str)
 
     if boxed_type_str == 'ContextCancelled':
-        boxed_type = box_type = ContextCancelled
+        box_type = ContextCancelled
+        assert boxed_type is box_type
 
     # TODO: already included by `_this_mod` in else loop right?
     #
@@ -609,19 +591,11 @@ def unpack_error(
     # we include the relay_path info and the
     # original source error.
     elif boxed_type_str == 'RemoteActorError':
-        boxed_type = RemoteActorError
+        assert boxed_type is RemoteActorError
         assert len(error_dict['relay_path']) >= 1
-
-    # try to lookup a suitable error type
-    # from the local runtime env.
-    else:
-        boxed_type = get_err_type(boxed_type_str)
 
     exc = box_type(
         message,
-        boxed_type=boxed_type,
-
-        # unpack other fields into error type init
         **error_dict,
     )
 
