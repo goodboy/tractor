@@ -36,7 +36,7 @@ async def sleep_back_actor(
                 if not exposed_mods:
                     expect = tractor.ModuleNotExposed
 
-                assert err.type is expect
+                assert err.boxed_type is expect
                 raise
     else:
         await trio.sleep(float('inf'))
@@ -150,4 +150,4 @@ def test_rpc_errors(
             ))
 
         if getattr(value, 'type', None):
-            assert value.type is inside_err
+            assert value.boxed_type is inside_err

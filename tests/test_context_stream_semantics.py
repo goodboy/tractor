@@ -795,7 +795,7 @@ async def test_callee_cancels_before_started(
 
         # raises a special cancel signal
         except tractor.ContextCancelled as ce:
-            ce.type == trio.Cancelled
+            ce.boxed_type == trio.Cancelled
 
             # the traceback should be informative
             assert 'itself' in ce.msgdata['tb_str']
@@ -903,7 +903,7 @@ def test_one_end_stream_not_opened(
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
-        assert excinfo.value.type == StreamOverrun
+        assert excinfo.value.boxed_type == StreamOverrun
 
     elif overrunner == 'callee':
         with pytest.raises(tractor.RemoteActorError) as excinfo:
@@ -912,7 +912,7 @@ def test_one_end_stream_not_opened(
         # TODO: embedded remote errors so that we can verify the source
         # error? the callee delivers an error which is an overrun
         # wrapped in a remote actor error.
-        assert excinfo.value.type == tractor.RemoteActorError
+        assert excinfo.value.boxed_type == tractor.RemoteActorError
 
     else:
         trio.run(main)
@@ -1131,7 +1131,7 @@ def test_maybe_allow_overruns_stream(
             # NOTE: i tried to isolate to a deterministic case here
             # based on timeing, but i was kinda wasted, and i don't
             # think it's sane to catch them..
-            assert err.type in (
+            assert err.boxed_type in (
                 tractor.RemoteActorError,
                 StreamOverrun,
             )
@@ -1139,10 +1139,10 @@ def test_maybe_allow_overruns_stream(
         elif (
             slow_side == 'child'
         ):
-            assert err.type == StreamOverrun
+            assert err.boxed_type == StreamOverrun
 
         elif slow_side == 'parent':
-            assert err.type == tractor.RemoteActorError
+            assert err.boxed_type == tractor.RemoteActorError
             assert 'StreamOverrun' in err.msgdata['tb_str']
 
     else:

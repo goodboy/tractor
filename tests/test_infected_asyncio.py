@@ -128,7 +128,7 @@ def test_aio_simple_error(reg_addr):
         assert err
 
     assert isinstance(err, RemoteActorError)
-    assert err.type == AssertionError
+    assert err.boxed_type == AssertionError
 
 
 def test_tractor_cancels_aio(reg_addr):
@@ -272,7 +272,7 @@ def test_context_spawns_aio_task_that_errors(
 
         err = excinfo.value
         assert isinstance(err, expect)
-        assert err.type == AssertionError
+        assert err.boxed_type == AssertionError
 
 
 async def aio_cancel():
@@ -314,7 +314,7 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(reg_addr):
         assert err
 
     # ensure boxed error is correct
-    assert err.type == to_asyncio.AsyncioCancelled
+    assert err.boxed_type == to_asyncio.AsyncioCancelled
 
 
 # TODO: verify open_channel_from will fail on this..
@@ -466,7 +466,7 @@ def test_trio_error_cancels_intertask_chan(reg_addr):
 
     # ensure boxed errors
     for exc in excinfo.value.exceptions:
-        assert exc.type == Exception
+        assert exc.boxed_type == Exception
 
 
 def test_trio_closes_early_and_channel_exits(reg_addr):
@@ -500,7 +500,7 @@ def test_aio_errors_and_channel_propagates_and_closes(reg_addr):
 
     # ensure boxed errors
     for exc in excinfo.value.exceptions:
-        assert exc.type == Exception
+        assert exc.boxed_type == Exception
 
 
 @tractor.context

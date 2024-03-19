@@ -77,7 +77,7 @@ def test_remote_error(reg_addr, args_err):
                 # of this actor nursery.
                 await portal.result()
             except tractor.RemoteActorError as err:
-                assert err.type == errtype
+                assert err.boxed_type == errtype
                 print("Look Maa that actor failed hard, hehh")
                 raise
 
@@ -86,7 +86,7 @@ def test_remote_error(reg_addr, args_err):
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
-        assert excinfo.value.type == errtype
+        assert excinfo.value.boxed_type == errtype
 
     else:
         # the root task will also error on the `.result()` call
@@ -96,7 +96,7 @@ def test_remote_error(reg_addr, args_err):
 
         # ensure boxed errors
         for exc in excinfo.value.exceptions:
-            assert exc.type == errtype
+            assert exc.boxed_type == errtype
 
 
 def test_multierror(reg_addr):
@@ -117,7 +117,7 @@ def test_multierror(reg_addr):
             try:
                 await portal2.result()
             except tractor.RemoteActorError as err:
-                assert err.type == AssertionError
+                assert err.boxed_type == AssertionError
                 print("Look Maa that first actor failed hard, hehh")
                 raise
 
@@ -169,7 +169,7 @@ def test_multierror_fast_nursery(reg_addr, start_method, num_subactors, delay):
 
     for exc in exceptions:
         assert isinstance(exc, tractor.RemoteActorError)
-        assert exc.type == AssertionError
+        assert exc.boxed_type == AssertionError
 
 
 async def do_nothing():
@@ -310,7 +310,7 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
                         await portal.run(func, **kwargs)
 
                     except tractor.RemoteActorError as err:
-                        assert err.type == err_type
+                        assert err.boxed_type == err_type
                         # we only expect this first error to propogate
                         # (all other daemons are cancelled before they
                         # can be scheduled)
@@ -329,11 +329,11 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
             assert len(err.exceptions) == num_actors
             for exc in err.exceptions:
                 if isinstance(exc, tractor.RemoteActorError):
-                    assert exc.type == err_type
+                    assert exc.boxed_type == err_type
                 else:
                     assert isinstance(exc, trio.Cancelled)
         elif isinstance(err, tractor.RemoteActorError):
-            assert err.type == err_type
+            assert err.boxed_type == err_type
 
         assert n.cancelled is True
         assert not n._children
@@ -412,7 +412,7 @@ async def test_nested_multierrors(loglevel, start_method):
                     elif isinstance(subexc, tractor.RemoteActorError):
                         # on windows it seems we can't exactly be sure wtf
                         # will happen..
-                        assert subexc.type in (
+                        assert subexc.boxed_type in (
                             tractor.RemoteActorError,
                             trio.Cancelled,
                             BaseExceptionGroup,
@@ -422,7 +422,7 @@ async def test_nested_multierrors(loglevel, start_method):
                         for subsub in subexc.exceptions:
 
                             if subsub in (tractor.RemoteActorError,):
-                                subsub = subsub.type
+                                subsub = subsub.boxed_type
 
                             assert type(subsub) in (
                                 trio.Cancelled,
@@ -437,16 +437,16 @@ async def test_nested_multierrors(loglevel, start_method):
                     # we get back the (sent) cancel signal instead
                     if is_win():
                         if isinstance(subexc, tractor.RemoteActorError):
-                            assert subexc.type in (
+                            assert subexc.boxed_type in (
                                 BaseExceptionGroup,
                                 tractor.RemoteActorError
                             )
                         else:
                             assert isinstance(subexc, BaseExceptionGroup)
                     else:
-                        assert subexc.type is ExceptionGroup
+                        assert subexc.boxed_type is ExceptionGroup
                 else:
-                    assert subexc.type in (
+                    assert subexc.boxed_type in (
                         tractor.RemoteActorError,
                         trio.Cancelled
                     )

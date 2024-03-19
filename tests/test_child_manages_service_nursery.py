@@ -171,4 +171,4 @@ def test_actor_managed_trio_nursery_task_error_cancels_aio(
 
     # verify boxed error
     err = excinfo.value
-    assert isinstance(err.type(), NameError)
+    assert err.boxed_type is NameError
