@@ -656,10 +656,12 @@ class Actor:
                         f'|_{chan}\n'
                     )
                     try:
-                        # send a msg loop terminate sentinel
+                        # send msg loop terminate sentinel which
+                        # triggers cancellation of all remotely
+                        # started tasks.
                         await chan.send(None)
 
-                        # XXX: do we want this?
+                        # XXX: do we want this? no right?
                         # causes "[104] connection reset by peer" on other end
                         # await chan.aclose()
 
@@ -1137,10 +1139,10 @@ class Actor:
             # - callee self raises ctxc before caller send request,
             # - callee errors prior to cancel req.
             log.cancel(
-                'Cancel request invalid, RPC task already completed?\n'
+                'Cancel request invalid, RPC task already completed?\n\n'
                 f'<= canceller: {requesting_uid}\n\n'
-                f'=>{parent_chan}\n'
-                f'  |_ctx-id: {cid}\n'
+                f'=> {cid}@{parent_chan.uid}\n'
+                f'  |_{parent_chan}\n'
             )
             return True
 
@@ -1420,7 +1422,6 @@ async def async_main(
             # or because we're running in mp mode
             if accept_addr_rent is not None:
                 accept_addr = accept_addr_rent
-
 
         # The "root" nursery ensures the channel with the immediate
         # parent is kept alive as a resilient service until
