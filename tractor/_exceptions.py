@@ -111,7 +111,6 @@ class RemoteActorError(Exception):
     reprol_fields: list[str] = [
         'src_uid',
         'relay_path',
-        # 'relay_uid',
     ]
 
     def __init__(
@@ -487,14 +486,11 @@ def pack_error(
     else:
         tb_str = traceback.format_exc()
 
-    our_uid: tuple = current_actor().uid
-    error_msg: dict[
+    error_msg: dict[  # for IPC
         str,
         str | tuple[str, str]
-    ] = {
-        'tb_str': tb_str,
-        'relay_uid': our_uid,
-    }
+    ] = {}
+    our_uid: tuple = current_actor().uid
 
     if (
         isinstance(exc, RemoteActorError)
@@ -534,6 +530,11 @@ def pack_error(
         'relay_path',
         [],
     ).append(our_uid)
+
+    # XXX NOTE: always ensure the traceback-str is from the
+    # locally raised error (**not** the prior relay's boxed
+    # content's `.msgdata`).
+    error_msg['tb_str'] = tb_str
 
     pkt: dict = {'error': error_msg}
     if cid:
