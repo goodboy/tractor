@@ -94,12 +94,24 @@ async def open_root_actor(
     Runtime init entry point for ``tractor``.
 
     '''
+    # TODO: stick this in a `@cm` defined in `devx._debug`?
+    #
     # Override the global debugger hook to make it play nice with
     # ``trio``, see much discussion in:
     # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
-    builtin_bp_handler = sys.breakpointhook
-    orig_bp_path: str | None = os.environ.get('PYTHONBREAKPOINT', None)
-    os.environ['PYTHONBREAKPOINT'] = 'tractor.devx._debug.pause_from_sync'
+    if (
+        await _debug.maybe_init_greenback(
+            raise_not_found=False,
+        )
+    ):
+        builtin_bp_handler = sys.breakpointhook
+        orig_bp_path: str|None = os.environ.get(
+            'PYTHONBREAKPOINT',
+            None,
+        )
+        os.environ['PYTHONBREAKPOINT'] = (
+            'tractor.devx._debug.pause_from_sync'
+        )
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.

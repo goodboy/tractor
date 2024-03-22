@@ -2,8 +2,18 @@ import trio
 import tractor
 
 
-def sync_pause():
-    tractor.pause_from_sync()
+def sync_pause(
+    use_builtin: bool = True,
+    error: bool = False,
+):
+    if use_builtin:
+        breakpoint()
+
+    else:
+        tractor.pause_from_sync()
+
+    if error:
+        raise RuntimeError('yoyo sync code error')
 
 
 @tractor.context
@@ -21,15 +31,9 @@ async def start_n_sync_pause(
 
 async def main() -> None:
 
-    from tractor._rpc import maybe_import_gb
-
     async with tractor.open_nursery(
         debug_mode=True,
     ) as an:
-
-        # TODO: where to put this?
-        # => just inside `open_root_actor()` yah?
-        await maybe_import_gb()
 
         p: tractor.Portal  = await an.start_actor(
             'subactor',

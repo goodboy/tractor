@@ -1025,3 +1025,67 @@ def test_different_debug_mode_per_actor(
     # instead crashed completely
     assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
     assert "RuntimeError" in before
+
+
+
+def test_pause_from_sync(
+    spawn,
+    ctlc: bool
+):
+    '''
+    Verify we can use the `pdbp` REPL from sync functions AND from
+    any thread spawned with `trio.to_thread.run_sync()`.
+
+    `examples/debugging/sync_bp.py`
+
+    '''
+    child = spawn('sync_bp')
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            '`greenback` portal opened!',
+            # pre-prompt line
+            _pause_msg, "('root'",
+        ]
+    )
+    if ctlc:
+        do_ctlc(child)
+    child.sendline('c')
+    child.expect(PROMPT)
+
+    # XXX shouldn't see gb loaded again
+    before = str(child.before.decode())
+    assert not in_prompt_msg(
+        before,
+        ['`greenback` portal opened!'],
+    )
+    assert_before(
+        child,
+        [_pause_msg, "('root'",],
+    )
+
+    if ctlc:
+        do_ctlc(child)
+    child.sendline('c')
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [_pause_msg, "('subactor'",],
+    )
+
+    if ctlc:
+        do_ctlc(child)
+    child.sendline('c')
+    child.expect(PROMPT)
+    # non-main thread case
+    # TODO: should we agument the pre-prompt msg in this case?
+    assert_before(
+        child,
+        [_pause_msg, "('root'",],
+    )
+
+    if ctlc:
+        do_ctlc(child)
+    child.sendline('c')
+    child.expect(pexpect.EOF)
