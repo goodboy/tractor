@@ -351,7 +351,7 @@ class Context:
     by the runtime in 2 ways:
      - by entering ``Portal.open_context()`` which is the primary
        public API for any "caller" task or,
-     - by the RPC machinery's `._runtime._invoke()` as a `ctx` arg
+     - by the RPC machinery's `._rpc._invoke()` as a `ctx` arg
        to a remotely scheduled "callee" function.
 
     AND is always constructed using the below ``mk_context()``.
@@ -361,10 +361,10 @@ class Context:
     `trio.Task`s. Contexts are allocated on each side of any task
     RPC-linked msg dialog, i.e. for every request to a remote
     actor from a `Portal`. On the "callee" side a context is
-    always allocated inside ``._runtime._invoke()``.
+    always allocated inside ``._rpc._invoke()``.
 
-    # TODO: more detailed writeup on cancellation, error and
-    # streaming semantics..
+    TODO: more detailed writeup on cancellation, error and
+    streaming semantics..
 
     A context can be cancelled and (possibly eventually restarted) from
     either side of the underlying IPC channel, it can also open task
@@ -1209,7 +1209,9 @@ class Context:
                     # await pause()
                     log.warning(
                         'Stream was terminated by EoC\n\n'
-                        f'{repr(eoc)}\n'
+                        # NOTE: won't show the error <Type> but
+                        # does show txt followed by IPC msg.
+                        f'{str(eoc)}\n'
                     )
 
             finally:
@@ -1306,7 +1308,7 @@ class Context:
             # `._cancel_called == True`.
             not raise_overrun_from_self
             and isinstance(remote_error, RemoteActorError)
-            and remote_error.msgdata['type_str'] == 'StreamOverrun'
+            and remote_error.msgdata['boxed_type_str'] == 'StreamOverrun'
             and tuple(remote_error.msgdata['sender']) == our_uid
         ):
             # NOTE: we set the local scope error to any "self
@@ -1883,6 +1885,19 @@ class Context:
             return False
 
 
+# TODO: exception tb masking by using a manual
+# `.__aexit__()`/.__aenter__()` pair on a type?
+# => currently this is one of the few places we can't easily
+# mask errors - on the exit side of a `Portal.open_context()`..
+# there's # => currently this is one of the few places we can't
+# there's 2 ways to approach it:
+# - manually write an @acm type as per above
+# - use `contextlib.AsyncContextDecorator` to override the default
+#   impl to suppress traceback frames:
+#  * https://docs.python.org/3/library/contextlib.html#contextlib.AsyncContextDecorator
+#  * https://docs.python.org/3/library/contextlib.html#contextlib.ContextDecorator
+# - also we could just override directly the underlying
+#   `contextlib._AsyncGeneratorContextManager`?
 @acm
 async def open_context_from_portal(
     portal: Portal,
