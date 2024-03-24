@@ -48,6 +48,7 @@ from types import (
 )
 
 import pdbp
+import sniffio
 import tractor
 import trio
 from trio.lowlevel import current_task
@@ -144,7 +145,7 @@ class Lock:
         # in which case schedule the SIGINT shielding override
         # to in the main thread.
         # https://docs.python.org/3/library/signal.html#signals-and-threads
-        if not cls.is_trio_thread():
+        if not cls.is_main_trio_thread():
             cls._orig_sigint_handler: Callable = trio.from_thread.run_sync(
                 signal.signal,
                 signal.SIGINT,
@@ -163,7 +164,7 @@ class Lock:
         # always restore ``trio``'s sigint handler. see notes below in
         # the pdb factory about the nightmare that is that code swapping
         # out the handler when the repl activates...
-        if not cls.is_trio_thread():
+        if not cls.is_main_trio_thread():
             trio.from_thread.run_sync(
                 signal.signal,
                 signal.SIGINT,
@@ -178,15 +179,21 @@ class Lock:
         cls._orig_sigint_handler = None
 
     @classmethod
-    def is_trio_thread(self) -> bool:
+    def is_main_trio_thread(cls) -> bool:
         '''
         Check if we're the "main" thread (as in the first one
-        started by cpython) and presume that it is the thread that
+        started by cpython) AND that it is ALSO the thread that
         called `trio.run()` and not some thread spawned with
         `trio.to_thread.run_sync()`.
 
         '''
-        return trio._util.is_main_thread()
+        return (
+            # TODO: since this is private, @oremanj says
+            # we should just copy the impl for now..
+            trio._util.is_main_thread()
+            and
+            sniffio.current_async_library() == 'trio'
+        )
         # XXX apparently unreliable..see ^
         # (
         #     threading.current_thread()
@@ -196,7 +203,7 @@ class Lock:
     @classmethod
     def release(cls):
         try:
-            if not cls.is_trio_thread():
+            if not cls.is_main_trio_thread():
                 trio.from_thread.run_sync(
                     cls._debug_lock.release
                 )
@@ -1112,7 +1119,16 @@ def pause_from_sync(
     mdb: MultiActorPdb = mk_mpdb()
 
     # run async task which will lock out the root proc's TTY.
-    if not Lock.is_trio_thread():
+    if not Lock.is_main_trio_thread():
+
+        # TODO: we could also check for a non-`.to_thread` context
+        # using `trio.from_thread.check_cancelled()` (says
+        # oremanj) wherein we get the following outputs:
+        #
+        # `RuntimeError`: non-`.to_thread` spawned thread
+        # noop: non-cancelled `.to_thread`
+        # `trio.Cancelled`: cancelled `.to_thread`
+        #
         trio.from_thread.run(
             partial(
                 pause,
