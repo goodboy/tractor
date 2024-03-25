@@ -187,13 +187,18 @@ class Lock:
         `trio.to_thread.run_sync()`.
 
         '''
-        return (
+        is_trio_main = (
             # TODO: since this is private, @oremanj says
             # we should just copy the impl for now..
             trio._util.is_main_thread()
             and
-            sniffio.current_async_library() == 'trio'
+            (async_lib := sniffio.current_async_library()) == 'trio'
         )
+        if not is_trio_main:
+            log.warning(
+                f'Current async-lib detected by `sniffio`: {async_lib}\n'
+            )
+        return is_trio_main
         # XXX apparently unreliable..see ^
         # (
         #     threading.current_thread()
@@ -1112,6 +1117,14 @@ def pause_from_sync(
             '`tractor.pause_from_sync()` is not functional without a wrapping\n'
             '- `async with tractor.open_nursery()` or,\n'
             '- `async with tractor.open_root_actor()`\n'
+        )
+
+    # NOTE: once supported, remove this AND the one
+    # inside `._pause()`!
+    if actor.is_infected_aio():
+        raise RuntimeError(
+            '`tractor.pause[_from_sync]()` not yet supported '
+            'for infected `asyncio` mode!'
         )
 
     # raises on not-found by default

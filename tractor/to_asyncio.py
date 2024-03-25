@@ -33,10 +33,14 @@ from typing import (
 import trio
 from outcome import Error
 
-from .log import get_logger
-from ._state import current_actor
-from ._exceptions import AsyncioCancelled
-from .trionics._broadcast import (
+from tractor.log import get_logger
+from tractor._state import (
+    current_actor,
+    debug_mode,
+)
+from tractor.devx import _debug
+from tractor._exceptions import AsyncioCancelled
+from tractor.trionics._broadcast import (
     broadcast_receiver,
     BroadcastReceiver,
 )
@@ -64,9 +68,9 @@ class LinkedTaskChannel(trio.abc.Channel):
     _trio_exited: bool = False
 
     # set after ``asyncio.create_task()``
-    _aio_task: asyncio.Task | None = None
-    _aio_err: BaseException | None = None
-    _broadcaster: BroadcastReceiver | None = None
+    _aio_task: asyncio.Task|None = None
+    _aio_err: BaseException|None = None
+    _broadcaster: BroadcastReceiver|None = None
 
     async def aclose(self) -> None:
         await self._from_aio.aclose()
@@ -158,7 +162,9 @@ def _run_asyncio_task(
     '''
     __tracebackhide__ = True
     if not current_actor().is_infected_aio():
-        raise RuntimeError("`infect_asyncio` mode is not enabled!?")
+        raise RuntimeError(
+            "`infect_asyncio` mode is not enabled!?"
+        )
 
     # ITC (inter task comms), these channel/queue names are mostly from
     # ``asyncio``'s perspective.
@@ -187,7 +193,7 @@ def _run_asyncio_task(
 
     cancel_scope = trio.CancelScope()
     aio_task_complete = trio.Event()
-    aio_err: BaseException | None = None
+    aio_err: BaseException|None = None
 
     chan = LinkedTaskChannel(
         aio_q,  # asyncio.Queue
@@ -253,7 +259,7 @@ def _run_asyncio_task(
     if not inspect.isawaitable(coro):
         raise TypeError(f"No support for invoking {coro}")
 
-    task = asyncio.create_task(
+    task: asyncio.Task = asyncio.create_task(
         wait_on_coro_final_result(
             to_trio,
             coro,
@@ -262,6 +268,18 @@ def _run_asyncio_task(
     )
     chan._aio_task = task
 
+    # XXX TODO XXX get this actually workin.. XD
+    # maybe setup `greenback` for `asyncio`-side task REPLing
+    if (
+        debug_mode()
+        and
+        (greenback := _debug.maybe_import_greenback(
+            force_reload=True,
+            raise_not_found=False,
+        ))
+    ):
+        greenback.bestow_portal(task)
+
     def cancel_trio(task: asyncio.Task) -> None:
         '''
         Cancel the calling ``trio`` task on error.
@@ -269,7 +287,7 @@ def _run_asyncio_task(
         '''
         nonlocal chan
         aio_err = chan._aio_err
-        task_err: BaseException | None = None
+        task_err: BaseException|None = None
 
         # only to avoid ``asyncio`` complaining about uncaptured
         # task exceptions
@@ -349,11 +367,11 @@ async def translate_aio_errors(
     '''
     trio_task = trio.lowlevel.current_task()
 
-    aio_err: BaseException | None = None
+    aio_err: BaseException|None = None
 
     # TODO: make thisi a channel method?
     def maybe_raise_aio_err(
-        err: Exception | None = None
+        err: Exception|None = None
     ) -> None:
         aio_err = chan._aio_err
         if (
@@ -530,6 +548,16 @@ def run_as_asyncio_guest(
 
         loop = asyncio.get_running_loop()
         trio_done_fut = asyncio.Future()
+
+        if debug_mode():
+            # XXX make it obvi we know this isn't supported yet!
+            log.error(
+                'Attempting to enter unsupported `greenback` init '
+                'from `asyncio` task..'
+            )
+            await _debug.maybe_init_greenback(
+                force_reload=True,
+            )
 
         def trio_done_callback(main_outcome):
 

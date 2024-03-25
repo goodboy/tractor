@@ -601,7 +601,8 @@ def test_echoserver_detailed_mechanics(
                             pass
                         else:
                             pytest.fail(
-                                "stream wasn't stopped after sentinel?!")
+                                'stream not stopped after sentinel ?!'
+                            )
 
             # TODO: the case where this blocks and
             # is cancelled by kbi or out of task cancellation
@@ -613,3 +614,37 @@ def test_echoserver_detailed_mechanics(
 
     else:
         trio.run(main)
+
+
+# TODO: debug_mode tests once we get support for `asyncio`!
+#
+# -[ ] need tests to wrap both scripts:
+#   - [ ] infected_asyncio_echo_server.py
+#   - [ ] debugging/asyncio_bp.py
+#  -[ ] consider moving ^ (some of) these ^ to `test_debugger`?
+#
+# -[ ] missing impl outstanding includes:
+#  - [x] for sync pauses we need to ensure we open yet another
+#    `greenback` portal in the asyncio task
+#    => completed using `.bestow_portal(task)` inside
+#     `.to_asyncio._run_asyncio_task()` right?
+#   -[ ] translation func to get from `asyncio` task calling to 
+#     `._debug.wait_for_parent_stdin_hijack()` which does root
+#     call to do TTY locking.
+#
+def test_sync_breakpoint():
+    '''
+    Verify we can do sync-func/code breakpointing using the
+    `breakpoint()` builtin inside infected mode actors.
+
+    '''
+    pytest.xfail('This support is not implemented yet!')
+
+
+def test_debug_mode_crash_handling():
+    '''
+    Verify mult-actor crash handling works with a combo of infected-`asyncio`-mode
+    and normal `trio` actors despite nested process trees.
+
+    '''
+    pytest.xfail('This support is not implemented yet!')

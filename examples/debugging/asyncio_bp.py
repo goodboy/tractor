@@ -77,7 +77,9 @@ async def main(
 
 ) -> None:
 
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery(
+        # debug_mode=True,
+    ) as n:
 
         p = await n.start_actor(
             'aio_daemon',
