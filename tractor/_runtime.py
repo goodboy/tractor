@@ -136,16 +136,16 @@ class Actor:
     msg_buffer_size: int = 2**6
 
     # nursery placeholders filled in by `async_main()` after fork
-    _root_n: Nursery | None = None
-    _service_n: Nursery | None = None
-    _server_n: Nursery | None = None
+    _root_n: Nursery|None = None
+    _service_n: Nursery|None = None
+    _server_n: Nursery|None = None
 
     # Information about `__main__` from parent
     _parent_main_data: dict[str, str]
-    _parent_chan_cs: CancelScope | None = None
+    _parent_chan_cs: CancelScope|None = None
 
     # syncs for setup/teardown sequences
-    _server_down: trio.Event | None = None
+    _server_down: trio.Event|None = None
 
     # user toggled crash handling (including monkey-patched in
     # `trio.open_nursery()` via `.trionics._supervisor` B)
@@ -174,7 +174,7 @@ class Actor:
         spawn_method: str|None = None,
 
         # TODO: remove!
-        arbiter_addr: tuple[str, int] | None = None,
+        arbiter_addr: tuple[str, int]|None = None,
 
     ) -> None:
         '''
@@ -189,7 +189,7 @@ class Actor:
         )
 
         self._cancel_complete = trio.Event()
-        self._cancel_called_by_remote: tuple[str, tuple] | None = None
+        self._cancel_called_by_remote: tuple[str, tuple]|None = None
         self._cancel_called: bool = False
 
         # retreive and store parent `__main__` data which
@@ -245,11 +245,11 @@ class Actor:
         ] = {}
 
         self._listeners: list[trio.abc.Listener] = []
-        self._parent_chan: Channel | None = None
-        self._forkserver_info: tuple | None = None
+        self._parent_chan: Channel|None = None
+        self._forkserver_info: tuple|None = None
         self._actoruid2nursery: dict[
             tuple[str, str],
-            ActorNursery | None,
+            ActorNursery|None,
         ] = {}  # type: ignore  # noqa
 
         # when provided, init the registry addresses property from
@@ -781,7 +781,7 @@ class Actor:
         #
         # side: str|None = None,
 
-        msg_buffer_size: int | None = None,
+        msg_buffer_size: int|None = None,
         allow_overruns: bool = False,
 
     ) -> Context:
@@ -846,7 +846,7 @@ class Actor:
         kwargs: dict,
 
         # IPC channel config
-        msg_buffer_size: int | None = None,
+        msg_buffer_size: int|None = None,
         allow_overruns: bool = False,
         load_nsf: bool = False,
 
@@ -920,11 +920,11 @@ class Actor:
 
     async def _from_parent(
         self,
-        parent_addr: tuple[str, int] | None,
+        parent_addr: tuple[str, int]|None,
 
     ) -> tuple[
         Channel,
-        list[tuple[str, int]] | None,
+        list[tuple[str, int]]|None,
     ]:
         '''
         Bootstrap this local actor's runtime config from its parent by
@@ -945,7 +945,7 @@ class Actor:
             # Initial handshake: swap names.
             await self._do_handshake(chan)
 
-            accept_addrs: list[tuple[str, int]] | None = None
+            accept_addrs: list[tuple[str, int]]|None = None
             if self._spawn_method == "trio":
                 # Receive runtime state from our parent
                 parent_data: dict[str, Any]
@@ -1009,7 +1009,7 @@ class Actor:
         handler_nursery: Nursery,
         *,
         # (host, port) to bind for channel server
-        listen_sockaddrs: list[tuple[str, int]] | None = None,
+        listen_sockaddrs: list[tuple[str, int]]|None = None,
 
         task_status: TaskStatus[Nursery] = trio.TASK_STATUS_IGNORED,
     ) -> None:
@@ -1466,7 +1466,7 @@ class Actor:
 
 async def async_main(
     actor: Actor,
-    accept_addrs: tuple[str, int] | None = None,
+    accept_addrs: tuple[str, int]|None = None,
 
     # XXX: currently ``parent_addr`` is only needed for the
     # ``multiprocessing`` backend (which pickles state sent to
@@ -1475,7 +1475,7 @@ async def async_main(
     # change this to a simple ``is_subactor: bool`` which will
     # be False when running as root actor and True when as
     # a subactor.
-    parent_addr: tuple[str, int] | None = None,
+    parent_addr: tuple[str, int]|None = None,
     task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
 
 ) -> None:
@@ -1498,7 +1498,7 @@ async def async_main(
     try:
 
         # establish primary connection with immediate parent
-        actor._parent_chan: Channel | None = None
+        actor._parent_chan: Channel|None = None
         if parent_addr is not None:
 
             (
@@ -1797,7 +1797,7 @@ class Arbiter(Actor):
         self,
         name: str,
 
-    ) -> tuple[str, int] | None:
+    ) -> tuple[str, int]|None:
 
         for uid, sockaddr in self._registry.items():
             if name in uid:
