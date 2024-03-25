@@ -583,7 +583,7 @@ async def open_nursery(
     finally:
         msg: str = (
             'Actor-nursery exited\n'
-            f'|_{an}\n\n'
+            f'|_{an}\n'
         )
 
         # shutdown runtime if it was started
