@@ -20,12 +20,9 @@ types.
 
 '''
 from __future__ import annotations
-from collections import UserList
 from contextlib import contextmanager as cm
 from typing import (
     Any,
-    Iterator,
-    Optional,
     Union,
 )
 
@@ -33,252 +30,8 @@ from msgspec import (
     msgpack,
     Raw,
     Struct as _Struct,
-    structs,
-)
-from msgspec.msgpack import (
-    Encoder,
-    Decoder,
-)
-from pprint import (
-    saferepr,
 )
 
-# TODO: auto-gen type sig for input func both for
-# type-msgs and logging of RPC tasks?
-# taken and modified from:
-# https://stackoverflow.com/a/57110117
-# import inspect
-# from typing import List
-
-# def my_function(input_1: str, input_2: int) -> list[int]:
-#     pass
-
-# def types_of(func):
-#     specs = inspect.getfullargspec(func)
-#     return_type = specs.annotations['return']
-#     input_types = [t.__name__ for s, t in specs.annotations.items() if s != 'return']
-#     return f'{func.__name__}({": ".join(input_types)}) -> {return_type}'
-
-# types_of(my_function)
-
-
-class DiffDump(UserList):
-    '''
-    Very simple list delegator that repr() dumps (presumed) tuple
-    elements of the form `tuple[str, Any, Any]` in a nice
-    multi-line readable form for analyzing `Struct` diffs.
-
-    '''
-    def __repr__(self) -> str:
-        if not len(self):
-            return super().__repr__()
-
-        # format by displaying item pair's ``repr()`` on multiple,
-        # indented lines such that they are more easily visually
-        # comparable when printed to console when printed to
-        # console.
-        repstr: str = '[\n'
-        for k, left, right in self:
-            repstr += (
-                f'({k},\n'
-                f'\t{repr(left)},\n'
-                f'\t{repr(right)},\n'
-                ')\n'
-            )
-        repstr += ']\n'
-        return repstr
-
-
-class Struct(
-    _Struct,
-
-    # https://jcristharif.com/msgspec/structs.html#tagged-unions
-    # tag='pikerstruct',
-    # tag=True,
-):
-    '''
-    A "human friendlier" (aka repl buddy) struct subtype.
-
-    '''
-    def _sin_props(self) -> Iterator[
-        tuple[
-            structs.FieldIinfo,
-            str,
-            Any,
-        ]
-    ]:
-        '''
-        Iterate over all non-@property fields of this struct.
-
-        '''
-        fi: structs.FieldInfo
-        for fi in structs.fields(self):
-            key: str = fi.name
-            val: Any = getattr(self, key)
-            yield fi, key, val
-
-    def to_dict(
-        self,
-        include_non_members: bool = True,
-
-    ) -> dict:
-        '''
-        Like it sounds.. direct delegation to:
-        https://jcristharif.com/msgspec/api.html#msgspec.structs.asdict
-
-        BUT, by default we pop all non-member (aka not defined as
-        struct fields) fields by default.
-
-        '''
-        asdict: dict = structs.asdict(self)
-        if include_non_members:
-            return asdict
-
-        # only return a dict of the struct members
-        # which were provided as input, NOT anything
-        # added as type-defined `@property` methods!
-        sin_props: dict = {}
-        fi: structs.FieldInfo
-        for fi, k, v in self._sin_props():
-            sin_props[k] = asdict[k]
-
-        return sin_props
-
-    def pformat(
-        self,
-        field_indent: int = 2,
-        indent: int = 0,
-
-    ) -> str:
-        '''
-        Recursion-safe `pprint.pformat()` style formatting of
-        a `msgspec.Struct` for sane reading by a human using a REPL.
-
-        '''
-        # global whitespace indent
-        ws: str = ' '*indent
-
-        # field whitespace indent
-        field_ws: str = ' '*(field_indent + indent)
-
-        # qtn: str = ws + self.__class__.__qualname__
-        qtn: str = self.__class__.__qualname__
-
-        obj_str: str = ''  # accumulator
-        fi: structs.FieldInfo
-        k: str
-        v: Any
-        for fi, k, v in self._sin_props():
-
-            # TODO: how can we prefer `Literal['option1',  'option2,
-            # ..]` over .__name__ == `Literal` but still get only the
-            # latter for simple types like `str | int | None` etc..?
-            ft: type = fi.type
-            typ_name: str = getattr(ft, '__name__', str(ft))
-
-            # recurse to get sub-struct's `.pformat()` output Bo
-            if isinstance(v, Struct):
-                val_str: str =  v.pformat(
-                    indent=field_indent + indent,
-                    field_indent=indent + field_indent,
-                )
-
-            else:  # the `pprint` recursion-safe format:
-                # https://docs.python.org/3.11/library/pprint.html#pprint.saferepr
-                val_str: str = saferepr(v)
-
-            # TODO: LOLOL use `textwrap.indent()` instead dawwwwwg!
-            obj_str += (field_ws + f'{k}: {typ_name} = {val_str},\n')
-
-        return (
-            f'{qtn}(\n'
-            f'{obj_str}'
-            f'{ws})'
-        )
-
-    # TODO: use a pprint.PrettyPrinter instance around ONLY rendering
-    # inside a known tty?
-    # def __repr__(self) -> str:
-    #     ...
-
-    # __str__ = __repr__ = pformat
-    __repr__ = pformat
-
-    def copy(
-        self,
-        update: dict | None = None,
-
-    ) -> Struct:
-        '''
-        Validate-typecast all self defined fields, return a copy of
-        us with all such fields.
-
-        NOTE: This is kinda like the default behaviour in
-        `pydantic.BaseModel` except a copy of the object is
-        returned making it compat with `frozen=True`.
-
-        '''
-        if update:
-            for k, v in update.items():
-                setattr(self, k, v)
-
-        # NOTE: roundtrip serialize to validate
-        # - enode to msgpack binary format,
-        # - decode that back to a struct.
-        return msgpack.Decoder(type=type(self)).decode(
-            msgpack.Encoder().encode(self)
-        )
-
-    def typecast(
-        self,
-
-        # TODO: allow only casting a named subset?
-        # fields: set[str] | None = None,
-
-    ) -> None:
-        '''
-        Cast all fields using their declared type annotations
-        (kinda like what `pydantic` does by default).
-
-        NOTE: this of course won't work on frozen types, use
-        ``.copy()`` above in such cases.
-
-        '''
-        # https://jcristharif.com/msgspec/api.html#msgspec.structs.fields
-        fi: structs.FieldInfo
-        for fi in structs.fields(self):
-            setattr(
-                self,
-                fi.name,
-                fi.type(getattr(self, fi.name)),
-            )
-
-    def __sub__(
-        self,
-        other: Struct,
-
-    ) -> DiffDump[tuple[str, Any, Any]]:
-        '''
-        Compare fields/items key-wise and return a ``DiffDump``
-        for easy visual REPL comparison B)
-
-        '''
-        diffs: DiffDump[tuple[str, Any, Any]] = DiffDump()
-        for fi in structs.fields(self):
-            attr_name: str = fi.name
-            ours: Any = getattr(self, attr_name)
-            theirs: Any = getattr(other, attr_name)
-            if ours != theirs:
-                diffs.append((
-                    attr_name,
-                    ours,
-                    theirs,
-                ))
-
-        return diffs
-
-# ------ - ------
-#
 # TODO: integration with our ``enable_modules: list[str]`` caps sys.
 #
 # ``pkgutil.resolve_name()`` internally uses
@@ -307,15 +60,15 @@ class Struct(
 # that are spawned **after** the configure call is made.
 _lifo_codecs: list[
     tuple[
-        Encoder,
-        Decoder,
+        msgpack.Encoder,
+        msgpack.Decoder,
     ],
-] = [(Encoder(), Decoder())]
+] = [(msgpack.Encoder(), msgpack.Decoder())]
 
 
 def get_msg_codecs() -> tuple[
-    Encoder,
-    Decoder,
+    msgpack.Encoder,
+    msgpack.Decoder,
 ]:
     '''
     Return the currently configured ``msgspec`` codec set.
@@ -344,13 +97,13 @@ def configure_native_msgs(
     # defining every struct type in the union. In this case tag_field
     # defaults to "type", and tag defaults to the struct class name
     # (e.g. "Get")."
-    enc = Encoder()
+    enc = msgpack.Encoder()
 
     types_union = Union[tagged_structs[0]] | Any
     for struct in tagged_structs[1:]:
         types_union |= struct
 
-    dec = Decoder(types_union)
+    dec = msgpack.Decoder(types_union)
 
     _lifo_codecs.append((enc, dec))
     try:
@@ -367,7 +120,7 @@ class Header(_Struct, tag=True):
 
     '''
     uid: str
-    msgtype: Optional[str] = None
+    msgtype: str|None = None
 
 
 class Msg(_Struct, tag=True):
@@ -379,23 +132,23 @@ class Msg(_Struct, tag=True):
     payload: Raw
 
 
-_root_dec = Decoder(Msg)
-_root_enc = Encoder()
+_root_dec = msgpack.Decoder(Msg)
+_root_enc = msgpack.Encoder()
 
 # sub-decoders for retreiving embedded
 # payload data and decoding to a sender
 # side defined (struct) type.
 _subdecs:  dict[
-    Optional[str],
-    Decoder] = {
-    None: Decoder(Any),
+    str|None,
+    msgpack.Decoder] = {
+    None: msgpack.Decoder(Any),
 }
 
 
 @cm
 def enable_context(
     msg_subtypes: list[list[_Struct]]
-) -> Decoder:
+) -> msgpack.Decoder:
 
     for types in msg_subtypes:
         first = types[0]
@@ -410,7 +163,7 @@ def enable_context(
             type_union |= typ
             tags.append(typ.__name__)
 
-        dec = Decoder(type_union)
+        dec = msgpack.Decoder(type_union)
 
         # register all tags for this union sub-decoder
         for tag in tags:

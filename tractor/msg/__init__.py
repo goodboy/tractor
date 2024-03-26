@@ -21,11 +21,10 @@ Built-in messaging patterns, types, APIs and helpers.
 from .ptr import (
     NamespacePath as NamespacePath,
 )
-from .types import (
+from .pretty_struct import (
     Struct as Struct,
 )
 from ._codec import (
-
     _def_msgspec_codec as _def_msgspec_codec,
     _ctxvar_MsgCodec as _ctxvar_MsgCodec,
 

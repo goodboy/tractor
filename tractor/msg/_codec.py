@@ -47,7 +47,7 @@ from types import ModuleType
 import msgspec
 from msgspec import msgpack
 
-from .types import Struct
+from .pretty_struct import Struct
 
 
 # TODO: API changes towards being interchange lib agnostic!
