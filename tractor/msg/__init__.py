@@ -24,3 +24,13 @@ from .ptr import (
 from .types import (
     Struct as Struct,
 )
+from ._codec import (
+
+    _def_msgspec_codec as _def_msgspec_codec,
+    _ctxvar_MsgCodec as _ctxvar_MsgCodec,
+
+    apply_codec as apply_codec,
+    mk_codec as mk_codec,
+    MsgCodec as MsgCodec,
+    current_msgspec_codec as current_msgspec_codec,
+)

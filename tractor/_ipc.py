@@ -23,7 +23,10 @@ from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
 )
-from contextlib import asynccontextmanager as acm
+from contextlib import (
+    asynccontextmanager as acm,
+    contextmanager as cm,
+)
 import platform
 from pprint import pformat
 import struct
@@ -37,12 +40,15 @@ from typing import (
     TypeVar,
 )
 
-import msgspec
 from tricycle import BufferedReceiveStream
 import trio
 
 from tractor.log import get_logger
 from tractor._exceptions import TransportClosed
+from tractor.msg import (
+    _ctxvar_MsgCodec,
+    MsgCodec,
+)
 
 log = get_logger(__name__)
 
@@ -154,13 +160,9 @@ class MsgpackTCPStream(MsgTransport):
         )
         self.prefix_size = prefix_size
 
-        # TODO: struct aware messaging coders
-        self.encode = msgspec.msgpack.Encoder(
-            enc_hook=codec[0] if codec else None,
-        ).encode
-        self.decode = msgspec.msgpack.Decoder(
-            dec_hook=codec[1] if codec else None,
-        ).decode
+        # allow for custom IPC msg interchange format
+        # dynamic override Bo
+        self.codec: MsgCodec = codec or MsgCodec()
 
     async def _iter_packets(self) -> AsyncGenerator[dict, None]:
         '''Yield packets from the underlying stream.
@@ -199,7 +201,23 @@ class MsgpackTCPStream(MsgTransport):
 
             log.transport(f"received {msg_bytes}")  # type: ignore
             try:
-                yield self.decode(msg_bytes)
+                # NOTE: lookup the `trio.Task.context`'s var for
+                # the current `MsgCodec`.
+                yield  _ctxvar_MsgCodec.get().decode(msg_bytes)
+
+                # TODO: remove, was only for orig draft impl
+                # testing.
+                #
+                # curr_codec: MsgCodec = _ctxvar_MsgCodec.get()
+                # obj = curr_codec.decode(msg_bytes)
+                # if (
+                #     curr_codec is not
+                #     _codec._def_msgspec_codec
+                # ):
+                #     print(f'OBJ: {obj}\n')
+                #
+                # yield obj
+
             except (
                 msgspec.DecodeError,
                 UnicodeDecodeError,
@@ -235,7 +253,10 @@ class MsgpackTCPStream(MsgTransport):
         # __tracebackhide__: bool = hide_tb
         async with self._send_lock:
 
-            bytes_data: bytes = self.encode(msg)
+            # NOTE: lookup the `trio.Task.context`'s var for
+            # the current `MsgCodec`.
+            bytes_data: bytes = _ctxvar_MsgCodec.get().encode(msg)
+            # bytes_data: bytes = self.codec.encode(msg)
 
             # supposedly the fastest says,
             # https://stackoverflow.com/a/54027962
@@ -335,7 +356,9 @@ class Channel:
 
     @property
     def msgstream(self) -> MsgTransport:
-        log.info('`Channel.msgstream` is an old name, use `._transport`')
+        log.info(
+            '`Channel.msgstream` is an old name, use `._transport`'
+        )
         return self._transport
 
     @property
@@ -368,10 +391,7 @@ class Channel:
 
         # XXX optionally provided codec pair for `msgspec`:
         # https://jcristharif.com/msgspec/extending.html#mapping-to-from-native-types
-        codec: tuple[
-            Callable[[Any], Any],  # coder
-            Callable[[type, Any], Any],  # decoder
-        ]|None = None,
+        codec: MsgCodec|None = None,
 
     ) -> MsgTransport:
         type_key = (
@@ -379,13 +399,35 @@ class Channel:
             or
             self._transport_key
         )
+        # get transport type, then
         self._transport = get_msg_transport(
             type_key
+        # instantiate an instance of the msg-transport
         )(
             stream,
             codec=codec,
         )
         return self._transport
+
+    # TODO: something simliar at the IPC-`Context`
+    # level so as to support 
+    @cm
+    def apply_codec(
+        self,
+        codec: MsgCodec,
+
+    ) -> None:
+        '''
+        Temporarily override the underlying IPC msg codec for
+        dynamic enforcement of messaging schema.
+
+        '''
+        orig: MsgCodec = self._transport.codec
+        try:
+            self._transport.codec = codec
+            yield
+        finally:
+            self._transport.codec = orig
 
     def __repr__(self) -> str:
         if not self._transport:
