@@ -536,7 +536,9 @@ def pack_error(
     # content's `.msgdata`).
     error_msg['tb_str'] = tb_str
 
-    pkt: dict = {'error': error_msg}
+    pkt: dict = {
+        'error': error_msg,
+    }
     if cid:
         pkt['cid'] = cid
 

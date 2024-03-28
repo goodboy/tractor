@@ -84,7 +84,10 @@ async def _invoke_non_context(
 
     # TODO: can we unify this with the `context=True` impl below?
     if inspect.isasyncgen(coro):
-        await chan.send({'functype': 'asyncgen', 'cid': cid})
+        await chan.send({
+            'cid': cid,
+            'functype': 'asyncgen',
+        })
         # XXX: massive gotcha! If the containing scope
         # is cancelled and we execute the below line,
         # any ``ActorNursery.__aexit__()`` WON'T be
@@ -104,18 +107,27 @@ async def _invoke_non_context(
                     # to_send = await chan.recv_nowait()
                     # if to_send is not None:
                     #     to_yield = await coro.asend(to_send)
-                    await chan.send({'yield': item, 'cid': cid})
+                    await chan.send({
+                        'yield': item,
+                        'cid': cid,
+                    })
 
         log.runtime(f"Finished iterating {coro}")
         # TODO: we should really support a proper
         # `StopAsyncIteration` system here for returning a final
         # value if desired
-        await chan.send({'stop': True, 'cid': cid})
+        await chan.send({
+            'stop': True,
+            'cid': cid,
+        })
 
     # one way @stream func that gets treated like an async gen
     # TODO: can we unify this with the `context=True` impl below?
     elif treat_as_gen:
-        await chan.send({'functype': 'asyncgen', 'cid': cid})
+        await chan.send({
+            'cid': cid,
+            'functype': 'asyncgen',
+        })
         # XXX: the async-func may spawn further tasks which push
         # back values like an async-generator would but must
         # manualy construct the response dict-packet-responses as
@@ -128,7 +140,10 @@ async def _invoke_non_context(
         if not cs.cancelled_caught:
             # task was not cancelled so we can instruct the
             # far end async gen to tear down
-            await chan.send({'stop': True, 'cid': cid})
+            await chan.send({
+                'stop': True,
+                'cid': cid
+            })
     else:
         # regular async function/method
         # XXX: possibly just a scheduled `Actor._cancel_task()`
@@ -177,10 +192,10 @@ async def _invoke_non_context(
                 and chan.connected()
             ):
                 try:
-                    await chan.send(
-                        {'return': result,
-                         'cid': cid}
-                    )
+                    await chan.send({
+                        'return': result,
+                        'cid': cid,
+                    })
                 except (
                     BrokenPipeError,
                     trio.BrokenResourceError,
@@ -474,8 +489,8 @@ async def _invoke(
         # "least sugary" type of RPC ep with support for
         # bi-dir streaming B)
         await chan.send({
+            'cid': cid,
             'functype': 'context',
-            'cid': cid
         })
 
         # TODO: should we also use an `.open_context()` equiv
