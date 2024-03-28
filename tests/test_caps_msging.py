@@ -6,12 +6,22 @@ B~)
 '''
 from typing import (
     Any,
+    _GenericAlias,
     Type,
+    Union,
 )
 from contextvars import (
     Context,
 )
+# from inspect import Parameter
 
+from msgspec import (
+    structs,
+    msgpack,
+    # defstruct,
+    Struct,
+    ValidationError,
+)
 import tractor
 from tractor.msg import (
     _def_msgspec_codec,
@@ -22,6 +32,12 @@ from tractor.msg import (
     mk_codec,
     apply_codec,
     current_msgspec_codec,
+)
+from tractor.msg.types import (
+    PayloadT,
+    Msg,
+    # Started,
+    mk_msg_spec,
 )
 import trio
 
@@ -54,7 +70,7 @@ def mk_custom_codec() -> MsgCodec:
     # apply custom hooks and set a `Decoder` which only
     # loads `NamespacePath` types.
     nsp_codec: MsgCodec = mk_codec(
-        dec_types=NamespacePath,
+        ipc_msg_spec=NamespacePath,
         enc_hook=enc_hook,
         dec_hook=dec_hook,
     )
@@ -194,5 +210,168 @@ def test_codec_hooks_mod():
                             assert isinstance(msg, str)
 
             await p.cancel_actor()
+
+    trio.run(main)
+
+
+def chk_pld_type(
+    generic: Msg|_GenericAlias,
+    payload_type: Type[Struct]|Any,
+    pld: Any,
+
+) -> bool:
+
+    roundtrip: bool = False
+    pld_val_type: Type = type(pld)
+
+    # gen_paramed: _GenericAlias = generic[payload_type]
+    # TODO: verify that the overridden subtypes
+    # DO NOT have modified type-annots from original!
+    # 'Start',  .pld: FuncSpec
+    # 'StartAck',  .pld: IpcCtxSpec
+    # 'Stop',  .pld: UNSEt
+    # 'Error',  .pld: ErrorData
+    # for typedef in (
+    #     [gen_paramed]
+    #     +
+
+    #     # type-var should always be set for these sub-types
+    #     # as well!
+    #     Msg.__subclasses__()
+    # ):
+    #     if typedef.__name__ not in [
+    #         'Msg',
+    #         'Started',
+    #         'Yield',
+    #         'Return',
+    #     ]:
+    #         continue
+    # payload_type: Type[Struct] = CustomPayload
+
+    # TODO: can remove all this right!?
+    #
+    # when parameterized (like `Msg[Any]`) then
+    # we expect an alias as input.
+    # if isinstance(generic, _GenericAlias):
+    #     assert payload_type in generic.__args__
+    # else:
+        # assert PayloadType in generic.__parameters__
+        # pld_param: Parameter = generic.__signature__.parameters['pld']
+        # assert pld_param.annotation is PayloadType
+
+    type_spec: Union[Type[Struct]]
+    msg_types: list[Msg[payload_type]]
+    (
+        type_spec,
+        msg_types,
+    ) = mk_msg_spec(
+        payload_type=payload_type,
+    )
+    enc = msgpack.Encoder()
+    dec = msgpack.Decoder(
+        type=type_spec,  # like `Msg[Any]`
+    )
+
+    # verify the boxed-type for all variable payload-type msgs.
+    for typedef in msg_types:
+
+        pld_field = structs.fields(typedef)[1]
+        assert pld_field.type in {payload_type, PayloadT}
+        # TODO: does this need to work to get all subtypes to
+        # adhere?
+        assert pld_field.type is payload_type
+
+        kwargs: dict[str, Any] = {
+            'cid': '666',
+            'pld': pld,
+        }
+        enc_msg = typedef(**kwargs)
+
+        wire_bytes: bytes = enc.encode(enc_msg)
+
+        try:
+            dec_msg = dec.decode(wire_bytes)
+            assert dec_msg.pld == pld
+            assert (roundtrip := (dec_msg == enc_msg))
+
+        except ValidationError as ve:
+            # breakpoint()
+            if pld_val_type is payload_type:
+                raise ValueError(
+                   'Got `ValidationError` despite type-var match!?\n'
+                    f'pld_val_type: {pld_val_type}\n'
+                    f'payload_type: {payload_type}\n'
+                ) from ve
+
+            else:
+                # ow we good cuz the pld spec mismatched.
+                print(
+                    'Got expected `ValidationError` since,\n'
+                    f'{pld_val_type} is not {payload_type}\n'
+                )
+        else:
+            if (
+                pld_val_type is not payload_type
+                and payload_type is not Any
+            ):
+                raise ValueError(
+                   'DID NOT `ValidationError` despite expected type match!?\n'
+                    f'pld_val_type: {pld_val_type}\n'
+                    f'payload_type: {payload_type}\n'
+                )
+
+    return roundtrip
+
+
+
+def test_limit_msgspec():
+
+    async def main():
+        async with tractor.open_root_actor(
+            debug_mode=True
+        ):
+
+            # ensure we can round-trip a boxing `Msg`
+            assert chk_pld_type(
+                Msg,
+                Any,
+                None,
+            )
+
+            # TODO: don't need this any more right since
+            # `msgspec>=0.15` has the nice generics stuff yah??
+            #
+            # manually override the type annot of the payload
+            # field and ensure it propagates to all msg-subtypes.
+            # Msg.__annotations__['pld'] = Any
+
+            # verify that a mis-typed payload value won't decode
+            assert not chk_pld_type(
+                Msg,
+                int,
+                pld='doggy',
+            )
+
+            # parametrize the boxed `.pld` type as a custom-struct
+            # and ensure that parametrization propagates
+            # to all payload-msg-spec-able subtypes!
+            class CustomPayload(Struct):
+                name: str
+                value: Any
+
+            assert not chk_pld_type(
+                Msg,
+                CustomPayload,
+                pld='doggy',
+            )
+
+            assert chk_pld_type(
+                Msg,
+                CustomPayload,
+                pld=CustomPayload(name='doggy', value='urmom')
+            )
+
+            # uhh bc we can `.pause_from_sync()` now! :surfer:
+            # breakpoint()
 
     trio.run(main)

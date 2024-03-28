@@ -47,20 +47,25 @@ from types import ModuleType
 import msgspec
 from msgspec import msgpack
 
-from .pretty_struct import Struct
+from tractor.msg.pretty_struct import Struct
+from tractor.msg.types import (
+    mk_msg_spec,
+    Msg,
+)
 
 
 # TODO: API changes towards being interchange lib agnostic!
+#
 # -[ ] capnproto has pre-compiled schema for eg..
 #  * https://capnproto.org/language.html
 #  * http://capnproto.github.io/pycapnp/quickstart.html
 #   * https://github.com/capnproto/pycapnp/blob/master/examples/addressbook.capnp
+#
 class MsgCodec(Struct):
     '''
     A IPC msg interchange format lib's encoder + decoder pair.
 
     '''
-
     lib: ModuleType = msgspec
 
     # ad-hoc type extensions
@@ -70,12 +75,22 @@ class MsgCodec(Struct):
 
     # struct type unions
     # https://jcristharif.com/msgspec/structs.html#tagged-unions
-    types: Union[Type[Struct]]|Any = Any
+    ipc_msg_spec: Union[Type[Struct]]|Any = Any
+    payload_msg_spec: Union[Type[Struct]] = Any
 
     # post-configure cached props
     _enc: msgpack.Encoder|None = None
     _dec: msgpack.Decoder|None = None
 
+    # TODO: a sub-decoder system as well?
+    # see related comments in `.msg.types`
+    # _payload_decs: (
+    #     dict[
+    #         str,
+    #         msgpack.Decoder,
+    #     ]
+    #     |None
+    # ) = None
 
     # TODO: use `functools.cached_property` for these ?
     # https://docs.python.org/3/library/functools.html#functools.cached_property
@@ -88,8 +103,9 @@ class MsgCodec(Struct):
         enc_hook: Callable|None = None,
         reset: bool = False,
 
-        # TODO: what's the default for this?
+        # TODO: what's the default for this, and do we care?
         # write_buffer_size: int
+        #
         **kwargs,
 
     ) -> msgpack.Encoder:
@@ -131,7 +147,7 @@ class MsgCodec(Struct):
 
     def decoder(
         self,
-        types: Union[Type[Struct]]|None = None,
+        ipc_msg_spec: Union[Type[Struct]]|None = None,
         dec_hook: Callable|None = None,
         reset: bool = False,
         **kwargs,
@@ -152,7 +168,7 @@ class MsgCodec(Struct):
             or reset
         ):
             self._dec = self.lib.msgpack.Decoder(
-                types or self.types,
+                type=ipc_msg_spec or self.ipc_msg_spec,
                 dec_hook=dec_hook or self.dec_hook,
                 **kwargs,
             )
@@ -169,9 +185,38 @@ class MsgCodec(Struct):
         determined by the 
 
         '''
-
         return self.dec.decode(msg)
 
+
+def mk_tagged_union_dec(
+    tagged_structs: list[Struct],
+
+) -> tuple[
+    list[str],
+    msgpack.Decoder,
+]:
+    # See "tagged unions" docs:
+    # https://jcristharif.com/msgspec/structs.html#tagged-unions
+
+    # "The quickest way to enable tagged unions is to set tag=True when
+    # defining every struct type in the union. In this case tag_field
+    # defaults to "type", and tag defaults to the struct class name
+    # (e.g. "Get")."
+    first: Struct = tagged_structs[0]
+    types_union: Union[Type[Struct]] = Union[
+       first
+    ]|Any
+    tags: list[str] = [first.__name__]
+
+    for struct in tagged_structs[1:]:
+        types_union |= struct
+        tags.append(struct.__name__)
+
+    dec = msgpack.Decoder(types_union)
+    return (
+        tags,
+        dec,
+    )
 
 # TODO: struct aware messaging coders as per:
 # - https://github.com/goodboy/tractor/issues/36
@@ -181,13 +226,18 @@ class MsgCodec(Struct):
 def mk_codec(
     libname: str = 'msgspec',
 
+    # for codec-ing boxed `Msg`-with-payload msgs
+    payload_types: Union[Type[Struct]]|None = None,
+
+    # TODO: do we want to allow NOT/using a diff `Msg`-set?
+    #
     # struct type unions set for `Decoder`
     # https://jcristharif.com/msgspec/structs.html#tagged-unions
-    dec_types: Union[Type[Struct]]|Any = Any,
+    ipc_msg_spec: Union[Type[Struct]]|Any = Any,
 
     cache_now: bool = True,
 
-    # proxy to the `Struct.__init__()`
+    # proxy as `Struct(**kwargs)`
     **kwargs,
 
 ) -> MsgCodec:
@@ -197,14 +247,59 @@ def mk_codec(
     `msgspec` ;).
 
     '''
+    # (manually) generate a msg-payload-spec for all relevant
+    # god-boxing-msg subtypes, parameterizing the `Msg.pld: PayloadT`
+    # for the decoder such that all sub-type msgs in our SCIPP
+    # will automatically decode to a type-"limited" payload (`Struct`)
+    # object (set).
+    payload_type_spec: Union[Type[Msg]]|None = None
+    if payload_types:
+        (
+            payload_type_spec,
+            msg_types,
+        ) = mk_msg_spec(
+            payload_type=payload_types,
+        )
+        assert len(payload_type_spec.__args__) == len(msg_types)
+
+        # TODO: sub-decode `.pld: Raw`?
+        # see similar notes inside `.msg.types`..
+        #
+        # not sure we'll end up wanting/needing this
+        # though it might have unforeseen advantages in terms
+        # of enabling encrypted appliciation layer (only)
+        # payloads?
+        #
+        # register sub-payload decoders to load `.pld: Raw`
+        # decoded `Msg`-packets using a dynamic lookup (table)
+        # instead of a pre-defined msg-spec via `Generic`
+        # parameterization.
+        #
+        # (
+        #     tags,
+        #     payload_dec,
+        # ) = mk_tagged_union_dec(
+        #     tagged_structs=list(payload_types.__args__),
+        # )
+        # _payload_decs: (
+        #     dict[str, msgpack.Decoder]|None
+        # ) = {
+        #     # pre-seed decoders for std-py-type-set for use when
+        #     # `Msg.pld == None|Any`.
+        #     None: msgpack.Decoder(Any),
+        #     Any: msgpack.Decoder(Any),
+        # }
+        # for name in tags:
+        #     _payload_decs[name] = payload_dec
+
     codec = MsgCodec(
-        types=dec_types,
+        ipc_msg_spec=ipc_msg_spec,
+        payload_msg_spec=payload_type_spec,
         **kwargs,
     )
     assert codec.lib.__name__ == libname
 
-    # by default config and cache the codec pair for given
-    # input settings.
+    # by default, config-n-cache the codec pair from input settings.
     if cache_now:
         assert codec.enc
         assert codec.dec
@@ -251,3 +346,28 @@ def current_msgspec_codec() -> MsgCodec:
 
     '''
     return _ctxvar_MsgCodec.get()
+
+
+@cm
+def limit_msg_spec(
+    payload_types: Union[Type[Struct]],
+
+    # TODO: don't need this approach right?
+    #
+    # tagged_structs: list[Struct]|None = None,
+
+    **codec_kwargs,
+):
+    '''
+    Apply a `MsgCodec` that will natively decode the SC-msg set's
+    `Msg.pld: Union[Type[Struct]]` payload fields using
+    tagged-unions of `msgspec.Struct`s from the `payload_types`
+    for all IPC contexts in use by the current `trio.Task`.
+
+    '''
+    msgspec_codec: MsgCodec = mk_codec(
+        payload_types=payload_types,
+        **codec_kwargs,
+    )
+    with apply_codec(msgspec_codec):
+        yield msgspec_codec
