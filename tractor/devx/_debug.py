@@ -190,11 +190,14 @@ class Lock:
         is_trio_main = (
             # TODO: since this is private, @oremanj says
             # we should just copy the impl for now..
-            trio._util.is_main_thread()
+            (is_main_thread := trio._util.is_main_thread())
             and
             (async_lib := sniffio.current_async_library()) == 'trio'
         )
-        if not is_trio_main:
+        if (
+            not is_trio_main
+            and is_main_thread
+        ):
             log.warning(
                 f'Current async-lib detected by `sniffio`: {async_lib}\n'
             )
