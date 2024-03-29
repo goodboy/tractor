@@ -73,16 +73,15 @@ class MsgCodec(Struct):
     A IPC msg interchange format lib's encoder + decoder pair.
 
     '''
-    # post-configure-cached when prop-accessed (see `mk_codec()`
-    # OR can be passed directly as,
-    # `MsgCodec(_enc=<Encoder>,  _dec=<Decoder>)`
-    _enc: msgpack.Encoder|None = None
-    _dec: msgpack.Decoder|None = None
+    _enc: msgpack.Encoder
+    _dec: msgpack.Decoder
+
+    pld_spec: Union[Type[Struct]]|None
 
     # struct type unions
     # https://jcristharif.com/msgspec/structs.html#tagged-unions
     @property
-    def ipc_pld_spec(self) -> Union[Type[Struct]]:
+    def msg_spec(self) -> Union[Type[Struct]]:
         return self._dec.type
 
     lib: ModuleType = msgspec
@@ -142,6 +141,7 @@ class MsgCodec(Struct):
         determined by the 
 
         '''
+        # https://jcristharif.com/msgspec/usage.html#typed-decoding
         return self._dec.decode(msg)
 
     # TODO: do we still want to try and support the sub-decoder with
@@ -149,6 +149,7 @@ class MsgCodec(Struct):
     # future grief?
     #
     # -[ ] <NEW-ISSUE-FOR-ThIS-HERE>
+    #  -> https://jcristharif.com/msgspec/api.html#raw
     #
     #def mk_pld_subdec(
     #    self,
@@ -222,6 +223,20 @@ class MsgCodec(Struct):
     #         # ),
     #     )
     #     return codec.enc.encode(msg)
+
+
+
+# TODO: sub-decoded `Raw` fields?
+# -[ ] see `MsgCodec._payload_decs` notes
+#
+# XXX if we wanted something more complex then field name str-keys
+# we might need a header field type to describe the lookup sys?
+# class Header(Struct, tag=True):
+#     '''
+#     A msg header which defines payload properties
+
+#     '''
+#     payload_tag: str|None = None
 
 
  #def mk_tagged_union_dec(
@@ -345,10 +360,6 @@ def mk_codec(
         assert len(ipc_msg_spec.__args__) == len(msg_types)
         assert ipc_msg_spec
 
-        dec = msgpack.Decoder(
-            type=ipc_msg_spec,  # like `Msg[Any]`
-        )
-
     else:
         ipc_msg_spec = ipc_msg_spec or Any
 
@@ -363,6 +374,7 @@ def mk_codec(
     codec = MsgCodec(
         _enc=enc,
         _dec=dec,
+        pld_spec=ipc_pld_spec,
         # payload_msg_specs=payload_msg_specs,
         # **kwargs,
     )

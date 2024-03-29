@@ -37,36 +37,20 @@ from ._codec import (
 from .types import (
     Msg as Msg,
 
-    Start,  # with pld
+    Start as Start,  # with pld
     FuncSpec as FuncSpec,
 
-    StartAck, # with pld
+    StartAck as StartAck, # with pld
     IpcCtxSpec as IpcCtxSpec,
 
-    Started,
-    Yield,
-    Stop,
-    Return,
+    Started as Started,
+    Yield as Yield,
+    Stop as Stop,
+    Return as Return,
 
-    Error,  # with pld
-    ErrorData as ErrorData
+    Error as Error,  # with pld
+    ErrorData as ErrorData,
+
+    # full msg spec set
+    __spec__ as __spec__,
 )
-
-
-# built-in SC shuttle protocol msg type set in
-# approx order of the IPC txn-state spaces.
-__spec__: list[Msg] = [
-
-    # inter-actor RPC initiation
-    Start,
-    StartAck,
-
-    # no-outcome-yet IAC (inter-actor-communication)
-    Started,
-    Yield,
-    Stop,
-
-    # termination outcomes
-    Return,
-    Error,
-]

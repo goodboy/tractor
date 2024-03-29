@@ -48,6 +48,7 @@ from tractor._exceptions import TransportClosed
 from tractor.msg import (
     _ctxvar_MsgCodec,
     MsgCodec,
+    mk_codec,
 )
 
 log = get_logger(__name__)
@@ -162,7 +163,7 @@ class MsgpackTCPStream(MsgTransport):
 
         # allow for custom IPC msg interchange format
         # dynamic override Bo
-        self.codec: MsgCodec = codec or MsgCodec()
+        self.codec: MsgCodec = codec or mk_codec()
 
     async def _iter_packets(self) -> AsyncGenerator[dict, None]:
         '''

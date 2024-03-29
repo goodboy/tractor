@@ -34,19 +34,12 @@ from typing import (
 )
 
 from msgspec import (
+    defstruct,
+    # field,
     Struct,
     UNSET,
+    UnsetType,
 )
-
-# TODO: sub-decoded `Raw` fields?
-# -[ ] see `MsgCodec._payload_decs` notes
-#
-# class Header(Struct, tag=True):
-#     '''
-#     A msg header which defines payload properties
-
-#     '''
-#     payload_tag: str|None = None
 
 # type variable for the boxed payload field `.pld`
 PayloadT = TypeVar('PayloadT')
@@ -57,6 +50,9 @@ class Msg(
     Generic[PayloadT],
     tag=True,
     tag_field='msg_type',
+
+    # eq=True,
+    # order=True,
 ):
     '''
     The "god" boxing msg type.
@@ -66,8 +62,13 @@ class Msg(
     tree.
 
     '''
-    # TODO: use UNSET here?
     cid: str|None  # call/context-id
+    # ^-TODO-^: more explicit type?
+    # -[ ] use UNSET here?
+    #  https://jcristharif.com/msgspec/supported-types.html#unset
+    #
+    # -[ ] `uuid.UUID` which has multi-protocol support
+    #  https://jcristharif.com/msgspec/supported-types.html#uuid
 
     # The msgs "payload" (spelled without vowels):
     # https://en.wikipedia.org/wiki/Payload_(computing)
@@ -136,19 +137,18 @@ class Start(
     pld: FuncSpec
 
 
-FuncType: Literal[
-    'asyncfunc',
-    'asyncgen',
-    'context',  # TODO: the only one eventually?
-] = 'context'
-
-
 class IpcCtxSpec(Struct):
     '''
     An inter-actor-`trio.Task`-comms `Context` spec.
 
     '''
-    functype: FuncType
+    # TODO: maybe better names for all these?
+    # -[ ] obvi ^ would need sync with `._rpc`
+    functype: Literal[
+        'asyncfunc',
+        'asyncgen',
+        'context',  # TODO: the only one eventually?
+    ]
 
     # TODO: as part of the reponse we should report our allowed
     # msg spec which should be generated from the type-annots as
@@ -182,6 +182,7 @@ class Started(
     decorated IPC endpoint.
 
     '''
+    pld: PayloadT
 
 
 # TODO: instead of using our existing `Start`
@@ -198,6 +199,7 @@ class Yield(
     Per IPC transmission of a value from `await MsgStream.send(<value>)`.
 
     '''
+    pld: PayloadT
 
 
 class Stop(Msg):
@@ -206,7 +208,7 @@ class Stop(Msg):
     of `StopAsyncIteration`.
 
     '''
-    pld: UNSET
+    pld: UnsetType = UNSET
 
 
 class Return(
@@ -218,6 +220,7 @@ class Return(
     func-as-`trio.Task`.
 
     '''
+    pld: PayloadT
 
 
 class ErrorData(Struct):
@@ -258,13 +261,47 @@ class Error(Msg):
 #     cid: str
 
 
+# built-in SC shuttle protocol msg type set in
+# approx order of the IPC txn-state spaces.
+__spec__: list[Msg] = [
+
+    # inter-actor RPC initiation
+    Start,
+    StartAck,
+
+    # no-outcome-yet IAC (inter-actor-communication)
+    Started,
+    Yield,
+    Stop,
+
+    # termination outcomes
+    Return,
+    Error,
+]
+
+_runtime_spec_msgs: list[Msg] = [
+    Start,
+    StartAck,
+    Stop,
+    Error,
+]
+_payload_spec_msgs: list[Msg] = [
+    Started,
+    Yield,
+    Return,
+]
+
+
 def mk_msg_spec(
     payload_type_union: Union[Type] = Any,
-    boxing_msg_set: set[Msg] = {
-        Started,
-        Yield,
-        Return,
-    },
+
+    # boxing_msg_set: list[Msg] = _payload_spec_msgs,
+    spec_build_method: Literal[
+        'indexed_generics',  # works
+        'defstruct',
+        'types_new_class',
+
+    ] = 'indexed_generics',
 
 ) -> tuple[
     Union[Type[Msg]],
@@ -281,26 +318,58 @@ def mk_msg_spec(
 
     '''
     submsg_types: list[Type[Msg]] = Msg.__subclasses__()
+    bases: tuple = (
+        # XXX NOTE XXX the below generic-parameterization seems to
+        # be THE ONLY way to get this to work correctly in terms
+        # of getting ValidationError on a roundtrip?
+        Msg[payload_type_union],
+        Generic[PayloadT],
+    )
+    defstruct_bases: tuple = (
+        Msg, # [payload_type_union],
+        # Generic[PayloadT],
+        # ^-XXX-^: not allowed? lul..
+    )
+    ipc_msg_types: list[Msg] = []
 
-    # TODO: see below as well,
-    # => union building approach with `.__class_getitem__()`
-    # doesn't seem to work..?
-    #
-    # payload_type_spec: Union[Type[Msg]]
-    #
-    msg_types: list[Msg] = []
-    for msgtype in boxing_msg_set:
+    idx_msg_types: list[Msg] = []
+    defs_msg_types: list[Msg] = []
+    nc_msg_types: list[Msg] = []
+
+    for msgtype in __spec__:
+
+        # for the NON-payload (user api) type specify-able
+        # msgs types, we simply aggregate the def as is
+        # for inclusion in the output type `Union`.
+        if msgtype not in _payload_spec_msgs:
+            ipc_msg_types.append(msgtype)
+            continue
 
         # check inheritance sanity
         assert msgtype in submsg_types
 
         # TODO: wait why do we need the dynamic version here?
-        # -[ ] paraming the `PayloadT` values via `Generic[T]`
-        #   doesn't seem to work at all?
-        # -[ ] is there a way to get it to work at module level
-        #   just using inheritance or maybe a metaclass?
+        # XXX ANSWER XXX -> BC INHERITANCE.. don't work w generics..
         #
-        # index_paramed_msg_type: Msg = msgtype[payload_type_union]
+        # NOTE previously bc msgtypes WERE NOT inheritting
+        # directly the `Generic[PayloadT]` type, the manual method
+        # of generic-paraming with `.__class_getitem__()` wasn't
+        # working..
+        #
+        # XXX but bc i changed that to make every subtype inherit
+        # it, this manual "indexed parameterization" method seems
+        # to work?
+        #
+        # -[x] paraming the `PayloadT` values via `Generic[T]`
+        #   does work it seems but WITHOUT inheritance of generics
+        #
+        # -[-] is there a way to get it to work at module level
+        #   just using inheritance or maybe a metaclass?
+        #  => thot that `defstruct` might work, but NOPE, see
+        #   below..
+        #
+        idxed_msg_type: Msg = msgtype[payload_type_union]
+        idx_msg_types.append(idxed_msg_type)
 
         # TODO: WHY do we need to dynamically generate the
         # subtype-msgs here to ensure the `.pld` parameterization
@@ -308,30 +377,69 @@ def mk_msg_spec(
         # `msgpack.Decoder()`..?
         #
         # dynamically create the payload type-spec-limited msg set.
-        manual_paramed_msg_subtype: Type = types.new_class(
-            msgtype.__name__,
-            (
-                # XXX NOTE XXX this seems to be THE ONLY
-                # way to get this to work correctly!?!
-                Msg[payload_type_union],
-                Generic[PayloadT],
-            ),
-            {},
+        newclass_msgtype: Type = types.new_class(
+            name=msgtype.__name__,
+            bases=bases,
+            kwds={},
+        )
+        nc_msg_types.append(
+            newclass_msgtype[payload_type_union]
         )
 
-        # TODO: grok the diff here better..
+        # with `msgspec.structs.defstruct`
+        # XXX ALSO DOESN'T WORK
+        defstruct_msgtype = defstruct(
+            name=msgtype.__name__,
+            fields=[
+                ('cid', str),
+
+                # XXX doesn't seem to work..
+                # ('pld', PayloadT),
+
+                ('pld', payload_type_union),
+            ],
+            bases=defstruct_bases,
+        )
+        defs_msg_types.append(defstruct_msgtype)
+
         # assert index_paramed_msg_type == manual_paramed_msg_subtype
 
-        # XXX TODO: why does the manual method work but not the
-        # `.__class_getitem__()` one!?!
-        paramed_msg_type = manual_paramed_msg_subtype
+        # paramed_msg_type = manual_paramed_msg_subtype
 
-        # payload_type_spec |= paramed_msg_type
-        msg_types.append(paramed_msg_type)
+        # ipc_payload_msgs_type_union |= index_paramed_msg_type
 
+    idx_spec: Union[Type[Msg]] = Union[*idx_msg_types]
+    def_spec: Union[Type[Msg]] = Union[*defs_msg_types]
+    nc_spec: Union[Type[Msg]] = Union[*nc_msg_types]
 
-    payload_type_spec: Union[Type[Msg]] = Union[*msg_types]
+    specs: dict[str, Union[Type[Msg]]] = {
+        'indexed_generics': idx_spec,
+        'defstruct': def_spec,
+        'types_new_class': nc_spec,
+    }
+    msgtypes_table: dict[str, list[Msg]] = {
+        'indexed_generics': idx_msg_types,
+        'defstruct': defs_msg_types,
+        'types_new_class': nc_msg_types,
+    }
+
+    # XXX lol apparently type unions can't ever
+    # be equal eh?
+    # TODO: grok the diff here better..
+    #
+    # assert (
+    #     idx_spec
+    #     ==
+    #     nc_spec
+    #     ==
+    #     def_spec
+    # )
+    # breakpoint()
+
+    pld_spec: Union[Type] = specs[spec_build_method]
+    runtime_spec: Union[Type] = Union[*ipc_msg_types]
+
     return (
-        payload_type_spec,
-        msg_types,
+        pld_spec | runtime_spec,
+        msgtypes_table[spec_build_method] + ipc_msg_types,
     )

@@ -35,6 +35,7 @@ from tractor.msg import (
     apply_codec,
     current_msgspec_codec,
 )
+from tractor.msg import types
 from tractor.msg.types import (
     # PayloadT,
     Msg,
@@ -235,30 +236,14 @@ def test_codec_hooks_mod():
 
 
 def chk_pld_type(
-    generic: Msg|_GenericAlias,
-    payload_type: Type[Struct]|Any,
+    payload_spec: Type[Struct]|Any,
     pld: Any,
+
+    expect_roundtrip: bool|None = None,
 
 ) -> bool:
 
-    roundtrip: bool = False
     pld_val_type: Type = type(pld)
-
-    # gen_paramed: _GenericAlias = generic[payload_type]
-    # for typedef in (
-    #     [gen_paramed]
-    #     +
-    #     # type-var should always be set for these sub-types
-    #     # as well!
-    #     Msg.__subclasses__()
-    # ):
-    #     if typedef.__name__ not in [
-    #         'Msg',
-    #         'Started',
-    #         'Yield',
-    #         'Return',
-    #     ]:
-    #         continue
 
     # TODO: verify that the overridden subtypes
     # DO NOT have modified type-annots from original!
@@ -267,48 +252,64 @@ def chk_pld_type(
     # 'Stop',  .pld: UNSEt
     # 'Error',  .pld: ErrorData
 
-
-    pld_type_spec: Union[Type[Struct]]
-    msg_types: list[Msg[payload_type]]
-
-    # make a one-off dec to compare with our `MsgCodec` instance
-    # which does the below `mk_msg_spec()` call internally
-    (
-        pld_type_spec,
-        msg_types,
-    ) = mk_msg_spec(
-        payload_type_union=payload_type,
-    )
-    enc = msgpack.Encoder()
-    dec = msgpack.Decoder(
-        type=pld_type_spec or Any,  # like `Msg[Any]`
-    )
-
     codec: MsgCodec = mk_codec(
         # NOTE: this ONLY accepts `Msg.pld` fields of a specified
         # type union.
-        ipc_pld_spec=payload_type,
+        ipc_pld_spec=payload_spec,
+    )
+
+    # make a one-off dec to compare with our `MsgCodec` instance
+    # which does the below `mk_msg_spec()` call internally
+    ipc_msg_spec: Union[Type[Struct]]
+    msg_types: list[Msg[payload_spec]]
+    (
+        ipc_msg_spec,
+        msg_types,
+    ) = mk_msg_spec(
+        payload_type_union=payload_spec,
+    )
+    _enc = msgpack.Encoder()
+    _dec = msgpack.Decoder(
+        type=ipc_msg_spec or Any,  # like `Msg[Any]`
+    )
+
+    assert (
+        payload_spec
+        ==
+        codec.pld_spec
     )
 
     # assert codec.dec == dec
-    # XXX-^ not sure why these aren't "equal" but when cast
+    #
+    # ^-XXX-^ not sure why these aren't "equal" but when cast
     # to `str` they seem to match ?? .. kk
+
     assert (
-        str(pld_type_spec)
+        str(ipc_msg_spec)
         ==
-        str(codec.ipc_pld_spec)
+        str(codec.msg_spec)
         ==
-        str(dec.type)
+        str(_dec.type)
         ==
         str(codec.dec.type)
     )
 
     # verify the boxed-type for all variable payload-type msgs.
+    if not msg_types:
+        breakpoint()
+
+    roundtrip: bool|None = None
+    pld_spec_msg_names: list[str] = [
+        td.__name__ for td in types._payload_spec_msgs
+    ]
     for typedef in msg_types:
 
+        skip_runtime_msg: bool = typedef.__name__ not in pld_spec_msg_names
+        if skip_runtime_msg:
+            continue
+
         pld_field = structs.fields(typedef)[1]
-        assert pld_field.type is payload_type
-        # TODO-^ does this need to work to get all subtypes to adhere?
+        assert pld_field.type is payload_spec # TODO-^ does this need to work to get all subtypes to adhere?
 
         kwargs: dict[str, Any] = {
             'cid': '666',
@@ -316,44 +317,72 @@ def chk_pld_type(
         }
         enc_msg: Msg = typedef(**kwargs)
 
+        _wire_bytes: bytes = _enc.encode(enc_msg)
         wire_bytes: bytes = codec.enc.encode(enc_msg)
-        _wire_bytes: bytes = enc.encode(enc_msg)
+        assert _wire_bytes == wire_bytes
 
+        ve: ValidationError|None = None
         try:
-            _dec_msg = dec.decode(wire_bytes)
             dec_msg = codec.dec.decode(wire_bytes)
+            _dec_msg = _dec.decode(wire_bytes)
 
-            assert dec_msg.pld == pld
-            assert _dec_msg.pld == pld
-            assert (roundtrip := (_dec_msg == enc_msg))
+            # decoded msg and thus payload should be exactly same!
+            assert (roundtrip := (
+                _dec_msg
+                ==
+                dec_msg
+                ==
+                enc_msg
+            ))
 
-        except ValidationError as ve:
-            if pld_val_type is payload_type:
+            if (
+                expect_roundtrip is not None
+                and expect_roundtrip != roundtrip
+            ):
+                breakpoint()
+
+            assert (
+                pld
+                ==
+                dec_msg.pld
+                ==
+                enc_msg.pld
+            )
+            # assert (roundtrip := (_dec_msg == enc_msg))
+
+        except ValidationError as _ve:
+            ve = _ve
+            roundtrip: bool = False
+            if pld_val_type is payload_spec:
                 raise ValueError(
                    'Got `ValidationError` despite type-var match!?\n'
                     f'pld_val_type: {pld_val_type}\n'
-                    f'payload_type: {payload_type}\n'
+                    f'payload_type: {payload_spec}\n'
                 ) from ve
 
             else:
                 # ow we good cuz the pld spec mismatched.
                 print(
                     'Got expected `ValidationError` since,\n'
-                    f'{pld_val_type} is not {payload_type}\n'
+                    f'{pld_val_type} is not {payload_spec}\n'
                 )
         else:
             if (
-                pld_val_type is not payload_type
-                and payload_type is not Any
+                payload_spec is not Any
+                and
+                pld_val_type is not payload_spec
             ):
                 raise ValueError(
                    'DID NOT `ValidationError` despite expected type match!?\n'
                     f'pld_val_type: {pld_val_type}\n'
-                    f'payload_type: {payload_type}\n'
+                    f'payload_type: {payload_spec}\n'
                 )
 
-    return roundtrip
+    # full code decode should always be attempted!
+    if roundtrip is None:
+        breakpoint()
 
+    return roundtrip
 
 
 def test_limit_msgspec():
@@ -365,9 +394,10 @@ def test_limit_msgspec():
 
             # ensure we can round-trip a boxing `Msg`
             assert chk_pld_type(
-                Msg,
+                # Msg,
                 Any,
                 None,
+                expect_roundtrip=True,
             )
 
             # TODO: don't need this any more right since
@@ -379,7 +409,7 @@ def test_limit_msgspec():
 
             # verify that a mis-typed payload value won't decode
             assert not chk_pld_type(
-                Msg,
+                # Msg,
                 int,
                 pld='doggy',
             )
@@ -392,13 +422,13 @@ def test_limit_msgspec():
                 value: Any
 
             assert not chk_pld_type(
-                Msg,
+                # Msg,
                 CustomPayload,
                 pld='doggy',
             )
 
             assert chk_pld_type(
-                Msg,
+                # Msg,
                 CustomPayload,
                 pld=CustomPayload(name='doggy', value='urmom')
             )
