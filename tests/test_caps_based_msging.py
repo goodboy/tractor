@@ -1,5 +1,6 @@
 '''
-Functional audits for our "capability based messaging (schema)" feats.
+Low-level functional audits for our
+"capability based messaging"-spec feats.
 
 B~)
 
@@ -22,6 +23,7 @@ from msgspec import (
     Struct,
     ValidationError,
 )
+import pytest
 import tractor
 from tractor.msg import (
     _def_msgspec_codec,
@@ -34,12 +36,28 @@ from tractor.msg import (
     current_msgspec_codec,
 )
 from tractor.msg.types import (
-    PayloadT,
+    # PayloadT,
     Msg,
     # Started,
     mk_msg_spec,
 )
 import trio
+
+
+def test_msg_spec_xor_pld_spec():
+    '''
+    If the `.msg.types.Msg`-set is overridden, we
+    can't also support a `Msg.pld` spec.
+
+    '''
+    # apply custom hooks and set a `Decoder` which only
+    # loads `NamespacePath` types.
+    with pytest.raises(RuntimeError):
+        mk_codec(
+            ipc_msg_spec=Any,
+            ipc_pld_spec=NamespacePath,
+        )
+
 
 # TODO: wrap these into `._codec` such that user can just pass
 # a type table of some sort?
@@ -66,11 +84,13 @@ def ex_func(*args):
     print(f'ex_func({args})')
 
 
-def mk_custom_codec() -> MsgCodec:
+def mk_custom_codec(
+    ipc_msg_spec: Type[Any] = Any,
+) -> MsgCodec:
     # apply custom hooks and set a `Decoder` which only
     # loads `NamespacePath` types.
     nsp_codec: MsgCodec = mk_codec(
-        ipc_msg_spec=NamespacePath,
+        ipc_msg_spec=ipc_msg_spec,
         enc_hook=enc_hook,
         dec_hook=dec_hook,
     )
@@ -225,16 +245,9 @@ def chk_pld_type(
     pld_val_type: Type = type(pld)
 
     # gen_paramed: _GenericAlias = generic[payload_type]
-    # TODO: verify that the overridden subtypes
-    # DO NOT have modified type-annots from original!
-    # 'Start',  .pld: FuncSpec
-    # 'StartAck',  .pld: IpcCtxSpec
-    # 'Stop',  .pld: UNSEt
-    # 'Error',  .pld: ErrorData
     # for typedef in (
     #     [gen_paramed]
     #     +
-
     #     # type-var should always be set for these sub-types
     #     # as well!
     #     Msg.__subclasses__()
@@ -246,56 +259,75 @@ def chk_pld_type(
     #         'Return',
     #     ]:
     #         continue
-    # payload_type: Type[Struct] = CustomPayload
 
-    # TODO: can remove all this right!?
-    #
-    # when parameterized (like `Msg[Any]`) then
-    # we expect an alias as input.
-    # if isinstance(generic, _GenericAlias):
-    #     assert payload_type in generic.__args__
-    # else:
-        # assert PayloadType in generic.__parameters__
-        # pld_param: Parameter = generic.__signature__.parameters['pld']
-        # assert pld_param.annotation is PayloadType
+    # TODO: verify that the overridden subtypes
+    # DO NOT have modified type-annots from original!
+    # 'Start',  .pld: FuncSpec
+    # 'StartAck',  .pld: IpcCtxSpec
+    # 'Stop',  .pld: UNSEt
+    # 'Error',  .pld: ErrorData
 
-    type_spec: Union[Type[Struct]]
+
+    pld_type_spec: Union[Type[Struct]]
     msg_types: list[Msg[payload_type]]
+
+    # make a one-off dec to compare with our `MsgCodec` instance
+    # which does the below `mk_msg_spec()` call internally
     (
-        type_spec,
+        pld_type_spec,
         msg_types,
     ) = mk_msg_spec(
-        payload_type=payload_type,
+        payload_type_union=payload_type,
     )
     enc = msgpack.Encoder()
     dec = msgpack.Decoder(
-        type=type_spec,  # like `Msg[Any]`
+        type=pld_type_spec or Any,  # like `Msg[Any]`
+    )
+
+    codec: MsgCodec = mk_codec(
+        # NOTE: this ONLY accepts `Msg.pld` fields of a specified
+        # type union.
+        ipc_pld_spec=payload_type,
+    )
+
+    # assert codec.dec == dec
+    # XXX-^ not sure why these aren't "equal" but when cast
+    # to `str` they seem to match ?? .. kk
+    assert (
+        str(pld_type_spec)
+        ==
+        str(codec.ipc_pld_spec)
+        ==
+        str(dec.type)
+        ==
+        str(codec.dec.type)
     )
 
     # verify the boxed-type for all variable payload-type msgs.
     for typedef in msg_types:
 
         pld_field = structs.fields(typedef)[1]
-        assert pld_field.type in {payload_type, PayloadT}
-        # TODO: does this need to work to get all subtypes to
-        # adhere?
         assert pld_field.type is payload_type
+        # TODO-^ does this need to work to get all subtypes to adhere?
 
         kwargs: dict[str, Any] = {
             'cid': '666',
             'pld': pld,
         }
-        enc_msg = typedef(**kwargs)
+        enc_msg: Msg = typedef(**kwargs)
 
-        wire_bytes: bytes = enc.encode(enc_msg)
+        wire_bytes: bytes = codec.enc.encode(enc_msg)
+        _wire_bytes: bytes = enc.encode(enc_msg)
 
         try:
-            dec_msg = dec.decode(wire_bytes)
+            _dec_msg = dec.decode(wire_bytes)
+            dec_msg = codec.dec.decode(wire_bytes)
+
             assert dec_msg.pld == pld
-            assert (roundtrip := (dec_msg == enc_msg))
+            assert _dec_msg.pld == pld
+            assert (roundtrip := (_dec_msg == enc_msg))
 
         except ValidationError as ve:
-            # breakpoint()
             if pld_val_type is payload_type:
                 raise ValueError(
                    'Got `ValidationError` despite type-var match!?\n'
