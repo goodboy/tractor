@@ -22,9 +22,7 @@ that is,
 the "Structurred-Concurrency-Inter-Process-(dialog)-(un)Protocol".
 
 '''
-
 from __future__ import annotations
-# from contextlib import contextmanager as cm
 import types
 from typing import (
     Any,
@@ -36,14 +34,12 @@ from typing import (
 )
 
 from msgspec import (
-    msgpack,
-    Raw,
     Struct,
     UNSET,
 )
 
-
-# TODO: can also remove yah?
+# TODO: sub-decoded `Raw` fields?
+# -[ ] see `MsgCodec._payload_decs` notes
 #
 # class Header(Struct, tag=True):
 #     '''
@@ -70,7 +66,6 @@ class Msg(
     tree.
 
     '''
-    # header: Header
     # TODO: use UNSET here?
     cid: str|None  # call/context-id
 
@@ -94,9 +89,24 @@ class Msg(
     pld: PayloadT
 
 
-# TODO: better name, like `Call/TaskInput`?
+# TODO: caps based RPC support in the payload?
+#
+# -[ ] integration with our ``enable_modules: list[str]`` caps sys.
+#   ``pkgutil.resolve_name()`` internally uses
+#   ``importlib.import_module()`` which can be filtered by
+#   inserting a ``MetaPathFinder`` into ``sys.meta_path`` (which
+#   we could do before entering the ``Actor._process_messages()``
+#   loop)?
+#   - https://github.com/python/cpython/blob/main/Lib/pkgutil.py#L645
+#   - https://stackoverflow.com/questions/1350466/preventing-python-code-from-importing-certain-modules
+#   - https://stackoverflow.com/a/63320902
+#   - https://docs.python.org/3/library/sys.html#sys.meta_path
+#
+# -[ ] can we combine .ns + .func into a native `NamespacePath` field?
+#
+# -[ ]better name, like `Call/TaskInput`?
+#
 class FuncSpec(Struct):
-    # TODO: can we combine these 2 into a `NamespacePath` field?
     ns: str
     func: str
 
@@ -249,7 +259,7 @@ class Error(Msg):
 
 
 def mk_msg_spec(
-    payload_type: Union[Type] = Any,
+    payload_type_union: Union[Type] = Any,
     boxing_msg_set: set[Msg] = {
         Started,
         Yield,
@@ -261,10 +271,13 @@ def mk_msg_spec(
     list[Type[Msg]],
 ]:
     '''
-    Generate a payload-type-parameterized `Msg` specification such
-    that IPC msgs which can be `Msg.pld` (payload) type
-    limited/filterd are specified given an input `payload_type:
-    Union[Type]`.
+    Create a payload-(data-)type-parameterized IPC message specification.
+
+    Allows generating IPC msg types from the above builtin set
+    with a payload (field) restricted data-type via the `Msg.pld:
+    PayloadT` type var. This allows runtime-task contexts to use
+    the python type system to limit/filter payload values as
+    determined by the input `payload_type_union: Union[Type]`.
 
     '''
     submsg_types: list[Type[Msg]] = Msg.__subclasses__()
@@ -287,7 +300,7 @@ def mk_msg_spec(
         # -[ ] is there a way to get it to work at module level
         #   just using inheritance or maybe a metaclass?
         #
-        # index_paramed_msg_type: Msg = msgtype[payload_type]
+        # index_paramed_msg_type: Msg = msgtype[payload_type_union]
 
         # TODO: WHY do we need to dynamically generate the
         # subtype-msgs here to ensure the `.pld` parameterization
@@ -300,7 +313,7 @@ def mk_msg_spec(
             (
                 # XXX NOTE XXX this seems to be THE ONLY
                 # way to get this to work correctly!?!
-                Msg[payload_type],
+                Msg[payload_type_union],
                 Generic[PayloadT],
             ),
             {},
@@ -322,71 +335,3 @@ def mk_msg_spec(
         payload_type_spec,
         msg_types,
     )
-
-
-# TODO: integration with our ``enable_modules: list[str]`` caps sys.
-#
-# ``pkgutil.resolve_name()`` internally uses
-# ``importlib.import_module()`` which can be filtered by inserting
-# a ``MetaPathFinder`` into ``sys.meta_path`` (which we could do before
-# entering the ``Actor._process_messages()`` loop).
-# https://github.com/python/cpython/blob/main/Lib/pkgutil.py#L645
-# https://stackoverflow.com/questions/1350466/preventing-python-code-from-importing-certain-modules
-#   - https://stackoverflow.com/a/63320902
-#   - https://docs.python.org/3/library/sys.html#sys.meta_path
-
-# TODO: do we still want to try and support the sub-decoder with
-# `Raw` technique in the case that the `Generic` approach gives
-# future grief?
-#
-# sub-decoders for retreiving embedded
-# payload data and decoding to a sender
-# side defined (struct) type.
-_payload_decs:  dict[
-    str|None,
-    msgpack.Decoder,
-] = {
-    # default decoder is used when `Header.payload_tag == None`
-    None: msgpack.Decoder(Any),
-}
-
-
-def dec_payload(
-    msg: Msg,
-    msg_dec: msgpack.Decoder = msgpack.Decoder(
-        type=Msg[Any]
-    ),
-
-) -> Any|Struct:
-
-    msg: Msg = msg_dec.decode(msg)
-    payload_tag: str = msg.header.payload_tag
-    payload_dec: msgpack.Decoder = _payload_decs[payload_tag]
-    return payload_dec.decode(msg.pld)
-
-
-def enc_payload(
-    enc: msgpack.Encoder,
-    payload: Any,
-    cid: str,
-
-) -> bytes:
-
-    # tag_field: str|None = None
-
-    plbytes = enc.encode(payload)
-    if b'msg_type' in plbytes:
-        assert isinstance(payload, Struct)
-
-        # tag_field: str = type(payload).__name__
-        payload = Raw(plbytes)
-
-    msg = Msg(
-        cid=cid,
-        pld=payload,
-        # Header(
-        #     payload_tag=tag_field,
-        #     # dialog_id,
-        # ),
-    )
-    return enc.encode(msg)
