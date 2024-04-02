@@ -80,6 +80,28 @@ class DiffDump(UserList):
         return repstr
 
 
+def iter_fields(struct: Struct) -> Iterator[
+    tuple[
+        structs.FieldIinfo,
+        str,
+        Any,
+    ]
+]:
+    '''
+    Iterate over all non-@property fields of this struct.
+
+    '''
+    fi: structs.FieldInfo
+    for fi in structs.fields(struct):
+        key: str = fi.name
+        val: Any = getattr(struct, key)
+        yield (
+            fi,
+            key,
+            val,
+        )
+
+
 class Struct(
     _Struct,
 
@@ -91,23 +113,6 @@ class Struct(
     A "human friendlier" (aka repl buddy) struct subtype.
 
     '''
-    def _sin_props(self) -> Iterator[
-        tuple[
-            structs.FieldIinfo,
-            str,
-            Any,
-        ]
-    ]:
-        '''
-        Iterate over all non-@property fields of this struct.
-
-        '''
-        fi: structs.FieldInfo
-        for fi in structs.fields(self):
-            key: str = fi.name
-            val: Any = getattr(self, key)
-            yield fi, key, val
-
     def to_dict(
         self,
         include_non_members: bool = True,
@@ -130,7 +135,7 @@ class Struct(
         # added as type-defined `@property` methods!
         sin_props: dict = {}
         fi: structs.FieldInfo
-        for fi, k, v in self._sin_props():
+        for fi, k, v in iter_fields(self):
             sin_props[k] = asdict[k]
 
         return sin_props
@@ -159,7 +164,7 @@ class Struct(
         fi: structs.FieldInfo
         k: str
         v: Any
-        for fi, k, v in self._sin_props():
+        for fi, k, v in iter_fields(self):
 
             # TODO: how can we prefer `Literal['option1',  'option2,
             # ..]` over .__name__ == `Literal` but still get only the

@@ -30,13 +30,13 @@ ToDo: backends we prolly should offer:
 
 '''
 from __future__ import annotations
-from contextvars import (
-    ContextVar,
-    Token,
-)
 from contextlib import (
     contextmanager as cm,
 )
+# from contextvars import (
+#     ContextVar,
+#     Token,
+# )
 from typing import (
     Any,
     Callable,
@@ -47,6 +47,12 @@ from types import ModuleType
 
 import msgspec
 from msgspec import msgpack
+from trio.lowlevel import (
+    RunVar,
+    RunVarToken,
+)
+# TODO: see notes below from @mikenerone..
+# from tricycle import TreeVar
 
 from tractor.msg.pretty_struct import Struct
 from tractor.msg.types import (
@@ -72,6 +78,9 @@ class MsgCodec(Struct):
     '''
     A IPC msg interchange format lib's encoder + decoder pair.
 
+    Pretty much nothing more then delegation to underlying
+    `msgspec.<interchange-protocol>.Encoder/Decoder`s for now.
+
     '''
     _enc: msgpack.Encoder
     _dec: msgpack.Decoder
@@ -85,11 +94,6 @@ class MsgCodec(Struct):
         return self._dec.type
 
     lib: ModuleType = msgspec
-
-    # ad-hoc type extensions
-    # https://jcristharif.com/msgspec/extending.html#mapping-to-from-native-types
-    enc_hook: Callable[[Any], Any]|None = None  # coder
-    dec_hook: Callable[[type, Any], Any]|None = None # decoder
 
     # TODO: a sub-decoder system as well?
     # payload_msg_specs: Union[Type[Struct]] = Any
@@ -304,7 +308,8 @@ def mk_codec(
 
     libname: str = 'msgspec',
 
-    # proxy as `Struct(**kwargs)`
+    # proxy as `Struct(**kwargs)` for ad-hoc type extensions
+    # https://jcristharif.com/msgspec/extending.html#mapping-to-from-native-types
     # ------ - ------
     dec_hook: Callable|None = None,
     enc_hook: Callable|None = None,
@@ -389,14 +394,52 @@ def mk_codec(
 # no custom structs, hooks or other special types.
 _def_msgspec_codec: MsgCodec = mk_codec(ipc_msg_spec=Any)
 
-# NOTE: provides for per-`trio.Task` specificity of the
+# The built-in IPC `Msg` spec.
+# Our composing "shuttle" protocol which allows `tractor`-app code
+# to use any `msgspec` supported type as the `Msg.pld` payload,
+# https://jcristharif.com/msgspec/supported-types.html
+#
+_def_tractor_codec: MsgCodec = mk_codec(
+    ipc_pld_spec=Any,
+)
+# TODO: IDEALLY provides for per-`trio.Task` specificity of the
 # IPC msging codec used by the transport layer when doing
 # `Channel.send()/.recv()` of wire data.
-_ctxvar_MsgCodec: ContextVar[MsgCodec] = ContextVar(
+
+# ContextVar-TODO: DIDN'T WORK, kept resetting in every new task to default!?
+# _ctxvar_MsgCodec: ContextVar[MsgCodec] = ContextVar(
+
+# TreeVar-TODO: DIDN'T WORK, kept resetting in every new embedded nursery
+# even though it's supposed to inherit from a parent context ???
+#
+# _ctxvar_MsgCodec: TreeVar[MsgCodec] = TreeVar(
+#
+# ^-NOTE-^: for this to work see the mods by @mikenerone from `trio` gitter:
+#
+# 22:02:54 <mikenerone> even for regular contextvars, all you have to do is:
+#    `task: Task = trio.lowlevel.current_task()`
+#    `task.parent_nursery.parent_task.context.run(my_ctx_var.set, new_value)`
+#
+# From a comment in his prop code he couldn't share outright:
+# 1. For every TreeVar set in the current task (which covers what
+#    we need from SynchronizerFacade), walk up the tree until the
+#    root or finding one where the TreeVar is already set, setting
+#    it in all of the contexts along the way.
+# 2. For each of those, we also forcibly set the values that are
+#    pending for child nurseries that have not yet accessed the
+#    TreeVar.
+# 3. We similarly set the pending values for the child nurseries
+#    of the *current* task.
+#
+
+# TODO: STOP USING THIS, since it's basically a global and won't
+# allow sub-IPC-ctxs to limit the msg-spec however desired..
+_ctxvar_MsgCodec: MsgCodec = RunVar(
     'msgspec_codec',
 
     # TODO: move this to our new `Msg`-spec!
     default=_def_msgspec_codec,
+    # default=_def_tractor_codec,
 )
 
 
@@ -410,15 +453,36 @@ def apply_codec(
     runtime context such that all IPC msgs are processed
     with it for that task.
 
+    Uses a `tricycle.TreeVar` to ensure the scope of the codec
+    matches the `@cm` block and DOES NOT change to the original
+    (default) value in new tasks (as it does for `ContextVar`).
+
+    See the docs:
+    - https://tricycle.readthedocs.io/en/latest/reference.html#tree-variables
+    - https://github.com/oremanj/tricycle/blob/master/tricycle/_tests/test_tree_var.py
+
     '''
-    token: Token = _ctxvar_MsgCodec.set(codec)
+    orig: MsgCodec = _ctxvar_MsgCodec.get()
+    assert orig is not codec
+    token: RunVarToken = _ctxvar_MsgCodec.set(codec)
+
+    # TODO: for TreeVar approach, see docs for @cm `.being()` API:
+    # https://tricycle.readthedocs.io/en/latest/reference.html#tree-variables
+    # try:
+    #     with _ctxvar_MsgCodec.being(codec):
+    #         new = _ctxvar_MsgCodec.get()
+    #         assert new is codec
+    #         yield codec
+
     try:
         yield _ctxvar_MsgCodec.get()
     finally:
         _ctxvar_MsgCodec.reset(token)
 
+    assert _ctxvar_MsgCodec.get() is orig
 
-def current_msgspec_codec() -> MsgCodec:
+
+def current_codec() -> MsgCodec:
     '''
     Return the current `trio.Task.context`'s value
     for `msgspec_codec` used by `Channel.send/.recv()`
@@ -449,5 +513,6 @@ def limit_msg_spec(
         payload_types=payload_types,
         **codec_kwargs,
     )
-    with apply_codec(msgspec_codec):
+    with apply_codec(msgspec_codec) as applied_codec:
+        assert applied_codec is msgspec_codec
         yield msgspec_codec

@@ -31,25 +31,24 @@ from ._codec import (
     apply_codec as apply_codec,
     mk_codec as mk_codec,
     MsgCodec as MsgCodec,
-    current_msgspec_codec as current_msgspec_codec,
+    current_codec as current_codec,
 )
 
 from .types import (
     Msg as Msg,
 
-    Start as Start,  # with pld
-    FuncSpec as FuncSpec,
+    Aid as Aid,
+    SpawnSpec as SpawnSpec,
 
-    StartAck as StartAck, # with pld
-    IpcCtxSpec as IpcCtxSpec,
+    Start as Start,
+    StartAck as StartAck,
 
     Started as Started,
     Yield as Yield,
     Stop as Stop,
     Return as Return,
 
-    Error as Error,  # with pld
-    ErrorData as ErrorData,
+    Error as Error,
 
     # full msg spec set
     __spec__ as __spec__,

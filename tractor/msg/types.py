@@ -26,6 +26,7 @@ from __future__ import annotations
 import types
 from typing import (
     Any,
+    Callable,
     Generic,
     Literal,
     Type,
@@ -37,8 +38,12 @@ from msgspec import (
     defstruct,
     # field,
     Struct,
-    UNSET,
-    UnsetType,
+    # UNSET,
+    # UnsetType,
+)
+
+from tractor.msg import (
+    pretty_struct,
 )
 
 # type variable for the boxed payload field `.pld`
@@ -48,11 +53,19 @@ PayloadT = TypeVar('PayloadT')
 class Msg(
     Struct,
     Generic[PayloadT],
+
+    # https://jcristharif.com/msgspec/structs.html#tagged-unions
     tag=True,
     tag_field='msg_type',
 
-    # eq=True,
+    # https://jcristharif.com/msgspec/structs.html#field-ordering
+    # kw_only=True,
+
+    # https://jcristharif.com/msgspec/structs.html#equality-and-order
     # order=True,
+
+    # https://jcristharif.com/msgspec/structs.html#encoding-decoding-as-arrays
+    # as_array=True,
 ):
     '''
     The "god" boxing msg type.
@@ -90,6 +103,53 @@ class Msg(
     pld: PayloadT
 
 
+class Aid(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+):
+    '''
+    Actor-identity msg.
+
+    Initial contact exchange enabling an actor "mailbox handshake"
+    delivering the peer identity (and maybe eventually contact)
+    info.
+
+    Used by discovery protocol to register actors as well as
+    conduct the initial comms (capability) filtering.
+
+    '''
+    name: str
+    uuid: str
+    # TODO: use built-in support for UUIDs?
+    # -[ ] `uuid.UUID` which has multi-protocol support
+    #  https://jcristharif.com/msgspec/supported-types.html#uuid
+
+
+class SpawnSpec(
+    pretty_struct.Struct,
+    tag=True,
+    tag_field='msg_type',
+):
+    '''
+    Initial runtime spec handed down from a spawning parent to its
+    child subactor immediately following first contact via an
+    `Aid` msg.
+
+    '''
+    _parent_main_data: dict
+    _runtime_vars: dict[str, Any]
+
+    # module import capability
+    enable_modules: dict[str, str]
+
+    # TODO: not just sockaddr pairs?
+    # -[ ] abstract into a `TransportAddr` type?
+    reg_addrs: list[tuple[str, int]]
+    bind_addrs: list[tuple[str, int]]
+
+
+
 # TODO: caps based RPC support in the payload?
 #
 # -[ ] integration with our ``enable_modules: list[str]`` caps sys.
@@ -105,18 +165,31 @@ class Msg(
 #
 # -[ ] can we combine .ns + .func into a native `NamespacePath` field?
 #
-# -[ ]better name, like `Call/TaskInput`?
+# -[ ] better name, like `Call/TaskInput`?
 #
-class FuncSpec(Struct):
-    ns: str
-    func: str
-
-    kwargs: dict
-    uid: str  # (calling) actor-id
+# -[ ] XXX a debugger lock msg transaction with payloads like,
+#   child -> `.pld: DebugLock` -> root
+#   child <- `.pld: DebugLocked` <- root
+#   child -> `.pld: DebugRelease` -> root
+#
+#   WHY => when a pld spec is provided it might not allow for
+#   debug mode msgs as they currently are (using plain old `pld.
+#   str` payloads) so we only when debug_mode=True we need to
+#   union in this debugger payload set?
+#
+#   mk_msg_spec(
+#       MyPldSpec,
+#       debug_mode=True,
+#   ) -> (
+#       Union[MyPldSpec]
+#      | Union[DebugLock, DebugLocked, DebugRelease]
+#   )
 
 
 class Start(
-    Msg,
+    Struct,
+    tag=True,
+    tag_field='msg_type',
 ):
     '''
     Initial request to remotely schedule an RPC `trio.Task` via
@@ -134,14 +207,26 @@ class Start(
     - `Context.open_context()`
 
     '''
-    pld: FuncSpec
+    cid: str
+
+    ns: str
+    func: str
+
+    kwargs: dict
+    uid: tuple[str, str]  # (calling) actor-id
 
 
-class IpcCtxSpec(Struct):
+class StartAck(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+):
     '''
-    An inter-actor-`trio.Task`-comms `Context` spec.
+    Init response to a `Cmd` request indicating the far
+    end's RPC spec, namely its callable "type".
 
     '''
+    cid: str
     # TODO: maybe better names for all these?
     # -[ ] obvi ^ would need sync with `._rpc`
     functype: Literal[
@@ -158,18 +243,6 @@ class IpcCtxSpec(Struct):
     # a function had been called using an invalid signature.
     #
     # msgspec: MsgSpec
-
-
-class StartAck(
-    Msg,
-    Generic[PayloadT],
-):
-    '''
-    Init response to a `Cmd` request indicating the far
-    end's RPC callable "type".
-
-    '''
-    pld: IpcCtxSpec
 
 
 class Started(
@@ -202,13 +275,19 @@ class Yield(
     pld: PayloadT
 
 
-class Stop(Msg):
+class Stop(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+):
     '''
     Stream termination signal much like an IPC version 
     of `StopAsyncIteration`.
 
     '''
-    pld: UnsetType = UNSET
+    cid: str
+    # TODO: do we want to support a payload on stop?
+    # pld: UnsetType = UNSET
 
 
 class Return(
@@ -223,32 +302,33 @@ class Return(
     pld: PayloadT
 
 
-class ErrorData(Struct):
+class Error(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+):
     '''
-    Remote actor error meta-data as needed originally by
+    A pkt that wraps `RemoteActorError`s for relay and raising.
+
+    Fields are 1-to-1 meta-data as needed originally by
     `RemoteActorError.msgdata: dict`.
 
     '''
-    src_uid: str
+    src_uid: tuple[str, str]
     src_type_str: str
     boxed_type_str: str
-
-    relay_path: list[str]
+    relay_path: list[tuple[str, str]]
     tb_str: str
 
+    cid: str|None = None
+
+    # TODO: use UNSET or don't include them via
+    #
     # `ContextCancelled`
-    canceller: str|None = None
+    canceller: tuple[str, str]|None = None
 
     # `StreamOverrun`
-    sender: str|None = None
-
-
-class Error(Msg):
-    '''
-    A pkt that wraps `RemoteActorError`s for relay.
-
-    '''
-    pld: ErrorData
+    sender: tuple[str, str]|None = None
 
 
 # TODO: should be make a msg version of `ContextCancelled?`
@@ -265,6 +345,12 @@ class Error(Msg):
 # approx order of the IPC txn-state spaces.
 __spec__: list[Msg] = [
 
+    # identity handshake
+    Aid,
+
+    # spawn specification from parent
+    SpawnSpec,
+
     # inter-actor RPC initiation
     Start,
     StartAck,
@@ -280,6 +366,8 @@ __spec__: list[Msg] = [
 ]
 
 _runtime_spec_msgs: list[Msg] = [
+    Aid,
+    SpawnSpec,
     Start,
     StartAck,
     Stop,
@@ -443,3 +531,99 @@ def mk_msg_spec(
         pld_spec | runtime_spec,
         msgtypes_table[spec_build_method] + ipc_msg_types,
     )
+
+
+# TODO: make something similar to this inside `._codec` such that
+# user can just pass a type table of some sort?
+# def mk_dict_msg_codec_hooks() -> tuple[Callable, Callable]:
+#     '''
+#     Deliver a `enc_hook()`/`dec_hook()` pair which does
+#     manual convertion from our above native `Msg` set
+#     to `dict` equivalent (wire msgs) in order to keep legacy compat
+#     with the original runtime implementation.
+
+#     Note: this is is/was primarly used while moving the core
+#     runtime over to using native `Msg`-struct types wherein we
+#     start with the send side emitting without loading
+#     a typed-decoder and then later flipping the switch over to
+#     load to the native struct types once all runtime usage has
+#     been adjusted appropriately.
+
+#     '''
+#     def enc_to_dict(msg: Any) -> Any:
+#         '''
+#         Encode `Msg`-structs to `dict` msgs instead
+#         of using `msgspec.msgpack.Decoder.type`-ed
+#         features.
+
+#         '''
+#         match msg:
+#             case Start():
+#                 dctmsg: dict = pretty_struct.Struct.to_dict(
+#                     msg
+#                 )['pld']
+
+#             case Error():
+#                 dctmsg: dict = pretty_struct.Struct.to_dict(
+#                     msg
+#                 )['pld']
+#                 return {'error': dctmsg}
+
+
+#     def dec_from_dict(
+#         type: Type,
+#         obj: Any,
+#     ) -> Any:
+#         '''
+#         Decode to `Msg`-structs from `dict` msgs instead
+#         of using `msgspec.msgpack.Decoder.type`-ed
+#         features.
+
+#         '''
+#         cid: str = obj.get('cid')
+#         match obj:
+#             case {'cmd': pld}:
+#                 return Start(
+#                     cid=cid,
+#                     pld=pld,
+#                 )
+#             case {'functype': pld}:
+#                 return StartAck(
+#                     cid=cid,
+#                     functype=pld,
+#                     # pld=IpcCtxSpec(
+#                     #     functype=pld,
+#                     # ),
+#                 )
+#             case {'started': pld}:
+#                 return Started(
+#                     cid=cid,
+#                     pld=pld,
+#                 )
+#             case {'yield': pld}:
+#                 return Yield(
+#                     cid=obj['cid'],
+#                     pld=pld,
+#                 )
+#             case {'stop': pld}:
+#                 return Stop(
+#                     cid=cid,
+#                 )
+#             case {'return': pld}:
+#                 return Return(
+#                     cid=cid,
+#                     pld=pld,
+#                 )
+
+#             case {'error': pld}:
+#                 return Error(
+#                     cid=cid,
+#                     pld=ErrorData(
+#                         **pld
+#                     ),
+#                 )
+
+#     return (
+#         # enc_to_dict,
+#         dec_from_dict,
+#     )
