@@ -498,7 +498,7 @@ def pack_error(
     tb: str|None = None,
     cid: str|None = None,
 
-) -> Error|dict[str, dict]:
+) -> Error:
     '''
     Create an "error message" which boxes a locally caught
     exception's meta-data and encodes it for wire transport via an
@@ -561,19 +561,10 @@ def pack_error(
     # content's `.msgdata`).
     error_msg['tb_str'] = tb_str
 
-    # Error()
-    # pkt: dict = {
-    #     'error': error_msg,
-    # }
-    pkt: Error = Error(
-        cid=cid,
-        **error_msg,
-        # TODO: just get rid of `.pld` on this msg?
-    )
-    # if cid:
-    #     pkt['cid'] = cid
+    if cid is not None:
+        error_msg['cid'] = cid
 
-    return pkt
+    return Error(**error_msg)
 
 
 def unpack_error(
