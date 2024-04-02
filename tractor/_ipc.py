@@ -38,17 +38,23 @@ from typing import (
     Protocol,
     Type,
     TypeVar,
+    Union,
 )
 
+import msgspec
 from tricycle import BufferedReceiveStream
 import trio
 
 from tractor.log import get_logger
-from tractor._exceptions import TransportClosed
+from tractor._exceptions import (
+    TransportClosed,
+    MsgTypeError,
+)
 from tractor.msg import (
     _ctxvar_MsgCodec,
+    _codec,
     MsgCodec,
-    mk_codec,
+    types,
 )
 
 log = get_logger(__name__)
@@ -163,7 +169,16 @@ class MsgpackTCPStream(MsgTransport):
 
         # allow for custom IPC msg interchange format
         # dynamic override Bo
-        self.codec: MsgCodec = codec or mk_codec()
+        self._task = trio.lowlevel.current_task()
+        self._codec: MsgCodec = (
+            codec
+            or
+            _codec._ctxvar_MsgCodec.get()
+        )
+        log.critical(
+            '!?!: USING STD `tractor` CODEC !?!?\n'
+            f'{self._codec}\n'
+        )
 
     async def _iter_packets(self) -> AsyncGenerator[dict, None]:
         '''
@@ -171,7 +186,6 @@ class MsgpackTCPStream(MsgTransport):
         stream using the current task's `MsgCodec`.
 
         '''
-        import msgspec  # noqa
         decodes_failed: int = 0
 
         while True:
@@ -206,7 +220,19 @@ class MsgpackTCPStream(MsgTransport):
             try:
                 # NOTE: lookup the `trio.Task.context`'s var for
                 # the current `MsgCodec`.
-                yield  _ctxvar_MsgCodec.get().decode(msg_bytes)
+                codec: MsgCodec = _ctxvar_MsgCodec.get()
+                if self._codec.pld_spec != codec.pld_spec:
+                    # assert (
+                    #     task := trio.lowlevel.current_task()
+                    # ) is not self._task
+                    # self._task = task
+                    self._codec = codec
+                    log.critical(
+                        '.recv() USING NEW CODEC !?!?\n'
+                        f'{self._codec}\n\n'
+                        f'msg_bytes -> {msg_bytes}\n'
+                    )
+                yield codec.decode(msg_bytes)
 
                 # TODO: remove, was only for orig draft impl
                 # testing.
@@ -221,6 +247,41 @@ class MsgpackTCPStream(MsgTransport):
                 #
                 # yield obj
 
+            # XXX NOTE: since the below error derives from
+            # `DecodeError` we need to catch is specially
+            # and always raise such that spec violations
+            # are never allowed to be caught silently!
+            except msgspec.ValidationError as verr:
+
+                # decode the msg-bytes using the std msgpack
+                # interchange-prot (i.e. without any
+                # `msgspec.Struct` handling) so that we can
+                # determine what `.msg.types.Msg` is the culprit
+                # by reporting the received value.
+                msg_dict: dict = msgspec.msgpack.decode(msg_bytes)
+                msg_type_name: str = msg_dict['msg_type']
+                msg_type = getattr(types, msg_type_name)
+                errmsg: str = (
+                    f'Received invalid IPC `{msg_type_name}` msg\n\n'
+                )
+
+                # XXX see if we can determine the exact invalid field
+                # such that we can comprehensively report the
+                # specific field's type problem
+                msgspec_msg: str = verr.args[0].rstrip('`')
+                msg, _, maybe_field = msgspec_msg.rpartition('$.')
+                if field_val := msg_dict.get(maybe_field):
+                    field_type: Union[Type] = msg_type.__signature__.parameters[
+                        maybe_field
+                    ].annotation
+                    errmsg += (
+                        f'{msg.rstrip("`")}\n\n'
+                        f'{msg_type}\n'
+                        f' |_.{maybe_field}: {field_type} = {field_val}\n'
+                    )
+
+                raise MsgTypeError(errmsg) from verr
+
             except (
                 msgspec.DecodeError,
                 UnicodeDecodeError,
@@ -230,14 +291,15 @@ class MsgpackTCPStream(MsgTransport):
                     # do with a channel drop - hope that receiving from the
                     # channel will raise an expected error and bubble up.
                     try:
-                        msg_str: str | bytes = msg_bytes.decode()
+                        msg_str: str|bytes = msg_bytes.decode()
                     except UnicodeDecodeError:
                         msg_str = msg_bytes
 
-                    log.error(
-                        '`msgspec` failed to decode!?\n'
-                        'dumping bytes:\n'
-                        f'{msg_str!r}'
+                    log.exception(
+                        'Failed to decode msg?\n'
+                        f'{codec}\n\n'
+                        'Rxed bytes from wire:\n\n'
+                        f'{msg_str!r}\n'
                     )
                     decodes_failed += 1
                 else:
@@ -258,8 +320,21 @@ class MsgpackTCPStream(MsgTransport):
 
             # NOTE: lookup the `trio.Task.context`'s var for
             # the current `MsgCodec`.
-            bytes_data: bytes = _ctxvar_MsgCodec.get().encode(msg)
-            # bytes_data: bytes = self.codec.encode(msg)
+            codec: MsgCodec = _ctxvar_MsgCodec.get()
+            # if self._codec != codec:
+            if self._codec.pld_spec != codec.pld_spec:
+                self._codec = codec
+                log.critical(
+                    '.send() using NEW CODEC !?!?\n'
+                    f'{self._codec}\n\n'
+                    f'OBJ -> {msg}\n'
+                )
+            if type(msg) not in types.__spec__:
+                log.warning(
+                    'Sending non-`Msg`-spec msg?\n\n'
+                    f'{msg}\n'
+                )
+            bytes_data: bytes = codec.encode(msg)
 
             # supposedly the fastest says,
             # https://stackoverflow.com/a/54027962

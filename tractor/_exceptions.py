@@ -31,9 +31,16 @@ import textwrap
 import traceback
 
 import trio
+from msgspec import structs
 
 from tractor._state import current_actor
 from tractor.log import get_logger
+from tractor.msg import (
+    Error,
+    Msg,
+    Stop,
+    Yield,
+)
 
 if TYPE_CHECKING:
     from ._context import Context
@@ -135,6 +142,8 @@ class RemoteActorError(Exception):
         # and instead render if from `.boxed_type_str`?
         self._boxed_type: BaseException = boxed_type
         self._src_type: BaseException|None = None
+
+        # TODO: make this a `.errmsg: Error` throughout?
         self.msgdata: dict[str, Any] = msgdata
 
         # TODO: mask out eventually or place in `pack_error()`
@@ -464,7 +473,23 @@ class AsyncioCancelled(Exception):
     '''
 
 class MessagingError(Exception):
-    'Some kind of unexpected SC messaging dialog issue'
+    '''
+    IPC related msg (typing), transaction (ordering) or dialog
+    handling error.
+
+    '''
+
+
+class MsgTypeError(MessagingError):
+    '''
+    Equivalent of a `TypeError` for an IPC wire-message
+    due to an invalid field value (type).
+
+    Normally this is re-raised from some `.msg._codec`
+    decode error raised by a backend interchange lib
+    like `msgspec` or `pycapnproto`.
+
+    '''
 
 
 def pack_error(
@@ -473,7 +498,7 @@ def pack_error(
     tb: str|None = None,
     cid: str|None = None,
 
-) -> dict[str, dict]:
+) -> Error|dict[str, dict]:
     '''
     Create an "error message" which boxes a locally caught
     exception's meta-data and encodes it for wire transport via an
@@ -536,17 +561,23 @@ def pack_error(
     # content's `.msgdata`).
     error_msg['tb_str'] = tb_str
 
-    pkt: dict = {
-        'error': error_msg,
-    }
-    if cid:
-        pkt['cid'] = cid
+    # Error()
+    # pkt: dict = {
+    #     'error': error_msg,
+    # }
+    pkt: Error = Error(
+        cid=cid,
+        **error_msg,
+        # TODO: just get rid of `.pld` on this msg?
+    )
+    # if cid:
+    #     pkt['cid'] = cid
 
     return pkt
 
 
 def unpack_error(
-    msg: dict[str, Any],
+    msg: dict[str, Any]|Error,
 
     chan: Channel|None = None,
     box_type: RemoteActorError = RemoteActorError,
@@ -564,15 +595,17 @@ def unpack_error(
     '''
     __tracebackhide__: bool = hide_tb
 
-    error_dict: dict[str, dict] | None
-    if (
-        error_dict := msg.get('error')
-    ) is None:
+    error_dict: dict[str, dict]|None
+    if not isinstance(msg, Error):
+    # if (
+    #     error_dict := msg.get('error')
+    # ) is None:
         # no error field, nothing to unpack.
         return None
 
     # retrieve the remote error's msg encoded details
-    tb_str: str = error_dict.get('tb_str', '')
+    # tb_str: str = error_dict.get('tb_str', '')
+    tb_str: str = msg.tb_str
     message: str = (
         f'{chan.uid}\n'
         +
@@ -581,7 +614,8 @@ def unpack_error(
 
     # try to lookup a suitable error type from the local runtime
     # env then use it to construct a local instance.
-    boxed_type_str: str = error_dict['boxed_type_str']
+    # boxed_type_str: str = error_dict['boxed_type_str']
+    boxed_type_str: str = msg.boxed_type_str
     boxed_type: Type[BaseException] = get_err_type(boxed_type_str)
 
     if boxed_type_str == 'ContextCancelled':
@@ -595,7 +629,11 @@ def unpack_error(
     # original source error.
     elif boxed_type_str == 'RemoteActorError':
         assert boxed_type is RemoteActorError
-        assert len(error_dict['relay_path']) >= 1
+        # assert len(error_dict['relay_path']) >= 1
+        assert len(msg.relay_path) >= 1
+
+    # TODO: mk RAE just take the `Error` instance directly?
+    error_dict: dict = structs.asdict(msg)
 
     exc = box_type(
         message,
@@ -623,11 +661,12 @@ def is_multi_cancelled(exc: BaseException) -> bool:
 
 def _raise_from_no_key_in_msg(
     ctx: Context,
-    msg: dict,
+    msg: Msg,
     src_err: KeyError,
     log: StackLevelAdapter,  # caller specific `log` obj
 
     expect_key: str = 'yield',
+    expect_msg: str = Yield,
     stream: MsgStream | None = None,
 
     # allow "deeper" tbs when debugging B^o
@@ -660,8 +699,10 @@ def _raise_from_no_key_in_msg(
 
     # an internal error should never get here
     try:
-        cid: str = msg['cid']
-    except KeyError as src_err:
+        cid: str = msg.cid
+        # cid: str = msg['cid']
+    # except KeyError as src_err:
+    except AttributeError as src_err:
         raise MessagingError(
             f'IPC `Context` rx-ed msg without a ctx-id (cid)!?\n'
             f'cid: {cid}\n\n'
@@ -672,7 +713,10 @@ def _raise_from_no_key_in_msg(
     # TODO: test that shows stream raising an expected error!!!
 
     # raise the error message in a boxed exception type!
-    if msg.get('error'):
+    # if msg.get('error'):
+    if isinstance(msg, Error):
+    # match msg:
+    #     case Error():
         raise unpack_error(
             msg,
             ctx.chan,
@@ -683,8 +727,10 @@ def _raise_from_no_key_in_msg(
     # `MsgStream` termination msg.
     # TODO: does it make more sense to pack 
     # the stream._eoc outside this in the calleer always?
+        # case Stop():
     elif (
-        msg.get('stop')
+        # msg.get('stop')
+        isinstance(msg, Stop)
         or (
             stream
             and stream._eoc
@@ -725,14 +771,16 @@ def _raise_from_no_key_in_msg(
         stream
         and stream._closed
     ):
-        raise trio.ClosedResourceError('This stream was closed')
-
+        # TODO: our own error subtype?
+        raise trio.ClosedResourceError(
+            'This stream was closed'
+        )
 
     # always re-raise the source error if no translation error case
     # is activated above.
     _type: str = 'Stream' if stream else 'Context'
     raise MessagingError(
-        f"{_type} was expecting a '{expect_key}' message"
+        f"{_type} was expecting a '{expect_key.upper()}' message"
         " BUT received a non-error msg:\n"
         f'{pformat(msg)}'
     ) from src_err

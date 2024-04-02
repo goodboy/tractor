@@ -53,7 +53,14 @@ from ._exceptions import (
     _raise_from_no_key_in_msg,
 )
 from .log import get_logger
-from .msg import NamespacePath
+from .msg import (
+    NamespacePath,
+    Msg,
+    Return,
+    Started,
+    Stop,
+    Yield,
+)
 from ._ipc import Channel
 from ._streaming import MsgStream
 from ._state import (
@@ -96,7 +103,8 @@ async def _drain_to_final_msg(
     # wait for a final context result by collecting (but
     # basically ignoring) any bi-dir-stream msgs still in transit
     # from the far end.
-    pre_result_drained: list[dict] = []
+    # pre_result_drained: list[dict] = []
+    pre_result_drained: list[Msg] = []
     while not (
         ctx.maybe_error
         and not ctx._final_result_is_set()
@@ -155,7 +163,10 @@ async def _drain_to_final_msg(
             #     await pause()
 
             # pray to the `trio` gawds that we're corrent with this
-            msg: dict = await ctx._recv_chan.receive()
+            # msg: dict = await ctx._recv_chan.receive()
+            msg: Msg = await ctx._recv_chan.receive()
+            # always capture unexpected/non-result msgs
+            pre_result_drained.append(msg)
 
         # NOTE: we get here if the far end was
         # `ContextCancelled` in 2 cases:
@@ -175,24 +186,31 @@ async def _drain_to_final_msg(
             # continue to bubble up as normal.
             raise
 
-        try:
-            ctx._result: Any = msg['return']
-            log.runtime(
-                'Context delivered final draining msg:\n'
-                f'{pformat(msg)}'
-            )
-            # XXX: only close the rx mem chan AFTER
-            # a final result is retreived.
-            # if ctx._recv_chan:
-            #     await ctx._recv_chan.aclose()
-            # TODO: ^ we don't need it right?
-            break
+        match msg:
+            case Return(
+                cid=cid,
+                pld=res,
+            ):
+        # try:
+            # ctx._result: Any = msg['return']
+            # ctx._result: Any = msg.pld
+                ctx._result: Any = res
+                log.runtime(
+                    'Context delivered final draining msg:\n'
+                    f'{pformat(msg)}'
+                )
+                # XXX: only close the rx mem chan AFTER
+                # a final result is retreived.
+                # if ctx._recv_chan:
+                #     await ctx._recv_chan.aclose()
+                # TODO: ^ we don't need it right?
+                break
 
-        except KeyError:
-            # always capture unexpected/non-result msgs
-            pre_result_drained.append(msg)
+        # except KeyError:
+        # except AttributeError:
+            case Yield():
+            # if 'yield' in msg:
 
-            if 'yield' in msg:
                 # far end task is still streaming to us so discard
                 # and report per local context state.
                 if (
@@ -238,9 +256,10 @@ async def _drain_to_final_msg(
             # TODO: work out edge cases here where
             # a stream is open but the task also calls
             # this?
-            # -[ ] should be a runtime error if a stream is open
-            #   right?
-            elif 'stop' in msg:
+            # -[ ] should be a runtime error if a stream is open right?
+            # Stop()
+            case Stop():
+            # elif 'stop' in msg:
                 log.cancel(
                     'Remote stream terminated due to "stop" msg:\n\n'
                     f'{pformat(msg)}\n'
@@ -249,78 +268,80 @@ async def _drain_to_final_msg(
 
             # It's an internal error if any other msg type without
             # a`'cid'` field arrives here!
-            if not msg.get('cid'):
-                raise InternalError(
-                    'Unexpected cid-missing msg?\n\n'
-                    f'{msg}\n'
-                )
+            case _:
+            # if not msg.get('cid'):
+                if not msg.cid:
+                    raise InternalError(
+                        'Unexpected cid-missing msg?\n\n'
+                        f'{msg}\n'
+                    )
 
-            # XXX fallthrough to handle expected error XXX
-            # TODO: replace this with `ctx.maybe_raise()`
-            #
-            # TODO: would this be handier for this case maybe?
-            # async with maybe_raise_on_exit() as raises:
-            #     if raises:
-            #         log.error('some msg about raising..')
+                # XXX fallthrough to handle expected error XXX
+                # TODO: replace this with `ctx.maybe_raise()`
+                #
+                # TODO: would this be handier for this case maybe?
+                # async with maybe_raise_on_exit() as raises:
+                #     if raises:
+                #         log.error('some msg about raising..')
 
-            re: Exception|None = ctx._remote_error
-            if re:
-                log.critical(
-                    'Remote ctx terminated due to "error" msg:\n'
-                    f'{re}'
-                )
-                assert msg is ctx._cancel_msg
-                # NOTE: this solved a super dupe edge case XD
-                # this was THE super duper edge case of:
-                # - local task opens a remote task,
-                # - requests remote cancellation of far end
-                #   ctx/tasks,
-                # - needs to wait for the cancel ack msg
-                #   (ctxc) or some result in the race case
-                #   where the other side's task returns
-                #   before the cancel request msg is ever
-                #   rxed and processed,
-                # - here this surrounding drain loop (which
-                #   iterates all ipc msgs until the ack or
-                #   an early result arrives) was NOT exiting
-                #   since we are the edge case: local task
-                #   does not re-raise any ctxc it receives
-                #   IFF **it** was the cancellation
-                #   requester..
-                # will raise if necessary, ow break from
-                # loop presuming any error terminates the
-                # context!
-                ctx._maybe_raise_remote_err(
-                    re,
-                    # NOTE: obvi we don't care if we
-                    # overran the far end if we're already
-                    # waiting on a final result (msg).
-                    # raise_overrun_from_self=False,
-                    raise_overrun_from_self=raise_overrun,
-                )
+                re: Exception|None = ctx._remote_error
+                if re:
+                    log.critical(
+                        'Remote ctx terminated due to "error" msg:\n'
+                        f'{re}'
+                    )
+                    assert msg is ctx._cancel_msg
+                    # NOTE: this solved a super dupe edge case XD
+                    # this was THE super duper edge case of:
+                    # - local task opens a remote task,
+                    # - requests remote cancellation of far end
+                    #   ctx/tasks,
+                    # - needs to wait for the cancel ack msg
+                    #   (ctxc) or some result in the race case
+                    #   where the other side's task returns
+                    #   before the cancel request msg is ever
+                    #   rxed and processed,
+                    # - here this surrounding drain loop (which
+                    #   iterates all ipc msgs until the ack or
+                    #   an early result arrives) was NOT exiting
+                    #   since we are the edge case: local task
+                    #   does not re-raise any ctxc it receives
+                    #   IFF **it** was the cancellation
+                    #   requester..
+                    # will raise if necessary, ow break from
+                    # loop presuming any error terminates the
+                    # context!
+                    ctx._maybe_raise_remote_err(
+                        re,
+                        # NOTE: obvi we don't care if we
+                        # overran the far end if we're already
+                        # waiting on a final result (msg).
+                        # raise_overrun_from_self=False,
+                        raise_overrun_from_self=raise_overrun,
+                    )
 
-                break  # OOOOOF, yeah obvi we need this..
+                    break  # OOOOOF, yeah obvi we need this..
 
-            # XXX we should never really get here
-            # right! since `._deliver_msg()` should
-            # always have detected an {'error': ..}
-            # msg and already called this right!?!
-            elif error := unpack_error(
-                msg=msg,
-                chan=ctx._portal.channel,
-                hide_tb=False,
-            ):
-                log.critical('SHOULD NEVER GET HERE!?')
-                assert msg is ctx._cancel_msg
-                assert error.msgdata == ctx._remote_error.msgdata
-                from .devx._debug import pause
-                await pause()
-                ctx._maybe_cancel_and_set_remote_error(error)
-                ctx._maybe_raise_remote_err(error)
+                # XXX we should never really get here
+                # right! since `._deliver_msg()` should
+                # always have detected an {'error': ..}
+                # msg and already called this right!?!
+                elif error := unpack_error(
+                    msg=msg,
+                    chan=ctx._portal.channel,
+                    hide_tb=False,
+                ):
+                    log.critical('SHOULD NEVER GET HERE!?')
+                    assert msg is ctx._cancel_msg
+                    assert error.msgdata == ctx._remote_error.msgdata
+                    from .devx._debug import pause
+                    await pause()
+                    ctx._maybe_cancel_and_set_remote_error(error)
+                    ctx._maybe_raise_remote_err(error)
 
-            else:
-                # bubble the original src key error
-                raise
+                else:
+                    # bubble the original src key error
+                    raise
     else:
         log.cancel(
             'Skipping `MsgStream` drain since final outcome is set\n\n'
@@ -710,10 +731,14 @@ class Context:
 
     async def send_stop(self) -> None:
         # await pause()
-        await self.chan.send({
-            'stop': True,
-            'cid': self.cid
-        })
+        # await self.chan.send({
+        #     # Stop(
+        #     'stop': True,
+        #     'cid': self.cid
+        # })
+        await self.chan.send(
+            Stop(cid=self.cid)
+        )
 
     def _maybe_cancel_and_set_remote_error(
         self,
@@ -1398,17 +1423,19 @@ class Context:
             for msg in drained_msgs:
 
                 # TODO: mask this by default..
-                if 'return' in msg:
+                # if 'return' in msg:
+                if isinstance(msg, Return):
                     # from .devx import pause
                     # await pause()
-                    raise InternalError(
+                    # raise InternalError(
+                    log.warning(
                         'Final `return` msg should never be drained !?!?\n\n'
                         f'{msg}\n'
                     )
 
             log.cancel(
                 'Ctx drained pre-result msgs:\n'
-                f'{drained_msgs}'
+                f'{pformat(drained_msgs)}'
             )
 
         self.maybe_raise(
@@ -1616,7 +1643,18 @@ class Context:
                 f'called `.started()` twice on context with {self.chan.uid}'
             )
 
-        await self.chan.send({'started': value, 'cid': self.cid})
+        # await self.chan.send(
+        #     {
+        #         'started': value,
+        #          'cid': self.cid,
+        #     }
+        # )
+        await self.chan.send(
+            Started(
+                cid=self.cid,
+                pld=value,
+            )
+        )
         self._started_called = True
 
     async def _drain_overflows(
@@ -1671,7 +1709,8 @@ class Context:
 
     async def _deliver_msg(
         self,
-        msg: dict,
+        # msg: dict,
+        msg: Msg,
 
     ) -> bool:
         '''
@@ -1855,7 +1894,7 @@ class Context:
                         # anything different.
                         return False
             else:
-                txt += f'\n{msg}\n'
+                # txt += f'\n{msg}\n'
                 # raise local overrun and immediately pack as IPC
                 # msg for far end.
                 try:
@@ -1986,15 +2025,17 @@ async def open_context_from_portal(
     )
 
     assert ctx._remote_func_type == 'context'
-    msg: dict = await ctx._recv_chan.receive()
+    msg: Started = await ctx._recv_chan.receive()
 
     try:
         # the "first" value here is delivered by the callee's
         # ``Context.started()`` call.
-        first: Any = msg['started']
+        # first: Any = msg['started']
+        first: Any = msg.pld
         ctx._started_called: bool = True
 
-    except KeyError as src_error:
+    # except KeyError as src_error:
+    except AttributeError as src_error:
         _raise_from_no_key_in_msg(
             ctx=ctx,
             msg=msg,

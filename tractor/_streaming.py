@@ -43,6 +43,11 @@ from .trionics import (
     broadcast_receiver,
     BroadcastReceiver,
 )
+from tractor.msg import (
+    Stop,
+    Yield,
+    Error,
+)
 
 if TYPE_CHECKING:
     from ._context import Context
@@ -94,21 +99,25 @@ class MsgStream(trio.abc.Channel):
         self,
         allow_msg_keys: list[str] = ['yield'],
     ):
-        msg: dict = self._rx_chan.receive_nowait()
+        # msg: dict = self._rx_chan.receive_nowait()
+        msg: Yield|Stop = self._rx_chan.receive_nowait()
         for (
             i,
             key,
         ) in enumerate(allow_msg_keys):
             try:
-                return msg[key]
-            except KeyError as kerr:
+                # return msg[key]
+                return msg.pld
+            # except KeyError as kerr:
+            except AttributeError as attrerr:
                 if i < (len(allow_msg_keys) - 1):
                     continue
 
                 _raise_from_no_key_in_msg(
                     ctx=self._ctx,
                     msg=msg,
-                    src_err=kerr,
+                    # src_err=kerr,
+                    src_err=attrerr,
                     log=log,
                     expect_key=key,
                     stream=self,
@@ -148,18 +157,22 @@ class MsgStream(trio.abc.Channel):
         src_err: Exception|None = None  # orig tb
         try:
             try:
-                msg = await self._rx_chan.receive()
-                return msg['yield']
+                msg: Yield = await self._rx_chan.receive()
+                # return msg['yield']
+                return msg.pld
 
-            except KeyError as kerr:
-                src_err = kerr
+            # except KeyError as kerr:
+            except AttributeError as attrerr:
+                # src_err = kerr
+                src_err = attrerr
 
                 # NOTE: may raise any of the below error types
                 # includg EoC when a 'stop' msg is found.
                 _raise_from_no_key_in_msg(
                     ctx=self._ctx,
                     msg=msg,
-                    src_err=kerr,
+                    # src_err=kerr,
+                    src_err=attrerr,
                     log=log,
                     expect_key='yield',
                     stream=self,
@@ -514,11 +527,18 @@ class MsgStream(trio.abc.Channel):
             raise self._closed
 
         try:
+            # await self._ctx.chan.send(
+            #     payload={
+            #         'yield': data,
+            #         'cid': self._ctx.cid,
+            #     },
+            #     # hide_tb=hide_tb,
+            # )
             await self._ctx.chan.send(
-                payload={
-                    'yield': data,
-                    'cid': self._ctx.cid,
-                },
+                payload=Yield(
+                    cid=self._ctx.cid,
+                    pld=data,
+                ),
                 # hide_tb=hide_tb,
             )
         except (

@@ -935,6 +935,9 @@ async def _pause(
             # ``breakpoint()`` was awaited and begin handling stdio.
             log.debug('Entering sync world of the `pdb` REPL..')
             try:
+                # log.critical(
+                #     f'stack len: {len(pdb.stack)}\n'
+                # )
                 debug_func(
                     actor,
                     pdb,

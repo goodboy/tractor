@@ -136,6 +136,7 @@ def _trio_main(
             run_as_asyncio_guest(trio_main)
         else:
             trio.run(trio_main)
+
     except KeyboardInterrupt:
         log.cancel(
             'Actor received KBI\n'

@@ -45,7 +45,10 @@ from ._state import (
 )
 from ._ipc import Channel
 from .log import get_logger
-from .msg import NamespacePath
+from .msg import (
+    NamespacePath,
+    Return,
+)
 from ._exceptions import (
     unpack_error,
     NoResult,
@@ -66,7 +69,8 @@ log = get_logger(__name__)
 # `._raise_from_no_key_in_msg()` (after tweak to
 # accept a `chan: Channel` arg) in key block!
 def _unwrap_msg(
-    msg: dict[str, Any],
+    # msg: dict[str, Any],
+    msg: Return,
     channel: Channel,
 
     hide_tb: bool = True,
@@ -79,18 +83,21 @@ def _unwrap_msg(
     __tracebackhide__: bool = hide_tb
 
     try:
-        return msg['return']
-    except KeyError as ke:
+        return msg.pld
+        # return msg['return']
+    # except KeyError as ke:
+    except AttributeError as err:
 
         # internal error should never get here
-        assert msg.get('cid'), (
+        # assert msg.get('cid'), (
+        assert msg.cid, (
             "Received internal error at portal?"
         )
 
         raise unpack_error(
             msg,
             channel
-        ) from ke
+        ) from err
 
 
 class Portal:

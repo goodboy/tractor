@@ -57,6 +57,15 @@ from ._exceptions import (
 from .devx import _debug
 from . import _state
 from .log import get_logger
+from tractor.msg.types import (
+    Start,
+    StartAck,
+    Started,
+    Stop,
+    Yield,
+    Return,
+    Error,
+)
 
 if TYPE_CHECKING:
     from ._runtime import Actor
@@ -84,10 +93,13 @@ async def _invoke_non_context(
 
     # TODO: can we unify this with the `context=True` impl below?
     if inspect.isasyncgen(coro):
-        await chan.send({
-            'cid': cid,
-            'functype': 'asyncgen',
-        })
+        # await chan.send({
+        await chan.send(
+            StartAck(
+                cid=cid,
+                functype='asyncgen',
+            )
+        )
         # XXX: massive gotcha! If the containing scope
         # is cancelled and we execute the below line,
         # any ``ActorNursery.__aexit__()`` WON'T be
@@ -107,27 +119,45 @@ async def _invoke_non_context(
                     # to_send = await chan.recv_nowait()
                     # if to_send is not None:
                     #     to_yield = await coro.asend(to_send)
-                    await chan.send({
-                        'yield': item,
-                        'cid': cid,
-                    })
+                    # await chan.send({
+                    #     # Yield()
+                    #     'cid': cid,
+                    #     'yield': item,
+                    # })
+                    await chan.send(
+                        Yield(
+                            cid=cid,
+                            pld=item,
+                        )
+                    )
 
         log.runtime(f"Finished iterating {coro}")
         # TODO: we should really support a proper
         # `StopAsyncIteration` system here for returning a final
         # value if desired
-        await chan.send({
-            'stop': True,
-            'cid': cid,
-        })
+        await chan.send(
+            Stop(cid=cid)
+        )
+        # await chan.send({
+        #     # Stop(
+        #     'cid': cid,
+        #     'stop': True,
+        # })
 
     # one way @stream func that gets treated like an async gen
     # TODO: can we unify this with the `context=True` impl below?
     elif treat_as_gen:
-        await chan.send({
-            'cid': cid,
-            'functype': 'asyncgen',
-        })
+        await chan.send(
+            StartAck(
+                cid=cid,
+                functype='asyncgen',
+            )
+        )
+        # await chan.send({
+        #     # StartAck()
+        #     'cid': cid,
+        #     'functype': 'asyncgen',
+        # })
         # XXX: the async-func may spawn further tasks which push
         # back values like an async-generator would but must
         # manualy construct the response dict-packet-responses as
@@ -140,10 +170,14 @@ async def _invoke_non_context(
         if not cs.cancelled_caught:
             # task was not cancelled so we can instruct the
             # far end async gen to tear down
-            await chan.send({
-                'stop': True,
-                'cid': cid
-            })
+            await chan.send(
+                Stop(cid=cid)
+            )
+            # await chan.send({
+            #     # Stop(
+            #     'cid': cid,
+            #     'stop': True,
+            # })
     else:
         # regular async function/method
         # XXX: possibly just a scheduled `Actor._cancel_task()`
@@ -155,10 +189,17 @@ async def _invoke_non_context(
         # way: using the linked IPC context machinery.
         failed_resp: bool = False
         try:
-            await chan.send({
-                'functype': 'asyncfunc',
-                'cid': cid
-            })
+            await chan.send(
+                StartAck(
+                    cid=cid,
+                    functype='asyncfunc',
+                )
+            )
+            # await chan.send({
+            #     # StartAck()
+            #     'cid': cid,
+            #     'functype': 'asyncfunc',
+            # })
         except (
             trio.ClosedResourceError,
             trio.BrokenResourceError,
@@ -192,10 +233,17 @@ async def _invoke_non_context(
                 and chan.connected()
             ):
                 try:
-                    await chan.send({
-                        'return': result,
-                        'cid': cid,
-                    })
+                    # await chan.send({
+                    #     # Return()
+                    #     'cid': cid,
+                    #     'return': result,
+                    # })
+                    await chan.send(
+                        Return(
+                            cid=cid,
+                            pld=result,
+                        )
+                    )
                 except (
                     BrokenPipeError,
                     trio.BrokenResourceError,
@@ -376,6 +424,8 @@ async def _invoke(
         # XXX for .pause_from_sync()` usage we need to make sure
         # `greenback` is boostrapped in the subactor!
         await _debug.maybe_init_greenback()
+    # else:
+    #     await pause()
 
     # TODO: possibly a specially formatted traceback
     # (not sure what typing is for this..)?
@@ -488,10 +538,18 @@ async def _invoke(
         # a "context" endpoint type is the most general and
         # "least sugary" type of RPC ep with support for
         # bi-dir streaming B)
-        await chan.send({
-            'cid': cid,
-            'functype': 'context',
-        })
+        # StartAck
+        await chan.send(
+            StartAck(
+                cid=cid,
+                functype='context',
+            )
+        )
+        # await chan.send({
+        #     # StartAck()
+        #     'cid': cid,
+        #     'functype': 'context',
+        # })
 
         # TODO: should we also use an `.open_context()` equiv
         # for this callee side by factoring the impl from
@@ -515,10 +573,17 @@ async def _invoke(
                 ctx._result = res
 
                 # deliver final result to caller side.
-                await chan.send({
-                    'return': res,
-                    'cid': cid
-                })
+                await chan.send(
+                    Return(
+                        cid=cid,
+                        pld=res,
+                    )
+                )
+                # await chan.send({
+                #     # Return()
+                #     'cid': cid,
+                #     'return': res,
+                # })
 
             # NOTE: this happens IFF `ctx._scope.cancel()` is
             # called by any of,
@@ -691,7 +756,8 @@ async def try_ship_error_to_remote(
         try:
             # NOTE: normally only used for internal runtime errors
             # so ship to peer actor without a cid.
-            msg: dict = pack_error(
+            # msg: dict = pack_error(
+            msg: Error = pack_error(
                 err,
                 cid=cid,
 
@@ -707,12 +773,13 @@ async def try_ship_error_to_remote(
             trio.BrokenResourceError,
             BrokenPipeError,
         ):
-            err_msg: dict = msg['error']['tb_str']
+            # err_msg: dict = msg['error']['tb_str']
             log.critical(
                 'IPC transport failure -> '
                 f'failed to ship error to {remote_descr}!\n\n'
                 f'X=> {channel.uid}\n\n'
-                f'{err_msg}\n'
+                # f'{err_msg}\n'
+                f'{msg}\n'
             )
 
 
@@ -772,31 +839,6 @@ async def process_messages(
         with CancelScope(shield=shield) as loop_cs:
             task_status.started(loop_cs)
             async for msg in chan:
-
-                # dedicated loop terminate sentinel
-                if msg is None:
-
-                    tasks: dict[
-                        tuple[Channel, str],
-                        tuple[Context, Callable, trio.Event]
-                    ] = actor._rpc_tasks.copy()
-                    log.cancel(
-                        f'Peer IPC channel terminated via `None` setinel msg?\n'
-                        f'=> Cancelling all {len(tasks)} local RPC tasks..\n'
-                        f'peer: {chan.uid}\n'
-                        f'|_{chan}\n'
-                    )
-                    for (channel, cid) in tasks:
-                        if channel is chan:
-                            await actor._cancel_task(
-                                cid,
-                                channel,
-                                requesting_uid=channel.uid,
-
-                                ipc_msg=msg,
-                            )
-                    break
-
                 log.transport(   # type: ignore
                     f'<= IPC msg from peer: {chan.uid}\n\n'
 
@@ -806,216 +848,294 @@ async def process_messages(
                     f'{pformat(msg)}\n'
                 )
 
-                cid = msg.get('cid')
-                if cid:
-                    # deliver response to local caller/waiter
-                    # via its per-remote-context memory channel.
-                    await actor._push_result(
-                        chan,
-                        cid,
-                        msg,
-                    )
+                match msg:
 
-                    log.runtime(
-                        'Waiting on next IPC msg from\n'
-                        f'peer: {chan.uid}:\n'
-                        f'|_{chan}\n'
+                # if msg is None:
+                # dedicated loop terminate sentinel
+                    case None:
 
-                        # f'last msg: {msg}\n'
-                    )
-                    continue
-
-                # process a 'cmd' request-msg upack
-                # TODO: impl with native `msgspec.Struct` support !!
-                # -[ ] implement with ``match:`` syntax?
-                # -[ ] discard un-authed msgs as per,
-                # <TODO put issue for typed msging structs>
-                try:
-                    (
-                        ns,
-                        funcname,
-                        kwargs,
-                        actorid,
-                        cid,
-                    ) = msg['cmd']
-
-                except KeyError:
-                    # This is the non-rpc error case, that is, an
-                    # error **not** raised inside a call to ``_invoke()``
-                    # (i.e. no cid was provided in the msg - see above).
-                    # Push this error to all local channel consumers
-                    # (normally portals) by marking the channel as errored
-                    assert chan.uid
-                    exc = unpack_error(msg, chan=chan)
-                    chan._exc = exc
-                    raise exc
-
-                log.runtime(
-                    'Handling RPC cmd from\n'
-                    f'peer: {actorid}\n'
-                    '\n'
-                    f'=> {ns}.{funcname}({kwargs})\n'
-                )
-                if ns == 'self':
-                    if funcname == 'cancel':
-                        func: Callable = actor.cancel
-                        kwargs |= {
-                            'req_chan': chan,
-                        }
-
-                        # don't start entire actor runtime cancellation
-                        # if this actor is currently in debug mode!
-                        pdb_complete: trio.Event|None = _debug.Lock.local_pdb_complete
-                        if pdb_complete:
-                            await pdb_complete.wait()
-
-                        # Either of  `Actor.cancel()`/`.cancel_soon()`
-                        # was called, so terminate this IPC msg
-                        # loop, exit back out into `async_main()`,
-                        # and immediately start the core runtime
-                        # machinery shutdown!
-                        with CancelScope(shield=True):
-                            await _invoke(
-                                actor,
-                                cid,
-                                chan,
-                                func,
-                                kwargs,
-                                is_rpc=False,
-                            )
-
-                        log.runtime(
-                            'Cancelling IPC transport msg-loop with peer:\n'
+                        tasks: dict[
+                            tuple[Channel, str],
+                            tuple[Context, Callable, trio.Event]
+                        ] = actor._rpc_tasks.copy()
+                        log.cancel(
+                            f'Peer IPC channel terminated via `None` setinel msg?\n'
+                            f'=> Cancelling all {len(tasks)} local RPC tasks..\n'
+                            f'peer: {chan.uid}\n'
                             f'|_{chan}\n'
                         )
-                        loop_cs.cancel()
+                        for (channel, cid) in tasks:
+                            if channel is chan:
+                                await actor._cancel_task(
+                                    cid,
+                                    channel,
+                                    requesting_uid=channel.uid,
+
+                                    ipc_msg=msg,
+                                )
                         break
 
-                    if funcname == '_cancel_task':
-                        func: Callable = actor._cancel_task
-
-                        # we immediately start the runtime machinery
-                        # shutdown
-                        # with CancelScope(shield=True):
-                        target_cid: str = kwargs['cid']
-                        kwargs |= {
-                            # NOTE: ONLY the rpc-task-owning
-                            # parent IPC channel should be able to
-                            # cancel it!
-                            'parent_chan': chan,
-                            'requesting_uid': chan.uid,
-                            'ipc_msg': msg,
-                        }
-                        # TODO: remove? already have emit in meth.
-                        # log.runtime(
-                        #     f'Rx RPC task cancel request\n'
-                        #     f'<= canceller: {chan.uid}\n'
-                        #     f'  |_{chan}\n\n'
-                        #     f'=> {actor}\n'
-                        #     f'  |_cid: {target_cid}\n'
-                        # )
-                        try:
-                            await _invoke(
-                                actor,
-                                cid,
-                                chan,
-                                func,
-                                kwargs,
-                                is_rpc=False,
-                            )
-                        except BaseException:
-                            log.exception(
-                                'Failed to cancel task?\n'
-                                f'<= canceller: {chan.uid}\n'
-                                f'  |_{chan}\n\n'
-                                f'=> {actor}\n'
-                                f'  |_cid: {target_cid}\n'
-                            )
-                        continue
-                    else:
-                        # normally registry methods, eg.
-                        # ``.register_actor()`` etc.
-                        func: Callable = getattr(actor, funcname)
-
-                else:
-                    # complain to client about restricted modules
-                    try:
-                        func = actor._get_rpc_func(ns, funcname)
-                    except (
-                        ModuleNotExposed,
-                        AttributeError,
-                    ) as err:
-                        err_msg: dict[str, dict] = pack_error(
-                            err,
-                            cid=cid,
-                        )
-                        await chan.send(err_msg)
-                        continue
-
-                # schedule a task for the requested RPC function
-                # in the actor's main "service nursery".
-                # TODO: possibly a service-tn per IPC channel for
-                # supervision isolation? would avoid having to
-                # manage RPC tasks individually in `._rpc_tasks`
-                # table?
-                log.runtime(
-                    f'Spawning task for RPC request\n'
-                    f'<= caller: {chan.uid}\n'
-                    f'  |_{chan}\n\n'
-                    # TODO: maddr style repr?
-                    # f'  |_@ /ipv4/{chan.raddr}/tcp/{chan.rport}/'
-                    # f'cid="{cid[-16:]} .."\n\n'
-
-                    f'=> {actor}\n'
-                    f'  |_cid: {cid}\n'
-                    f'   |>> {func}()\n'
-                )
-                assert actor._service_n  # wait why? do it at top?
-                try:
-                    ctx: Context = await actor._service_n.start(
-                        partial(
-                            _invoke,
-                            actor,
-                            cid,
+                # cid = msg.get('cid')
+                # if cid:
+                    case (
+                        StartAck(cid=cid)
+                        | Started(cid=cid)
+                        | Yield(cid=cid)
+                        | Stop(cid=cid)
+                        | Return(cid=cid)
+                        | Error(cid=cid)
+                    ):
+                        # deliver response to local caller/waiter
+                        # via its per-remote-context memory channel.
+                        await actor._push_result(
                             chan,
-                            func,
-                            kwargs,
-                        ),
-                        name=funcname,
-                    )
+                            cid,
+                            msg,
+                        )
 
-                except (
-                    RuntimeError,
-                    BaseExceptionGroup,
-                ):
-                    # avoid reporting a benign race condition
-                    # during actor runtime teardown.
-                    nursery_cancelled_before_task: bool = True
-                    break
+                        log.runtime(
+                            'Waiting on next IPC msg from\n'
+                            f'peer: {chan.uid}:\n'
+                            f'|_{chan}\n'
 
-                # in the lone case where a ``Context`` is not
-                # delivered, it's likely going to be a locally
-                # scoped exception from ``_invoke()`` itself.
-                if isinstance(err := ctx, Exception):
-                    log.warning(
-                        'Task for RPC failed?'
-                        f'|_ {func}()\n\n'
+                            # f'last msg: {msg}\n'
+                        )
+                        continue
 
-                        f'{err}'
-                    )
-                    continue
+                    # process a 'cmd' request-msg upack
+                    # TODO: impl with native `msgspec.Struct` support !!
+                    # -[ ] implement with ``match:`` syntax?
+                    # -[ ] discard un-authed msgs as per,
+                    # <TODO put issue for typed msging structs>
+                    case Start(
+                        cid=cid,
+                        ns=ns,
+                        func=funcname,
+                        kwargs=kwargs,
+                        uid=actorid,
+                    ):
+                        # try:
+                        #     (
+                        #         ns,
+                        #         funcname,
+                        #         kwargs,
+                        #         actorid,
+                        #         cid,
+                        #     ) = msg['cmd']
 
-                else:
-                    # mark that we have ongoing rpc tasks
-                    actor._ongoing_rpc_tasks = trio.Event()
+                        # # TODO: put in `case Error():` right?
+                        # except KeyError:
+                        #     # This is the non-rpc error case, that is, an
+                        #     # error **not** raised inside a call to ``_invoke()``
+                        #     # (i.e. no cid was provided in the msg - see above).
+                        #     # Push this error to all local channel consumers
+                        #     # (normally portals) by marking the channel as errored
+                        #     assert chan.uid
+                        #     exc = unpack_error(msg, chan=chan)
+                        #     chan._exc = exc
+                        #     raise exc
 
-                    # store cancel scope such that the rpc task can be
-                    # cancelled gracefully if requested
-                    actor._rpc_tasks[(chan, cid)] = (
-                        ctx,
-                        func,
-                        trio.Event(),
-                    )
+                        log.runtime(
+                            'Handling RPC `Start` request from\n'
+                            f'peer: {actorid}\n'
+                            '\n'
+                            f'=> {ns}.{funcname}({kwargs})\n'
+                        )
+                        # case Start(
+                        #     ns='self',
+                        #     funcname='cancel',
+                        # ):
+                        if ns == 'self':
+                            if funcname == 'cancel':
+                                func: Callable = actor.cancel
+                                kwargs |= {
+                                    'req_chan': chan,
+                                }
+
+                                # don't start entire actor runtime cancellation
+                                # if this actor is currently in debug mode!
+                                pdb_complete: trio.Event|None = _debug.Lock.local_pdb_complete
+                                if pdb_complete:
+                                    await pdb_complete.wait()
+
+                                # Either of  `Actor.cancel()`/`.cancel_soon()`
+                                # was called, so terminate this IPC msg
+                                # loop, exit back out into `async_main()`,
+                                # and immediately start the core runtime
+                                # machinery shutdown!
+                                with CancelScope(shield=True):
+                                    await _invoke(
+                                        actor,
+                                        cid,
+                                        chan,
+                                        func,
+                                        kwargs,
+                                        is_rpc=False,
+                                    )
+
+                                log.runtime(
+                                    'Cancelling IPC transport msg-loop with peer:\n'
+                                    f'|_{chan}\n'
+                                )
+                                loop_cs.cancel()
+                                break
+
+                        # case Start(
+                        #     ns='self',
+                        #     funcname='_cancel_task',
+                        # ):
+                            if funcname == '_cancel_task':
+                                func: Callable = actor._cancel_task
+
+                                # we immediately start the runtime machinery
+                                # shutdown
+                                # with CancelScope(shield=True):
+                                target_cid: str = kwargs['cid']
+                                kwargs |= {
+                                    # NOTE: ONLY the rpc-task-owning
+                                    # parent IPC channel should be able to
+                                    # cancel it!
+                                    'parent_chan': chan,
+                                    'requesting_uid': chan.uid,
+                                    'ipc_msg': msg,
+                                }
+                                # TODO: remove? already have emit in meth.
+                                # log.runtime(
+                                #     f'Rx RPC task cancel request\n'
+                                #     f'<= canceller: {chan.uid}\n'
+                                #     f'  |_{chan}\n\n'
+                                #     f'=> {actor}\n'
+                                #     f'  |_cid: {target_cid}\n'
+                                # )
+                                try:
+                                    await _invoke(
+                                        actor,
+                                        cid,
+                                        chan,
+                                        func,
+                                        kwargs,
+                                        is_rpc=False,
+                                    )
+                                except BaseException:
+                                    log.exception(
+                                        'Failed to cancel task?\n'
+                                        f'<= canceller: {chan.uid}\n'
+                                        f'  |_{chan}\n\n'
+                                        f'=> {actor}\n'
+                                        f'  |_cid: {target_cid}\n'
+                                    )
+                                continue
+
+                            # case Start(
+                            #     ns='self',
+                            #     funcname='register_actor',
+                            # ):
+                            else:
+                                # normally registry methods, eg.
+                                # ``.register_actor()`` etc.
+                                func: Callable = getattr(actor, funcname)
+
+                        # case Start(
+                        #     ns=str(),
+                        #     funcname=funcname,
+                        # ):
+                        else:
+                            # complain to client about restricted modules
+                            try:
+                                func = actor._get_rpc_func(ns, funcname)
+                            except (
+                                ModuleNotExposed,
+                                AttributeError,
+                            ) as err:
+                                err_msg: dict[str, dict] = pack_error(
+                                    err,
+                                    cid=cid,
+                                )
+                                await chan.send(err_msg)
+                                continue
+
+                        # schedule a task for the requested RPC function
+                        # in the actor's main "service nursery".
+                        # TODO: possibly a service-tn per IPC channel for
+                        # supervision isolation? would avoid having to
+                        # manage RPC tasks individually in `._rpc_tasks`
+                        # table?
+                        log.runtime(
+                            f'Spawning task for RPC request\n'
+                            f'<= caller: {chan.uid}\n'
+                            f'  |_{chan}\n\n'
+                            # TODO: maddr style repr?
+                            # f'  |_@ /ipv4/{chan.raddr}/tcp/{chan.rport}/'
+                            # f'cid="{cid[-16:]} .."\n\n'
+
+                            f'=> {actor}\n'
+                            f'  |_cid: {cid}\n'
+                            f'   |>> {func}()\n'
+                        )
+                        assert actor._service_n  # wait why? do it at top?
+                        try:
+                            ctx: Context = await actor._service_n.start(
+                                partial(
+                                    _invoke,
+                                    actor,
+                                    cid,
+                                    chan,
+                                    func,
+                                    kwargs,
+                                ),
+                                name=funcname,
+                            )
+
+                        except (
+                            RuntimeError,
+                            BaseExceptionGroup,
+                        ):
+                            # avoid reporting a benign race condition
+                            # during actor runtime teardown.
+                            nursery_cancelled_before_task: bool = True
+                            break
+
+                        # in the lone case where a ``Context`` is not
+                        # delivered, it's likely going to be a locally
+                        # scoped exception from ``_invoke()`` itself.
+                        if isinstance(err := ctx, Exception):
+                            log.warning(
+                                'Task for RPC failed?'
+                                f'|_ {func}()\n\n'
+
+                                f'{err}'
+                            )
+                            continue
+
+                        else:
+                            # mark that we have ongoing rpc tasks
+                            actor._ongoing_rpc_tasks = trio.Event()
+
+                            # store cancel scope such that the rpc task can be
+                            # cancelled gracefully if requested
+                            actor._rpc_tasks[(chan, cid)] = (
+                                ctx,
+                                func,
+                                trio.Event(),
+                            )
+
+                    case Error()|_:
+                        # This is the non-rpc error case, that is, an
+                        # error **not** raised inside a call to ``_invoke()``
+                        # (i.e. no cid was provided in the msg - see above).
+                        # Push this error to all local channel consumers
+                        # (normally portals) by marking the channel as errored
+                        log.exception(
+                            f'Unhandled IPC msg:\n\n'
+                            f'{msg}\n'
+                        )
+                        assert chan.uid
+                        exc = unpack_error(
+                            msg,
+                            chan=chan,
+                        )
+                        chan._exc = exc
+                        raise exc
 
                 log.runtime(
                     'Waiting on next IPC msg from\n'

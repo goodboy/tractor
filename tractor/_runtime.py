@@ -87,6 +87,23 @@ from ._rpc import (
     process_messages,
     try_ship_error_to_remote,
 )
+from tractor.msg import (
+    types as msgtypes,
+    pretty_struct,
+)
+# from tractor.msg.types import (
+#     Aid,
+#     SpawnSpec,
+#     Start,
+#     StartAck,
+#     Started,
+#     Yield,
+#     Stop,
+#     Return,
+#     Error,
+# )
+
+
 
 
 if TYPE_CHECKING:
@@ -143,6 +160,7 @@ class Actor:
     # Information about `__main__` from parent
     _parent_main_data: dict[str, str]
     _parent_chan_cs: CancelScope|None = None
+    _spawn_spec: SpawnSpec|None = None
 
     # syncs for setup/teardown sequences
     _server_down: trio.Event|None = None
@@ -539,7 +557,8 @@ class Actor:
 
                             f'{pformat(msg)}\n'
                         )
-                        cid = msg.get('cid')
+                        # cid: str|None = msg.get('cid')
+                        cid: str|None = msg.cid
                         if cid:
                             # deliver response to local caller/waiter
                             await self._push_result(
@@ -891,29 +910,44 @@ class Actor:
             f'=> {ns}.{func}({kwargs})\n'
         )
         await chan.send(
-            {'cmd': (
-                ns,
-                func,
-                kwargs,
-                self.uid,
-                cid,
-            )}
+            msgtypes.Start(
+                ns=ns,
+                func=func,
+                kwargs=kwargs,
+                uid=self.uid,
+                cid=cid,
+            )
         )
+            # {'cmd': (
+            #     ns,
+            #     func,
+            #     kwargs,
+            #     self.uid,
+            #     cid,
+            # )}
+        # )
 
         # Wait on first response msg and validate; this should be
         # immediate.
-        first_msg: dict = await ctx._recv_chan.receive()
-        functype: str = first_msg.get('functype')
+        # first_msg: dict = await ctx._recv_chan.receive()
+        # functype: str = first_msg.get('functype')
 
-        if 'error' in first_msg:
+        first_msg: msgtypes.StartAck = await ctx._recv_chan.receive()
+        try:
+            functype: str = first_msg.functype
+        except AttributeError:
             raise unpack_error(first_msg, chan)
+            # if 'error' in first_msg:
+            #     raise unpack_error(first_msg, chan)
 
-        elif functype not in (
+        if functype not in (
             'asyncfunc',
             'asyncgen',
             'context',
         ):
-            raise ValueError(f"{first_msg} is an invalid response packet?")
+            raise ValueError(
+                f'{first_msg} is an invalid response packet?'
+            )
 
         ctx._remote_func_type = functype
         return ctx
@@ -946,24 +980,36 @@ class Actor:
             await self._do_handshake(chan)
 
             accept_addrs: list[tuple[str, int]]|None = None
-            if self._spawn_method == "trio":
-                # Receive runtime state from our parent
-                parent_data: dict[str, Any]
-                parent_data = await chan.recv()
-                log.runtime(
-                    'Received state from parent:\n\n'
-                    # TODO: eventually all these msgs as
-                    # `msgspec.Struct` with a special mode that
-                    # pformats them in multi-line mode, BUT only
-                    # if "trace"/"util" mode is enabled?
-                    f'{pformat(parent_data)}\n'
-                )
-                accept_addrs: list[tuple[str, int]] = parent_data.pop('bind_addrs')
-                rvs = parent_data.pop('_runtime_vars')
 
+            if self._spawn_method == "trio":
+
+                # Receive runtime state from our parent
+                # parent_data: dict[str, Any]
+                # parent_data = await chan.recv()
+
+                # TODO: maybe we should just wrap this directly
+                # in a `Actor.spawn_info: SpawnInfo` struct?
+                spawnspec: msgtypes.SpawnSpec = await chan.recv()
+                self._spawn_spec = spawnspec
+
+                # TODO: eventually all these msgs as
+                # `msgspec.Struct` with a special mode that
+                # pformats them in multi-line mode, BUT only
+                # if "trace"/"util" mode is enabled?
+                log.runtime(
+                    'Received runtime spec from parent:\n\n'
+                    f'{pformat(spawnspec)}\n'
+                )
+                # accept_addrs: list[tuple[str, int]] = parent_data.pop('bind_addrs')
+                accept_addrs: list[tuple[str, int]] = spawnspec.bind_addrs
+
+                # rvs = parent_data.pop('_runtime_vars')
+                rvs = spawnspec._runtime_vars
                 if rvs['_debug_mode']:
                     try:
-                        log.info('Enabling `stackscope` traces on SIGUSR1')
+                        log.info(
+                            'Enabling `stackscope` traces on SIGUSR1'
+                        )
                         from .devx import enable_stack_on_sig
                         enable_stack_on_sig()
                     except ImportError:
@@ -971,28 +1017,40 @@ class Actor:
                             '`stackscope` not installed for use in debug mode!'
                         )
 
-                log.runtime(f"Runtime vars are: {rvs}")
+                log.runtime(f'Runtime vars are: {rvs}')
                 rvs['_is_root'] = False
                 _state._runtime_vars.update(rvs)
 
-                for attr, value in parent_data.items():
-                    if (
-                        attr == 'reg_addrs'
-                        and value
-                    ):
-                        # XXX: ``msgspec`` doesn't support serializing tuples
-                        # so just cash manually here since it's what our
-                        # internals expect.
-                        # TODO: we don't really NEED these as
-                        # tuples so we can probably drop this
-                        # casting since apparently in python lists
-                        # are "more efficient"?
-                        self.reg_addrs = [tuple(val) for val in value]
+                # XXX: ``msgspec`` doesn't support serializing tuples
+                # so just cash manually here since it's what our
+                # internals expect.
+                #
+                self.reg_addrs = [
+                    # TODO: we don't really NEED these as tuples?
+                    # so we can probably drop this casting since
+                    # apparently in python lists are "more
+                    # efficient"?
+                    tuple(val)
+                    for val in spawnspec.reg_addrs
+                ]
 
-                    else:
-                        setattr(self, attr, value)
+                # for attr, value in parent_data.items():
+                for _, attr, value in pretty_struct.iter_fields(
+                    spawnspec,
+                ):
+                    setattr(self, attr, value)
+                    # if (
+                    #     attr == 'reg_addrs'
+                    #     and value
+                    # ):
+                    #     self.reg_addrs = [tuple(val) for val in value]
+                    # else:
+                    #     setattr(self, attr, value)
 
-            return chan, accept_addrs
+            return (
+                chan,
+                accept_addrs,
+            )
 
         except OSError:  # failed to connect
             log.warning(
@@ -1434,7 +1492,7 @@ class Actor:
         self,
         chan: Channel
 
-    ) -> tuple[str, str]:
+    ) -> msgtypes.Aid:
         '''
         Exchange `(name, UUIDs)` identifiers as the first
         communication step with any (peer) remote `Actor`.
@@ -1443,14 +1501,27 @@ class Actor:
         "actor model" parlance.
 
         '''
-        await chan.send(self.uid)
-        value: tuple = await chan.recv()
-        uid: tuple[str, str] = (str(value[0]), str(value[1]))
+        name, uuid = self.uid
+        await chan.send(
+            msgtypes.Aid(
+                name=name,
+                uuid=uuid,
+            )
+        )
+        aid: msgtypes.Aid = await chan.recv()
+        chan.aid = aid
+
+        uid: tuple[str, str] = (
+            # str(value[0]),
+            # str(value[1])
+            aid.name,
+            aid.uuid,
+        )
 
         if not isinstance(uid, tuple):
             raise ValueError(f"{uid} is not a valid uid?!")
 
-        chan.uid = str(uid[0]), str(uid[1])
+        chan.uid = uid
         return uid
 
     def is_infected_aio(self) -> bool:
@@ -1510,7 +1581,8 @@ async def async_main(
             # because we're running in mp mode
             if (
                 set_accept_addr_says_rent
-                and set_accept_addr_says_rent is not None
+                and
+                set_accept_addr_says_rent is not None
             ):
                 accept_addrs = set_accept_addr_says_rent
 

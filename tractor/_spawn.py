@@ -49,6 +49,9 @@ from tractor._portal import Portal
 from tractor._runtime import Actor
 from tractor._entry import _mp_main
 from tractor._exceptions import ActorFailure
+from tractor.msg.types import (
+    SpawnSpec,
+)
 
 
 if TYPE_CHECKING:
@@ -493,14 +496,25 @@ async def trio_proc(
             portal,
         )
 
-        # send additional init params
-        await chan.send({
-            '_parent_main_data': subactor._parent_main_data,
-            'enable_modules': subactor.enable_modules,
-            'reg_addrs': subactor.reg_addrs,
-            'bind_addrs': bind_addrs,
-            '_runtime_vars': _runtime_vars,
-        })
+        # send a "spawning specification" which configures the
+        # initial runtime state of the child.
+        await chan.send(
+            SpawnSpec(
+                _parent_main_data=subactor._parent_main_data,
+                enable_modules=subactor.enable_modules,
+                reg_addrs=subactor.reg_addrs,
+                bind_addrs=bind_addrs,
+                _runtime_vars=_runtime_vars,
+            )
+        )
+
+        # await chan.send({
+        #     '_parent_main_data': subactor._parent_main_data,
+        #     'enable_modules': subactor.enable_modules,
+        #     'reg_addrs': subactor.reg_addrs,
+        #     'bind_addrs': bind_addrs,
+        #     '_runtime_vars': _runtime_vars,
+        # })
 
         # track subactor in current nursery
         curr_actor: Actor = current_actor()
