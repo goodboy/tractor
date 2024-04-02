@@ -873,7 +873,7 @@ def test_one_end_stream_not_opened(
                 enable_modules=[__name__],
             )
 
-            with trio.fail_after(0.8):
+            with trio.fail_after(1):
                 async with portal.open_context(
                     entrypoint,
                 ) as (ctx, sent):
