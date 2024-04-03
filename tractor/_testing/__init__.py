@@ -26,6 +26,9 @@ import tractor
 from .pytest import (
     tractor_test as tractor_test
 )
+from .fault_simulation import (
+    break_ipc as break_ipc,
+)
 
 
 def repodir() -> pathlib.Path:
