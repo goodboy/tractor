@@ -18,6 +18,10 @@
 Built-in messaging patterns, types, APIs and helpers.
 
 '''
+from typing import (
+    Union,
+    TypeAlias,
+)
 from .ptr import (
     NamespacePath as NamespacePath,
 )
@@ -50,6 +54,10 @@ from .types import (
 
     Error as Error,
 
-    # full msg spec set
-    __spec__ as __spec__,
+    # full msg class set from above as list
+    __msg_types__ as __msg_types__,
 )
+# TODO: use new type declaration syntax for msg-type-spec
+# https://docs.python.org/3/library/typing.html#type-aliases
+# https://docs.python.org/3/reference/simple_stmts.html#type
+__msg_spec__: TypeAlias = Union[*__msg_types__]

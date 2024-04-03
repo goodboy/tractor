@@ -438,8 +438,8 @@ _ctxvar_MsgCodec: MsgCodec = RunVar(
     'msgspec_codec',
 
     # TODO: move this to our new `Msg`-spec!
-    default=_def_msgspec_codec,
-    # default=_def_tractor_codec,
+    # default=_def_msgspec_codec,
+    default=_def_tractor_codec,
 )
 
 

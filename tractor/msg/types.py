@@ -26,7 +26,7 @@ from __future__ import annotations
 import types
 from typing import (
     Any,
-    Callable,
+    # Callable,
     Generic,
     Literal,
     Type,
@@ -340,50 +340,54 @@ class Error(
 # class Overrun(Msg):
 #     cid: str
 
+_runtime_msgs: list[Msg] = [
 
-# built-in SC shuttle protocol msg type set in
-# approx order of the IPC txn-state spaces.
-__spec__: list[Msg] = [
-
-    # identity handshake
+    # identity handshake on first IPC `Channel` contact.
     Aid,
 
-    # spawn specification from parent
+    # parent-to-child spawn specification passed as 2nd msg after
+    # handshake ONLY after child connects back to parent.
     SpawnSpec,
 
     # inter-actor RPC initiation
-    Start,
-    StartAck,
+    Start,  # schedule remote task-as-func
+    StartAck,  # ack the schedule request
 
-    # no-outcome-yet IAC (inter-actor-communication)
-    Started,
-    Yield,
+    # emission from `MsgStream.aclose()`
     Stop,
 
-    # termination outcomes
-    Return,
+    # box remote errors, normally subtypes
+    # of `RemoteActorError`.
     Error,
 ]
 
-_runtime_spec_msgs: list[Msg] = [
-    Aid,
-    SpawnSpec,
-    Start,
-    StartAck,
-    Stop,
-    Error,
-]
-_payload_spec_msgs: list[Msg] = [
+# the no-outcome-yet IAC (inter-actor-communication) sub-set which
+# can be `Msg.pld` payload field type-limited by application code
+# using `apply_codec()` and `limit_msg_spec()`.
+_payload_msgs: list[Msg] = [
+    # first <value> from `Context.started(<value>)`
     Started,
+
+    # any <value> sent via `MsgStream.send(<value>)`
     Yield,
+
+    # the final value returned from a `@context` decorated
+    # IPC endpoint.
     Return,
 ]
+
+# built-in SC shuttle protocol msg type set in
+# approx order of the IPC txn-state spaces.
+__msg_types__: list[Msg] = (
+    _runtime_msgs
+    +
+    _payload_msgs
+)
 
 
 def mk_msg_spec(
     payload_type_union: Union[Type] = Any,
 
-    # boxing_msg_set: list[Msg] = _payload_spec_msgs,
     spec_build_method: Literal[
         'indexed_generics',  # works
         'defstruct',
@@ -424,12 +428,12 @@ def mk_msg_spec(
     defs_msg_types: list[Msg] = []
     nc_msg_types: list[Msg] = []
 
-    for msgtype in __spec__:
+    for msgtype in __msg_types__:
 
         # for the NON-payload (user api) type specify-able
         # msgs types, we simply aggregate the def as is
         # for inclusion in the output type `Union`.
-        if msgtype not in _payload_spec_msgs:
+        if msgtype not in _payload_msgs:
             ipc_msg_types.append(msgtype)
             continue
 
@@ -535,6 +539,11 @@ def mk_msg_spec(
 
 # TODO: make something similar to this inside `._codec` such that
 # user can just pass a type table of some sort?
+# -[ ] we would need to decode all msgs to `pretty_struct.Struct`
+#   and then call `.to_dict()` on them?
+# -[ ] we're going to need to re-impl all the stuff changed in the
+# runtime port such that it can handle dicts or `Msg`s?
+#
 # def mk_dict_msg_codec_hooks() -> tuple[Callable, Callable]:
 #     '''
 #     Deliver a `enc_hook()`/`dec_hook()` pair which does
