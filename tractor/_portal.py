@@ -502,7 +502,7 @@ async def open_portal(
     '''
     actor = current_actor()
     assert actor
-    was_connected = False
+    was_connected: bool = False
 
     async with maybe_open_nursery(nursery, shield=shield) as nursery:
 
@@ -533,9 +533,7 @@ async def open_portal(
             await portal.aclose()
 
             if was_connected:
-                # gracefully signal remote channel-msg loop
-                await channel.send(None)
-                # await channel.aclose()
+                await channel.aclose()
 
             # cancel background msg loop task
             if msg_loop_cs:

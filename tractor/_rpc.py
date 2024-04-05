@@ -424,8 +424,6 @@ async def _invoke(
         # XXX for .pause_from_sync()` usage we need to make sure
         # `greenback` is boostrapped in the subactor!
         await _debug.maybe_init_greenback()
-    # else:
-    #     await pause()
 
     # TODO: possibly a specially formatted traceback
     # (not sure what typing is for this..)?
@@ -850,30 +848,54 @@ async def process_messages(
 
                 match msg:
 
+                # NOTE: this *was a dedicated
+                # "graceful-terminate-loop" mechanism using
+                # a `None`-msg-sentinel which would cancel all RPC
+                # tasks parented by this loop's IPC channel; that
+                # is all rpc-scheduled-tasks started over the
+                # connection were explicitly per-task cancelled
+                # normally prior to the `Channel`'s underlying
+                # transport being later closed.
+                #
+                # * all `.send(None)`s were # removed as part of
+                #   typed-msging  requirements
+                #
+                # TODO: if this mechanism is still desired going
+                # forward it should be implemented as part of the
+                # normal runtime-cancel-RPC endpoints with either,
+                # - a special `msg.types.Msg` to trigger the loop endpoint
+                #   (like `None` was used prior) or,
+                # - it should just be accomplished using A 
+                #   `Start(ns='self', func='cancel_rpc_tasks())`
+                #   request instead?
+                #
                 # if msg is None:
-                # dedicated loop terminate sentinel
-                    case None:
+                    # case None:
+                    #     tasks: dict[
+                    #         tuple[Channel, str],
+                    #         tuple[Context, Callable, trio.Event]
+                    #     ] = actor._rpc_tasks.copy()
+                    #     log.cancel(
+                    #         f'Peer IPC channel terminated via `None` setinel msg?\n'
+                    #         f'=> Cancelling all {len(tasks)} local RPC tasks..\n'
+                    #         f'peer: {chan.uid}\n'
+                    #         f'|_{chan}\n'
+                    #     )
+                    #     # TODO: why aren't we just calling
+                    #     # `.cancel_rpc_tasks()` with the parent
+                    #     # chan as input instead?
+                    #     for (channel, cid) in tasks:
+                    #         if channel is chan:
+                    #             await actor._cancel_task(
+                    #                 cid,
+                    #                 channel,
+                    #                 requesting_uid=channel.uid,
 
-                        tasks: dict[
-                            tuple[Channel, str],
-                            tuple[Context, Callable, trio.Event]
-                        ] = actor._rpc_tasks.copy()
-                        log.cancel(
-                            f'Peer IPC channel terminated via `None` setinel msg?\n'
-                            f'=> Cancelling all {len(tasks)} local RPC tasks..\n'
-                            f'peer: {chan.uid}\n'
-                            f'|_{chan}\n'
-                        )
-                        for (channel, cid) in tasks:
-                            if channel is chan:
-                                await actor._cancel_task(
-                                    cid,
-                                    channel,
-                                    requesting_uid=channel.uid,
+                    #                 ipc_msg=msg,
+                    #             )
 
-                                    ipc_msg=msg,
-                                )
-                        break
+                    #     # immediately break out of this loop!
+                    #     break
 
                 # cid = msg.get('cid')
                 # if cid:
@@ -911,7 +933,7 @@ async def process_messages(
                         cid=cid,
                         ns=ns,
                         func=funcname,
-                        kwargs=kwargs,
+                        kwargs=kwargs,  # type-spec this? see `msg.types`
                         uid=actorid,
                     ):
                         # try:

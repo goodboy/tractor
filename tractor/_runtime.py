@@ -65,7 +65,11 @@ from trio import (
     TaskStatus,
 )
 
-from .msg import NamespacePath
+from tractor.msg import (
+    pretty_struct,
+    NamespacePath,
+    types as msgtypes,
+)
 from ._ipc import Channel
 from ._context import (
     mk_context,
@@ -86,10 +90,6 @@ from . import _mp_fixup_main
 from ._rpc import (
     process_messages,
     try_ship_error_to_remote,
-)
-from tractor.msg import (
-    types as msgtypes,
-    pretty_struct,
 )
 # from tractor.msg.types import (
 #     Aid,
@@ -160,18 +160,15 @@ class Actor:
     # Information about `__main__` from parent
     _parent_main_data: dict[str, str]
     _parent_chan_cs: CancelScope|None = None
-    _spawn_spec: SpawnSpec|None = None
+    _spawn_spec: msgtypes.SpawnSpec|None = None
 
     # syncs for setup/teardown sequences
     _server_down: trio.Event|None = None
 
-    # user toggled crash handling (including monkey-patched in
-    # `trio.open_nursery()` via `.trionics._supervisor` B)
-    _debug_mode: bool = False
-
     # if started on ``asycio`` running ``trio`` in guest mode
     _infected_aio: bool = False
 
+    # TODO: nursery tracking like `trio` does?
     # _ans: dict[
     #     tuple[str, str],
     #     list[ActorNursery],
@@ -718,35 +715,50 @@ class Actor:
                         # TODO: figure out why this breaks tests..
                         db_cs.cancel()
 
-            # XXX: is this necessary (GC should do it)?
+            # XXX TODO XXX: DO WE NEED THIS?
+            # -[ ] is it necessary any more (GC should do it) now
+            #    that we have strict(er) graceful cancellation
+            #    semantics?
             # XXX WARNING XXX
             # Be AWARE OF THE INDENT LEVEL HERE
             # -> ONLY ENTER THIS BLOCK WHEN ._peers IS
             # EMPTY!!!!
-            if (
-                not self._peers
-                and chan.connected()
-            ):
-                    # if the channel is still connected it may mean the far
-                    # end has not closed and we may have gotten here due to
-                    # an error and so we should at least try to terminate
-                    # the channel from this end gracefully.
-                    log.runtime(
-                        'Terminating channel with `None` setinel msg\n'
-                        f'|_{chan}\n'
-                    )
-                    try:
-                        # send msg loop terminate sentinel which
-                        # triggers cancellation of all remotely
-                        # started tasks.
-                        await chan.send(None)
+            #
+            # if the channel is still connected it may mean the far
+            # end has not closed and we may have gotten here due to
+            # an error and so we should at least try to terminate
+            # the channel from this end gracefully.
+            #if (
+            #    not self._peers
+            #    and chan.connected()
+            #):
+            #        log.runtime(
+            #            'Terminating channel with `None` setinel msg\n'
+            #            f'|_{chan}\n'
+            #        )
+            #        try:
+            #            # ORIGINALLY we sent a msg loop terminate
+            #            # sentinel (`None`) which triggers
+            #            # cancellation of all remotely started
+            #            # tasks.
+            #            #
+            #            # HOWEVER, after we added typed msging,
+            #            # you can't just willy nilly send `None`
+            #            # wherever since it might be invalid given
+            #            # the currently configured msg-spec.
+            #            #
+            #            # SO, this was all removed and I'm pretty
+            #            # confident we don't need it replaced with
+            #            # a manual RPC to
+            #            # a `Actor.cancel_rpc_tasks()` right?
+            #            await chan.send(None)
 
-                        # XXX: do we want this? no right?
-                        # causes "[104] connection reset by peer" on other end
-                        # await chan.aclose()
+            #            # XXX: do we want this? NO RIGHT?
+            #            # causes "[104] connection reset by peer" on other end
+            #            # await chan.aclose()
 
-                    except trio.BrokenResourceError:
-                        log.runtime(f"Channel {chan.uid} was already closed")
+            #        except trio.BrokenResourceError:
+            #            log.runtime(f"Channel {chan.uid} was already closed")
 
     # TODO: rename to `._deliver_payload()` since this handles
     # more then just `result` msgs now obvi XD
@@ -776,9 +788,10 @@ class Actor:
             log.warning(
                 'Ignoring invalid IPC ctx msg!\n\n'
                 f'<= sender: {uid}\n'
-                f'=> cid: {cid}\n\n'
+                # XXX don't need right since it's always in msg?
+                # f'=> cid: {cid}\n\n'
 
-                f'{msg}\n'
+                f'{pretty_struct.Struct.pformat(msg)}\n'
             )
             return
 
@@ -1439,7 +1452,7 @@ class Actor:
             )
         await self._ongoing_rpc_tasks.wait()
 
-    def cancel_server(self) -> None:
+    def cancel_server(self) -> bool:
         '''
         Cancel the internal IPC transport server nursery thereby
         preventing any new inbound IPC connections establishing.
@@ -1448,6 +1461,9 @@ class Actor:
         if self._server_n:
             log.runtime("Shutting down channel server")
             self._server_n.cancel_scope.cancel()
+            return True
+
+        return False
 
     @property
     def accept_addrs(self) -> list[tuple[str, int]]:
