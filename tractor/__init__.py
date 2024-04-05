@@ -45,9 +45,10 @@ from ._state import (
     is_root_process as is_root_process,
 )
 from ._exceptions import (
-    RemoteActorError as RemoteActorError,
-    ModuleNotExposed as ModuleNotExposed,
     ContextCancelled as ContextCancelled,
+    ModuleNotExposed as ModuleNotExposed,
+    MsgTypeError as MsgTypeError,
+    RemoteActorError as RemoteActorError,
 )
 from .devx import (
     breakpoint as breakpoint,
