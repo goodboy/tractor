@@ -45,6 +45,10 @@ from msgspec import (
 from tractor.msg import (
     pretty_struct,
 )
+from tractor.log import get_logger
+
+
+log = get_logger('tractor.msgspec')
 
 # type variable for the boxed payload field `.pld`
 PayloadT = TypeVar('PayloadT')
@@ -185,7 +189,47 @@ class SpawnSpec(
 #      | Union[DebugLock, DebugLocked, DebugRelease]
 #   )
 
+# class Params(
+#     Struct,
+#     Generic[PayloadT],
+# ):
+#     spec: PayloadT|ParamSpec
+#     inputs: InputsT|dict[str, Any]
 
+    # TODO: for eg. we could stringently check the target
+    # task-func's type sig and enforce it?
+    # as an example for an IPTC,
+    # @tractor.context
+    # async def send_back_nsp(
+    #     ctx: Context,
+    #     expect_debug: bool,
+    #     pld_spec_str: str,
+    #     add_hooks: bool,
+    #     started_msg_dict: dict,
+    # ) -> <WhatHere!>:
+
+    # TODO: figure out which of the `typing` feats we want to
+    # support:
+    # - plain ol `ParamSpec`:
+    #   https://docs.python.org/3/library/typing.html#typing.ParamSpec
+    # - new in 3.12 type parameter lists Bo
+    # |_ https://docs.python.org/3/reference/compound_stmts.html#type-params
+    # |_ historical pep 695: https://peps.python.org/pep-0695/
+    # |_ full lang spec: https://typing.readthedocs.io/en/latest/spec/
+    # |_ on annotation scopes:
+    #    https://docs.python.org/3/reference/executionmodel.html#annotation-scopes
+    # spec: ParamSpec[
+    #     expect_debug: bool,
+    #     pld_spec_str: str,
+    #     add_hooks: bool,
+    #     started_msg_dict: dict,
+    # ]
+
+
+# TODO: possibly sub-type for runtime method requests?
+# -[ ] `Runtime(Start)` with a `.ns: str = 'self' or
+#     we can just enforce any such method as having a strict
+#     ns for calling funcs, namely the `Actor` instance?
 class Start(
     Struct,
     tag=True,
@@ -212,8 +256,44 @@ class Start(
     ns: str
     func: str
 
-    kwargs: dict
+    # TODO: make this a sub-struct which can be further
+    # type-limited, maybe `Inputs`?
+    # => SEE ABOVE <=
+    kwargs: dict[str, Any]
     uid: tuple[str, str]  # (calling) actor-id
+
+    # TODO: enforcing a msg-spec in terms `Msg.pld`
+    # parameterizable msgs to be used in the appls IPC dialog.
+    #
+    # -[ ] both as part of the `.open_context()` call AND as part of the
+    #     immediate ack-reponse (see similar below)
+    #     we should do spec matching and fail if anything is awry?
+    #
+    # -[ ] eventually spec should be generated/parsed from the
+    #     type-annots as # desired in GH issue:
+    #     https://github.com/goodboy/tractor/issues/365
+    #
+    # -[ ] semantics of the mismatch case
+    #   - when caller-callee specs we should raise
+    #    a `MsgTypeError` or `MsgSpecError` or similar?
+    #
+    # -[ ] wrapper types for both spec types such that we can easily
+    #     IPC transport them?
+    #     - `TypeSpec: Union[Type]`
+    #      * also a `.__contains__()` for doing `None in
+    #      TypeSpec[None|int]` since rn you need to do it on
+    #      `.__args__` for unions..
+    #     - `MsgSpec: Union[Type[Msg]]
+    #
+    # -[ ] auto-genning this from new (in 3.12) type parameter lists Bo
+    # |_ https://docs.python.org/3/reference/compound_stmts.html#type-params
+    # |_ historical pep 695: https://peps.python.org/pep-0695/
+    # |_ full lang spec: https://typing.readthedocs.io/en/latest/spec/
+    # |_ on annotation scopes:
+    #    https://docs.python.org/3/reference/executionmodel.html#annotation-scopes
+    # |_ 3.13 will have subscriptable funcs Bo
+    #    https://peps.python.org/pep-0718/
+    pld_spec: str = str(Any)
 
 
 class StartAck(
@@ -235,14 +315,10 @@ class StartAck(
         'context',  # TODO: the only one eventually?
     ]
 
-    # TODO: as part of the reponse we should report our allowed
-    # msg spec which should be generated from the type-annots as
-    # desired in # https://github.com/goodboy/tractor/issues/365
-    # When this does not match what the starter/caller side
-    # expects we of course raise a `TypeError` just like if
-    # a function had been called using an invalid signature.
-    #
-    # msgspec: MsgSpec
+    # import typing
+    # eval(str(Any), {}, {'typing': typing})
+    # started_spec: str = str(Any)
+    # return_spec
 
 
 class Started(
@@ -290,6 +366,7 @@ class Stop(
     # pld: UnsetType = UNSET
 
 
+# TODO: is `Result` or `Out[come]` a better name?
 class Return(
     Msg,
     Generic[PayloadT],
@@ -300,6 +377,27 @@ class Return(
 
     '''
     pld: PayloadT
+
+
+class CancelAck(
+    Return,
+):
+    '''
+    Deliver the `bool` return-value from a cancellation `Actor`
+    method scheduled via and prior RPC request.
+
+    - `Actor.cancel()`
+       `|_.cancel_soon()`
+       `|_.cancel_rpc_tasks()`
+       `|_._cancel_task()`
+       `|_.cancel_server()`
+
+    RPCs to these methods must **always** be able to deliver a result
+    despite the currently configured IPC msg spec such that graceful
+    cancellation is always functional in the runtime.
+
+    '''
+    pld: bool
 
 
 class Error(
@@ -530,9 +628,13 @@ def mk_msg_spec(
 
     pld_spec: Union[Type] = specs[spec_build_method]
     runtime_spec: Union[Type] = Union[*ipc_msg_types]
-
+    ipc_spec = pld_spec | runtime_spec
+    log.runtime(
+        'Generating new IPC msg-spec\n'
+        f'{ipc_spec}\n'
+    )
     return (
-        pld_spec | runtime_spec,
+        ipc_spec,
         msgtypes_table[spec_build_method] + ipc_msg_types,
     )
 
