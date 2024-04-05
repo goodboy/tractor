@@ -104,6 +104,57 @@ def get_err_type(type_name: str) -> BaseException|None:
             return type_ref
 
 
+def pformat_boxed_tb(
+    tb_str: str,
+    fields_str: str|None = None,
+    field_prefix: str = ' |_',
+    indent: str = ' '*2
+) -> str:
+    if (
+        fields_str
+        and
+        field_prefix
+    ):
+        fields: str = textwrap.indent(
+            fields_str,
+            # prefix=' '*2,
+            # prefix=' |_',
+            prefix=field_prefix,
+        )
+    else:
+        fields = fields_str or ''
+
+    # body_indent: str = len(field_prefix) * ' '
+    body: str = (
+
+        # orig
+        # f'  |\n'
+        # f'   ------ - ------\n\n'
+        # f'{tb_str}\n'
+        # f'   ------ - ------\n'
+        # f' _|\n'
+
+        f'|\n'
+        f' ------ - ------\n\n'
+        f'{tb_str}\n'
+        f' ------ - ------\n'
+        f'_|\n'
+    )
+    if len(indent):
+        body: str = textwrap.indent(
+            body,
+            # prefix=body_indent,
+            prefix=indent,
+        )
+
+    return (
+        fields
+        +
+        body
+    )
+    # return body
+
+
 # TODO: rename to just `RemoteError`?
 class RemoteActorError(Exception):
     '''
@@ -117,7 +168,7 @@ class RemoteActorError(Exception):
     '''
     reprol_fields: list[str] = [
         'src_uid',
-        'relay_path',
+        # 'relay_path',
     ]
 
     def __init__(
@@ -249,7 +300,7 @@ class RemoteActorError(Exception):
     @property
     def tb_str(
         self,
-        indent: str = ' '*3,
+        indent: str = ' ',
     ) -> str:
         if remote_tb := self.msgdata.get('tb_str'):
             return textwrap.indent(
@@ -309,25 +360,12 @@ class RemoteActorError(Exception):
         fields: str = self._mk_fields_str(
             _body_fields,
         )
-        fields: str = textwrap.indent(
-            fields,
-            # prefix=' '*2,
-            prefix=' |_',
+        body: str = pformat_boxed_tb(
+            tb_str=self.tb_str,
+            fields_str=fields,
+            field_prefix=' |_',
+            indent=' ',  # no indent?
         )
-        indent: str = ''*1
-        body: str = (
-            f'{fields}'
-            f'  |\n'
-            f'   ------ - ------\n\n'
-            f'{self.tb_str}\n'
-            f'   ------ - ------\n'
-            f' _|\n'
-        )
-        if indent:
-            body: str = textwrap.indent(
-                body,
-                prefix=indent,
-            )
         return (
             f'<{type(self).__name__}(\n'
             f'{body}'
