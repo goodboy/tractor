@@ -13,6 +13,7 @@ import trio
 import tractor
 from tractor._testing import (
     examples_dir,
+    break_ipc,
 )
 
 
@@ -93,7 +94,8 @@ def test_ipc_channel_break_during_stream(
         expect_final_exc = trio.ClosedResourceError
 
     mod: ModuleType = import_path(
-        examples_dir() / 'advanced_faults' / 'ipc_failure_during_stream.py',
+        examples_dir() / 'advanced_faults'
+        / 'ipc_failure_during_stream.py',
         root=examples_dir(),
         consider_namespace_packages=False,
     )
@@ -225,9 +227,15 @@ async def break_ipc_after_started(
 ) -> None:
     await ctx.started()
     async with ctx.open_stream() as stream:
-        await stream.aclose()
-        await trio.sleep(0.2)
-        await ctx.chan.send(None)
+
+        # TODO: make a test which verifies the error
+        # for this, i.e. raises a `MsgTypeError`
+        # await ctx.chan.send(None)
+
+        await break_ipc(
+            stream=stream,
+            pre_close=True,
+        )
         print('child broke IPC and terminating')
 
 
