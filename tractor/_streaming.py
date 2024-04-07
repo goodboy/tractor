@@ -46,7 +46,6 @@ from .trionics import (
 from tractor.msg import (
     Stop,
     Yield,
-    Error,
 )
 
 if TYPE_CHECKING:
@@ -391,11 +390,11 @@ class MsgStream(trio.abc.Channel):
 
         if not self._eoc:
             log.cancel(
-                'Stream closed before it received an EoC?\n'
+                'Stream closed by self before it received an EoC?\n'
                 'Setting eoc manually..\n..'
             )
             self._eoc: bool = trio.EndOfChannel(
-                f'Context stream closed by {self._ctx.side}\n'
+                f'Context stream closed by self({self._ctx.side})\n'
                 f'|_{self}\n'
             )
         # ?XXX WAIT, why do we not close the local mem chan `._rx_chan` XXX?
