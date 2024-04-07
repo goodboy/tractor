@@ -454,6 +454,10 @@ _runtime_msgs: list[Msg] = [
     # emission from `MsgStream.aclose()`
     Stop,
 
+    # `Return` sub-type that we always accept from
+    # runtime-internal cancel endpoints
+    CancelAck,
+
     # box remote errors, normally subtypes
     # of `RemoteActorError`.
     Error,
