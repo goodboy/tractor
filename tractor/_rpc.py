@@ -806,61 +806,15 @@ async def process_messages(
                 log.transport(   # type: ignore
                     f'<= IPC msg from peer: {chan.uid}\n\n'
 
-                    # TODO: conditionally avoid fmting depending
-                    # on log level (for perf)?
-                    # => specifically `pformat()` sub-call..?
+                    # TODO: avoid fmting depending on loglevel for perf?
+                    # -[ ] specifically `pformat()` sub-call..?
+                    # -[ ] use `.msg.pretty_struct` here now instead!
                     f'{pformat(msg)}\n'
                 )
 
                 match msg:
-
-                # NOTE: this *was a dedicated
-                # "graceful-terminate-loop" mechanism using
-                # a `None`-msg-sentinel which would cancel all RPC
-                # tasks parented by this loop's IPC channel; that
-                # is all rpc-scheduled-tasks started over the
-                # connection were explicitly per-task cancelled
-                # normally prior to the `Channel`'s underlying
-                # transport being later closed.
-                #
-                # * all `.send(None)`s were # removed as part of
-                #   typed-msging  requirements
-                #
-                # TODO: if this mechanism is still desired going
-                # forward it should be implemented as part of the
-                # normal runtime-cancel-RPC endpoints with either,
-                # - a special `msg.types.Msg` to trigger the loop endpoint
-                #   (like `None` was used prior) or,
-                # - it should just be accomplished using A 
-                #   `Start(ns='self', func='cancel_rpc_tasks())`
-                #   request instead?
-                #
-                # if msg is None:
-                    # case None:
-                    #     tasks: dict[
-                    #         tuple[Channel, str],
-                    #         tuple[Context, Callable, trio.Event]
-                    #     ] = actor._rpc_tasks.copy()
-                    #     log.cancel(
-                    #         f'Peer IPC channel terminated via `None` setinel msg?\n'
-                    #         f'=> Cancelling all {len(tasks)} local RPC tasks..\n'
-                    #         f'peer: {chan.uid}\n'
-                    #         f'|_{chan}\n'
-                    #     )
-                    #     # TODO: why aren't we just calling
-                    #     # `.cancel_rpc_tasks()` with the parent
-                    #     # chan as input instead?
-                    #     for (channel, cid) in tasks:
-                    #         if channel is chan:
-                    #             await actor._cancel_task(
-                    #                 cid,
-                    #                 channel,
-                    #                 requesting_uid=channel.uid,
-                    #                 ipc_msg=msg,
-                    #             )
-                    #     # immediately break out of this loop!
-                    #     break
-
+                    # msg for an ongoing IPC ctx session, deliver msg to
+                    # local task.
                     case (
                         StartAck(cid=cid)
                         | Started(cid=cid)
@@ -868,7 +822,7 @@ async def process_messages(
                         | Stop(cid=cid)
                         | Return(cid=cid)
                         | CancelAck(cid=cid)
-                        | Error(cid=cid)
+                        | Error(cid=cid)  # RPC-task ctx specific
                     ):
                         # deliver response to local caller/waiter
                         # via its per-remote-context memory channel.
@@ -877,10 +831,8 @@ async def process_messages(
                             cid,
                             msg,
                         )
-                        # TODO: can remove right?
-                        # continue
 
-                    # runtime-internal cancellation endpoints
+                    # `Actor`(-internal) runtime cancel requests
                     case Start(
                         ns='self',
                         func='cancel',
@@ -955,11 +907,9 @@ async def process_messages(
                             )
 
                     # the "MAIN" RPC endpoint to schedule-a-`trio.Task`
-                    #
-                    # TODO: impl with native `msgspec.Struct` support !!
-                    # -[ ] implement with ``match:`` syntax?
-                    # -[ ] discard un-authed msgs as per,
-                    # <TODO put issue for typed msging structs>
+                    #                ------ - ------
+                    # -[x] discard un-authed msgs as per,
+                    #    <TODO put issue for typed msging structs>
                     case Start(
                         cid=cid,
                         ns=ns,
@@ -983,7 +933,10 @@ async def process_messages(
                         # application RPC endpoint
                         else:
                             try:
-                                func: Callable = actor._get_rpc_func(ns, funcname)
+                                func: Callable = actor._get_rpc_func(
+                                    ns,
+                                    funcname,
+                                )
                             except (
                                 ModuleNotExposed,
                                 AttributeError,
@@ -1061,6 +1014,8 @@ async def process_messages(
                                 trio.Event(),
                             )
 
+                    # XXX remote (runtime scoped) error or uknown
+                    # msg (type).
                     case Error() | _:
                         # NOTE: this is the non-rpc error case,
                         # that is, an error **not** raised inside
@@ -1086,8 +1041,9 @@ async def process_messages(
                     f'|_{chan}\n'
                 )
 
-            # end of async for, channel disconnect vis
-            # ``trio.EndOfChannel``
+            # END-OF `async for`:
+            # IPC disconnected via `trio.EndOfChannel`, likely
+            # due to a (graceful) `Channel.aclose()`.
             log.runtime(
                 f'channel for {chan.uid} disconnected, cancelling RPC tasks\n'
                 f'|_{chan}\n'
@@ -1107,9 +1063,10 @@ async def process_messages(
         # connection-reset) is ok since we don't have a teardown
         # handshake for them (yet) and instead we simply bail out of
         # the message loop and expect the teardown sequence to clean
-        # up.
-        # TODO: don't show this msg if it's an emphemeral
-        # discovery ep call?
+        # up..
+        # TODO: add a teardown handshake? and,
+        # -[ ] don't show this msg if it's an ephemeral discovery ep call?
+        # -[ ] figure out how this will break with other transports?
         log.runtime(
             f'channel closed abruptly with\n'
             f'peer: {chan.uid}\n' 

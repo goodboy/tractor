@@ -389,8 +389,9 @@ class Actor:
 
             raise mne
 
+    # TODO: maybe change to mod-func and rename for implied
+    # multi-transport semantics?
     async def _stream_handler(
-
         self,
         stream: trio.SocketStream,
 
@@ -714,51 +715,6 @@ class Actor:
                         )
                         # TODO: figure out why this breaks tests..
                         db_cs.cancel()
-
-            # XXX TODO XXX: DO WE NEED THIS?
-            # -[ ] is it necessary any more (GC should do it) now
-            #    that we have strict(er) graceful cancellation
-            #    semantics?
-            # XXX WARNING XXX
-            # Be AWARE OF THE INDENT LEVEL HERE
-            # -> ONLY ENTER THIS BLOCK WHEN ._peers IS
-            # EMPTY!!!!
-            #
-            # if the channel is still connected it may mean the far
-            # end has not closed and we may have gotten here due to
-            # an error and so we should at least try to terminate
-            # the channel from this end gracefully.
-            #if (
-            #    not self._peers
-            #    and chan.connected()
-            #):
-            #        log.runtime(
-            #            'Terminating channel with `None` setinel msg\n'
-            #            f'|_{chan}\n'
-            #        )
-            #        try:
-            #            # ORIGINALLY we sent a msg loop terminate
-            #            # sentinel (`None`) which triggers
-            #            # cancellation of all remotely started
-            #            # tasks.
-            #            #
-            #            # HOWEVER, after we added typed msging,
-            #            # you can't just willy nilly send `None`
-            #            # wherever since it might be invalid given
-            #            # the currently configured msg-spec.
-            #            #
-            #            # SO, this was all removed and I'm pretty
-            #            # confident we don't need it replaced with
-            #            # a manual RPC to
-            #            # a `Actor.cancel_rpc_tasks()` right?
-            #            await chan.send(None)
-
-            #            # XXX: do we want this? NO RIGHT?
-            #            # causes "[104] connection reset by peer" on other end
-            #            # await chan.aclose()
-
-            #        except trio.BrokenResourceError:
-            #            log.runtime(f"Channel {chan.uid} was already closed")
 
     # TODO: rename to `._deliver_payload()` since this handles
     # more then just `result` msgs now obvi XD
