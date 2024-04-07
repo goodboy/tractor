@@ -172,7 +172,8 @@ def _raise_msg_type_err(
         # specific field's type problem
         msgspec_msg: str = validation_err.args[0].rstrip('`')
         msg, _, maybe_field = msgspec_msg.rpartition('$.')
-        if field_val := msg_dict.get(maybe_field):
+        obj = object()
+        if (field_val := msg_dict.get(maybe_field, obj)) is not obj:
             field_type: Union[Type] = msg_type.__signature__.parameters[
                 maybe_field
             ].annotation
