@@ -1210,7 +1210,7 @@ class Context:
                 # XXX: (MEGA IMPORTANT) if this is a root opened process we
                 # wait for any immediate child in debug before popping the
                 # context from the runtime msg loop otherwise inside
-                # ``Actor._push_result()`` the msg will be discarded and in
+                # ``Actor._deliver_ctx_payload()`` the msg will be discarded and in
                 # the case where that msg is global debugger unlock (via
                 # a "stop" msg for a stream), this can result in a deadlock
                 # where the root is waiting on the lock to clear but the
@@ -1701,11 +1701,11 @@ class Context:
 
         # raise any msg type error NO MATTER WHAT!
         except msgspec.ValidationError as verr:
-            from tractor._ipc import _raise_msg_type_err
-            _raise_msg_type_err(
+            from tractor._ipc import _mk_msg_type_err
+            raise _mk_msg_type_err(
                 msg=msg_bytes,
                 codec=codec,
-                validation_err=verr,
+                src_validation_error=verr,
                 verb_header='Trying to send payload'
                 # > 'invalid `Started IPC msgs\n'
             )
@@ -2418,7 +2418,7 @@ async def open_context_from_portal(
         # XXX: (MEGA IMPORTANT) if this is a root opened process we
         # wait for any immediate child in debug before popping the
         # context from the runtime msg loop otherwise inside
-        # ``Actor._push_result()`` the msg will be discarded and in
+        # ``Actor._deliver_ctx_payload()`` the msg will be discarded and in
         # the case where that msg is global debugger unlock (via
         # a "stop" msg for a stream), this can result in a deadlock
         # where the root is waiting on the lock to clear but the

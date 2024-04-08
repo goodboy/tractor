@@ -183,7 +183,7 @@ class MsgStream(trio.abc.Channel):
         # - via a received `{'stop': ...}` msg from remote side.
         #   |_ NOTE: previously this was triggered by calling
         #   ``._rx_chan.aclose()`` on the send side of the channel inside
-        #   `Actor._push_result()`, but now the 'stop' message handling
+        #   `Actor._deliver_ctx_payload()`, but now the 'stop' message handling
         #   has been put just above inside `_raise_from_no_key_in_msg()`.
         except (
             trio.EndOfChannel,

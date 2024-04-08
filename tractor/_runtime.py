@@ -69,6 +69,7 @@ from tractor.msg import (
     pretty_struct,
     NamespacePath,
     types as msgtypes,
+    Msg,
 )
 from ._ipc import Channel
 from ._context import (
@@ -77,9 +78,10 @@ from ._context import (
 )
 from .log import get_logger
 from ._exceptions import (
-    unpack_error,
-    ModuleNotExposed,
     ContextCancelled,
+    ModuleNotExposed,
+    MsgTypeError,
+    unpack_error,
     TransportClosed,
 )
 from .devx import _debug
@@ -559,7 +561,7 @@ class Actor:
                         cid: str|None = msg.cid
                         if cid:
                             # deliver response to local caller/waiter
-                            await self._push_result(
+                            await self._deliver_ctx_payload(
                                 chan,
                                 cid,
                                 msg,
@@ -718,11 +720,11 @@ class Actor:
 
     # TODO: rename to `._deliver_payload()` since this handles
     # more then just `result` msgs now obvi XD
-    async def _push_result(
+    async def _deliver_ctx_payload(
         self,
         chan: Channel,
         cid: str,
-        msg: dict[str, Any],
+        msg: Msg|MsgTypeError,
 
     ) -> None|bool:
         '''
@@ -750,6 +752,9 @@ class Actor:
                 f'{pretty_struct.Struct.pformat(msg)}\n'
             )
             return
+
+        # if isinstance(msg, MsgTypeError):
+        #     return await ctx._deliver_bad_msg()
 
         return await ctx._deliver_msg(msg)
 

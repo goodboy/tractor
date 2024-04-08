@@ -826,7 +826,7 @@ async def process_messages(
                     ):
                         # deliver response to local caller/waiter
                         # via its per-remote-context memory channel.
-                        await actor._push_result(
+                        await actor._deliver_ctx_payload(
                             chan,
                             cid,
                             msg,
