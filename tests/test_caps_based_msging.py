@@ -374,7 +374,7 @@ def enc_type_union(
 
 
 @tractor.context
-async def send_back_nsp(
+async def send_back_values(
     ctx: Context,
     expect_debug: bool,
     pld_spec_type_strs: list[str],
@@ -388,6 +388,8 @@ async def send_back_nsp(
     and ensure we can round trip a func ref with our parent.
 
     '''
+    uid: tuple = tractor.current_actor().uid
+
     # debug mode sanity check (prolly superfluous but, meh)
     assert expect_debug == _state.debug_mode()
 
@@ -414,7 +416,7 @@ async def send_back_nsp(
         )
 
         print(
-            'CHILD attempting `Started`-bytes DECODE..\n'
+            f'{uid}: attempting `Started`-bytes DECODE..\n'
         )
         try:
             msg: Started = nsp_codec.decode(started_msg_bytes)
@@ -436,7 +438,7 @@ async def send_back_nsp(
                 raise
             else:
                 print(
-                    'CHILD (correctly) unable to DECODE `Started`-bytes\n'
+                    f'{uid}: (correctly) unable to DECODE `Started`-bytes\n'
                     f'{started_msg_bytes}\n'
                 )
 
@@ -445,7 +447,7 @@ async def send_back_nsp(
         for send_value, expect_send in iter_send_val_items:
             try:
                 print(
-                    f'CHILD attempting to `.started({send_value})`\n'
+                    f'{uid}: attempting to `.started({send_value})`\n'
                     f'=> expect_send: {expect_send}\n'
                     f'SINCE, ipc_pld_spec: {ipc_pld_spec}\n'
                     f'AND, codec: {codec}\n'
@@ -460,7 +462,6 @@ async def send_back_nsp(
                     # await tractor.pause()
 
                     raise RuntimeError(
-                    # pytest.fail(
                         f'NOT-EXPECTED able to roundtrip value given spec:\n'
                         f'ipc_pld_spec -> {ipc_pld_spec}\n'
                         f'value -> {send_value}: {type(send_value)}\n'
@@ -468,53 +469,76 @@ async def send_back_nsp(
 
                 break  # move on to streaming block..
 
-            except NotImplementedError:
-                print('FAILED ENCODE!')
-
             except tractor.MsgTypeError:
                 # await tractor.pause()
                 if expect_send:
-                    pytest.fail(
+                    raise RuntimeError(
                         f'EXPECTED to `.started()` value given spec:\n'
                         f'ipc_pld_spec -> {ipc_pld_spec}\n'
                         f'value -> {send_value}: {type(send_value)}\n'
                     )
 
         async with ctx.open_stream() as ipc:
+            print(
+                f'{uid}: Entering streaming block to send remaining values..'
+            )
+
             for send_value, expect_send in iter_send_val_items:
                 send_type: Type = type(send_value)
                 print(
-                    'CHILD report on send value\n'
+                    '------ - ------\n'
+                    f'{uid}: SENDING NEXT VALUE\n'
                     f'ipc_pld_spec: {ipc_pld_spec}\n'
                     f'expect_send: {expect_send}\n'
                     f'val: {send_value}\n'
+                    '------ - ------\n'
                 )
                 try:
                     await ipc.send(send_value)
+                    print(f'***\n{uid}-CHILD sent {send_value!r}\n***\n')
                     sent.append(send_value)
-                    if not expect_send:
-                        pytest.fail(
-                            f'NOT-EXPECTED able to roundtrip value given spec:\n'
-                            f'ipc_pld_spec -> {ipc_pld_spec}\n'
-                            f'value -> {send_value}: {send_type}\n'
-                        )
+
+                    # NOTE: should only raise above on
+                    # `.started()` or a `Return`
+                    # if not expect_send:
+                    #     raise RuntimeError(
+                    #         f'NOT-EXPECTED able to roundtrip value given spec:\n'
+                    #         f'ipc_pld_spec -> {ipc_pld_spec}\n'
+                    #         f'value -> {send_value}: {send_type}\n'
+                    #     )
+
                 except ValidationError:
+                    print(f'{uid} FAILED TO SEND {send_value}!')
+
+                    # await tractor.pause()
                     if expect_send:
-                        pytest.fail(
+                        raise RuntimeError(
                             f'EXPECTED to roundtrip value given spec:\n'
                             f'ipc_pld_spec -> {ipc_pld_spec}\n'
                             f'value -> {send_value}: {send_type}\n'
                         )
-                    continue
+                    # continue
 
-        assert (
-            len(sent)
-            ==
-            len([val
-                 for val, expect in
-                 expect_ipc_send.values()
-                 if expect is True])
-        )
+            else:
+                print(
+                    f'{uid}: finished sending all values\n'
+                    'Should be exiting stream block!\n'
+                )
+
+        print(f'{uid}: exited streaming block!')
+
+        # TODO: this won't be true bc in streaming phase we DO NOT
+        # msgspec check outbound msgs!
+        # -[ ] once we implement the receiver side `InvalidMsg`
+        #   then we can expect it here?
+        # assert (
+        #     len(sent)
+        #     ==
+        #     len([val
+        #          for val, expect in
+        #          expect_ipc_send.values()
+        #          if expect is True])
+        # )
 
 
 def ex_func(*args):
@@ -635,7 +659,7 @@ def test_codec_hooks_mod(
                 async with (
 
                     p.open_context(
-                        send_back_nsp,
+                        send_back_values,
                         expect_debug=debug_mode,
                         pld_spec_type_strs=pld_spec_type_strs,
                         add_hooks=add_codec_hooks,
@@ -665,10 +689,13 @@ def test_codec_hooks_mod(
 
                     async for next_sent in ipc:
                         print(
-                            'Child sent next value\n'
+                            'Parent: child sent next value\n'
                             f'{next_sent}: {type(next_sent)}\n'
                         )
-                        expect_to_send.remove(next_sent)
+                        if expect_to_send:
+                            expect_to_send.remove(next_sent)
+                        else:
+                            print('PARENT should terminate stream loop + block!')
 
                     # all sent values should have arrived!
                     assert not expect_to_send
