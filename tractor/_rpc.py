@@ -47,12 +47,13 @@ from ._context import (
     Context,
 )
 from ._exceptions import (
-    ModuleNotExposed,
-    is_multi_cancelled,
     ContextCancelled,
+    ModuleNotExposed,
+    MsgTypeError,
+    TransportClosed,
+    is_multi_cancelled,
     pack_error,
     unpack_error,
-    TransportClosed,
 )
 from .devx import _debug
 from . import _state
@@ -632,7 +633,7 @@ async def _invoke(
                     # (callee) task, so relay this cancel signal to the
                     # other side.
                     ctxc = ContextCancelled(
-                        msg,
+                        message=msg,
                         boxed_type=trio.Cancelled,
                         canceller=canceller,
                     )
@@ -822,7 +823,12 @@ async def process_messages(
                         | Stop(cid=cid)
                         | Return(cid=cid)
                         | CancelAck(cid=cid)
-                        | Error(cid=cid)  # RPC-task ctx specific
+
+                        # `.cid` means RPC-ctx-task specific
+                        | Error(cid=cid)
+
+                        # recv-side `MsgType` decode violation
+                        | MsgTypeError(cid=cid)
                     ):
                         # deliver response to local caller/waiter
                         # via its per-remote-context memory channel.
