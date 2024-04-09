@@ -185,6 +185,10 @@ async def sleep_a_bit_then_cancel_peer(
         await trio.sleep(cancel_after)
         await peer.cancel_actor()
 
+        # such that we're cancelled by our rent ctx-task
+        await trio.sleep(3)
+        print('CANCELLER RETURNING!')
+
 
 @tractor.context
 async def stream_ints(
@@ -244,6 +248,12 @@ async def stream_from_peer(
 
         assert peer_ctx._remote_error is ctxerr
         assert peer_ctx._remote_error.msgdata == ctxerr.msgdata
+
+        # XXX YES, bc exact same msg instances
+        assert peer_ctx._remote_error._ipc_msg is ctxerr._ipc_msg
+
+        # XXX NO, bc new one always created for property accesss
+        assert peer_ctx._remote_error.ipc_msg != ctxerr.ipc_msg
 
         # the peer ctx is the canceller even though it's canceller
         # is the "canceller" XD

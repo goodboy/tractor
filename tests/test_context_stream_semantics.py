@@ -796,10 +796,12 @@ async def test_callee_cancels_before_started(
 
         # raises a special cancel signal
         except tractor.ContextCancelled as ce:
+            _ce = ce  # for debug on crash
             ce.boxed_type == trio.Cancelled
 
             # the traceback should be informative
-            assert 'itself' in ce.msgdata['tb_str']
+            assert 'itself' in ce.tb_str
+            assert ce.tb_str == ce.msgdata['tb_str']
 
         # teardown the actor
         await portal.cancel_actor()
@@ -1157,7 +1159,8 @@ def test_maybe_allow_overruns_stream(
 
         elif slow_side == 'parent':
             assert err.boxed_type == tractor.RemoteActorError
-            assert 'StreamOverrun' in err.msgdata['tb_str']
+            assert 'StreamOverrun' in err.tb_str
+            assert err.tb_str == err.msgdata['tb_str']
 
     else:
         # if this hits the logic blocks from above are not
