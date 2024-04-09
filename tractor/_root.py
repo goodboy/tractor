@@ -22,9 +22,10 @@ from contextlib import asynccontextmanager
 from functools import partial
 import importlib
 import logging
+import os
 import signal
 import sys
-import os
+from typing import Callable
 import warnings
 
 
@@ -99,19 +100,35 @@ async def open_root_actor(
     # Override the global debugger hook to make it play nice with
     # ``trio``, see much discussion in:
     # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
+    builtin_bp_handler: Callable = sys.breakpointhook
+    orig_bp_path: str|None = os.environ.get(
+        'PYTHONBREAKPOINT',
+        None,
+    )
     if (
+        debug_mode
+        and
         await _debug.maybe_init_greenback(
             raise_not_found=False,
         )
     ):
-        builtin_bp_handler = sys.breakpointhook
-        orig_bp_path: str|None = os.environ.get(
-            'PYTHONBREAKPOINT',
-            None,
-        )
         os.environ['PYTHONBREAKPOINT'] = (
             'tractor.devx._debug.pause_from_sync'
         )
+    else:
+        # TODO: disable `breakpoint()` by default (without
+        # `greenback`) since it will break any multi-actor
+        # usage by a clobbered TTY's stdstreams!
+        def block_bps(*args, **kwargs):
+            raise RuntimeError(
+                '`tractor` blocks built-in `breakpoint()` calls by default!\n'
+                'If you need to us it please install `greenback` and set '
+                '`debug_mode=True` when opening the runtime '
+                '(either via `.open_nursery()` or `open_root_actor()`)\n'
+            )
+
+        sys.breakpointhook = block_bps
+        # os.environ['PYTHONBREAKPOINT'] = None
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
@@ -368,12 +385,14 @@ async def open_root_actor(
         _state._last_actor_terminated = actor
 
         # restore built-in `breakpoint()` hook state
-        sys.breakpointhook = builtin_bp_handler
-        if orig_bp_path is not None:
-            os.environ['PYTHONBREAKPOINT'] = orig_bp_path
-        else:
-            # clear env back to having no entry
-            os.environ.pop('PYTHONBREAKPOINT')
+        if debug_mode:
+            if builtin_bp_handler is not None:
+                sys.breakpointhook = builtin_bp_handler
+            if orig_bp_path is not None:
+                os.environ['PYTHONBREAKPOINT'] = orig_bp_path
+            else:
+                # clear env back to having no entry
+                os.environ.pop('PYTHONBREAKPOINT')
 
         logger.runtime("Root actor terminated")
 
