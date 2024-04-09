@@ -50,7 +50,6 @@ from pprint import pformat
 import signal
 import sys
 from typing import (
-    Any,
     Callable,
     TYPE_CHECKING,
 )

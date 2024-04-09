@@ -46,6 +46,7 @@ from ._state import (
 from ._ipc import Channel
 from .log import get_logger
 from .msg import (
+    Error,
     NamespacePath,
     Return,
 )
@@ -69,8 +70,7 @@ log = get_logger(__name__)
 # `._raise_from_no_key_in_msg()` (after tweak to
 # accept a `chan: Channel` arg) in key block!
 def _unwrap_msg(
-    # msg: dict[str, Any],
-    msg: Return,
+    msg: Return|Error,
     channel: Channel,
 
     hide_tb: bool = True,
