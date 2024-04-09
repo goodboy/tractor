@@ -19,7 +19,6 @@ Built-in messaging patterns, types, APIs and helpers.
 
 '''
 from typing import (
-    Union,
     TypeAlias,
 )
 from .ptr import (
@@ -56,8 +55,9 @@ from .types import (
 
     # full msg class set from above as list
     __msg_types__ as __msg_types__,
+
+    # type-alias for union of all msgs
+    MsgType as MsgType,
 )
-# TODO: use new type declaration syntax for msg-type-spec
-# https://docs.python.org/3/library/typing.html#type-aliases
-# https://docs.python.org/3/reference/simple_stmts.html#type
-__msg_spec__: TypeAlias = Union[*__msg_types__]
+
+__msg_spec__: TypeAlias = MsgType

@@ -31,6 +31,7 @@ from typing import (
     Literal,
     Type,
     TypeVar,
+    TypeAlias,
     Union,
 )
 
@@ -400,16 +401,29 @@ class CancelAck(
     pld: bool
 
 
+# TODO: unify this with `._exceptions.RemoteActorError`
+# such that we can have a msg which is both raisable and
+# IPC-wire ready?
+# B~o
 class Error(
     Struct,
     tag=True,
     tag_field='msg_type',
+
+    # TODO may omit defaults?
+    # https://jcristharif.com/msgspec/structs.html#omitting-default-values
+    # omit_defaults=True,
 ):
     '''
     A pkt that wraps `RemoteActorError`s for relay and raising.
 
     Fields are 1-to-1 meta-data as needed originally by
-    `RemoteActorError.msgdata: dict`.
+    `RemoteActorError.msgdata: dict` but now are defined here.
+
+    Note: this msg shuttles `ContextCancelled` and `StreamOverrun`
+    as well is used to rewrap any `MsgTypeError` for relay-reponse
+    to bad `Yield.pld` senders during an IPC ctx's streaming dialog
+    phase.
 
     '''
     src_uid: tuple[str, str]
@@ -427,6 +441,10 @@ class Error(
 
     # `StreamOverrun`
     sender: tuple[str, str]|None = None
+
+    # for the `MsgTypeError` case where the receiver side
+    # decodes the underlying original `Msg`-subtype
+    _msg_dict: dict|None = None
 
 
 # TODO: should be make a msg version of `ContextCancelled?`
@@ -485,6 +503,11 @@ __msg_types__: list[Msg] = (
     +
     _payload_msgs
 )
+
+# TODO: use new type declaration syntax for msg-type-spec
+# https://docs.python.org/3/library/typing.html#type-aliases
+# https://docs.python.org/3/reference/simple_stmts.html#type
+MsgType: TypeAlias = Union[*__msg_types__]
 
 
 def mk_msg_spec(

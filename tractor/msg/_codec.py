@@ -57,7 +57,7 @@ from trio.lowlevel import (
 from tractor.msg.pretty_struct import Struct
 from tractor.msg.types import (
     mk_msg_spec,
-    Msg,
+    MsgType,
 )
 
 
@@ -87,11 +87,49 @@ class MsgCodec(Struct):
 
     pld_spec: Union[Type[Struct]]|None
 
+    @property
+    def pld_spec_str(self) -> str:
+        spec: Union[Type]|Type = self.pld_spec
+
+        # TODO: could also use match: instead?
+        if getattr(spec, '__args__', False):
+            # `typing.Union` case
+            return str(spec)
+        else:
+            return spec.__name__
+
     # struct type unions
     # https://jcristharif.com/msgspec/structs.html#tagged-unions
     @property
     def msg_spec(self) -> Union[Type[Struct]]:
         return self._dec.type
+
+    def msg_spec_items(
+        self,
+        msg: MsgType|None = None,
+
+    ) -> dict[str, MsgType]|str:
+
+        msgt_table: dict[str, MsgType] = {
+            msgt: str(msgt)
+            for msgt in self.msg_spec.__args__
+        }
+        if msg:
+            msgt: MsgType = type(msg)
+            str_repr: str = msgt_table[msgt]
+            return {msgt: str_repr}
+
+        return msgt_table
+
+    # TODO: some way to make `pretty_struct.Struct` use this
+    # wrapped field over the `.msg_spec` one?
+    def pformat_msg_spec(
+        self,
+        msg: MsgType|None = None,
+    ) -> str:
+        return '\n'.join(
+            self.msg_spec_items(msg=msg).values()
+        )
 
     lib: ModuleType = msgspec
 
@@ -108,7 +146,7 @@ class MsgCodec(Struct):
     # OR
     # ) = {
     #     # pre-seed decoders for std-py-type-set for use when
-    #     # `Msg.pld == None|Any`.
+    #     # `MsgType.pld == None|Any`.
     #     None: msgpack.Decoder(Any),
     #     Any: msgpack.Decoder(Any),
     # }
@@ -303,7 +341,7 @@ def mk_codec(
     # by `tag_field: str` value key?
     # payload_msg_specs: dict[
     #     str,  # tag_field value as sub-decoder key
-    #     Union[Type[Struct]]  # `Msg.pld` type spec
+    #     Union[Type[Struct]]  # `MsgType.pld` type spec
     # ]|None = None,
 
     libname: str = 'msgspec',
@@ -336,7 +374,7 @@ def mk_codec(
         raise RuntimeError(
             f'If a payload spec is provided,\n'
             "the builtin SC-shuttle-protocol's msg set\n"
-            f'(i.e. `{Msg}`) MUST be used!\n\n'
+            f'(i.e. a `{MsgType}`) MUST be used!\n\n'
             f'However both values were passed as => mk_codec(\n'
             f'   ipc_msg_spec={ipc_msg_spec}`\n'
             f'   ipc_pld_spec={ipc_pld_spec}`\n)\n'
