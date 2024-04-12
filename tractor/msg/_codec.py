@@ -37,6 +37,7 @@ from contextlib import (
 #     ContextVar,
 #     Token,
 # )
+import textwrap
 from typing import (
     Any,
     Callable,
@@ -59,7 +60,9 @@ from tractor.msg.types import (
     mk_msg_spec,
     MsgType,
 )
+from tractor.log import get_logger
 
+log = get_logger(__name__)
 
 # TODO: overall IPC msg-spec features (i.e. in this mod)!
 #
@@ -86,6 +89,27 @@ class MsgCodec(Struct):
     _dec: msgpack.Decoder
 
     pld_spec: Union[Type[Struct]]|None
+
+    def __repr__(self) -> str:
+        speclines: str = textwrap.indent(
+            self.pformat_msg_spec(),
+            prefix=' '*3,
+        )
+        body: str = textwrap.indent(
+            f'|_lib = {self.lib.__name__!r}\n'
+            f'|_enc_hook: {self.enc.enc_hook}\n'
+            f'|_dec_hook: {self.dec.dec_hook}\n'
+            f'|_pld_spec: {self.pld_spec_str}\n'
+            # f'|\n'
+            f'|__msg_spec__:\n'
+            f'{speclines}\n',
+            prefix=' '*2,
+        )
+        return (
+            f'<{type(self).__name__}(\n'
+            f'{body}'
+            ')>'
+        )
 
     @property
     def pld_spec_str(self) -> str:
@@ -163,8 +187,8 @@ class MsgCodec(Struct):
 
     ) -> bytes:
         '''
-        Encode input python objects to `msgpack` bytes for transfer
-        on a tranport protocol connection.
+        Encode input python objects to `msgpack` bytes for
+        transfer on a tranport protocol connection.
 
         '''
         return self._enc.encode(py_obj)
@@ -325,15 +349,9 @@ class MsgCodec(Struct):
 
 
 def mk_codec(
-    ipc_msg_spec: Union[Type[Struct]]|Any|None = None,
-    #
-    # ^TODO^: in the long run, do we want to allow using a diff IPC `Msg`-set?
-    # it would break the runtime, but maybe say if you wanted
-    # to add some kinda field-specific or wholesale `.pld` ecryption?
-
     # struct type unions set for `Decoder`
     # https://jcristharif.com/msgspec/structs.html#tagged-unions
-    ipc_pld_spec: Union[Type[Struct]]|Any|None = None,
+    ipc_pld_spec: Union[Type[Struct]]|Any = Any,
 
     # TODO: offering a per-msg(-field) type-spec such that
     # the fields can be dynamically NOT decoded and left as `Raw`
@@ -352,7 +370,6 @@ def mk_codec(
     dec_hook: Callable|None = None,
     enc_hook: Callable|None = None,
     # ------ - ------
-    **kwargs,
     #
     # Encoder:
     # write_buffer_size=write_buffer_size,
@@ -367,44 +384,19 @@ def mk_codec(
     `msgspec` ;).
 
     '''
-    if (
-        ipc_msg_spec is not None
-        and ipc_pld_spec
-    ):
-        raise RuntimeError(
-            f'If a payload spec is provided,\n'
-            "the builtin SC-shuttle-protocol's msg set\n"
-            f'(i.e. a `{MsgType}`) MUST be used!\n\n'
-            f'However both values were passed as => mk_codec(\n'
-            f'   ipc_msg_spec={ipc_msg_spec}`\n'
-            f'   ipc_pld_spec={ipc_pld_spec}`\n)\n'
-        )
-
-    elif (
-        ipc_pld_spec
-        and
-
-        # XXX required for now (or maybe forever?) until
-        # we can dream up a way to allow parameterizing and/or
-        # custom overrides to the `Msg`-spec protocol itself?
-        ipc_msg_spec is None
-    ):
-        # (manually) generate a msg-payload-spec for all relevant
-        # god-boxing-msg subtypes, parameterizing the `Msg.pld: PayloadT`
-        # for the decoder such that all sub-type msgs in our SCIPP
-        # will automatically decode to a type-"limited" payload (`Struct`)
-        # object (set).
-        (
-            ipc_msg_spec,
-            msg_types,
-        ) = mk_msg_spec(
-            payload_type_union=ipc_pld_spec,
-        )
-        assert len(ipc_msg_spec.__args__) == len(msg_types)
-        assert ipc_msg_spec
-
-    else:
-        ipc_msg_spec = ipc_msg_spec or Any
+    # (manually) generate a msg-payload-spec for all relevant
+    # god-boxing-msg subtypes, parameterizing the `Msg.pld: PayloadT`
+    # for the decoder such that all sub-type msgs in our SCIPP
+    # will automatically decode to a type-"limited" payload (`Struct`)
+    # object (set).
+    (
+        ipc_msg_spec,
+        msg_types,
+    ) = mk_msg_spec(
+        payload_type_union=ipc_pld_spec,
+    )
+    assert len(ipc_msg_spec.__args__) == len(msg_types)
+    assert ipc_msg_spec
 
     enc = msgpack.Encoder(
        enc_hook=enc_hook,
@@ -418,8 +410,6 @@ def mk_codec(
         _enc=enc,
         _dec=dec,
         pld_spec=ipc_pld_spec,
-        # payload_msg_specs=payload_msg_specs,
-        # **kwargs,
     )
 
     # sanity on expected backend support
@@ -500,8 +490,16 @@ def apply_codec(
     - https://github.com/oremanj/tricycle/blob/master/tricycle/_tests/test_tree_var.py
 
     '''
+    __tracebackhide__: bool = True
     orig: MsgCodec = _ctxvar_MsgCodec.get()
     assert orig is not codec
+    if codec.pld_spec is None:
+        breakpoint()
+
+    log.info(
+        'Applying new msg-spec codec\n\n'
+        f'{codec}\n'
+    )
     token: RunVarToken = _ctxvar_MsgCodec.set(codec)
 
     # TODO: for TreeVar approach, see docs for @cm `.being()` API:
@@ -518,7 +516,10 @@ def apply_codec(
         _ctxvar_MsgCodec.reset(token)
 
     assert _ctxvar_MsgCodec.get() is orig
-
+    log.info(
+        'Reverted to last msg-spec codec\n\n'
+        f'{orig}\n'
+    )
 
 def current_codec() -> MsgCodec:
     '''
@@ -532,14 +533,15 @@ def current_codec() -> MsgCodec:
 
 @cm
 def limit_msg_spec(
-    payload_types: Union[Type[Struct]],
+    payload_spec: Union[Type[Struct]],
 
     # TODO: don't need this approach right?
     # -> related to the `MsgCodec._payload_decs` stuff above..
     # tagged_structs: list[Struct]|None = None,
 
     **codec_kwargs,
-):
+
+) -> MsgCodec:
     '''
     Apply a `MsgCodec` that will natively decode the SC-msg set's
     `Msg.pld: Union[Type[Struct]]` payload fields using
@@ -547,10 +549,37 @@ def limit_msg_spec(
     for all IPC contexts in use by the current `trio.Task`.
 
     '''
+    __tracebackhide__: bool = True
+    curr_codec = current_codec()
     msgspec_codec: MsgCodec = mk_codec(
-        payload_types=payload_types,
+        ipc_pld_spec=payload_spec,
         **codec_kwargs,
     )
     with apply_codec(msgspec_codec) as applied_codec:
         assert applied_codec is msgspec_codec
         yield msgspec_codec
+
+    assert curr_codec is current_codec()
+
+
+# XXX: msgspec won't allow this with non-struct custom types
+# like `NamespacePath`!@!
+# @cm
+# def extend_msg_spec(
+#     payload_spec: Union[Type[Struct]],
+
+# ) -> MsgCodec:
+#     '''
+#     Extend the current `MsgCodec.pld_spec` (type set) by extending
+#     the payload spec to **include** the types specified by
+#     `payload_spec`.
+
+#     '''
+#     codec: MsgCodec = current_codec()
+#     pld_spec: Union[Type] = codec.pld_spec
+#     extended_spec: Union[Type] = pld_spec|payload_spec
+
+#     with limit_msg_spec(payload_types=extended_spec) as ext_codec:
+#         # import pdbp; pdbp.set_trace()
+#         assert ext_codec.pld_spec == extended_spec
+#         yield ext_codec
