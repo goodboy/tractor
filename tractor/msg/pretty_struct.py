@@ -140,6 +140,7 @@ class Struct(
 
         return sin_props
 
+    # TODO: make thisi a mod-func!
     def pformat(
         self,
         field_indent: int = 2,

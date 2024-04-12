@@ -447,6 +447,29 @@ class Error(
     _msg_dict: dict|None = None
 
 
+def from_dict_msg(
+    dict_msg: dict,
+
+    msgT: MsgType|None = None,
+    tag_field: str = 'msg_type'
+
+) -> MsgType:
+    '''
+    Helper to build a specific `MsgType` struct from
+    a "vanilla" decoded `dict`-ified equivalent of the
+    msg: i.e. if the `msgpack.Decoder.type == Any`.
+
+    '''
+    msg_type_tag_field: str = (
+        msgT.__struct_config__.tag_field
+        if msgT is not None
+        else tag_field
+    )
+    # XXX ensure tag field is removed
+    msgT_name: str = dict_msg.pop(msg_type_tag_field)
+    msgT: MsgType = _msg_table[msgT_name]
+    return msgT(**dict_msg)
+
 # TODO: should be make a msg version of `ContextCancelled?`
 # and/or with a scope field or a full `ActorCancelled`?
 # class Cancelled(Msg):
@@ -498,11 +521,17 @@ _payload_msgs: list[Msg] = [
 
 # built-in SC shuttle protocol msg type set in
 # approx order of the IPC txn-state spaces.
-__msg_types__: list[Msg] = (
+__msg_types__: list[MsgType] = (
     _runtime_msgs
     +
     _payload_msgs
 )
+
+
+_msg_table: dict[str, MsgType] = {
+    msgT.__name__: msgT
+    for msgT in __msg_types__
+}
 
 # TODO: use new type declaration syntax for msg-type-spec
 # https://docs.python.org/3/library/typing.html#type-aliases
@@ -660,6 +689,11 @@ def mk_msg_spec(
         'Generating new IPC msg-spec\n'
         f'{ipc_spec}\n'
     )
+    assert (
+        ipc_spec
+        and
+        ipc_spec is not Any
+    )
     return (
         ipc_spec,
         msgtypes_table[spec_build_method] + ipc_msg_types,
@@ -669,9 +703,9 @@ def mk_msg_spec(
 # TODO: make something similar to this inside `._codec` such that
 # user can just pass a type table of some sort?
 # -[ ] we would need to decode all msgs to `pretty_struct.Struct`
-#   and then call `.to_dict()` on them?
+#     and then call `.to_dict()` on them?
 # -[ ] we're going to need to re-impl all the stuff changed in the
-# runtime port such that it can handle dicts or `Msg`s?
+#    runtime port such that it can handle dicts or `Msg`s?
 #
 # def mk_dict_msg_codec_hooks() -> tuple[Callable, Callable]:
 #     '''
@@ -679,88 +713,15 @@ def mk_msg_spec(
 #     manual convertion from our above native `Msg` set
 #     to `dict` equivalent (wire msgs) in order to keep legacy compat
 #     with the original runtime implementation.
-
+#
 #     Note: this is is/was primarly used while moving the core
 #     runtime over to using native `Msg`-struct types wherein we
 #     start with the send side emitting without loading
 #     a typed-decoder and then later flipping the switch over to
 #     load to the native struct types once all runtime usage has
 #     been adjusted appropriately.
-
+#
 #     '''
-#     def enc_to_dict(msg: Any) -> Any:
-#         '''
-#         Encode `Msg`-structs to `dict` msgs instead
-#         of using `msgspec.msgpack.Decoder.type`-ed
-#         features.
-
-#         '''
-#         match msg:
-#             case Start():
-#                 dctmsg: dict = pretty_struct.Struct.to_dict(
-#                     msg
-#                 )['pld']
-
-#             case Error():
-#                 dctmsg: dict = pretty_struct.Struct.to_dict(
-#                     msg
-#                 )['pld']
-#                 return {'error': dctmsg}
-
-
-#     def dec_from_dict(
-#         type: Type,
-#         obj: Any,
-#     ) -> Any:
-#         '''
-#         Decode to `Msg`-structs from `dict` msgs instead
-#         of using `msgspec.msgpack.Decoder.type`-ed
-#         features.
-
-#         '''
-#         cid: str = obj.get('cid')
-#         match obj:
-#             case {'cmd': pld}:
-#                 return Start(
-#                     cid=cid,
-#                     pld=pld,
-#                 )
-#             case {'functype': pld}:
-#                 return StartAck(
-#                     cid=cid,
-#                     functype=pld,
-#                     # pld=IpcCtxSpec(
-#                     #     functype=pld,
-#                     # ),
-#                 )
-#             case {'started': pld}:
-#                 return Started(
-#                     cid=cid,
-#                     pld=pld,
-#                 )
-#             case {'yield': pld}:
-#                 return Yield(
-#                     cid=obj['cid'],
-#                     pld=pld,
-#                 )
-#             case {'stop': pld}:
-#                 return Stop(
-#                     cid=cid,
-#                 )
-#             case {'return': pld}:
-#                 return Return(
-#                     cid=cid,
-#                     pld=pld,
-#                 )
-
-#             case {'error': pld}:
-#                 return Error(
-#                     cid=cid,
-#                     pld=ErrorData(
-#                         **pld
-#                     ),
-#                 )
-
 #     return (
 #         # enc_to_dict,
 #         dec_from_dict,
