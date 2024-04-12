@@ -420,7 +420,7 @@ def mk_codec(
 
 # instance of the default `msgspec.msgpack` codec settings, i.e.
 # no custom structs, hooks or other special types.
-_def_msgspec_codec: MsgCodec = mk_codec(ipc_msg_spec=Any)
+_def_msgspec_codec: MsgCodec = mk_codec(ipc_pld_spec=Any)
 
 # The built-in IPC `Msg` spec.
 # Our composing "shuttle" protocol which allows `tractor`-app code
