@@ -53,6 +53,9 @@ from .types import (
 
     Error as Error,
 
+    # type-var for `.pld` field
+    PayloadT as PayloadT,
+
     # full msg class set from above as list
     __msg_types__ as __msg_types__,
 
