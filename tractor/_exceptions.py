@@ -40,7 +40,7 @@ from tractor._state import current_actor
 from tractor.log import get_logger
 from tractor.msg import (
     Error,
-    Msg,
+    MsgType,
     Stop,
     Yield,
     pretty_struct,
@@ -130,7 +130,10 @@ def pformat_boxed_tb(
     tb_str: str,
     fields_str: str|None = None,
     field_prefix: str = ' |_',
-    indent: str = ' '*2
+
+    tb_box_indent: int|None = None,
+    tb_body_indent: int = 1,
+
 ) -> str:
     if (
         fields_str
@@ -139,15 +142,19 @@ def pformat_boxed_tb(
     ):
         fields: str = textwrap.indent(
             fields_str,
-            # prefix=' '*2,
-            # prefix=' |_',
             prefix=field_prefix,
         )
     else:
         fields = fields_str or ''
 
-    # body_indent: str = len(field_prefix) * ' '
-    body: str = (
+    tb_body = tb_str
+    if tb_body_indent:
+        tb_body: str = textwrap.indent(
+            tb_str,
+            prefix=tb_body_indent * ' ',
+        )
+
+    tb_box: str = (
 
         # orig
         # f'  |\n'
@@ -158,21 +165,29 @@ def pformat_boxed_tb(
 
         f'|\n'
         f' ------ - ------\n\n'
-        f'{tb_str}\n'
+        # f'{tb_str}\n'
+        f'{tb_body}'
         f'  ------ - ------\n'
         f'_|\n'
     )
-    if len(indent):
-        body: str = textwrap.indent(
-            body,
-            # prefix=body_indent,
-            prefix=indent,
+    tb_box_indent: str = (
+        tb_box_indent
+        or
+        1
+
+        # (len(field_prefix))
+        # ? ^-TODO-^ ? if you wanted another indent level
+    )
+    if tb_box_indent > 0:
+        tb_box: str = textwrap.indent(
+            tb_box,
+            prefix=tb_box_indent * ' ',
         )
 
     return (
         fields
         +
-        body
+        tb_box
     )
 
 
@@ -316,7 +331,7 @@ class RemoteActorError(Exception):
         if self._ipc_msg is None:
             return None
 
-        msg_type: Msg = type(self._ipc_msg)
+        msg_type: MsgType = type(self._ipc_msg)
         fields: dict[str, Any] = {
             k: v for _, k, v in
             pretty_struct.iter_fields(self._ipc_msg)
@@ -493,7 +508,10 @@ class RemoteActorError(Exception):
             tb_str=self.tb_str,
             fields_str=fields,
             field_prefix=' |_',
-            indent=' ',  # no indent?
+            # ^- is so that it's placed like so,
+            # just after <Type(
+            #             |___ ..
+            tb_body_indent=1,
         )
         return (
             f'<{type(self).__name__}(\n'
@@ -623,7 +641,7 @@ class MsgTypeError(
 
     '''
     reprol_fields: list[str] = [
-        'ipc_msg',
+        'payload_msg',
     ]
     extra_body_fields: list[str] = [
         'cid',
@@ -633,7 +651,7 @@ class MsgTypeError(
     @property
     def msg_dict(self) -> dict[str, Any]:
         '''
-        If the underlying IPC `Msg` was received from a remote
+        If the underlying IPC `MsgType` was received from a remote
         actor but was unable to be decoded to a native
         `Yield`|`Started`|`Return` struct, the interchange backend
         native format decoder can be used to stash a `dict`
@@ -643,22 +661,21 @@ class MsgTypeError(
         return self.msgdata.get('_msg_dict')
 
     @property
-    def payload_msg(self) -> Msg|None:
+    def payload_msg(
+        self,
+    ) -> MsgType|None:
         '''
         Attempt to construct what would have been the original
-        `Msg`-with-payload subtype (i.e. an instance from the set
+        `MsgType`-with-payload subtype (i.e. an instance from the set
         of msgs in `.msg.types._payload_msgs`) which failed
         validation.
 
         '''
-        msg_dict: dict = self.msg_dict.copy()
-        name: str = msg_dict.pop('msg_type')
-        msg_type: Msg = getattr(
-            msgtypes,
-            name,
-            Msg,
-        )
-        return msg_type(**msg_dict)
+        if msg_dict := self.msg_dict.copy():
+            return msgtypes.from_dict_msg(
+                dict_msg=msg_dict,
+            )
+        return None
 
     @property
     def cid(self) -> str:
@@ -908,7 +925,7 @@ def is_multi_cancelled(exc: BaseException) -> bool:
 
 def _raise_from_no_key_in_msg(
     ctx: Context,
-    msg: Msg,
+    msg: MsgType,
     src_err: KeyError,
     log: StackLevelAdapter,  # caller specific `log` obj
 
