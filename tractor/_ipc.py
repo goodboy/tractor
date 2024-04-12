@@ -130,6 +130,8 @@ def _mk_msg_type_err(
 
 ) -> MsgTypeError:
 
+    import textwrap
+
     # `Channel.send()` case
     if src_validation_error is None:  # send-side
 
@@ -209,10 +211,24 @@ def _mk_msg_type_err(
         msg, _, maybe_field = msgspec_msg.rpartition('$.')
         obj = object()
         if (field_val := msg_dict.get(maybe_field, obj)) is not obj:
+            field_name_expr: str = (
+                f' |_{maybe_field}: {codec.pld_spec_str} = '
+            )
+            fmt_val_lines: list[str] = pformat(field_val).splitlines()
+            fmt_val: str = (
+                f'{fmt_val_lines[0]}\n'
+                +
+                textwrap.indent(
+                    '\n'.join(fmt_val_lines[1:]),
+                    prefix=' '*len(field_name_expr),
+                )
+            )
             message += (
                 f'{msg.rstrip("`")}\n\n'
-                f'{msg_type}\n'
-                f' |_.{maybe_field}: {codec.pld_spec_str} = {field_val!r}\n'
+                f'<{msg_type.__qualname__}(\n'
+                # f'{".".join([msg_type.__module__, msg_type.__qualname__])}\n'
+                f'{field_name_expr}{fmt_val}\n'
+                f')>'
             )
 
         msgtyperr = MsgTypeError.from_decode(
@@ -338,7 +354,7 @@ class MsgpackTCPStream(MsgTransport):
                     # self._task = task
                     self._codec = codec
                     log.runtime(
-                        'Using new codec in {self}.recv()\n'
+                        f'Using new codec in {self}.recv()\n'
                         f'codec: {self._codec}\n\n'
                         f'msg_bytes: {msg_bytes}\n'
                     )
@@ -420,7 +436,7 @@ class MsgpackTCPStream(MsgTransport):
             if self._codec.pld_spec != codec.pld_spec:
                 self._codec = codec
                 log.runtime(
-                    'Using new codec in {self}.send()\n'
+                    f'Using new codec in {self}.send()\n'
                     f'codec: {self._codec}\n\n'
                     f'msg: {msg}\n'
                 )
