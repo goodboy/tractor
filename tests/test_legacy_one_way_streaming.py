@@ -38,10 +38,13 @@ async def async_gen_stream(sequence):
     assert cs.cancelled_caught
 
 
+# TODO: deprecated either remove entirely
+# or re-impl in terms of `MsgStream` one-sides
+# wrapper, but at least remove `Portal.open_stream_from()`
 @tractor.stream
 async def context_stream(
     ctx: tractor.Context,
-    sequence
+    sequence: list[int],
 ):
     for i in sequence:
         await ctx.send_yield(i)
