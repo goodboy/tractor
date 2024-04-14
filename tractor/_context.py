@@ -2154,7 +2154,6 @@ async def open_context_from_portal(
             src_err=src_error,
             log=log,
             expect_msg=Started,
-            # expect_key='started',
         )
 
     uid: tuple = portal.channel.uid

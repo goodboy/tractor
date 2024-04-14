@@ -938,7 +938,6 @@ def _raise_from_no_key_in_msg(
     src_err: KeyError,
     log: StackLevelAdapter,  # caller specific `log` obj
 
-    expect_key: str = 'yield',
     expect_msg: str = Yield,
     stream: MsgStream | None = None,
 
@@ -1053,7 +1052,7 @@ def _raise_from_no_key_in_msg(
     # is activated above.
     _type: str = 'Stream' if stream else 'Context'
     raise MessagingError(
-        f"{_type} was expecting a '{expect_key.upper()}' message"
+        f"{_type} was expecting a {expect_msg} message"
         " BUT received a non-error msg:\n"
         f'{pformat(msg)}'
     ) from src_err
