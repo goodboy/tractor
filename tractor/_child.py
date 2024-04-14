@@ -36,6 +36,7 @@ def parse_ipaddr(arg):
 
 
 if __name__ == "__main__":
+    __tracebackhide__: bool = True
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--uid", type=parse_uid)
