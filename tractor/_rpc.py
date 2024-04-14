@@ -41,7 +41,6 @@ from trio import (
     TaskStatus,
 )
 
-from .msg import NamespacePath
 from ._ipc import Channel
 from ._context import (
     Context,
@@ -58,6 +57,11 @@ from ._exceptions import (
 from .devx import _debug
 from . import _state
 from .log import get_logger
+from .msg import (
+    current_codec,
+    MsgCodec,
+    NamespacePath,
+)
 from tractor.msg.types import (
     CancelAck,
     Error,
@@ -94,6 +98,7 @@ async def _invoke_non_context(
         Context | BaseException
     ] = trio.TASK_STATUS_IGNORED,
 ):
+    __tracebackhide__: bool = True
 
     # TODO: can we unify this with the `context=True` impl below?
     if inspect.isasyncgen(coro):
@@ -394,7 +399,11 @@ async def _invoke(
     __tracebackhide__: bool = hide_tb
     treat_as_gen: bool = False
 
-    if _state.debug_mode():
+    if (
+        _state.debug_mode()
+        and
+        _state._runtime_vars['use_greenback']
+    ):
         # XXX for .pause_from_sync()` usage we need to make sure
         # `greenback` is boostrapped in the subactor!
         await _debug.maybe_init_greenback()
@@ -508,10 +517,22 @@ async def _invoke(
         #     wrapper that calls `Context.started()` and then does
         #     the `await coro()`?
 
-        # a "context" endpoint type is the most general and
-        # "least sugary" type of RPC ep with support for
+        # ------ - ------
+        # a "context" endpoint is the most general and
+        # "least sugary" type of RPC with support for
         # bi-dir streaming B)
-        # StartAck
+        #
+        # the concurrency relation is simlar to a task nursery
+        # wherein a "parent" task (the one that enters
+        # `trio.open_nursery()` in some actor "opens" (via
+        # `Portal.open_context()`) an IPC ctx to another peer
+        # (which is maybe a sub-) actor who then schedules (aka
+        # `trio.Nursery.start()`s) a new "child" task to execute
+        # the `@context` annotated func; that is this func we're
+        # running directly below!
+        # ------ - ------
+        #
+        # StartAck: respond immediately with endpoint info
         await chan.send(
             StartAck(
                 cid=cid,
@@ -520,11 +541,11 @@ async def _invoke(
         )
 
         # TODO: should we also use an `.open_context()` equiv
-        # for this callee side by factoring the impl from
+        # for this child side by factoring the impl from
         # `Portal.open_context()` into a common helper?
         #
         # NOTE: there are many different ctx state details
-        # in a callee side instance according to current impl:
+        # in a child side instance according to current impl:
         # - `.cancelled_caught` can never be `True`.
         #  -> the below scope is never exposed to the
         #     `@context` marked RPC function.
@@ -550,7 +571,7 @@ async def _invoke(
 
             # NOTE: this happens IFF `ctx._scope.cancel()` is
             # called by any of,
-            # - *this* callee task manually calling `ctx.cancel()`.
+            # - *this* child task manually calling `ctx.cancel()`.
             # - the runtime calling `ctx._deliver_msg()` which
             #   itself calls `ctx._maybe_cancel_and_set_remote_error()`
             #   which cancels the scope presuming the input error
@@ -627,10 +648,11 @@ async def _invoke(
                         # f'  |_{ctx}'
                     )
 
-                    # task-contex was either cancelled by request using
-                    # ``Portal.cancel_actor()`` or ``Context.cancel()``
-                    # on the far end, or it was cancelled by the local
-                    # (callee) task, so relay this cancel signal to the
+                    # task-contex was either cancelled by request
+                    # using ``Portal.cancel_actor()`` or
+                    # ``Context.cancel()`` on the far end, or it
+                    # was cancelled by the local child (or callee)
+                    # task, so relay this cancel signal to the
                     # other side.
                     ctxc = ContextCancelled(
                         message=msg,
@@ -651,7 +673,7 @@ async def _invoke(
 
         ) as scope_error:
 
-            # always set this (callee) side's exception as the
+            # always set this (child) side's exception as the
             # local error on the context
             ctx._local_error: BaseException = scope_error
 
@@ -1020,9 +1042,8 @@ async def process_messages(
                                 trio.Event(),
                             )
 
-                    # XXX remote (runtime scoped) error or uknown
-                    # msg (type).
-                    case Error() | _:
+                    # runtime-scoped remote error (since no `.cid`)
+                    case Error():
                         # NOTE: this is the non-rpc error case,
                         # that is, an error **not** raised inside
                         # a call to ``_invoke()`` (i.e. no cid was
@@ -1030,16 +1051,23 @@ async def process_messages(
                         # this error to all local channel
                         # consumers (normally portals) by marking
                         # the channel as errored
-                        log.exception(
-                            f'Unhandled IPC msg:\n\n'
-                            f'{msg}\n'
-                        )
                         # assert chan.uid
                         chan._exc: Exception = unpack_error(
                             msg,
                             chan=chan,
                         )
                         raise chan._exc
+
+                    # unknown/invalid msg type?
+                    case _:
+                        codec: MsgCodec = current_codec()
+                        message: str = (
+                            f'Unhandled IPC msg for codec?\n\n'
+                            f'|_{codec}\n\n'
+                            f'{msg}\n'
+                        )
+                        log.exception(message)
+                        raise RuntimeError(message)
 
                 log.runtime(
                     'Waiting on next IPC msg from\n'

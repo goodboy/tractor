@@ -117,6 +117,8 @@ async def open_root_actor(
         os.environ['PYTHONBREAKPOINT'] = (
             'tractor.devx._debug.pause_from_sync'
         )
+        _state._runtime_vars['use_greenback'] = True
+
     else:
         # TODO: disable `breakpoint()` by default (without
         # `greenback`) since it will break any multi-actor
@@ -392,14 +394,20 @@ async def open_root_actor(
         _state._last_actor_terminated = actor
 
         # restore built-in `breakpoint()` hook state
-        if debug_mode:
+        if (
+            debug_mode
+            and
+            maybe_enable_greenback
+        ):
             if builtin_bp_handler is not None:
                 sys.breakpointhook = builtin_bp_handler
+
             if orig_bp_path is not None:
                 os.environ['PYTHONBREAKPOINT'] = orig_bp_path
+
             else:
                 # clear env back to having no entry
-                os.environ.pop('PYTHONBREAKPOINT')
+                os.environ.pop('PYTHONBREAKPOINT', None)
 
         logger.runtime("Root actor terminated")
 
