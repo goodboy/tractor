@@ -43,8 +43,11 @@ from tractor.msg import (
     MsgType,
     Stop,
     Yield,
-    pretty_struct,
     types as msgtypes,
+)
+from tractor.msg.pretty_struct import (
+    iter_fields,
+    Struct,
 )
 
 if TYPE_CHECKING:
@@ -82,7 +85,7 @@ class InternalError(RuntimeError):
 _ipcmsg_keys: list[str] = [
     fi.name
     for fi, k, v
-    in pretty_struct.iter_fields(Error)
+    in iter_fields(Error)
 
 ]
 
@@ -321,7 +324,7 @@ class RemoteActorError(Exception):
             assert self.boxed_type is boxed_type
 
     @property
-    def ipc_msg(self) -> pretty_struct.Struct:
+    def ipc_msg(self) -> Struct:
         '''
         Re-render the underlying `._ipc_msg: Msg` as
         a `pretty_struct.Struct` for introspection such that the
@@ -334,12 +337,12 @@ class RemoteActorError(Exception):
         msg_type: MsgType = type(self._ipc_msg)
         fields: dict[str, Any] = {
             k: v for _, k, v in
-            pretty_struct.iter_fields(self._ipc_msg)
+            iter_fields(self._ipc_msg)
         }
         return defstruct(
             msg_type.__name__,
             fields=fields.keys(),
-            bases=(msg_type, pretty_struct.Struct),
+            bases=(msg_type, Struct),
         )(**fields)
 
     @property
@@ -641,11 +644,11 @@ class MsgTypeError(
 
     '''
     reprol_fields: list[str] = [
-        'payload_msg',
+        'expected_msg_type',
     ]
     extra_body_fields: list[str] = [
         'cid',
-        'payload_msg',
+        'expected_msg',
     ]
 
     @property
@@ -661,9 +664,7 @@ class MsgTypeError(
         return self.msgdata.get('_msg_dict')
 
     @property
-    def payload_msg(
-        self,
-    ) -> MsgType|None:
+    def expected_msg(self) -> MsgType|None:
         '''
         Attempt to construct what would have been the original
         `MsgType`-with-payload subtype (i.e. an instance from the set
@@ -674,8 +675,16 @@ class MsgTypeError(
         if msg_dict := self.msg_dict.copy():
             return msgtypes.from_dict_msg(
                 dict_msg=msg_dict,
+                # use_pretty=True,
+                # ^-TODO-^ would luv to use this BUT then the
+                # `field_prefix` in `pformat_boxed_tb()` cucks it
+                # all up.. XD
             )
         return None
+
+    @property
+    def expected_msg_type(self) -> Type[MsgType]|None:
+        return type(self.expected_msg)
 
     @property
     def cid(self) -> str:
