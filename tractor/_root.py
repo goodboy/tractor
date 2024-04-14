@@ -79,6 +79,7 @@ async def open_root_actor(
 
     # enables the multi-process debugger support
     debug_mode: bool = False,
+    maybe_enable_greenback: bool = False,  # `.pause_from_sync()/breakpoint()` support
 
     # internal logging
     loglevel: str|None = None,
@@ -107,8 +108,8 @@ async def open_root_actor(
     )
     if (
         debug_mode
-        and
-        await _debug.maybe_init_greenback(
+        and maybe_enable_greenback
+        and await _debug.maybe_init_greenback(
             raise_not_found=False,
         )
     ):
