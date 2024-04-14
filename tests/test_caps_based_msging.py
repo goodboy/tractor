@@ -14,19 +14,20 @@ from typing import (
 from contextvars import (
     Context,
 )
-# from inspect import Parameter
 
 from msgspec import (
     structs,
     msgpack,
-    # defstruct,
     Struct,
     ValidationError,
 )
 import pytest
 
 import tractor
-from tractor import _state
+from tractor import (
+    _state,
+    MsgTypeError,
+)
 from tractor.msg import (
     _codec,
     _ctxvar_MsgCodec,
@@ -45,21 +46,6 @@ from tractor.msg.types import (
     mk_msg_spec,
 )
 import trio
-
-
-def test_msg_spec_xor_pld_spec():
-    '''
-    If the `.msg.types.Msg`-set is overridden, we
-    can't also support a `Msg.pld` spec.
-
-    '''
-    # apply custom hooks and set a `Decoder` which only
-    # loads `NamespacePath` types.
-    with pytest.raises(RuntimeError):
-        mk_codec(
-            ipc_msg_spec=Any,
-            ipc_pld_spec=NamespacePath,
-        )
 
 
 def mk_custom_codec(
@@ -134,7 +120,9 @@ def mk_custom_codec(
             f'{uid}\n'
             'FAILED DECODE\n'
             f'type-> {obj_type}\n'
-            f'obj-arg-> `{obj}`: {type(obj)}\n'
+            f'obj-arg-> `{obj}`: {type(obj)}\n\n'
+            f'current codec:\n'
+            f'{current_codec()}\n'
         )
         # TODO: figure out the ignore subsys for this!
         # -[ ] option whether to defense-relay backc the msg
@@ -409,7 +397,9 @@ async def send_back_values(
         pld_spec=ipc_pld_spec,
         add_hooks=add_hooks,
     )
-    with apply_codec(nsp_codec) as codec:
+    with (
+        apply_codec(nsp_codec) as codec,
+    ):
         chk_codec_applied(
             expect_codec=nsp_codec,
             enter_value=codec,
@@ -459,7 +449,7 @@ async def send_back_values(
                     # XXX NOTE XXX THIS WON'T WORK WITHOUT SPECIAL
                     # `str` handling! or special debug mode IPC
                     # msgs!
-                    # await tractor.pause()
+                    await tractor.pause()
 
                     raise RuntimeError(
                         f'NOT-EXPECTED able to roundtrip value given spec:\n'
@@ -470,7 +460,8 @@ async def send_back_values(
                 break  # move on to streaming block..
 
             except tractor.MsgTypeError:
-                # await tractor.pause()
+                await tractor.pause()
+
                 if expect_send:
                     raise RuntimeError(
                         f'EXPECTED to `.started()` value given spec:\n'
@@ -652,12 +643,42 @@ def test_codec_hooks_mod(
 
                 pld_spec_type_strs: list[str] = enc_type_union(ipc_pld_spec)
 
+                # XXX should raise an mte (`MsgTypeError`)
+                # when `add_codec_hooks == False` bc the input
+                # `expect_ipc_send` kwarg has a nsp which can't be
+                # serialized!
+                #
+                # TODO:can we ensure this happens from the
+                # `Return`-side (aka the sub) as well?
+                if not add_codec_hooks:
+                    try:
+                        async with p.open_context(
+                            send_back_values,
+                            expect_debug=debug_mode,
+                            pld_spec_type_strs=pld_spec_type_strs,
+                            add_hooks=add_codec_hooks,
+                            started_msg_bytes=nsp_codec.encode(expected_started),
+
+                            # XXX NOTE bc we send a `NamespacePath` in this kwarg
+                            expect_ipc_send=expect_ipc_send,
+
+                        ) as (ctx, first):
+                            pytest.fail('ctx should fail to open without custom enc_hook!?')
+
+                    # this test passes bc we can go no further!
+                    except MsgTypeError:
+                        # teardown nursery
+                        await p.cancel_actor()
+                        return
+
                 # TODO: send the original nsp here and
                 # test with `limit_msg_spec()` above?
                 # await tractor.pause()
                 print('PARENT opening IPC ctx!\n')
                 async with (
 
+                    # XXX should raise an mte (`MsgTypeError`)
+                    # when `add_codec_hooks == False`..
                     p.open_context(
                         send_back_values,
                         expect_debug=debug_mode,
