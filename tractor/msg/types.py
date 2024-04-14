@@ -451,7 +451,8 @@ def from_dict_msg(
     dict_msg: dict,
 
     msgT: MsgType|None = None,
-    tag_field: str = 'msg_type'
+    tag_field: str = 'msg_type',
+    use_pretty: bool = False,
 
 ) -> MsgType:
     '''
@@ -468,6 +469,19 @@ def from_dict_msg(
     # XXX ensure tag field is removed
     msgT_name: str = dict_msg.pop(msg_type_tag_field)
     msgT: MsgType = _msg_table[msgT_name]
+    if use_pretty:
+        msgT = defstruct(
+            name=msgT_name,
+            fields=[
+                (key, fi.type)
+                for fi, key, _
+                in pretty_struct.iter_fields(msgT)
+            ],
+            bases=(
+                pretty_struct.Struct,
+                msgT,
+            ),
+        )
     return msgT(**dict_msg)
 
 # TODO: should be make a msg version of `ContextCancelled?`
