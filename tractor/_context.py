@@ -1905,7 +1905,7 @@ class Context:
 
         try:
             log.runtime(
-                f'Delivering msg from IPC ctx:\n'
+                f'Delivering msg from IPC ctx:\n\n'
                 f'<= {from_uid}\n'
                 f'  |_ {nsf}()\n\n'
 

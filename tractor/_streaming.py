@@ -377,14 +377,17 @@ class MsgStream(trio.abc.Channel):
         #         await rx_chan.aclose()
 
         if not self._eoc:
-            log.cancel(
-                'Stream closed by self before it received an EoC?\n'
-                'Setting eoc manually..\n..'
-            )
-            self._eoc: bool = trio.EndOfChannel(
-                f'Context stream closed by self({self._ctx.side})\n'
+            message: str = (
+                f'Context stream closed by {self._ctx.side!r}\n'
                 f'|_{self}\n'
             )
+            log.cancel(
+                'Stream self-closed before receiving EoC\n\n'
+                +
+                message
+            )
+            self._eoc = trio.EndOfChannel(message)
+
         # ?XXX WAIT, why do we not close the local mem chan `._rx_chan` XXX?
         # => NO, DEFINITELY NOT! <=
         # if we're a bi-dir ``MsgStream`` BECAUSE this same
