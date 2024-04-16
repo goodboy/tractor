@@ -27,7 +27,6 @@ from ._debug import (
     pause as pause,
     pause_from_sync as pause_from_sync,
     shield_sigint_handler as shield_sigint_handler,
-    MultiActorPdb as MultiActorPdb,
     open_crash_handler as open_crash_handler,
     maybe_open_crash_handler as maybe_open_crash_handler,
     post_mortem as post_mortem,
