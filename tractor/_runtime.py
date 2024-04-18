@@ -263,10 +263,13 @@ class Actor:
         self._listeners: list[trio.abc.Listener] = []
         self._parent_chan: Channel|None = None
         self._forkserver_info: tuple|None = None
+
+        # track each child/sub-actor in it's locally
+        # supervising nursery
         self._actoruid2nursery: dict[
-            tuple[str, str],
+            tuple[str, str],  # sub-`Actor.uid`
             ActorNursery|None,
-        ] = {}  # type: ignore  # noqa
+        ] = {}
 
         # when provided, init the registry addresses property from
         # input via the validator.
@@ -661,12 +664,18 @@ class Actor:
 
                     # TODO: NEEEDS TO BE TESTED!
                     # actually, no idea if this ever even enters.. XD
+                    #
+                    # XXX => YES IT DOES, when i was testing ctl-c
+                    # from broken debug TTY locking due to
+                    # msg-spec races on application using RunVar...
                     pdb_user_uid: tuple = pdb_lock.global_actor_in_debug
                     if (
                         pdb_user_uid
                         and local_nursery
                     ):
-                        entry: tuple|None = local_nursery._children.get(pdb_user_uid)
+                        entry: tuple|None = local_nursery._children.get(
+                            tuple(pdb_user_uid)
+                        )
                         if entry:
                             proc: trio.Process
                             _, proc, _ = entry
@@ -676,10 +685,10 @@ class Actor:
                             and poll() is None
                         ):
                             log.cancel(
-                                'Root actor reports no-more-peers, BUT '
+                                'Root actor reports no-more-peers, BUT\n'
                                 'a DISCONNECTED child still has the debug '
-                                'lock!\n'
-                                f'root uid: {self.uid}\n'
+                                'lock!\n\n'
+                                # f'root uid: {self.uid}\n'
                                 f'last disconnected child uid: {uid}\n'
                                 f'locking child uid: {pdb_user_uid}\n'
                             )
@@ -705,9 +714,8 @@ class Actor:
                     # if a now stale local task has the TTY lock still
                     # we cancel it to allow servicing other requests for
                     # the lock.
-                    db_cs: trio.CancelScope|None = pdb_lock._root_local_task_cs_in_debug
                     if (
-                        db_cs
+                        (db_cs := pdb_lock.get_locking_task_cs())
                         and not db_cs.cancel_called
                         and uid == pdb_user_uid
                     ):
@@ -744,7 +752,7 @@ class Actor:
         except KeyError:
             log.warning(
                 'Ignoring invalid IPC ctx msg!\n\n'
-                f'<= sender: {uid}\n'
+                f'<= sender: {uid}\n\n'
                 # XXX don't need right since it's always in msg?
                 # f'=> cid: {cid}\n\n'
 
@@ -798,7 +806,7 @@ class Actor:
                 cid,
                 # side,
             )]
-            log.runtime(
+            log.debug(
                 f'Retreived cached IPC ctx for\n'
                 f'peer: {chan.uid}\n'
                 f'cid:{cid}\n'
@@ -837,10 +845,14 @@ class Actor:
         nsf: NamespacePath,
         kwargs: dict,
 
+        # determines `Context.side: str`
+        portal: Portal|None = None,
+
         # IPC channel config
         msg_buffer_size: int|None = None,
         allow_overruns: bool = False,
         load_nsf: bool = False,
+        ack_timeout: float = 3,
 
     ) -> Context:
         '''
@@ -865,10 +877,12 @@ class Actor:
             msg_buffer_size=msg_buffer_size,
             allow_overruns=allow_overruns,
         )
+        ctx._portal = portal
 
         if (
             'self' in nsf
-            or not load_nsf
+            or
+            not load_nsf
         ):
             ns, _, func = nsf.partition(':')
         else:
@@ -876,42 +890,29 @@ class Actor:
             # -[ ] but, how to do `self:<Actor.meth>`??
             ns, func = nsf.to_tuple()
 
+        msg = msgtypes.Start(
+            ns=ns,
+            func=func,
+            kwargs=kwargs,
+            uid=self.uid,
+            cid=cid,
+        )
         log.runtime(
-            'Sending cmd to\n'
-            f'peer: {chan.uid} => \n'
-            '\n'
-            f'=> {ns}.{func}({kwargs})\n'
+            'Sending RPC start msg\n\n'
+            f'=> peer: {chan.uid}\n'
+            f'  |_ {ns}.{func}({kwargs})\n'
         )
-        await chan.send(
-            msgtypes.Start(
-                ns=ns,
-                func=func,
-                kwargs=kwargs,
-                uid=self.uid,
-                cid=cid,
-            )
-        )
-            # {'cmd': (
-            #     ns,
-            #     func,
-            #     kwargs,
-            #     self.uid,
-            #     cid,
-            # )}
-        # )
+        await chan.send(msg)
 
-        # Wait on first response msg and validate; this should be
-        # immediate.
-        # first_msg: dict = await ctx._recv_chan.receive()
-        # functype: str = first_msg.get('functype')
-
-        first_msg: msgtypes.StartAck = await ctx._recv_chan.receive()
+        # NOTE wait on first `StartAck` response msg and validate;
+        # this should be immediate and does not (yet) wait for the
+        # remote child task to sync via `Context.started()`.
+        with trio.fail_after(ack_timeout):
+            first_msg: msgtypes.StartAck = await ctx._recv_chan.receive()
         try:
             functype: str = first_msg.functype
         except AttributeError:
             raise unpack_error(first_msg, chan)
-            # if 'error' in first_msg:
-            #     raise unpack_error(first_msg, chan)
 
         if functype not in (
             'asyncfunc',
@@ -919,7 +920,7 @@ class Actor:
             'context',
         ):
             raise ValueError(
-                f'{first_msg} is an invalid response packet?'
+                f'Invalid `StartAck.functype: str = {first_msg!r}` ??'
             )
 
         ctx._remote_func_type = functype
@@ -1164,7 +1165,7 @@ class Actor:
 
             # kill any debugger request task to avoid deadlock
             # with the root actor in this tree
-            dbcs = _debug.Lock._debugger_request_cs
+            dbcs = _debug.DebugStatus.req_cs
             if dbcs is not None:
                 msg += (
                     '>> Cancelling active debugger request..\n'
@@ -1239,9 +1240,9 @@ class Actor:
         except KeyError:
             # NOTE: during msging race conditions this will often
             # emit, some examples:
-            # - callee returns a result before cancel-msg/ctxc-raised
-            # - callee self raises ctxc before caller send request,
-            # - callee errors prior to cancel req.
+            # - child returns a result before cancel-msg/ctxc-raised
+            # - child self raises ctxc before parent send request,
+            # - child errors prior to cancel req.
             log.cancel(
                 'Cancel request invalid, RPC task already completed?\n\n'
                 f'<= canceller: {requesting_uid}\n\n'
@@ -1304,15 +1305,15 @@ class Actor:
         flow_info: str = (
             f'<= canceller: {requesting_uid}\n'
             f'=> ipc-parent: {parent_chan}\n'
-            f'  |_{ctx}\n'
+            f'|_{ctx}\n'
         )
         log.runtime(
-            'Waiting on RPC task to cancel\n'
+            'Waiting on RPC task to cancel\n\n'
             f'{flow_info}'
         )
         await is_complete.wait()
         log.runtime(
-            f'Sucessfully cancelled RPC task\n'
+            f'Sucessfully cancelled RPC task\n\n'
             f'{flow_info}'
         )
         return True
@@ -1538,8 +1539,8 @@ async def async_main(
 
     '''
     # attempt to retreive ``trio``'s sigint handler and stash it
-    # on our debugger lock state.
-    _debug.Lock._trio_handler = signal.getsignal(signal.SIGINT)
+    # on our debugger state.
+    _debug.DebugStatus._trio_handler = signal.getsignal(signal.SIGINT)
 
     is_registered: bool = False
     try:

@@ -137,7 +137,7 @@ async def open_root_actor(
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
-    _debug.Lock._trio_handler = signal.getsignal(signal.SIGINT)
+    _debug.DebugStatus._trio_handler = signal.getsignal(signal.SIGINT)
 
     # mark top most level process as root actor
     _state._runtime_vars['_is_root'] = True
