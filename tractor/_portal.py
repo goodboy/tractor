@@ -161,17 +161,18 @@ class Portal:
         self._expect_result = await self.actor.start_remote_task(
             self.channel,
             nsf=NamespacePath(f'{ns}:{func}'),
-            kwargs=kwargs
+            kwargs=kwargs,
+            portal=self,
         )
 
     async def _return_once(
         self,
         ctx: Context,
 
-    ) -> dict[str, Any]:
+    ) -> Return:
 
         assert ctx._remote_func_type == 'asyncfunc'  # single response
-        msg: dict = await ctx._recv_chan.receive()
+        msg: Return = await ctx._recv_chan.receive()
         return msg
 
     async def result(self) -> Any:
@@ -247,6 +248,8 @@ class Portal:
         purpose.
 
         '''
+        __runtimeframe__: int = 1  # noqa
+
         chan: Channel = self.channel
         if not chan.connected():
             log.runtime(
@@ -324,16 +327,18 @@ class Portal:
           internals!
 
         '''
+        __runtimeframe__: int = 1  # noqa
         nsf = NamespacePath(
             f'{namespace_path}:{function_name}'
         )
-        ctx = await self.actor.start_remote_task(
+        ctx: Context = await self.actor.start_remote_task(
             chan=self.channel,
             nsf=nsf,
             kwargs=kwargs,
+            portal=self,
         )
-        ctx._portal = self
-        msg = await self._return_once(ctx)
+        ctx._portal: Portal = self
+        msg: Return = await self._return_once(ctx)
         return _unwrap_msg(
             msg,
             self.channel,
@@ -384,6 +389,7 @@ class Portal:
             self.channel,
             nsf=nsf,
             kwargs=kwargs,
+            portal=self,
         )
         ctx._portal = self
         return _unwrap_msg(
@@ -398,6 +404,14 @@ class Portal:
         **kwargs,
 
     ) -> AsyncGenerator[MsgStream, None]:
+        '''
+        Legacy one-way streaming API.
+
+        TODO: re-impl on top `Portal.open_context()` + an async gen
+        around `Context.open_stream()`.
+
+        '''
+        __runtimeframe__: int = 1  # noqa
 
         if not inspect.isasyncgenfunction(async_gen_func):
             if not (
@@ -411,6 +425,7 @@ class Portal:
             self.channel,
             nsf=NamespacePath.from_ref(async_gen_func),
             kwargs=kwargs,
+            portal=self,
         )
         ctx._portal = self
 

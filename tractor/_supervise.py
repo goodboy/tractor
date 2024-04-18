@@ -131,7 +131,12 @@ class ActorNursery:
         "main task" besides the runtime.
 
         '''
-        loglevel = loglevel or self._actor.loglevel or get_loglevel()
+        __runtimeframe__: int = 1  # noqa
+        loglevel: str = (
+            loglevel
+            or self._actor.loglevel
+            or get_loglevel()
+        )
 
         # configure and pass runtime state
         _rtv = _state._runtime_vars.copy()
@@ -209,6 +214,7 @@ class ActorNursery:
         the actor is terminated.
 
         '''
+        __runtimeframe__: int = 1  # noqa
         mod_path: str = fn.__module__
 
         if name is None:
@@ -257,6 +263,7 @@ class ActorNursery:
         directly without any far end graceful ``trio`` cancellation.
 
         '''
+        __runtimeframe__: int = 1  # noqa
         self.cancelled = True
 
         # TODO: impl a repr for spawn more compact
