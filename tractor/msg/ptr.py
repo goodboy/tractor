@@ -76,9 +76,11 @@ class NamespacePath(str):
         return self._ref
 
     @staticmethod
-    def _mk_fqnp(ref: type | object) -> tuple[str, str]:
+    def _mk_fqnp(
+        ref: type|object,
+    ) -> tuple[str, str]:
         '''
-        Generate a minial ``str`` pair which describes a python
+        Generate a minial `str` pair which describes a python
         object's namespace path and object/type name.
 
         In more precise terms something like:
@@ -87,10 +89,9 @@ class NamespacePath(str):
             of THIS type XD
 
         '''
-        if (
-            isfunction(ref)
-        ):
+        if isfunction(ref):
             name: str = getattr(ref, '__name__')
+            mod_name: str = ref.__module__
 
         elif ismethod(ref):
             # build out the path manually i guess..?
@@ -99,15 +100,19 @@ class NamespacePath(str):
                 type(ref.__self__).__name__,
                 ref.__func__.__name__,
             ])
+            mod_name: str = ref.__self__.__module__
 
         else:  # object or other?
             # isinstance(ref, object)
             # and not isfunction(ref)
             name: str = type(ref).__name__
+            mod_name: str = ref.__module__
 
+        # TODO: return static value direactly?
+        #
         # fully qualified namespace path, tuple.
         fqnp: tuple[str, str] = (
-            ref.__module__,
+            mod_name,
             name,
         )
         return fqnp
@@ -115,7 +120,7 @@ class NamespacePath(str):
     @classmethod
     def from_ref(
         cls,
-        ref: type | object,
+        ref: type|object,
 
     ) -> NamespacePath:
 
