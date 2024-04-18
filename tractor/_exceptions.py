@@ -935,7 +935,7 @@ def is_multi_cancelled(exc: BaseException) -> bool:
 def _raise_from_no_key_in_msg(
     ctx: Context,
     msg: MsgType,
-    src_err: KeyError,
+    src_err: AttributeError,
     log: StackLevelAdapter,  # caller specific `log` obj
 
     expect_msg: str = Yield,
@@ -994,7 +994,7 @@ def _raise_from_no_key_in_msg(
             ctx.chan,
             hide_tb=hide_tb,
 
-        ) from None
+        ) from src_err
 
     # `MsgStream` termination msg.
     # TODO: does it make more sense to pack 
