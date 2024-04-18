@@ -810,7 +810,7 @@ async def process_messages(
     # should use it?
     # https://github.com/python-trio/trio/issues/467
     log.runtime(
-        'Entering IPC msg loop:\n'
+        'Entering RPC msg loop:\n'
         f'peer: {chan.uid}\n'
         f'|_{chan}\n'
     )
@@ -872,7 +872,7 @@ async def process_messages(
                         # XXX NOTE XXX don't start entire actor
                         # runtime cancellation if this actor is
                         # currently in debug mode!
-                        pdb_complete: trio.Event|None = _debug.Lock.local_pdb_complete
+                        pdb_complete: trio.Event|None = _debug.DebugStatus.repl_release
                         if pdb_complete:
                             await pdb_complete.wait()
 
@@ -1069,7 +1069,7 @@ async def process_messages(
                         log.exception(message)
                         raise RuntimeError(message)
 
-                log.runtime(
+                log.transport(
                     'Waiting on next IPC msg from\n'
                     f'peer: {chan.uid}\n'
                     f'|_{chan}\n'
