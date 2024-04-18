@@ -314,8 +314,7 @@ class MsgpackTCPStream(MsgTransport):
 
         while True:
             try:
-                header = await self.recv_stream.receive_exactly(4)
-
+                header: bytes = await self.recv_stream.receive_exactly(4)
             except (
                 ValueError,
                 ConnectionResetError,
@@ -337,8 +336,7 @@ class MsgpackTCPStream(MsgTransport):
             size, = struct.unpack("<I", header)
 
             log.transport(f'received header {size}')  # type: ignore
-
-            msg_bytes = await self.recv_stream.receive_exactly(size)
+            msg_bytes: bytes = await self.recv_stream.receive_exactly(size)
 
             log.transport(f"received {msg_bytes}")  # type: ignore
             try:
