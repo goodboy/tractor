@@ -66,7 +66,7 @@ def current_actor(
         err_on_no_runtime
         and _current_actor is None
     ):
-        msg: str = 'No local actor has been initialized yet'
+        msg: str = 'No local actor has been initialized yet?\n'
         from ._exceptions import NoRuntime
 
         if last := last_actor():
@@ -79,8 +79,8 @@ def current_actor(
         # this process.
         else:
             msg += (
-                'No last actor found?\n'
-                'Did you forget to open one of:\n\n'
+                # 'No last actor found?\n'
+                '\nDid you forget to call one of,\n'
                 '- `tractor.open_root_actor()`\n'
                 '- `tractor.open_nursery()`\n'
             )
