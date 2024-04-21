@@ -170,7 +170,7 @@ def pformat_boxed_tb(
         f' ------ - ------\n\n'
         # f'{tb_str}\n'
         f'{tb_body}'
-        f'  ------ - ------\n'
+        f' ------ - ------\n'
         f'_|\n'
     )
     tb_box_indent: str = (
@@ -972,8 +972,6 @@ def _raise_from_no_key_in_msg(
     # an internal error should never get here
     try:
         cid: str = msg.cid
-        # cid: str = msg['cid']
-    # except KeyError as src_err:
     except AttributeError as src_err:
         raise MessagingError(
             f'IPC `Context` rx-ed msg without a ctx-id (cid)!?\n'
@@ -985,7 +983,6 @@ def _raise_from_no_key_in_msg(
     # TODO: test that shows stream raising an expected error!!!
 
     # raise the error message in a boxed exception type!
-    # if msg.get('error'):
     if isinstance(msg, Error):
     # match msg:
     #     case Error():
@@ -1001,7 +998,6 @@ def _raise_from_no_key_in_msg(
     # the stream._eoc outside this in the calleer always?
         # case Stop():
     elif (
-        # msg.get('stop')
         isinstance(msg, Stop)
         or (
             stream
