@@ -38,6 +38,7 @@ from typing import (
 from msgspec import (
     defstruct,
     # field,
+    Raw,
     Struct,
     # UNSET,
     # UnsetType,
@@ -105,7 +106,7 @@ class Msg(
     # TODO: could also be set to `msgspec.Raw` if the sub-decoders
     # approach is preferred over the generic parameterization 
     # approach as take by `mk_msg_spec()` below.
-    pld: PayloadT
+    pld: PayloadT|Raw
 
 
 class Aid(
@@ -332,7 +333,7 @@ class Started(
     decorated IPC endpoint.
 
     '''
-    pld: PayloadT
+    pld: PayloadT|Raw
 
 
 # TODO: instead of using our existing `Start`
@@ -349,7 +350,7 @@ class Yield(
     Per IPC transmission of a value from `await MsgStream.send(<value>)`.
 
     '''
-    pld: PayloadT
+    pld: PayloadT|Raw
 
 
 class Stop(
@@ -377,7 +378,7 @@ class Return(
     func-as-`trio.Task`.
 
     '''
-    pld: PayloadT
+    pld: PayloadT|Raw
 
 
 class CancelAck(
@@ -710,7 +711,9 @@ def mk_msg_spec(
     )
     return (
         ipc_spec,
-        msgtypes_table[spec_build_method] + ipc_msg_types,
+        msgtypes_table[spec_build_method]
+        +
+        ipc_msg_types,
     )
 
 
