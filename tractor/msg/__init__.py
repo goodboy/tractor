@@ -34,6 +34,7 @@ from ._codec import (
     apply_codec as apply_codec,
     mk_codec as mk_codec,
     MsgCodec as MsgCodec,
+    MsgDec as MsgDec,
     current_codec as current_codec,
 )
 
@@ -50,6 +51,7 @@ from .types import (
     Yield as Yield,
     Stop as Stop,
     Return as Return,
+    CancelAck as CancelAck,
 
     Error as Error,
 

@@ -266,35 +266,7 @@ class Start(
 
     # TODO: enforcing a msg-spec in terms `Msg.pld`
     # parameterizable msgs to be used in the appls IPC dialog.
-    #
-    # -[ ] both as part of the `.open_context()` call AND as part of the
-    #     immediate ack-reponse (see similar below)
-    #     we should do spec matching and fail if anything is awry?
-    #
-    # -[ ] eventually spec should be generated/parsed from the
-    #     type-annots as # desired in GH issue:
-    #     https://github.com/goodboy/tractor/issues/365
-    #
-    # -[ ] semantics of the mismatch case
-    #   - when caller-callee specs we should raise
-    #    a `MsgTypeError` or `MsgSpecError` or similar?
-    #
-    # -[ ] wrapper types for both spec types such that we can easily
-    #     IPC transport them?
-    #     - `TypeSpec: Union[Type]`
-    #      * also a `.__contains__()` for doing `None in
-    #      TypeSpec[None|int]` since rn you need to do it on
-    #      `.__args__` for unions..
-    #     - `MsgSpec: Union[Type[Msg]]
-    #
-    # -[ ] auto-genning this from new (in 3.12) type parameter lists Bo
-    # |_ https://docs.python.org/3/reference/compound_stmts.html#type-params
-    # |_ historical pep 695: https://peps.python.org/pep-0695/
-    # |_ full lang spec: https://typing.readthedocs.io/en/latest/spec/
-    # |_ on annotation scopes:
-    #    https://docs.python.org/3/reference/executionmodel.html#annotation-scopes
-    # |_ 3.13 will have subscriptable funcs Bo
-    #    https://peps.python.org/pep-0718/
+    # => SEE `._codec.MsgDec` for more <=
     pld_spec: str = str(Any)
 
 
@@ -382,7 +354,8 @@ class Return(
 
 
 class CancelAck(
-    Return,
+    Msg,
+    Generic[PayloadT],
 ):
     '''
     Deliver the `bool` return-value from a cancellation `Actor`
