@@ -31,7 +31,7 @@ from typing import (
     Any,
     Callable,
     AsyncGenerator,
-    # Type,
+    TYPE_CHECKING,
 )
 from functools import partial
 from dataclasses import dataclass
@@ -46,12 +46,12 @@ from ._state import (
 from ._ipc import Channel
 from .log import get_logger
 from .msg import (
-    Error,
+    # Error,
     NamespacePath,
     Return,
 )
 from ._exceptions import (
-    unpack_error,
+    # unpack_error,
     NoResult,
 )
 from ._context import (
@@ -62,42 +62,44 @@ from ._streaming import (
     MsgStream,
 )
 
+if TYPE_CHECKING:
+    from ._runtime import Actor
 
 log = get_logger(__name__)
 
 
-# TODO: rename to `unwrap_result()` and use
-# `._raise_from_no_key_in_msg()` (after tweak to
-# accept a `chan: Channel` arg) in key block!
-def _unwrap_msg(
-    msg: Return|Error,
-    channel: Channel,
+# TODO: remove and/or rework?
+# -[ ] rename to `unwrap_result()` and use
+#     `._raise_from_unexpected_msg()` (after tweak to accept a `chan:
+#     Channel` arg) in key block??
+# -[ ] pretty sure this is entirely covered by
+# `_exceptions._raise_from_unexpected_msg()` so REMOVE!
+# def _unwrap_msg(
+#     msg: Return|Error,
+#     ctx: Context,
 
-    hide_tb: bool = True,
+#     hide_tb: bool = True,
 
-) -> Any:
-    '''
-    Unwrap a final result from a `{return: <Any>}` IPC msg.
+# ) -> Any:
+#     '''
+#     Unwrap a final result from a `{return: <Any>}` IPC msg.
 
-    '''
-    __tracebackhide__: bool = hide_tb
+#     '''
+#     __tracebackhide__: bool = hide_tb
+#     try:
+#         return msg.pld
+#     except AttributeError as err:
 
-    try:
-        return msg.pld
-        # return msg['return']
-    # except KeyError as ke:
-    except AttributeError as err:
+#         # internal error should never get here
+#         # assert msg.get('cid'), (
+#         assert msg.cid, (
+#             "Received internal error at portal?"
+#         )
 
-        # internal error should never get here
-        # assert msg.get('cid'), (
-        assert msg.cid, (
-            "Received internal error at portal?"
-        )
-
-        raise unpack_error(
-            msg,
-            channel
-        ) from err
+#         raise unpack_error(
+#             msg,
+#             ctx.chan,
+#         ) from err
 
 
 class Portal:
@@ -123,17 +125,21 @@ class Portal:
     # connected (peer) actors.
     cancel_timeout: float = 0.5
 
-    def __init__(self, channel: Channel) -> None:
+    def __init__(
+        self,
+        channel: Channel,
+    ) -> None:
+
         self.chan = channel
         # during the portal's lifetime
-        self._result_msg: dict|None = None
+        self._final_result: Any|None = None
 
         # When set to a ``Context`` (when _submit_for_result is called)
         # it is expected that ``result()`` will be awaited at some
         # point.
-        self._expect_result: Context | None = None
+        self._expect_result_ctx: Context|None = None
         self._streams: set[MsgStream] = set()
-        self.actor = current_actor()
+        self.actor: Actor = current_actor()
 
     @property
     def channel(self) -> Channel:
@@ -147,6 +153,7 @@ class Portal:
         )
         return self.chan
 
+    # TODO: factor this out into an `ActorNursery` wrapper
     async def _submit_for_result(
         self,
         ns: str,
@@ -154,26 +161,17 @@ class Portal:
         **kwargs
     ) -> None:
 
-        assert self._expect_result is None, (
-            "A pending main result has already been submitted"
-        )
+        if self._expect_result_ctx is not None:
+            raise RuntimeError(
+                'A pending main result has already been submitted'
+            )
 
-        self._expect_result = await self.actor.start_remote_task(
+        self._expect_result_ctx = await self.actor.start_remote_task(
             self.channel,
             nsf=NamespacePath(f'{ns}:{func}'),
             kwargs=kwargs,
             portal=self,
         )
-
-    async def _return_once(
-        self,
-        ctx: Context,
-
-    ) -> Return:
-
-        assert ctx._remote_func_type == 'asyncfunc'  # single response
-        msg: Return = await ctx._recv_chan.receive()
-        return msg
 
     async def result(self) -> Any:
         '''
@@ -188,7 +186,7 @@ class Portal:
             raise exc
 
         # not expecting a "main" result
-        if self._expect_result is None:
+        if self._expect_result_ctx is None:
             log.warning(
                 f"Portal for {self.channel.uid} not expecting a final"
                 " result?\nresult() should only be called if subactor"
@@ -196,17 +194,15 @@ class Portal:
             return NoResult
 
         # expecting a "main" result
-        assert self._expect_result
+        assert self._expect_result_ctx
 
-        if self._result_msg is None:
-            self._result_msg = await self._return_once(
-                self._expect_result
+        if self._final_result is None:
+            self._final_result: Any = await self._expect_result_ctx._pld_rx.recv_pld(
+                ctx=self._expect_result_ctx,
+                expect_msg=Return,
             )
 
-        return _unwrap_msg(
-            self._result_msg,
-            self.channel,
-        )
+        return self._final_result
 
     async def _cancel_streams(self):
         # terminate all locally running async generator
@@ -337,11 +333,9 @@ class Portal:
             kwargs=kwargs,
             portal=self,
         )
-        ctx._portal: Portal = self
-        msg: Return = await self._return_once(ctx)
-        return _unwrap_msg(
-            msg,
-            self.channel,
+        return await ctx._pld_rx.recv_pld(
+            ctx=ctx,
+            expect_msg=Return,
         )
 
     async def run(
@@ -391,10 +385,9 @@ class Portal:
             kwargs=kwargs,
             portal=self,
         )
-        ctx._portal = self
-        return _unwrap_msg(
-            await self._return_once(ctx),
-            self.channel,
+        return await ctx._pld_rx.recv_pld(
+            ctx=ctx,
+            expect_msg=Return,
         )
 
     @acm
@@ -436,7 +429,7 @@ class Portal:
             # deliver receive only stream
             async with MsgStream(
                 ctx=ctx,
-                rx_chan=ctx._recv_chan,
+                rx_chan=ctx._rx_chan,
             ) as rchan:
                 self._streams.add(rchan)
                 yield rchan

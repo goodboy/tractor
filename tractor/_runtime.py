@@ -819,8 +819,8 @@ class Actor:
                 state.max_buffer_size = msg_buffer_size
 
         except KeyError:
-            log.runtime(
-                f'Creating NEW IPC ctx for\n'
+            log.debug(
+                f'Allocate new IPC ctx for\n'
                 f'peer: {chan.uid}\n'
                 f'cid: {cid}\n'
             )
@@ -908,7 +908,7 @@ class Actor:
         # this should be immediate and does not (yet) wait for the
         # remote child task to sync via `Context.started()`.
         with trio.fail_after(ack_timeout):
-            first_msg: msgtypes.StartAck = await ctx._recv_chan.receive()
+            first_msg: msgtypes.StartAck = await ctx._rx_chan.receive()
         try:
             functype: str = first_msg.functype
         except AttributeError:

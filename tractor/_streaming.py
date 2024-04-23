@@ -35,7 +35,7 @@ import warnings
 import trio
 
 from ._exceptions import (
-    _raise_from_no_key_in_msg,
+    # _raise_from_no_key_in_msg,
     ContextCancelled,
 )
 from .log import get_logger
@@ -44,8 +44,9 @@ from .trionics import (
     BroadcastReceiver,
 )
 from tractor.msg import (
-    Return,
-    Stop,
+    # Return,
+    # Stop,
+    MsgType,
     Yield,
 )
 
@@ -94,24 +95,23 @@ class MsgStream(trio.abc.Channel):
         self._eoc: bool|trio.EndOfChannel = False
         self._closed: bool|trio.ClosedResourceError = False
 
+    # TODO: could we make this a direct method bind to `PldRx`?
+    # -> receive_nowait = PldRx.recv_pld
+    # |_ means latter would have to accept `MsgStream`-as-`self`?
+    #  => should be fine as long as,
+    #  -[ ] both define `._rx_chan`
+    #  -[ ] .ctx is bound into `PldRx` using a `@cm`?
+    #
     # delegate directly to underlying mem channel
     def receive_nowait(
         self,
-        allow_msgs: list[str] = Yield,
+        expect_msg: MsgType = Yield,
     ):
-        msg: Yield|Stop = self._rx_chan.receive_nowait()
-        # TODO: replace msg equiv of this or does the `.pld`
-        # interface read already satisfy it? I think so, yes?
-        try:
-            return msg.pld
-        except AttributeError as attrerr:
-            _raise_from_no_key_in_msg(
-                ctx=self._ctx,
-                msg=msg,
-                src_err=attrerr,
-                log=log,
-                stream=self,
-            )
+        ctx: Context = self._ctx
+        return ctx._pld_rx.recv_pld_nowait(
+            ctx=ctx,
+            expect_msg=expect_msg,
+        )
 
     async def receive(
         self,
@@ -146,24 +146,9 @@ class MsgStream(trio.abc.Channel):
 
         src_err: Exception|None = None  # orig tb
         try:
-            try:
-                msg: Yield = await self._rx_chan.receive()
-                return msg.pld
 
-            # TODO: implement with match: instead?
-            except AttributeError as attrerr:
-                # src_err = kerr
-                src_err = attrerr
-
-                # NOTE: may raise any of the below error types
-                # includg EoC when a 'stop' msg is found.
-                _raise_from_no_key_in_msg(
-                    ctx=self._ctx,
-                    msg=msg,
-                    src_err=attrerr,
-                    log=log,
-                    stream=self,
-                )
+            ctx: Context = self._ctx
+            return await ctx._pld_rx.recv_pld(ctx=ctx)
 
         # XXX: the stream terminates on either of:
         # - via `self._rx_chan.receive()` raising  after manual closure
@@ -228,7 +213,7 @@ class MsgStream(trio.abc.Channel):
         # probably want to instead raise the remote error
         # over the end-of-stream connection error since likely
         # the remote error was the source cause?
-        ctx: Context = self._ctx
+        # ctx: Context = self._ctx
         ctx.maybe_raise(
             raise_ctxc_from_self_call=True,
         )
@@ -292,7 +277,8 @@ class MsgStream(trio.abc.Channel):
         while not drained:
             try:
                 maybe_final_msg = self.receive_nowait(
-                    allow_msgs=[Yield, Return],
+                    # allow_msgs=[Yield, Return],
+                    expect_msg=Yield,
                 )
                 if maybe_final_msg:
                     log.debug(
@@ -472,6 +458,9 @@ class MsgStream(trio.abc.Channel):
                 self,
                 # use memory channel size by default
                 self._rx_chan._state.max_buffer_size,  # type: ignore
+
+                # TODO: can remove this kwarg right since
+                # by default behaviour is to do this anyway?
                 receive_afunc=self.receive,
             )
 
@@ -517,19 +506,11 @@ class MsgStream(trio.abc.Channel):
             raise self._closed
 
         try:
-            # await self._ctx.chan.send(
-            #     payload={
-            #         'yield': data,
-            #         'cid': self._ctx.cid,
-            #     },
-            #     # hide_tb=hide_tb,
-            # )
             await self._ctx.chan.send(
                 payload=Yield(
                     cid=self._ctx.cid,
                     pld=data,
                 ),
-                # hide_tb=hide_tb,
             )
         except (
             trio.ClosedResourceError,
@@ -562,7 +543,7 @@ def stream(func: Callable) -> Callable:
     '''
     # TODO: apply whatever solution ``mypy`` ends up picking for this:
     # https://github.com/python/mypy/issues/2087#issuecomment-769266912
-    func._tractor_stream_function = True  # type: ignore
+    func._tractor_stream_function: bool = True  # type: ignore
 
     sig = inspect.signature(func)
     params = sig.parameters
