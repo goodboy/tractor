@@ -420,7 +420,6 @@ class Portal:
             kwargs=kwargs,
             portal=self,
         )
-        ctx._portal = self
 
         # ensure receive-only stream entrypoint
         assert ctx._remote_func_type == 'asyncgen'
@@ -430,9 +429,10 @@ class Portal:
             async with MsgStream(
                 ctx=ctx,
                 rx_chan=ctx._rx_chan,
-            ) as rchan:
-                self._streams.add(rchan)
-                yield rchan
+            ) as stream:
+                self._streams.add(stream)
+                ctx._stream = stream
+                yield stream
 
         finally:
 
@@ -454,7 +454,7 @@ class Portal:
 
             # XXX: should this always be done?
             # await recv_chan.aclose()
-            self._streams.remove(rchan)
+            self._streams.remove(stream)
 
     # NOTE: impl is found in `._context`` mod to make
     # reading/groking the details simpler code-org-wise. This
