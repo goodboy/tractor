@@ -280,17 +280,32 @@ class MsgCodec(Struct):
     def enc(self) -> msgpack.Encoder:
         return self._enc
 
+    # TODO: reusing encode buffer for perf?
+    # https://jcristharif.com/msgspec/perf-tips.html#reusing-an-output-buffer
+    _buf: bytearray = bytearray()
+
     def encode(
         self,
         py_obj: Any,
+
+        use_buf: bool = False,
+        # ^-XXX-^ uhh why am i getting this?
+        # |_BufferError: Existing exports of data: object cannot be re-sized
 
     ) -> bytes:
         '''
         Encode input python objects to `msgpack` bytes for
         transfer on a tranport protocol connection.
 
+        When `use_buf == True` use the output buffer optimization:
+        https://jcristharif.com/msgspec/perf-tips.html#reusing-an-output-buffer
+
         '''
-        return self._enc.encode(py_obj)
+        if use_buf:
+            self._enc.encode_into(py_obj, self._buf)
+            return self._buf
+        else:
+            return self._enc.encode(py_obj)
 
     @property
     def dec(self) -> msgpack.Decoder:

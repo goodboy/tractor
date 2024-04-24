@@ -37,6 +37,11 @@ from ._codec import (
     MsgDec as MsgDec,
     current_codec as current_codec,
 )
+# currently can't bc circular with `._context`
+# from ._ops import (
+#     PldRx as PldRx,
+#     _drain_to_final_msg as _drain_to_final_msg,
+# )
 
 from .types import (
     Msg as Msg,
