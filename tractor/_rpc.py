@@ -588,7 +588,7 @@ async def _invoke(
                 if cs.cancel_called:
 
                     canceller: tuple = ctx.canceller
-                    msg: str = 'actor was cancelled by '
+                    explain: str = f'{ctx.side!r}-side task was cancelled by '
 
                     # NOTE / TODO: if we end up having
                     # ``Actor._cancel_task()`` call
@@ -598,24 +598,28 @@ async def _invoke(
                     if ctx._cancel_called:
                         # TODO: test for this!!!!!
                         canceller: tuple = our_uid
-                        msg += 'itself '
+                        explain += 'itself '
 
                     # if the channel which spawned the ctx is the
                     # one that cancelled it then we report that, vs.
                     # it being some other random actor that for ex.
                     # some actor who calls `Portal.cancel_actor()`
                     # and by side-effect cancels this ctx.
+                    #
+                    # TODO: determine if the ctx peer task was the
+                    # exact task which cancelled, vs. some other
+                    # task in the same actor.
                     elif canceller == ctx.chan.uid:
-                        msg += 'its caller'
+                        explain += f'its {ctx.peer_side!r}-side peer'
 
                     else:
-                        msg += 'a remote peer'
+                        explain += 'a remote peer'
 
                     # TODO: move this "div centering" into
                     # a helper for use elsewhere!
                     div_chars: str = '------ - ------'
                     div_offset: int = (
-                        round(len(msg)/2)+1
+                        round(len(explain)/2)+1
                         +
                         round(len(div_chars)/2)+1
                     )
@@ -626,11 +630,12 @@ async def _invoke(
                         +
                         f'{div_chars}\n'
                     )
-                    msg += (
+                    explain += (
                         div_str +
                         f'<= canceller: {canceller}\n'
-                        f'=> uid: {our_uid}\n'
-                        f'  |_{ctx._task}()'
+                        f'=> cancellee: {our_uid}\n'
+                        # TODO: better repr for ctx tasks..
+                        f'  |_{ctx.side!r} {ctx._task}'
 
                         # TODO: instead just show the
                         # ctx.__str__() here?
@@ -649,7 +654,7 @@ async def _invoke(
                     # task, so relay this cancel signal to the
                     # other side.
                     ctxc = ContextCancelled(
-                        message=msg,
+                        message=explain,
                         boxed_type=trio.Cancelled,
                         canceller=canceller,
                     )
