@@ -852,7 +852,7 @@ class Actor:
         msg_buffer_size: int|None = None,
         allow_overruns: bool = False,
         load_nsf: bool = False,
-        ack_timeout: float = 3,
+        ack_timeout: float = float('inf'),
 
     ) -> Context:
         '''
