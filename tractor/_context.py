@@ -472,12 +472,16 @@ class Context:
         return 'parent' if self._portal else 'child'
 
     @staticmethod
-    def peer_side(side: str) -> str:
+    def _peer_side(side: str) -> str:
         match side:
             case 'child':
                 return 'parent'
             case 'parent':
                 return 'child'
+
+    @property
+    def peer_side(self) -> str:
+        return self._peer_side(self.side)
 
     # TODO: remove stat!
     # -[ ] re-implement the `.experiemental._pubsub` stuff
@@ -512,9 +516,7 @@ class Context:
         equiv of a `StopIteration`.
 
         '''
-        await self.chan.send(
-            Stop(cid=self.cid)
-        )
+        await self.chan.send(Stop(cid=self.cid))
 
     def _maybe_cancel_and_set_remote_error(
         self,
@@ -593,7 +595,6 @@ class Context:
         # TODO: never do this right?
         # if self._remote_error:
         #     return
-        peer_side: str = self.peer_side(self.side)
 
         # XXX: denote and set the remote side's error so that
         # after we cancel whatever task is the opener of this
@@ -601,7 +602,7 @@ class Context:
         # appropriately.
         log.runtime(
             'Setting remote error for ctx\n\n'
-            f'<= {peer_side!r}: {self.chan.uid}\n'
+            f'<= {self.peer_side!r}: {self.chan.uid}\n'
             f'=> {self.side!r}\n\n'
             f'{error}'
         )
@@ -623,9 +624,8 @@ class Context:
 
         elif isinstance(error, MsgTypeError):
             msgerr = True
-            peer_side: str = self.peer_side(self.side)
             log.error(
-                f'IPC dialog error due to msg-type caused by {peer_side!r} side\n\n'
+                f'IPC dialog error due to msg-type caused by {self.peer_side!r} side\n\n'
 
                 f'{error}\n'
                 f'{pformat(self)}\n'
@@ -1070,12 +1070,12 @@ class Context:
             except trio.EndOfChannel as eoc:
                 if (
                     eoc
-                    and stream.closed
+                    and
+                    stream.closed
                 ):
                     # sanity, can remove?
                     assert eoc is stream._eoc
-                    # from .devx import pause
-                    # await pause()
+
                     log.warning(
                         'Stream was terminated by EoC\n\n'
                         # NOTE: won't show the error <Type> but
@@ -1647,10 +1647,9 @@ class Context:
         side: str = self.side
         if side == 'child':
             assert not self._portal
-        peer_side: str = self.peer_side(side)
 
         flow_body: str = (
-            f'<= peer {peer_side!r}: {from_uid}\n'
+            f'<= peer {self.peer_side!r}: {from_uid}\n'
             f'  |_<{nsf}()>\n\n'
 
             f'=> {side!r}: {self._task}\n'
@@ -1668,7 +1667,7 @@ class Context:
                 log_meth = log.runtime
 
             log_meth(
-                f'Delivering IPC ctx error from {peer_side!r} to {side!r} task\n\n'
+                f'Delivering IPC ctx error from {self.peer_side!r} to {side!r} task\n\n'
 
                 f'{flow_body}'
 
@@ -2333,7 +2332,7 @@ async def open_context_from_portal(
                 and ctx.cancel_acked
             ):
                 log.cancel(
-                    'Context cancelled by caller task\n'
+                    'Context cancelled by {ctx.side!r}-side task\n'
                     f'|_{ctx._task}\n\n'
 
                     f'{repr(scope_err)}\n'
@@ -2366,6 +2365,7 @@ async def open_context_from_portal(
             (uid, cid),
             None,
         )
+
 
 def mk_context(
     chan: Channel,
