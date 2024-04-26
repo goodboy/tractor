@@ -54,6 +54,7 @@ from tractor.msg import (
 from tractor.msg.pretty_struct import (
     iter_fields,
     Struct,
+    pformat as struct_format,
 )
 
 if TYPE_CHECKING:
@@ -108,6 +109,10 @@ _body_fields: list[str] = list(
         'relay_path',
         '_msg_dict',
         'cid',
+
+        # since only ctxc should show it but `Error` does
+        # have it as an optional field.
+        'canceller',
     }
 )
 
@@ -382,6 +387,9 @@ class RemoteActorError(Exception):
         '''
         Error type raised by original remote faulting actor.
 
+        When the error has only been relayed a single actor-hop
+        this will be the same as the `.boxed_type`.
+
         '''
         if self._src_type is None:
             self._src_type = get_err_type(
@@ -396,7 +404,8 @@ class RemoteActorError(Exception):
         String-name of the (last hop's) boxed error type.
 
         '''
-        return self._ipc_msg.boxed_type_str
+        bt: Type[BaseException] = self.boxed_type
+        return str(bt.__name__)
 
     @property
     def boxed_type(self) -> str:
@@ -492,7 +501,11 @@ class RemoteActorError(Exception):
         '''
         # TODO: use this matryoshka emjoi XD
         # => 🪆
-        reprol_str: str = f'{type(self).__name__}('
+        reprol_str: str = (
+            f'{type(self).__name__}'  # type name
+            f'[{self.boxed_type_str}]'  # parameterized by boxed type
+            '('  # init-style look
+        )
         _repr: str = self._mk_fields_str(
             self.reprol_fields,
             end_char=' ',
@@ -653,8 +666,8 @@ class MsgTypeError(
     - `Yield`
     - TODO: any embedded `.pld` type defined by user code?
 
-    Normally the source of an error is re-raised from some `.msg._codec`
-    decode which itself raises in a backend interchange
+    Normally the source of an error is re-raised from some
+    `.msg._codec` decode which itself raises in a backend interchange
     lib (eg. a `msgspec.ValidationError`).
 
     '''
@@ -939,7 +952,7 @@ def _raise_from_unexpected_msg(
     src_err: AttributeError,
     log: StackLevelAdapter,  # caller specific `log` obj
 
-    expect_msg: str = Yield,
+    expect_msg: Type[MsgType],
 
     # allow "deeper" tbs when debugging B^o
     hide_tb: bool = True,
@@ -1037,16 +1050,16 @@ def _raise_from_unexpected_msg(
             ctx.maybe_raise()
             raise eoc from src_err
 
+        # TODO: our own transport/IPC-broke error subtype?
         if stream._closed:
-            # TODO: our own error subtype?
             raise trio.ClosedResourceError('This stream was closed')
 
     # always re-raise the source error if no translation error case
     # is activated above.
     raise MessagingError(
-        f"{_type} was expecting a {expect_msg} message"
-        " BUT received a non-error msg:\n"
-        f'{pformat(msg)}'
+        f'{_type} was expecting a {expect_msg.__name__!r} message'
+        ' BUT received a non-error msg:\n\n'
+        f'{struct_format(msg)}'
     ) from src_err
 
 
@@ -1079,13 +1092,11 @@ def _mk_msg_type_err(
         # no src error from `msgspec.msgpack.Decoder.decode()` so
         # prolly a manual type-check on our part.
         if message is None:
-            fmt_spec: str = codec.pformat_msg_spec()
             fmt_stack: str = (
                 '\n'.join(traceback.format_stack(limit=3))
             )
             tb_fmt: str = pformat_boxed_tb(
                 tb_str=fmt_stack,
-                # fields_str=header,
                 field_prefix='  ',
                 indent='',
             )
@@ -1093,8 +1104,7 @@ def _mk_msg_type_err(
                 f'invalid msg -> {msg}: {type(msg)}\n\n'
                 f'{tb_fmt}\n'
                 f'Valid IPC msgs are:\n\n'
-                # f'  ------ - ------\n'
-                f'{fmt_spec}\n',
+                f'{codec.msg_spec_str}\n',
             )
         elif src_type_error:
             src_message: str = str(src_type_error)
