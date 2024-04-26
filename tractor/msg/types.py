@@ -56,6 +56,7 @@ log = get_logger('tractor.msgspec')
 PayloadT = TypeVar('PayloadT')
 
 
+# TODO: PayloadMsg
 class Msg(
     Struct,
     Generic[PayloadT],
@@ -81,7 +82,7 @@ class Msg(
     tree.
 
     '''
-    cid: str|None  # call/context-id
+    cid: str  # call/context-id
     # ^-TODO-^: more explicit type?
     # -[ ] use UNSET here?
     #  https://jcristharif.com/msgspec/supported-types.html#unset
@@ -106,7 +107,7 @@ class Msg(
     # TODO: could also be set to `msgspec.Raw` if the sub-decoders
     # approach is preferred over the generic parameterization 
     # approach as take by `mk_msg_spec()` below.
-    pld: PayloadT|Raw
+    pld: Raw
 
 
 class Aid(
