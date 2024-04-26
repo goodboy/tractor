@@ -102,6 +102,59 @@ def iter_fields(struct: Struct) -> Iterator[
         )
 
 
+def pformat(
+    struct: Struct,
+    field_indent: int = 2,
+    indent: int = 0,
+
+) -> str:
+    '''
+    Recursion-safe `pprint.pformat()` style formatting of
+    a `msgspec.Struct` for sane reading by a human using a REPL.
+
+    '''
+    # global whitespace indent
+    ws: str = ' '*indent
+
+    # field whitespace indent
+    field_ws: str = ' '*(field_indent + indent)
+
+    # qtn: str = ws + struct.__class__.__qualname__
+    qtn: str = struct.__class__.__qualname__
+
+    obj_str: str = ''  # accumulator
+    fi: structs.FieldInfo
+    k: str
+    v: Any
+    for fi, k, v in iter_fields(struct):
+
+        # TODO: how can we prefer `Literal['option1',  'option2,
+        # ..]` over .__name__ == `Literal` but still get only the
+        # latter for simple types like `str | int | None` etc..?
+        ft: type = fi.type
+        typ_name: str = getattr(ft, '__name__', str(ft))
+
+        # recurse to get sub-struct's `.pformat()` output Bo
+        if isinstance(v, Struct):
+            val_str: str =  v.pformat(
+                indent=field_indent + indent,
+                field_indent=indent + field_indent,
+            )
+
+        else:  # the `pprint` recursion-safe format:
+            # https://docs.python.org/3.11/library/pprint.html#pprint.saferepr
+            val_str: str = saferepr(v)
+
+        # TODO: LOLOL use `textwrap.indent()` instead dawwwwwg!
+        obj_str += (field_ws + f'{k}: {typ_name} = {val_str},\n')
+
+    return (
+        f'{qtn}(\n'
+        f'{obj_str}'
+        f'{ws})'
+    )
+
+
 class Struct(
     _Struct,
 
@@ -140,65 +193,12 @@ class Struct(
 
         return sin_props
 
-    # TODO: make thisi a mod-func!
-    def pformat(
-        self,
-        field_indent: int = 2,
-        indent: int = 0,
-
-    ) -> str:
-        '''
-        Recursion-safe `pprint.pformat()` style formatting of
-        a `msgspec.Struct` for sane reading by a human using a REPL.
-
-        '''
-        # global whitespace indent
-        ws: str = ' '*indent
-
-        # field whitespace indent
-        field_ws: str = ' '*(field_indent + indent)
-
-        # qtn: str = ws + self.__class__.__qualname__
-        qtn: str = self.__class__.__qualname__
-
-        obj_str: str = ''  # accumulator
-        fi: structs.FieldInfo
-        k: str
-        v: Any
-        for fi, k, v in iter_fields(self):
-
-            # TODO: how can we prefer `Literal['option1',  'option2,
-            # ..]` over .__name__ == `Literal` but still get only the
-            # latter for simple types like `str | int | None` etc..?
-            ft: type = fi.type
-            typ_name: str = getattr(ft, '__name__', str(ft))
-
-            # recurse to get sub-struct's `.pformat()` output Bo
-            if isinstance(v, Struct):
-                val_str: str =  v.pformat(
-                    indent=field_indent + indent,
-                    field_indent=indent + field_indent,
-                )
-
-            else:  # the `pprint` recursion-safe format:
-                # https://docs.python.org/3.11/library/pprint.html#pprint.saferepr
-                val_str: str = saferepr(v)
-
-            # TODO: LOLOL use `textwrap.indent()` instead dawwwwwg!
-            obj_str += (field_ws + f'{k}: {typ_name} = {val_str},\n')
-
-        return (
-            f'{qtn}(\n'
-            f'{obj_str}'
-            f'{ws})'
-        )
-
+    pformat = pformat
+    # __str__ = __repr__ = pformat
     # TODO: use a pprint.PrettyPrinter instance around ONLY rendering
     # inside a known tty?
     # def __repr__(self) -> str:
     #     ...
-
-    # __str__ = __repr__ = pformat
     __repr__ = pformat
 
     def copy(
