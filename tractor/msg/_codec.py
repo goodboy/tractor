@@ -75,7 +75,7 @@ log = get_logger(__name__)
 # TODO: unify with `MsgCodec` by making `._dec` part this?
 class MsgDec(Struct):
     '''
-    An IPC msg decoder.
+    An IPC msg (payload) decoder.
 
     Normally used to decode only a payload: `MsgType.pld:
     PayloadT` field before delivery to IPC consumer code.
@@ -86,6 +86,31 @@ class MsgDec(Struct):
     @property
     def dec(self) -> msgpack.Decoder:
         return self._dec
+
+    def __repr__(self) -> str:
+
+        speclines: str = self.spec_str
+
+        # in multi-typed spec case we stick the list
+        # all on newlines after the |__pld_spec__:,
+        # OW it's prolly single type spec-value
+        # so just leave it on same line.
+        if '\n' in speclines:
+            speclines: str = '\n' + textwrap.indent(
+                speclines,
+                prefix=' '*3,
+            )
+
+        body: str = textwrap.indent(
+            f'|_dec_hook: {self.dec.dec_hook}\n'
+            f'|__pld_spec__: {speclines}\n',
+            prefix=' '*2,
+        )
+        return (
+            f'<{type(self).__name__}(\n'
+            f'{body}'
+            ')>'
+        )
 
     # struct type unions
     # https://jcristharif.com/msgspec/structs.html#tagged-unions
@@ -137,17 +162,7 @@ class MsgDec(Struct):
     # TODO: would get moved into `FieldSpec.__str__()` right?
     @property
     def spec_str(self) -> str:
-
-        # TODO: could also use match: instead?
-        spec: Union[Type]|Type = self.spec
-
-        # `typing.Union` case
-        if getattr(spec, '__args__', False):
-            return str(spec)
-
-        # just a single type
-        else:
-            return spec.__name__
+        return pformat_msgspec(codec=self)
 
     pld_spec_str = spec_str
 
@@ -168,9 +183,57 @@ def mk_dec(
 
 ) -> MsgDec:
 
-    return msgpack.Decoder(
-        type=spec,  # like `Msg[Any]`
-        dec_hook=dec_hook,
+    return MsgDec(
+        _dec=msgpack.Decoder(
+            type=spec,  # like `Msg[Any]`
+            dec_hook=dec_hook,
+        )
+    )
+
+
+def mk_msgspec_table(
+    dec: msgpack.Decoder,
+    msg: MsgType|None = None,
+
+) -> dict[str, MsgType]|str:
+    '''
+    Fill out a `dict` of `MsgType`s keyed by name
+    for a given input `msgspec.msgpack.Decoder`
+    as defined by its `.type: Union[Type]` setting.
+
+    If `msg` is provided, only deliver a `dict` with a single
+    entry for that type.
+
+    '''
+    msgspec: Union[Type]|Type = dec.type
+
+    if not (msgtypes := getattr(msgspec, '__args__', False)):
+        msgtypes = [msgspec]
+
+    msgt_table: dict[str, MsgType] = {
+        msgt: str(msgt)
+        for msgt in msgtypes
+    }
+    if msg:
+        msgt: MsgType = type(msg)
+        str_repr: str = msgt_table[msgt]
+        return {msgt: str_repr}
+
+    return msgt_table
+
+
+def pformat_msgspec(
+    codec: MsgCodec|MsgDec,
+    msg: MsgType|None = None,
+    join_char: str = '\n',
+
+) -> str:
+    dec: msgpack.Decoder = getattr(codec, 'dec', codec)
+    return join_char.join(
+        mk_msgspec_table(
+            dec=dec,
+            msg=msg,
+        ).values()
     )
 
 # TODO: overall IPC msg-spec features (i.e. in this mod)!
@@ -200,7 +263,7 @@ class MsgCodec(Struct):
 
     def __repr__(self) -> str:
         speclines: str = textwrap.indent(
-            self.pformat_msg_spec(),
+            pformat_msgspec(codec=self),
             prefix=' '*3,
         )
         body: str = textwrap.indent(
@@ -244,33 +307,11 @@ class MsgCodec(Struct):
         # NOTE: defined and applied inside `mk_codec()`
         return self._dec.type
 
-    def msg_spec_items(
-        self,
-        msg: MsgType|None = None,
-
-    ) -> dict[str, MsgType]|str:
-
-        msgt_table: dict[str, MsgType] = {
-            msgt: str(msgt)
-            for msgt in self.msg_spec.__args__
-        }
-        if msg:
-            msgt: MsgType = type(msg)
-            str_repr: str = msgt_table[msgt]
-            return {msgt: str_repr}
-
-        return msgt_table
-
     # TODO: some way to make `pretty_struct.Struct` use this
     # wrapped field over the `.msg_spec` one?
-    def pformat_msg_spec(
-        self,
-        msg: MsgType|None = None,
-        join_char: str = '\n',
-    ) -> str:
-        return join_char.join(
-            self.msg_spec_items(msg=msg).values()
-        )
+    @property
+    def msg_spec_str(self) -> str:
+        return pformat_msgspec(self.msg_spec)
 
     lib: ModuleType = msgspec
 
