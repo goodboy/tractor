@@ -254,11 +254,11 @@ class Portal:
             return False
 
         reminfo: str = (
-            f'`Portal.cancel_actor()` => {self.channel.uid}\n'
-            f' |_{chan}\n'
+            f'Portal.cancel_actor() => {self.channel.uid}\n'
+            f'|_{chan}\n'
         )
         log.cancel(
-            f'Sending runtime `.cancel()` request to peer\n\n'
+            f'Requesting runtime cancel for peer\n\n'
             f'{reminfo}'
         )
 

@@ -364,14 +364,10 @@ class MsgStream(trio.abc.Channel):
 
         if not self._eoc:
             message: str = (
-                f'Context stream closed by {self._ctx.side!r}\n'
+                f'Stream self-closed by {self._ctx.side!r}-side before EoC\n'
                 f'|_{self}\n'
             )
-            log.cancel(
-                'Stream self-closed before receiving EoC\n\n'
-                +
-                message
-            )
+            log.cancel(message)
             self._eoc = trio.EndOfChannel(message)
 
         # ?XXX WAIT, why do we not close the local mem chan `._rx_chan` XXX?
