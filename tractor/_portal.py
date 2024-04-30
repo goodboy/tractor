@@ -435,7 +435,6 @@ class Portal:
                 yield stream
 
         finally:
-
             # cancel the far end task on consumer close
             # NOTE: this is a special case since we assume that if using
             # this ``.open_fream_from()`` api, the stream is one a one
@@ -496,7 +495,7 @@ class LocalPortal:
 async def open_portal(
 
     channel: Channel,
-    nursery: trio.Nursery|None = None,
+    tn: trio.Nursery|None = None,
     start_msg_loop: bool = True,
     shield: bool = False,
 
@@ -504,15 +503,19 @@ async def open_portal(
     '''
     Open a ``Portal`` through the provided ``channel``.
 
-    Spawns a background task to handle message processing (normally
-    done by the actor-runtime implicitly).
+    Spawns a background task to handle RPC processing, normally
+    done by the actor-runtime implicitly via a call to
+    `._rpc.process_messages()`. just after connection establishment.
 
     '''
     actor = current_actor()
     assert actor
     was_connected: bool = False
 
-    async with maybe_open_nursery(nursery, shield=shield) as nursery:
+    async with maybe_open_nursery(
+        tn,
+        shield=shield,
+    ) as tn:
 
         if not channel.connected():
             await channel.connect()
@@ -524,7 +527,7 @@ async def open_portal(
         msg_loop_cs: trio.CancelScope|None = None
         if start_msg_loop:
             from ._runtime import process_messages
-            msg_loop_cs = await nursery.start(
+            msg_loop_cs = await tn.start(
                 partial(
                     process_messages,
                     actor,
@@ -544,7 +547,7 @@ async def open_portal(
                 await channel.aclose()
 
             # cancel background msg loop task
-            if msg_loop_cs:
+            if msg_loop_cs is not None:
                 msg_loop_cs.cancel()
 
-            nursery.cancel_scope.cancel()
+            tn.cancel_scope.cancel()

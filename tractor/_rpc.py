@@ -61,11 +61,13 @@ from .msg import (
     current_codec,
     MsgCodec,
     NamespacePath,
+    pretty_struct,
 )
 from tractor.msg.types import (
     CancelAck,
     Error,
     Msg,
+    MsgType,
     Return,
     Start,
     StartAck,
@@ -770,7 +772,10 @@ async def process_messages(
     shield: bool = False,
     task_status: TaskStatus[CancelScope] = trio.TASK_STATUS_IGNORED,
 
-) -> bool:
+) -> (
+    bool,  # chan diconnected
+    MsgType,  # last msg
+):
     '''
     This is the low-level, per-IPC-channel, RPC task scheduler loop.
 
@@ -812,11 +817,6 @@ async def process_messages(
     #  |_ for ex, from `aioquic` which exposed "stream ids":
     #  - https://github.com/aiortc/aioquic/blob/main/src/aioquic/quic/connection.py#L1175
     #  - https://github.com/aiortc/aioquic/blob/main/src/aioquic/quic/connection.py#L659
-    log.runtime(
-        'Entering RPC msg loop:\n'
-        f'peer: {chan.uid}\n'
-        f'|_{chan}\n'
-    )
     nursery_cancelled_before_task: bool = False
     msg: Msg|None = None
     try:
@@ -830,12 +830,15 @@ async def process_messages(
 
             async for msg in chan:
                 log.transport(   # type: ignore
-                    f'<= IPC msg from peer: {chan.uid}\n\n'
+                    f'IPC msg from peer\n'
+                    f'<= {chan.uid}\n\n'
 
                     # TODO: avoid fmting depending on loglevel for perf?
-                    # -[ ] specifically `pformat()` sub-call..?
+                    # -[ ] specifically `pretty_struct.pformat()` sub-call..?
+                    #   - how to only log-level-aware actually call this?
                     # -[ ] use `.msg.pretty_struct` here now instead!
-                    f'{pformat(msg)}\n'
+                    # f'{pretty_struct.pformat(msg)}\n'
+                    f'{msg}\n'
                 )
 
                 match msg:
@@ -949,10 +952,11 @@ async def process_messages(
                         uid=actorid,
                     ):
                         log.runtime(
-                            'Handling RPC `Start` request from\n'
-                            f'peer: {actorid}\n'
-                            '\n'
-                            f'=> {ns}.{funcname}({kwargs})\n'
+                            'Handling RPC `Start` request\n'
+                            f'<= peer: {actorid}\n'
+                            f'  |_{ns}.{funcname}({kwargs})\n\n'
+
+                            f'{pretty_struct.pformat(msg)}\n'
                         )
 
                         # runtime-internal endpoint: `Actor.<funcname>`
@@ -1093,25 +1097,24 @@ async def process_messages(
                 parent_chan=chan,
             )
 
-    except (
-        TransportClosed,
-    ):
+    except TransportClosed:
         # channels "breaking" (for TCP streams by EOF or 104
         # connection-reset) is ok since we don't have a teardown
         # handshake for them (yet) and instead we simply bail out of
         # the message loop and expect the teardown sequence to clean
         # up..
-        # TODO: add a teardown handshake? and,
+        #
+        # TODO: maybe add a teardown handshake? and,
         # -[ ] don't show this msg if it's an ephemeral discovery ep call?
         # -[ ] figure out how this will break with other transports?
         log.runtime(
-            f'channel closed abruptly with\n'
-            f'peer: {chan.uid}\n' 
-            f'|_{chan.raddr}\n'
+            f'IPC channel closed abruptly\n'
+            f'<=x peer: {chan.uid}\n'
+            f'   |_{chan.raddr}\n'
         )
 
         # transport **WAS** disconnected
-        return True
+        return (True, msg)
 
     except (
         Exception,
@@ -1151,9 +1154,9 @@ async def process_messages(
         log.runtime(
             'Exiting IPC msg loop with final msg\n\n'
             f'<= peer: {chan.uid}\n'
-            f'|_{chan}\n\n'
-            f'{pformat(msg)}\n\n'
+            f'  |_{chan}\n\n'
+            f'{pretty_struct.pformat(msg)}'
         )
 
     # transport **WAS NOT** disconnected
-    return False
+    return (False, msg)

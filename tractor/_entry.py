@@ -146,7 +146,7 @@ def _trio_main(
 
     finally:
         log.info(
-            'Actor terminated\n'
+            'Subactor terminated\n'
             +
             actor_info
         )
