@@ -144,6 +144,8 @@ class SpawnSpec(
     `Aid` msg.
 
     '''
+    # TODO: similar to the `Start` kwargs spec needed below, we need
+    # a hard `Struct` def for all of these fields!
     _parent_main_data: dict
     _runtime_vars: dict[str, Any]
 
