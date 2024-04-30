@@ -229,7 +229,7 @@ class PldRx(Struct):
                     log.runtime(
                         'Decoded msg payload\n\n'
                         f'{msg}\n'
-                        f'|_pld={pld!r}'
+                        f'|_pld={pld!r}\n'
                     )
                     return pld
 
@@ -237,7 +237,7 @@ class PldRx(Struct):
                 except ValidationError as src_err:
                     msgterr: MsgTypeError = _mk_msg_type_err(
                         msg=msg,
-                        codec=self._dec,
+                        codec=self.dec,
                         src_validation_error=src_err,
                     )
                     msg: Error = pack_from_raise(
