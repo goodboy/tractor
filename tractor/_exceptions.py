@@ -46,7 +46,7 @@ from tractor.msg import (
     Error,
     MsgType,
     Stop,
-    Yield,
+    # Yield,
     types as msgtypes,
     MsgCodec,
     MsgDec,
@@ -138,71 +138,6 @@ def get_err_type(type_name: str) -> BaseException|None:
             False,
         ):
             return type_ref
-
-
-def pformat_boxed_tb(
-    tb_str: str,
-    fields_str: str|None = None,
-    field_prefix: str = ' |_',
-
-    tb_box_indent: int|None = None,
-    tb_body_indent: int = 1,
-
-) -> str:
-    if (
-        fields_str
-        and
-        field_prefix
-    ):
-        fields: str = textwrap.indent(
-            fields_str,
-            prefix=field_prefix,
-        )
-    else:
-        fields = fields_str or ''
-
-    tb_body = tb_str
-    if tb_body_indent:
-        tb_body: str = textwrap.indent(
-            tb_str,
-            prefix=tb_body_indent * ' ',
-        )
-
-    tb_box: str = (
-
-        # orig
-        # f'  |\n'
-        # f'   ------ - ------\n\n'
-        # f'{tb_str}\n'
-        # f'   ------ - ------\n'
-        # f' _|\n'
-
-        f'|\n'
-        f' ------ - ------\n\n'
-        # f'{tb_str}\n'
-        f'{tb_body}'
-        f' ------ - ------\n'
-        f'_|\n'
-    )
-    tb_box_indent: str = (
-        tb_box_indent
-        or
-        1
-
-        # (len(field_prefix))
-        # ? ^-TODO-^ ? if you wanted another indent level
-    )
-    if tb_box_indent > 0:
-        tb_box: str = textwrap.indent(
-            tb_box,
-            prefix=tb_box_indent * ' ',
-        )
-
-    return (
-        fields
-        +
-        tb_box
-    )
 
 
 def pack_from_raise(
@@ -504,12 +439,15 @@ class RemoteActorError(Exception):
         reprol_str: str = (
             f'{type(self).__name__}'  # type name
             f'[{self.boxed_type_str}]'  # parameterized by boxed type
-            '('  # init-style look
         )
+
         _repr: str = self._mk_fields_str(
             self.reprol_fields,
             end_char=' ',
         )
+        if _repr:
+            reprol_str += '('  # init-style call
+
         return (
             reprol_str
             +
@@ -521,6 +459,7 @@ class RemoteActorError(Exception):
         Nicely formatted boxed error meta data + traceback.
 
         '''
+        from tractor.devx._code import pformat_boxed_tb
         fields: str = self._mk_fields_str(
             _body_fields
             +
@@ -1092,14 +1031,10 @@ def _mk_msg_type_err(
         # no src error from `msgspec.msgpack.Decoder.decode()` so
         # prolly a manual type-check on our part.
         if message is None:
-            fmt_stack: str = (
-                '\n'.join(traceback.format_stack(limit=3))
+            from tractor.devx._code import (
+                pformat_caller_frame,
             )
-            tb_fmt: str = pformat_boxed_tb(
-                tb_str=fmt_stack,
-                field_prefix='  ',
-                indent='',
-            )
+            tb_fmt: str = pformat_caller_frame(stack_limit=3)
             message: str = (
                 f'invalid msg -> {msg}: {type(msg)}\n\n'
                 f'{tb_fmt}\n'

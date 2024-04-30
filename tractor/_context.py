@@ -61,7 +61,6 @@ from ._exceptions import (
 )
 from .log import get_logger
 from .msg import (
-    _codec,
     Error,
     MsgType,
     MsgCodec,
@@ -103,7 +102,6 @@ class Unresolved:
     a final return value or raised error is resolved.
 
     '''
-    ...
 
 
 # TODO: make this a .msg.types.Struct!
@@ -116,19 +114,19 @@ class Context:
 
     NB: This class should **never be instatiated directly**, it is allocated
     by the runtime in 2 ways:
-     - by entering ``Portal.open_context()`` which is the primary
-       public API for any "caller" task or,
+     - by entering `Portal.open_context()` which is the primary
+       public API for any "parent" task or,
      - by the RPC machinery's `._rpc._invoke()` as a `ctx` arg
-       to a remotely scheduled "callee" function.
+       to a remotely scheduled "child" function.
 
-    AND is always constructed using the below ``mk_context()``.
+    AND is always constructed using the below `mk_context()`.
 
     Allows maintaining task or protocol specific state between
     2 cancel-scope-linked, communicating and parallel executing
     `trio.Task`s. Contexts are allocated on each side of any task
     RPC-linked msg dialog, i.e. for every request to a remote
     actor from a `Portal`. On the "callee" side a context is
-    always allocated inside ``._rpc._invoke()``.
+    always allocated inside `._rpc._invoke()`.
 
     TODO: more detailed writeup on cancellation, error and
     streaming semantics..
@@ -262,7 +260,13 @@ class Context:
     _strict_started: bool = False
     _cancel_on_msgerr: bool = True
 
-    def __str__(self) -> str:
+    def pformat(
+        self,
+        extra_fields: dict[str, Any]|None = None,
+        # ^-TODO-^ some built-in extra state fields
+        # we'll want in some devx specific cases?
+
+    ) -> str:
         ds: str = '='
         # ds: str = ': '
 
@@ -279,11 +283,7 @@ class Context:
         outcome_str: str = self.repr_outcome(
             show_error_fields=True
         )
-        outcome_typ_str: str = self.repr_outcome(
-            type_only=True
-        )
-
-        return (
+        fmtstr: str = (
             f'<Context(\n'
             # f'\n'
             # f'   ---\n'
@@ -304,12 +304,12 @@ class Context:
             # f'   -----\n'
             #
             # TODO: better state `str`ids?
-            # -[ ] maybe map err-types to strs like 'cancelled',
+            # -[x] maybe map err-types to strs like 'cancelled',
             #     'errored', 'streaming', 'started', .. etc.
             # -[ ] as well as a final result wrapper like
             #     `outcome.Value`?
             #
-            f' |_state: {outcome_typ_str}\n'
+            f' |_state: {self.repr_state!r}\n'
 
             f'   outcome{ds}{outcome_str}\n'
             f'   result{ds}{self._result}\n'
@@ -324,6 +324,16 @@ class Context:
             # -[ ] remove this ^ right?
 
             # f'  _remote_error={self._remote_error}
+        )
+        if extra_fields:
+            for key, val in extra_fields.items():
+                fmtstr += (
+                    f'   {key}{ds}{val!r}\n'
+                )
+
+        return (
+            fmtstr
+            +
             ')>\n'
         )
     # NOTE: making this return a value that can be passed to
@@ -335,7 +345,8 @@ class Context:
     # logging perspective over `eval()`-ability since we do NOT
     # target serializing non-struct instances!
     # def __repr__(self) -> str:
-    __repr__ = __str__
+    __str__ = pformat
+    __repr__ = pformat
 
     @property
     def cancel_called(self) -> bool:
@@ -615,10 +626,10 @@ class Context:
 
             whom: str = (
                 'us' if error.canceller == self._actor.uid
-                else 'peer'
+                else 'a remote peer (not us)'
             )
             log.cancel(
-                f'IPC context cancelled by {whom}!\n\n'
+                f'IPC context was cancelled by {whom}!\n\n'
                 f'{error}'
             )
 
@@ -626,7 +637,6 @@ class Context:
             msgerr = True
             log.error(
                 f'IPC dialog error due to msg-type caused by {self.peer_side!r} side\n\n'
-
                 f'{error}\n'
                 f'{pformat(self)}\n'
             )
@@ -696,24 +706,23 @@ class Context:
         else:
             message: str = 'NOT cancelling `Context._scope` !\n\n'
 
-        scope_info: str = 'No `self._scope: CancelScope` was set/used ?'
+        fmt_str: str = 'No `self._scope: CancelScope` was set/used ?'
         if cs:
-            scope_info: str = (
-                f'self._scope: {cs}\n'
-                f'|_ .cancel_called: {cs.cancel_called}\n'
-                f'|_ .cancelled_caught: {cs.cancelled_caught}\n'
-                f'|_ ._cancel_status: {cs._cancel_status}\n\n'
+            fmt_str: str = self.pformat(
+                extra_fields={
+                    '._is_self_cancelled()': self._is_self_cancelled(),
+                    '._cancel_on_msgerr': self._cancel_on_msgerr,
 
-                f'{self}\n'
-                f'|_ ._is_self_cancelled(): {self._is_self_cancelled()}\n'
-                f'|_ ._cancel_on_msgerr: {self._cancel_on_msgerr}\n\n'
-
-                f'msgerr: {msgerr}\n'
+                    '._scope': cs,
+                    '._scope.cancel_called': cs.cancel_called,
+                    '._scope.cancelled_caught': cs.cancelled_caught,
+                    '._scope._cancel_status': cs._cancel_status,
+                }
             )
         log.cancel(
             message
             +
-            f'{scope_info}'
+            fmt_str
         )
         # TODO: maybe we should also call `._res_scope.cancel()` if it
         # exists to support cancelling any drain loop hangs?
@@ -751,7 +760,7 @@ class Context:
         )
         return (
             # f'{self._nsf}() -{{{codec}}}-> {repr(self.outcome)}:'
-            f'{self._nsf}() -> {outcome_str}:'
+            f'{self._nsf}() -> {outcome_str}'
         )
 
     @property
@@ -839,7 +848,7 @@ class Context:
             if not self._portal:
                 raise InternalError(
                     'No portal found!?\n'
-                    'Why is this supposed caller context missing it?'
+                    'Why is this supposed {self.side!r}-side ctx task missing it?!?'
                 )
 
             cid: str = self.cid
@@ -1277,11 +1286,11 @@ class Context:
                     )
 
             log.cancel(
-                'Ctx drained pre-result msgs:\n'
-                f'{pformat(drained_msgs)}\n\n'
+                'Ctx drained to final result msgs\n'
+                f'{return_msg}\n\n'
 
-                f'Final return msg:\n'
-                f'{return_msg}\n'
+                f'pre-result drained msgs:\n'
+                f'{pformat(drained_msgs)}\n'
             )
 
         self.maybe_raise(
@@ -1446,6 +1455,65 @@ class Context:
             repr(self._result)
         )
 
+    @property
+    def repr_state(self) -> str:
+        '''
+        A `str`-status describing the current state of this
+        inter-actor IPC context in terms of the current "phase" state
+        of the SC shuttling dialog protocol.
+
+        '''
+        merr: Exception|None = self.maybe_error
+        outcome: Unresolved|Exception|Any = self.outcome
+
+        match (
+            outcome,
+            merr,
+        ):
+            case (
+                Unresolved,
+                ContextCancelled(),
+            ) if self.cancel_acked:
+                status = 'self-cancelled'
+
+            case (
+                Unresolved,
+                ContextCancelled(),
+            ) if (
+                self.canceller
+                and not self._cancel_called
+            ):
+                status = 'peer-cancelled'
+
+            case (
+                Unresolved,
+                BaseException(),
+            ) if self.canceller:
+                status = 'errored'
+
+            case (
+                _,  # any non-unresolved value
+                None,
+            ) if self._final_result_is_set():
+                status = 'returned'
+
+            case (
+                Unresolved,  # noqa (weird.. ruff)
+                None,
+            ):
+                if stream := self._stream:
+                    if stream.closed:
+                        status = 'streaming-finished'
+                    else:
+                        status = 'streaming'
+                elif self._started_called:
+                    status = 'started'
+
+            case _:
+                status = 'unknown!?'
+
+        return status
+
     async def started(
         self,
 
@@ -1454,7 +1522,11 @@ class Context:
         value: PayloadT|None = None,
 
         strict_parity: bool = False,
-        complain_no_parity: bool = True,
+
+        # TODO: this will always emit now that we do `.pld: Raw`
+        # passthrough.. so maybe just only complain when above strict
+        # flag is set?
+        complain_no_parity: bool = False,
 
     ) -> None:
         '''
@@ -1514,18 +1586,19 @@ class Context:
                     )
                     raise RuntimeError(
                         'Failed to roundtrip `Started` msg?\n'
-                        f'{pformat(rt_started)}\n'
+                        f'{pretty_struct.pformat(rt_started)}\n'
                     )
 
                 if rt_started != started_msg:
                     # TODO: break these methods out from the struct subtype?
 
+                    # TODO: make that one a mod func too..
                     diff = pretty_struct.Struct.__sub__(
                         rt_started,
                         started_msg,
                     )
                     complaint: str = (
-                        'Started value does not match after codec rountrip?\n\n'
+                        'Started value does not match after roundtrip?\n\n'
                         f'{diff}'
                     )
 
@@ -1540,8 +1613,6 @@ class Context:
                         raise ValueError(complaint)
                     else:
                         log.warning(complaint)
-
-                # started_msg = rt_started
 
             await self.chan.send(started_msg)
 
@@ -2357,7 +2428,7 @@ async def open_context_from_portal(
         # FINALLY, remove the context from runtime tracking and
         # exit!
         log.runtime(
-            'De-allocating IPC ctx opened with {ctx.side!r} peer \n'
+            f'De-allocating IPC ctx opened with {ctx.side!r} peer \n'
             f'uid: {uid}\n'
             f'cid: {ctx.cid}\n'
         )
@@ -2393,10 +2464,8 @@ def mk_context(
     from .devx._code import find_caller_info
     caller_info: CallerInfo|None = find_caller_info()
 
-    pld_rx = msgops.PldRx(
-        # _rx_mc=recv_chan,
-        _msgdec=_codec.mk_dec(spec=pld_spec)
-    )
+    # TODO: when/how do we apply `.limit_plds()` from here?
+    pld_rx: msgops.PldRx = msgops.current_pldrx()
 
     ctx = Context(
         chan=chan,

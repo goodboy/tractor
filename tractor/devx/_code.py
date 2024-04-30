@@ -23,6 +23,8 @@ from __future__ import annotations
 import inspect
 # import msgspec
 # from pprint import pformat
+import textwrap
+import traceback
 from types import (
     FrameType,
     FunctionType,
@@ -175,3 +177,103 @@ def find_caller_info(
             )
 
     return None
+
+
+def pformat_boxed_tb(
+    tb_str: str,
+    fields_str: str|None = None,
+    field_prefix: str = ' |_',
+
+    tb_box_indent: int|None = None,
+    tb_body_indent: int = 1,
+
+) -> str:
+    '''
+    Create a "boxed" looking traceback string.
+
+    Useful for emphasizing traceback text content as being an
+    embedded attribute of some other object (like
+    a `RemoteActorError` or other boxing remote error shuttle
+    container).
+
+    Any other parent/container "fields" can be passed in the
+    `fields_str` input along with other prefix/indent settings.
+
+    '''
+    if (
+        fields_str
+        and
+        field_prefix
+    ):
+        fields: str = textwrap.indent(
+            fields_str,
+            prefix=field_prefix,
+        )
+    else:
+        fields = fields_str or ''
+
+    tb_body = tb_str
+    if tb_body_indent:
+        tb_body: str = textwrap.indent(
+            tb_str,
+            prefix=tb_body_indent * ' ',
+        )
+
+    tb_box: str = (
+
+        # orig
+        # f'  |\n'
+        # f'   ------ - ------\n\n'
+        # f'{tb_str}\n'
+        # f'   ------ - ------\n'
+        # f' _|\n'
+
+        f'|\n'
+        f' ------ - ------\n\n'
+        # f'{tb_str}\n'
+        f'{tb_body}'
+        f' ------ - ------\n'
+        f'_|\n'
+    )
+    tb_box_indent: str = (
+        tb_box_indent
+        or
+        1
+
+        # (len(field_prefix))
+        # ? ^-TODO-^ ? if you wanted another indent level
+    )
+    if tb_box_indent > 0:
+        tb_box: str = textwrap.indent(
+            tb_box,
+            prefix=tb_box_indent * ' ',
+        )
+
+    return (
+        fields
+        +
+        tb_box
+    )
+
+
+def pformat_caller_frame(
+    stack_limit: int = 1,
+    box_tb: bool = True,
+) -> str:
+    '''
+    Capture and return the traceback text content from
+    `stack_limit` call frames up.
+
+    '''
+    tb_str: str = (
+        '\n'.join(
+            traceback.format_stack(limit=stack_limit)
+        )
+    )
+    if box_tb:
+        tb_str: str = pformat_boxed_tb(
+            tb_str=tb_str,
+            field_prefix='  ',
+            indent='',
+        )
+    return tb_str
