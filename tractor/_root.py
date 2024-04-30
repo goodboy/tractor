@@ -122,8 +122,9 @@ async def open_root_actor(
         # usage by a clobbered TTY's stdstreams!
         def block_bps(*args, **kwargs):
             raise RuntimeError(
-                '`tractor` blocks built-in `breakpoint()` calls by default!\n'
-                'If you need to us it please install `greenback` and set '
+                'Trying to use `breakpoint()` eh?\n'
+                'Welp, `tractor` blocks `breakpoint()` built-in calls by default!\n'
+                'If you need to use it please install `greenback` and set '
                 '`debug_mode=True` when opening the runtime '
                 '(either via `.open_nursery()` or `open_root_actor()`)\n'
             )
