@@ -65,7 +65,7 @@ def dump_task_tree() -> None:
         level='cancel',
     )
     actor: Actor = _state.current_actor()
-    log.pdb(
+    log.devx(
         f'Dumping `stackscope` tree for actor\n'
         f'{actor.name}: {actor}\n'
         f' |_{mp.current_process()}\n\n'
@@ -104,7 +104,7 @@ def signal_handler(
         subproc: ProcessType
         subactor: Actor
         for subactor, subproc, _ in an._children.values():
-            log.pdb(
+            log.devx(
                 f'Relaying `SIGUSR1`[{sig}] to sub-actor\n'
                 f'{subactor}\n'
                 f' |_{subproc}\n'
