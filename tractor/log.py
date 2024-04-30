@@ -53,6 +53,7 @@ LEVELS: dict[str, int] = {
     'RUNTIME': 15,
     'CANCEL': 16,
     'PDB': 500,
+    'DEVX': 500,
 }
 # _custom_levels: set[str] = {
 #     lvlname.lower for lvlname in LEVELS.keys()
@@ -62,6 +63,7 @@ STD_PALETTE = {
     'CRITICAL': 'red',
     'ERROR': 'red',
     'PDB': 'white',
+    'DEVX': 'cyan',
     'WARNING': 'yellow',
     'INFO': 'green',
     'CANCEL': 'yellow',
@@ -86,7 +88,8 @@ class StackLevelAdapter(logging.LoggerAdapter):
 
     ) -> None:
         '''
-        IPC level msg-ing.
+        IPC transport level msg IO; generally anything below
+        `._ipc.Channel` and friends.
 
         '''
         return self.log(5, msg)
@@ -102,7 +105,7 @@ class StackLevelAdapter(logging.LoggerAdapter):
         msg: str,
     ) -> None:
         '''
-        Cancellation logging, mostly for runtime reporting.
+        Cancellation sequencing, mostly for runtime reporting.
 
         '''
         return self.log(
@@ -116,7 +119,17 @@ class StackLevelAdapter(logging.LoggerAdapter):
         msg: str,
     ) -> None:
         '''
-        Debugger logging.
+        `pdb`-REPL (debugger) related statuses.
+
+        '''
+        return self.log(500, msg)
+
+    def devx(
+        self,
+        msg: str,
+    ) -> None:
+        '''
+        "Developer experience" sub-sys statuses.
 
         '''
         return self.log(500, msg)
