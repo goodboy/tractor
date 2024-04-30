@@ -455,10 +455,9 @@ async def trio_proc(
     proc: trio.Process|None = None
     try:
         try:
-            # TODO: needs ``trio_typing`` patch?
-            proc = await trio.lowlevel.open_process(spawn_cmd)
+            proc: trio.Process = await trio.lowlevel.open_process(spawn_cmd)
             log.runtime(
-                'Started new sub-proc\n'
+                'Started new child\n'
                 f'|_{proc}\n'
             )
 
