@@ -53,7 +53,7 @@ LEVELS: dict[str, int] = {
     'RUNTIME': 15,
     'CANCEL': 16,
     'PDB': 500,
-    'DEVX': 500,
+    'DEVX': 600,
 }
 # _custom_levels: set[str] = {
 #     lvlname.lower for lvlname in LEVELS.keys()
@@ -132,7 +132,7 @@ class StackLevelAdapter(logging.LoggerAdapter):
         "Developer experience" sub-sys statuses.
 
         '''
-        return self.log(500, msg)
+        return self.log(600, msg)
 
     def log(
         self,
