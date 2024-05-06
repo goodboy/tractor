@@ -20,6 +20,7 @@ Sub-process entry points.
 """
 from __future__ import annotations
 from functools import partial
+# import textwrap
 from typing import (
     Any,
     TYPE_CHECKING,
@@ -91,7 +92,7 @@ def _mp_main(
         pass  # handle it the same way trio does?
 
     finally:
-        log.info(f"Actor {actor.uid} terminated")
+        log.info(f"Subactor {actor.uid} terminated")
 
 
 def _trio_main(
@@ -125,9 +126,11 @@ def _trio_main(
             f'  loglevel: {actor.loglevel}\n'
         )
         log.info(
-            'Started new trio process:\n'
+            'Started new trio subactor:\n'
             +
-            actor_info
+            '>\n'  # like a "started/play"-icon from super perspective
+            +
+            actor_info,
         )
 
     try:
@@ -147,6 +150,8 @@ def _trio_main(
     finally:
         log.info(
             'Subactor terminated\n'
+            +
+            'x\n'  # like a "crossed-out/killed" from super perspective
             +
             actor_info
         )
