@@ -68,40 +68,6 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-# TODO: remove and/or rework?
-# -[ ] rename to `unwrap_result()` and use
-#     `._raise_from_unexpected_msg()` (after tweak to accept a `chan:
-#     Channel` arg) in key block??
-# -[ ] pretty sure this is entirely covered by
-# `_exceptions._raise_from_unexpected_msg()` so REMOVE!
-# def _unwrap_msg(
-#     msg: Return|Error,
-#     ctx: Context,
-
-#     hide_tb: bool = True,
-
-# ) -> Any:
-#     '''
-#     Unwrap a final result from a `{return: <Any>}` IPC msg.
-
-#     '''
-#     __tracebackhide__: bool = hide_tb
-#     try:
-#         return msg.pld
-#     except AttributeError as err:
-
-#         # internal error should never get here
-#         # assert msg.get('cid'), (
-#         assert msg.cid, (
-#             "Received internal error at portal?"
-#         )
-
-#         raise unpack_error(
-#             msg,
-#             ctx.chan,
-#         ) from err
-
-
 class Portal:
     '''
     A 'portal' to a memory-domain-separated `Actor`.
@@ -173,12 +139,13 @@ class Portal:
             portal=self,
         )
 
+    # @api_frame
     async def result(self) -> Any:
         '''
         Return the result(s) from the remote actor's "main" task.
 
         '''
-        # __tracebackhide__ = True
+        __tracebackhide__ = True
         # Check for non-rpc errors slapped on the
         # channel for which we always raise
         exc = self.channel._exc

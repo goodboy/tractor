@@ -46,7 +46,6 @@ from tractor.msg import (
     Error,
     MsgType,
     Stop,
-    # Yield,
     types as msgtypes,
     MsgCodec,
     MsgDec,
@@ -212,6 +211,8 @@ class RemoteActorError(Exception):
     ) -> None:
         super().__init__(message)
 
+        # for manual display without having to muck with `Exception.args`
+        self._message: str = message
         # TODO: maybe a better name?
         # - .errtype
         # - .retype
@@ -454,31 +455,45 @@ class RemoteActorError(Exception):
             _repr
         )
 
-    def __repr__(self) -> str:
+    def pformat(self) -> str:
         '''
-        Nicely formatted boxed error meta data + traceback.
+        Nicely formatted boxed error meta data + traceback, OR just
+        the normal message from `.args` (for eg. as you'd want shown
+        by a locally raised `ContextCancelled`).
 
         '''
-        from tractor.devx._code import pformat_boxed_tb
-        fields: str = self._mk_fields_str(
-            _body_fields
-            +
-            self.extra_body_fields,
-        )
-        body: str = pformat_boxed_tb(
-            tb_str=self.tb_str,
-            fields_str=fields,
-            field_prefix=' |_',
-            # ^- is so that it's placed like so,
-            # just after <Type(
-            #             |___ ..
-            tb_body_indent=1,
-        )
+        tb_str: str = self.tb_str
+        if tb_str:
+            fields: str = self._mk_fields_str(
+                _body_fields
+                +
+                self.extra_body_fields,
+            )
+            from tractor.devx import (
+                pformat_boxed_tb,
+            )
+            body: str = pformat_boxed_tb(
+                tb_str=tb_str,
+                fields_str=fields,
+                field_prefix=' |_',
+                # ^- is so that it's placed like so,
+                # just after <Type(
+                #             |___ ..
+                tb_body_indent=1,
+            )
+        else:
+            body: str = textwrap.indent(
+                self._message,
+                prefix='  ',
+            ) + '\n'
         return (
             f'<{type(self).__name__}(\n'
             f'{body}'
             ')>'
         )
+
+    __repr__ = pformat
+    __str__ = pformat
 
     def unwrap(
         self,
@@ -809,11 +824,8 @@ def pack_error(
 
 def unpack_error(
     msg: Error,
-
-    chan: Channel|None = None,
+    chan: Channel,
     box_type: RemoteActorError = RemoteActorError,
-
-    hide_tb: bool = True,
 
 ) -> None|Exception:
     '''
@@ -824,12 +836,10 @@ def unpack_error(
     which is the responsibilitiy of the caller.
 
     '''
-    __tracebackhide__: bool = hide_tb
-
     if not isinstance(msg, Error):
         return None
 
-    # retrieve the remote error's encoded details from fields
+    # retrieve the remote error's msg-encoded details
     tb_str: str = msg.tb_str
     message: str = (
         f'{chan.uid}\n'
@@ -858,7 +868,6 @@ def unpack_error(
     # original source error.
     elif boxed_type_str == 'RemoteActorError':
         assert boxed_type is RemoteActorError
-        # assert len(error_dict['relay_path']) >= 1
         assert len(msg.relay_path) >= 1
 
     exc = box_type(
@@ -943,8 +952,6 @@ def _raise_from_unexpected_msg(
         raise unpack_error(
             msg,
             ctx.chan,
-            hide_tb=hide_tb,
-
         ) from src_err
 
     # `MsgStream` termination msg.
@@ -1014,6 +1021,7 @@ def _mk_msg_type_err(
 
     src_validation_error: ValidationError|None = None,
     src_type_error: TypeError|None = None,
+    is_invalid_payload: bool = False,
 
 ) -> MsgTypeError:
     '''
@@ -1028,12 +1036,12 @@ def _mk_msg_type_err(
                 '`codec` must be a `MsgCodec` for send-side errors?'
             )
 
+        from tractor.devx import (
+            pformat_caller_frame,
+        )
         # no src error from `msgspec.msgpack.Decoder.decode()` so
         # prolly a manual type-check on our part.
         if message is None:
-            from tractor.devx._code import (
-                pformat_caller_frame,
-            )
             tb_fmt: str = pformat_caller_frame(stack_limit=3)
             message: str = (
                 f'invalid msg -> {msg}: {type(msg)}\n\n'
@@ -1071,46 +1079,56 @@ def _mk_msg_type_err(
 
     # `Channel.recv()` case
     else:
-        # decode the msg-bytes using the std msgpack
-        # interchange-prot (i.e. without any
-        # `msgspec.Struct` handling) so that we can
-        # determine what `.msg.types.Msg` is the culprit
-        # by reporting the received value.
-        msg_dict: dict = msgpack.decode(msg)
-        msg_type_name: str = msg_dict['msg_type']
-        msg_type = getattr(msgtypes, msg_type_name)
-        message: str = (
-            f'invalid `{msg_type_name}` IPC msg\n\n'
-        )
+        if is_invalid_payload:
+            msg_type: str = type(msg)
+            message: str = (
+                f'invalid `{msg_type.__qualname__}` payload\n\n'
+                f'<{type(msg).__qualname__}(\n'
+                f' |_pld: {codec.pld_spec_str} = {msg.pld!r}'
+                f')>\n'
+            )
+
+        else:
+            # decode the msg-bytes using the std msgpack
+            # interchange-prot (i.e. without any
+            # `msgspec.Struct` handling) so that we can
+            # determine what `.msg.types.Msg` is the culprit
+            # by reporting the received value.
+            msg_dict: dict = msgpack.decode(msg)
+            msg_type_name: str = msg_dict['msg_type']
+            msg_type = getattr(msgtypes, msg_type_name)
+            message: str = (
+                f'invalid `{msg_type_name}` IPC msg\n\n'
+            )
+            # XXX be "fancy" and see if we can determine the exact
+            # invalid field such that we can comprehensively report
+            # the specific field's type problem.
+            msgspec_msg: str = src_validation_error.args[0].rstrip('`')
+            msg, _, maybe_field = msgspec_msg.rpartition('$.')
+            obj = object()
+            if (field_val := msg_dict.get(maybe_field, obj)) is not obj:
+                field_name_expr: str = (
+                    f' |_{maybe_field}: {codec.pld_spec_str} = '
+                )
+                fmt_val_lines: list[str] = pformat(field_val).splitlines()
+                fmt_val: str = (
+                    f'{fmt_val_lines[0]}\n'
+                    +
+                    textwrap.indent(
+                        '\n'.join(fmt_val_lines[1:]),
+                        prefix=' '*len(field_name_expr),
+                    )
+                )
+                message += (
+                    f'{msg.rstrip("`")}\n\n'
+                    f'<{msg_type.__qualname__}(\n'
+                    # f'{".".join([msg_type.__module__, msg_type.__qualname__])}\n'
+                    f'{field_name_expr}{fmt_val}\n'
+                    f')>'
+                )
+
         if verb_header:
             message = f'{verb_header} ' + message
-
-        # XXX see if we can determine the exact invalid field
-        # such that we can comprehensively report the
-        # specific field's type problem
-        msgspec_msg: str = src_validation_error.args[0].rstrip('`')
-        msg, _, maybe_field = msgspec_msg.rpartition('$.')
-        obj = object()
-        if (field_val := msg_dict.get(maybe_field, obj)) is not obj:
-            field_name_expr: str = (
-                f' |_{maybe_field}: {codec.pld_spec_str} = '
-            )
-            fmt_val_lines: list[str] = pformat(field_val).splitlines()
-            fmt_val: str = (
-                f'{fmt_val_lines[0]}\n'
-                +
-                textwrap.indent(
-                    '\n'.join(fmt_val_lines[1:]),
-                    prefix=' '*len(field_name_expr),
-                )
-            )
-            message += (
-                f'{msg.rstrip("`")}\n\n'
-                f'<{msg_type.__qualname__}(\n'
-                # f'{".".join([msg_type.__module__, msg_type.__qualname__])}\n'
-                f'{field_name_expr}{fmt_val}\n'
-                f')>'
-            )
 
         msgtyperr = MsgTypeError.from_decode(
             message=message,
