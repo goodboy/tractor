@@ -25,6 +25,7 @@ from tractor._exceptions import (
     StreamOverrun,
     ContextCancelled,
 )
+from tractor._state import current_ipc_ctx
 
 from tractor._testing import (
     tractor_test,
@@ -144,6 +145,8 @@ async def simple_setup_teardown(
     global _state
     _state = True
 
+    assert current_ipc_ctx() is ctx
+
     # signal to parent that we're up
     await ctx.started(data + 1)
 
@@ -204,6 +207,7 @@ def test_simple_context(
                             block_forever=callee_blocks_forever,
                         ) as (ctx, sent),
                     ):
+                        assert current_ipc_ctx() is ctx
                         assert sent == 11
 
                         if callee_blocks_forever:

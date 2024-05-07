@@ -19,13 +19,19 @@ Per process state
 
 """
 from __future__ import annotations
+from contextvars import (
+    ContextVar,
+)
 from typing import (
     Any,
     TYPE_CHECKING,
 )
 
+from trio.lowlevel import current_task
+
 if TYPE_CHECKING:
     from ._runtime import Actor
+    from ._context import Context
 
 
 _current_actor: Actor|None = None  # type: ignore # noqa
@@ -110,3 +116,20 @@ def debug_mode() -> bool:
 
 def is_root_process() -> bool:
     return _runtime_vars['_is_root']
+
+
+_ctxvar_Context: ContextVar[Context] = ContextVar(
+    'ipc_context',
+    default=None,
+)
+
+
+def current_ipc_ctx() -> Context:
+    ctx: Context = _ctxvar_Context.get()
+    if not ctx:
+        from ._exceptions import InternalError
+        raise InternalError(
+            'No IPC context has been allocated for this task yet?\n'
+            f'|_{current_task()}\n'
+        )
+    return ctx

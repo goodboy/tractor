@@ -54,7 +54,10 @@ from ._exceptions import (
     pack_error,
     unpack_error,
 )
-from .devx import _debug
+from .devx import (
+    _debug,
+    add_div,
+)
 from . import _state
 from .log import get_logger
 from .msg import (
@@ -246,6 +249,9 @@ async def _errors_relayed_via_ipc(
 
 ) -> None:
     __tracebackhide__: bool = hide_tb
+    # TODO: a debug nursery when in debug mode!
+    # async with maybe_open_debugger_nursery() as debug_tn:
+    # => see matching comment in side `._debug._pause()`
     try:
         yield  # run RPC invoke body
 
@@ -269,6 +275,8 @@ async def _errors_relayed_via_ipc(
 
         # TODO: maybe we'll want different "levels" of debugging
         # eventualy such as ('app', 'supervisory', 'runtime') ?
+        #
+        # -[ ] this if check is duplicate with `._maybe_enter_pm()`..
         if not is_multi_cancelled(err):
             entered_debug: bool = False
             if (
@@ -292,7 +300,6 @@ async def _errors_relayed_via_ipc(
                     )
                 )
             ):
-                # await _debug.pause()
                 # XXX QUESTION XXX: is there any case where we'll
                 # want to debug IPC disconnects as a default?
                 # => I can't think of a reason that inspecting this
@@ -300,7 +307,14 @@ async def _errors_relayed_via_ipc(
                 # recovery logic - the only case is some kind of
                 # strange bug in our transport layer itself? Going
                 # to keep this open ended for now.
-                entered_debug = await _debug._maybe_enter_pm(err)
+                log.debug(
+                    'RPC task crashed, attempting to enter debugger\n'
+                    f'|_{ctx}'
+                )
+                entered_debug = await _debug._maybe_enter_pm(
+                    err,
+                    api_frame=inspect.currentframe(),
+                )
                 if not entered_debug:
                     log.exception(
                         'RPC task crashed\n'
@@ -430,6 +444,8 @@ async def _invoke(
     )
     context: bool = False
 
+    assert not _state._ctxvar_Context.get()
+
     # TODO: deprecate this style..
     if getattr(func, '_tractor_stream_function', False):
         # handle decorated ``@tractor.stream`` async functions
@@ -553,6 +569,7 @@ async def _invoke(
             async with trio.open_nursery() as tn:
                 ctx._scope_nursery = tn
                 ctx._scope = tn.cancel_scope
+                _state._ctxvar_Context.set(ctx)
                 task_status.started(ctx)
 
                 # TODO: should would be nice to have our
@@ -588,7 +605,6 @@ async def _invoke(
                 cs: CancelScope = ctx._scope
 
                 if cs.cancel_called:
-
                     canceller: tuple = ctx.canceller
                     explain: str = f'{ctx.side!r}-side task was cancelled by '
 
@@ -617,23 +633,9 @@ async def _invoke(
                     else:
                         explain += 'a remote peer'
 
-                    # TODO: move this "div centering" into
-                    # a helper for use elsewhere!
-                    div_chars: str = '------ - ------'
-                    div_offset: int = (
-                        round(len(explain)/2)+1
-                        +
-                        round(len(div_chars)/2)+1
-                    )
-                    div_str: str = (
-                        '\n'
-                        +
-                        ' '*div_offset
-                        +
-                        f'{div_chars}\n'
-                    )
                     explain += (
-                        div_str +
+                        add_div(message=explain)
+                        +
                         f'<= canceller: {canceller}\n'
                         f'=> cancellee: {our_uid}\n'
                         # TODO: better repr for ctx tasks..
@@ -660,10 +662,10 @@ async def _invoke(
                         boxed_type=trio.Cancelled,
                         canceller=canceller,
                     )
-                    # assign local error so that the `.outcome`
-                    # resolves to an error for both reporting and
-                    # state checks.
-                    ctx._local_error = ctxc
+                    # does this matter other then for
+                    # consistentcy/testing? |_ no user code should be
+                    # in this scope at this point..
+                    # ctx._local_error = ctxc
                     raise ctxc
 
         # XXX: do we ever trigger this block any more?
@@ -673,6 +675,13 @@ async def _invoke(
             BaseException,
 
         ) as scope_error:
+            if (
+                isinstance(scope_error, RuntimeError)
+                and scope_error.args
+                and 'Cancel scope stack corrupted' in scope_error.args[0]
+            ):
+                log.exception('Cancel scope stack corrupted!?\n')
+                # _debug.mk_pdb().set_trace()
 
             # always set this (child) side's exception as the
             # local error on the context
@@ -706,17 +715,32 @@ async def _invoke(
                 res_type_str,
                 res_str,
             ) = (
-                ('error', f'{type(merr)}',)
-                if merr
+                ('error', f'{type(merr)}',) if merr
                 else (
                     'result',
                     f'`{repr(ctx.outcome)}`',
                 )
             )
-            log.runtime(
+            message: str = (
                 f'IPC context terminated with a final {res_type_str}\n\n'
                 f'{ctx}'
             )
+            if merr:
+                from tractor import RemoteActorError
+                if not isinstance(merr, RemoteActorError):
+                    fmt_merr: str = (
+                        f'\n{merr!r}\n'
+                        # f'{merr.args[0]!r}\n'
+                    )
+                else:
+                    fmt_merr = f'\n{merr!r}'
+                log.error(
+                    message
+                    +
+                    fmt_merr
+                )
+            else:
+                log.runtime(message)
 
 
 async def try_ship_error_to_remote(
@@ -951,12 +975,19 @@ async def process_messages(
                         kwargs=kwargs,  # type-spec this? see `msg.types`
                         uid=actorid,
                     ):
-                        log.runtime(
+                        start_status: str = (
                             'Handling RPC `Start` request\n'
-                            f'<= peer: {actorid}\n'
-                            f'  |_{ns}.{funcname}({kwargs})\n\n'
+                            f'<= peer: {actorid}\n\n'
+                            f'  |_{chan}\n'
+                            f'  |_cid: {cid}\n\n'
+                            # f'  |_{ns}.{funcname}({kwargs})\n'
+                            f'>> {actor.uid}\n'
+                            f'  |_{actor}\n'
+                            f'   -> nsp: `{ns}.{funcname}({kwargs})`\n'
 
-                            f'{pretty_struct.pformat(msg)}\n'
+                            # f'  |_{ns}.{funcname}({kwargs})\n\n'
+
+                            # f'{pretty_struct.pformat(msg)}\n'
                         )
 
                         # runtime-internal endpoint: `Actor.<funcname>`
@@ -985,6 +1016,10 @@ async def process_messages(
                                 await chan.send(err_msg)
                                 continue
 
+                        start_status += (
+                            f'   -> func: {func}\n'
+                        )
+
                         # schedule a task for the requested RPC function
                         # in the actor's main "service nursery".
                         #
@@ -992,18 +1027,8 @@ async def process_messages(
                         # supervision isolation? would avoid having to
                         # manage RPC tasks individually in `._rpc_tasks`
                         # table?
-                        log.runtime(
-                            f'Spawning task for RPC request\n'
-                            f'<= caller: {chan.uid}\n'
-                            f'  |_{chan}\n\n'
-                            # ^-TODO-^ maddr style repr?
-                            # f'  |_@ /ipv4/{chan.raddr}/tcp/{chan.rport}/'
-                            # f'cid="{cid[-16:]} .."\n\n'
-
-                            f'=> {actor}\n'
-                            f'  |_cid: {cid}\n'
-                            f'   |>> {func}()\n'
-                        )
+                        start_status += '   -> scheduling new task..\n'
+                        log.runtime(start_status)
                         try:
                             ctx: Context = await actor._service_n.start(
                                 partial(
@@ -1031,8 +1056,9 @@ async def process_messages(
                         # scoped exception from ``_invoke()`` itself.
                         if isinstance(err := ctx, Exception):
                             log.warning(
-                                'Task for RPC failed?'
-                                f'|_ {func}()\n\n'
+                                start_status
+                                +
+                                '   -> task for RPC failed?\n\n'
                                 f'{err}'
                             )
                             continue
@@ -1151,12 +1177,17 @@ async def process_messages(
 
     finally:
         # msg debugging for when he machinery is brokey
-        log.runtime(
-            'Exiting IPC msg loop with final msg\n\n'
-            f'<= peer: {chan.uid}\n'
-            f'  |_{chan}\n\n'
-            f'{pretty_struct.pformat(msg)}'
-        )
+        if msg is None:
+            message: str = 'Exiting IPC msg loop without receiving a msg?'
+        else:
+            message: str = (
+                'Exiting IPC msg loop with final msg\n\n'
+                f'<= peer: {chan.uid}\n'
+                f'  |_{chan}\n\n'
+                f'{pretty_struct.pformat(msg)}'
+            )
+
+        log.runtime(message)
 
     # transport **WAS NOT** disconnected
     return (False, msg)
