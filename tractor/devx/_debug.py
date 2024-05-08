@@ -73,7 +73,10 @@ from tractor._state import (
     debug_mode,
     current_ipc_ctx,
 )
-# from .pformat import pformat_caller_frame
+from .pformat import (
+    # pformat_caller_frame,
+    pformat_cs,
+)
 
 if TYPE_CHECKING:
     from tractor._ipc import Channel
@@ -867,20 +870,6 @@ def apply_debug_pldec() -> _codec.MsgCodec:
             'Reverted to previous pld-spec\n\n'
             f'{orig_pldec}\n'
         )
-
-# TODO: add this formatter to `.devx.pformat()`!
-def pformat_cs(
-    cs: CancelScope,
-    var_name: str = 'cs',
-) -> str:
-    return (
-        f'{var_name}: {cs}\n'
-        f'{var_name}.cancel_called = {cs.cancel_called}\n'
-        f'{var_name}.cancelled_caught = {cs.cancelled_caught}\n'
-        f'{var_name}._cancel_status = {cs._cancel_status}\n'
-        f'{var_name}.shield = {cs.shield}\n'
-    )
-
 
 async def request_root_stdio_lock(
     actor_uid: tuple[str, str],

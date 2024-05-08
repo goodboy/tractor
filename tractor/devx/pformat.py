@@ -22,6 +22,8 @@ Mostly handy for logging and exception message content.
 import textwrap
 import traceback
 
+from trio import CancelScope
+
 
 def add_div(
     message: str,
@@ -133,3 +135,34 @@ def pformat_caller_frame(
             indent='',
         )
     return tb_str
+
+
+def pformat_cs(
+    cs: CancelScope,
+    var_name: str = 'cs',
+    field_prefix: str = ' |_',
+) -> str:
+    '''
+    Pretty format info about a `trio.CancelScope` including most
+    of its public state and `._cancel_status`.
+
+    The output can be modified to show a "var name" for the
+    instance as a field prefix, just a simple str before each
+    line more or less.
+
+    '''
+
+    fields: str = textwrap.indent(
+        (
+            f'cancel_called = {cs.cancel_called}\n'
+            f'cancelled_caught = {cs.cancelled_caught}\n'
+            f'_cancel_status = {cs._cancel_status}\n'
+            f'shield = {cs.shield}\n'
+        ),
+        prefix=field_prefix,
+    )
+    return (
+        f'{var_name}: {cs}\n'
+        +
+        fields
+    )
