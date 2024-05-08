@@ -26,11 +26,13 @@ from contextlib import (
     contextmanager as cm,
     nullcontext,
     _GeneratorContextManager,
+    _AsyncGeneratorContextManager,
 )
 from functools import (
     partial,
     cached_property,
 )
+import inspect
 import os
 import signal
 import sys
@@ -48,13 +50,14 @@ from typing import (
 from types import (
     FrameType,
     ModuleType,
+    TracebackType,
 )
 
 from msgspec import Struct
 import pdbp
 import sniffio
-import tractor
 import trio
+from trio import CancelScope
 from trio.lowlevel import (
     current_task,
     Task,
@@ -62,25 +65,24 @@ from trio.lowlevel import (
 from trio import (
     TaskStatus,
 )
-
+import tractor
 from tractor.log import get_logger
-from tractor.msg import (
-    _codec,
-)
 from tractor._state import (
     current_actor,
     is_root_process,
     debug_mode,
+    current_ipc_ctx,
 )
-from tractor._exceptions import (
-    is_multi_cancelled,
-    ContextCancelled,
-)
-from tractor._ipc import Channel
+# from .pformat import pformat_caller_frame
 
 if TYPE_CHECKING:
+    from tractor._ipc import Channel
+    from tractor._context import Context
     from tractor._runtime import (
         Actor,
+    )
+    from tractor.msg import (
+        _codec,
     )
 
 log = get_logger(__name__)
@@ -115,6 +117,8 @@ log = get_logger(__name__)
 pdbp.hideframe(trio._core._run.NurseryManager.__aexit__)
 pdbp.hideframe(trio._core._run.CancelScope.__exit__)
 pdbp.hideframe(_GeneratorContextManager.__exit__)
+pdbp.hideframe(_AsyncGeneratorContextManager.__aexit__)
+pdbp.hideframe(trio.Event.wait)
 
 __all__ = [
     'breakpoint',
@@ -141,14 +145,14 @@ class LockRelease(
     cid: str
 
 
-__msg_spec__: TypeAlias = LockStatus|LockRelease
+__pld_spec__: TypeAlias = LockStatus|LockRelease
 
 
 class Lock:
     '''
-    Actor global debug lock state.
+    Actor-tree-global debug lock state, exists only in a root process.
 
-    Mostly to avoid a lot of ``global`` declarations for now XD.
+    Mostly to avoid a lot of global declarations for now XD.
 
     '''
     # XXX local ref to the `Pbp` instance, ONLY set in the
@@ -157,30 +161,17 @@ class Lock:
     # that does not have this lock acquired in the root proc.
     repl: PdbREPL|None = None
 
-    # placeholder for function to set a ``trio.Event`` on debugger exit
-    # pdb_release_hook: Callable | None = None
-
-    remote_task_in_debug: str|None = None
-
     @staticmethod
-    def get_locking_task_cs() -> trio.CancelScope|None:
-        if is_root_process():
-            return Lock._locking_task_cs
-
-        raise RuntimeError(
-            '`Lock.locking_task_cs` is invalid in subactors!'
-        )
-
-    @staticmethod
-    def set_locking_task_cs(
-        cs: trio.CancelScope,
-    ) -> None:
+    def get_locking_task_cs() -> CancelScope|None:
         if not is_root_process():
             raise RuntimeError(
                 '`Lock.locking_task_cs` is invalid in subactors!'
             )
 
-        Lock._locking_task_cs = cs
+        if ctx := Lock.ctx_in_debug:
+            return ctx._scope
+
+        return None
 
     #     ROOT ONLY
     # ------ - -------
@@ -195,12 +186,14 @@ class Lock:
     # * in case it needs to be manually cancelled in root due to
     #   a stale lock condition (eg. IPC failure with the locking
     #   child
-    global_actor_in_debug: tuple[str, str]|None = None
-    no_remote_has_tty: trio.Event|None = None
-    _locking_task_cs: trio.CancelScope|None = None
+    ctx_in_debug: Context|None = None
 
+    no_remote_has_tty: trio.Event|None = None
     _debug_lock: trio.StrictFIFOLock = trio.StrictFIFOLock()
-    _blocked: set[tuple[str, str]] = set()  # `Actor.uid` block list
+    _blocked: set[
+        tuple[str, str]  # `Actor.uid` for per actor
+        |str  # Context.cid for per task
+    ] = set()
 
     @classmethod
     def repr(cls) -> str:
@@ -213,11 +206,10 @@ class Lock:
         if is_root_process():
             lock_stats: trio.LockStatistics = cls._debug_lock.statistics()
             fields += (
-                f'global_actor_in_debug: {cls.global_actor_in_debug}\n'
                 f'no_remote_has_tty: {cls.no_remote_has_tty}\n'
-                f'remote_task_in_debug: {cls.remote_task_in_debug}\n'
-                f'_locking_task_cs: {cls.get_locking_task_cs()}\n'
                 f'_blocked: {cls._blocked}\n\n'
+
+                f'ctx_in_debug: {cls.ctx_in_debug}\n\n'
 
                 f'_debug_lock: {cls._debug_lock}\n'
                 f'lock_stats: {lock_stats}\n'
@@ -234,16 +226,29 @@ class Lock:
         )
 
     @classmethod
-    def release(cls):
+    @pdbp.hideframe
+    def release(
+        cls,
+        force: bool = False,
+    ):
+        lock: trio.StrictFIFOLock = cls._debug_lock
         try:
-            if not DebugStatus.is_main_trio_thread():
-                trio.from_thread.run_sync(
-                    cls._debug_lock.release
-                )
+            if lock.locked():
+                if not DebugStatus.is_main_trio_thread():
+                    trio.from_thread.run_sync(
+                        cls._debug_lock.release
+                    )
+                else:
+                    cls._debug_lock.release()
+
+                message: str = 'TTY lock released for child\n'
             else:
-                cls._debug_lock.release()
+                message: str = 'TTY lock not held by any child\n'
 
         except RuntimeError as rte:
+            message: str = 'TTY lock FAILED to release for child??\n'
+            log.exception(message)
+
             # uhhh makes no sense but been seeing the non-owner
             # release error even though this is definitely the task
             # that locked?
@@ -256,7 +261,7 @@ class Lock:
             #     raise RuntimeError(
             #         'Stale `Lock` detected, no remote task active!?\n'
             #         f'|_{owner}\n'
-            #         # f'{Lock}'
+            #         # f'{cls}'
             #     ) from rte
 
             if owner:
@@ -266,23 +271,265 @@ class Lock:
             # something somethin corrupts a cancel-scope
             # somewhere..
 
+        finally:
+            # IFF there are no more requesting tasks queued up fire, the
+            # "tty-unlocked" event thereby alerting any monitors of the lock that
+            # we are now back in the "tty unlocked" state. This is basically
+            # and edge triggered signal around an empty queue of sub-actor
+            # tasks that may have tried to acquire the lock.
+            stats = cls._debug_lock.statistics()
+            if (
+                not stats.owner
+                or force
+                # and cls.no_remote_has_tty is not None
+            ):
+                message += '-> No more child ctx tasks hold the TTY lock!\n'
+
+                # set and release
+                if cls.no_remote_has_tty is not None:
+                    cls.no_remote_has_tty.set()
+                    cls.no_remote_has_tty = None
+
+                    # cls.remote_task_in_debug = None
+
+                else:
+                    message += (
+                        f'-> Not signalling `Lock.no_remote_has_tty` since it has value:{cls.no_remote_has_tty}\n'
+                    )
+
+            else:
+                # wakeup any waiters since the lock was released
+                # (presumably) temporarily.
+                if no_remote_has_tty := cls.no_remote_has_tty:
+                    no_remote_has_tty.set()
+                    no_remote_has_tty = trio.Event()
+
+                message += (
+                    f'-> A child ctx task still owns the `Lock` ??\n'
+                    f'   |_owner task: {stats.owner}\n'
+                )
+
+            cls.ctx_in_debug = None
+
+    @classmethod
+    @acm
+    async def acquire(
+        cls,
+        ctx: Context,
+        # subactor_uid: tuple[str, str],
+        # remote_task_uid: str,
+
+    ) -> AsyncIterator[trio.StrictFIFOLock]:
+        '''
+        Acquire a root-actor local FIFO lock which tracks mutex access of
+        the process tree's global debugger breakpoint.
+
+        This lock avoids tty clobbering (by preventing multiple processes
+        reading from stdstreams) and ensures multi-actor, sequential access
+        to the ``pdb`` repl.
+
+        '''
+        if not is_root_process():
+            raise RuntimeError('Only callable by a root actor task!')
+
+        # subactor_uid: tuple[str, str] = ctx.chan.uid
+        we_acquired: bool = False
+        log.runtime(
+            f'Attempting to acquire TTY lock for sub-actor\n'
+            f'{ctx}'
+        )
         try:
-            # sometimes the ``trio`` might already be terminated in
-            # which case this call will raise.
-            if DebugStatus.repl_release is not None:
-                DebugStatus.repl_release.set()
+            pre_msg: str = (
+                f'Entering lock checkpoint for sub-actor\n'
+                f'{ctx}'
+            )
+            stats = cls._debug_lock.statistics()
+            if owner := stats.owner:
+                # and cls.no_remote_has_tty is not None
+                pre_msg += (
+                    f'\n'
+                    f'`Lock` already held by local task?\n'
+                    f'{owner}\n\n'
+                    # f'On behalf of task: {cls.remote_task_in_debug!r}\n'
+                    f'On behalf of IPC ctx\n'
+                    f'{ctx}'
+                )
+            log.runtime(pre_msg)
+
+            # NOTE: if the surrounding cancel scope from the
+            # `lock_tty_for_child()` caller is cancelled, this line should
+            # unblock and NOT leave us in some kind of
+            # a "child-locked-TTY-but-child-is-uncontactable-over-IPC"
+            # condition.
+            await cls._debug_lock.acquire()
+            cls.ctx_in_debug = ctx
+            we_acquired = True
+            if cls.no_remote_has_tty is None:
+                # mark the tty lock as being in use so that the runtime
+                # can try to avoid clobbering any connection from a child
+                # that's currently relying on it.
+                cls.no_remote_has_tty = trio.Event()
+                # cls.remote_task_in_debug = remote_task_uid
+
+            log.runtime(
+                f'TTY lock acquired for sub-actor\n'
+                f'{ctx}'
+            )
+
+            # NOTE: critical section: this yield is unshielded!
+
+            # IF we received a cancel during the shielded lock entry of some
+            # next-in-queue requesting task, then the resumption here will
+            # result in that ``trio.Cancelled`` being raised to our caller
+            # (likely from ``lock_tty_for_child()`` below)!  In
+            # this case the ``finally:`` below should trigger and the
+            # surrounding caller side context should cancel normally
+            # relaying back to the caller.
+
+            yield cls._debug_lock
 
         finally:
-            cls.repl = None
-            cls.global_actor_in_debug = None
+            message :str = 'Exiting `Lock.acquire()` on behalf of sub-actor\n'
+            if (
+                we_acquired
+                # and
+                # cls._debug_lock.locked()
+            ):
+                message += '-> TTY lock released by child\n'
+                cls.release()
 
-            # restore original sigint handler
-            DebugStatus.unshield_sigint()
-            # actor-local state, irrelevant for non-root.
-            DebugStatus.repl_task = None
+            else:
+                message += '-> TTY lock never acquired by child??\n'
+
+            log.runtime(
+                f'{message}\n'
+                f'{ctx}'
+            )
 
 
-# TODO: actually use this instead throughout for subs!
+@tractor.context
+async def lock_tty_for_child(
+
+    ctx: Context,
+    subactor_task_uid: tuple[str, int],
+
+) -> LockStatus|LockRelease:
+    '''
+    Lock the TTY in the root process of an actor tree in a new
+    inter-actor-context-task such that the ``pdbp`` debugger console
+    can be mutex-allocated to the calling sub-actor for REPL control
+    without interference by other processes / threads.
+
+    NOTE: this task must be invoked in the root process of the actor
+    tree. It is meant to be invoked as an rpc-task and should be
+    highly reliable at releasing the mutex complete!
+
+    '''
+    subactor_uid: tuple[str, str] = ctx.chan.uid
+    # NOTE: we use the IPC ctx's cancel scope directly in order to
+    # ensure that on any transport failure, or cancellation request
+    # from the child we expect
+    # `Context._maybe_cancel_and_set_remote_error()` to cancel this
+    # scope despite the shielding we apply below.
+    debug_lock_cs: CancelScope = ctx._scope
+
+    try:
+        if ctx.cid in Lock._blocked:
+            raise RuntimeError(
+                f'Double lock request!?\n'
+                f'The same remote task already has an active request for TTY lock ??\n\n'
+                f'subactor uid: {subactor_uid}\n\n'
+
+                'This might be mean that the requesting task '
+                'in `request_root_stdio_lock()` may have crashed?\n'
+                'Consider that an internal bug exists given the TTY '
+                '`Lock`ing IPC dialog..\n'
+            )
+
+        root_task_name: str = current_task().name
+        if tuple(subactor_uid) in Lock._blocked:
+            log.warning(
+                f'Subactor is blocked from acquiring debug lock..\n'
+                f'subactor_uid: {subactor_uid}\n'
+                f'remote task: {subactor_task_uid}\n'
+            )
+            ctx._enter_debugger_on_cancel: bool = False
+            await ctx.cancel(f'Debug lock blocked for {subactor_uid}')
+            # TODO: remove right?
+            # return LockStatus(
+            #     subactor_uid=subactor_uid,
+            #     cid=ctx.cid,
+            #     locked=False,
+            # )
+
+        # TODO: when we get to true remote debugging
+        # this will deliver stdin data?
+
+        log.debug(
+            'Subactor attempting to acquire TTY lock\n'
+            f'root task: {root_task_name}\n'
+            f'subactor_uid: {subactor_uid}\n'
+            f'remote task: {subactor_task_uid}\n'
+        )
+        DebugStatus.shield_sigint()
+        Lock._blocked.add(ctx.cid)
+        with (
+            # enable the locking msgspec
+            apply_debug_pldec(),
+        ):
+            async with Lock.acquire(ctx=ctx):
+                debug_lock_cs.shield = True
+
+                # indicate to child that we've locked stdio
+                await ctx.started(
+                    LockStatus(
+                        subactor_uid=subactor_uid,
+                        cid=ctx.cid,
+                        locked=True,
+                    )
+                )
+
+                log.debug( f'Actor {subactor_uid} acquired TTY lock')
+
+                # wait for unlock pdb by child
+                async with ctx.open_stream() as stream:
+                    release_msg: LockRelease = await stream.receive()
+
+                    # TODO: security around only releasing if
+                    # these match?
+                    log.pdb(
+                        f'TTY lock released requested\n\n'
+                        f'{release_msg}\n'
+                    )
+                    assert release_msg.cid == ctx.cid
+                    assert release_msg.subactor_uid == tuple(subactor_uid)
+
+                log.debug(f'Actor {subactor_uid} released TTY lock')
+
+            return LockStatus(
+                subactor_uid=subactor_uid,
+                cid=ctx.cid,
+                locked=False,
+            )
+
+    except BaseException:
+        log.exception(
+            'Errored during root TTY-lock dialog?\n'
+            'Forcing release since an internal error caused this!\n'
+        )
+        Lock.release(force=True)
+        raise
+
+    finally:
+        Lock._blocked.remove(ctx.cid)
+        if (no_locker := Lock.no_remote_has_tty):
+            no_locker.set()
+
+        DebugStatus.unshield_sigint()
+
+
+# TODO: rename to ReplState or somethin?
+# DebugRequest, make it a singleton instance?
 class DebugStatus:
     '''
     Singleton-state for debugging machinery in a subactor.
@@ -297,18 +544,18 @@ class DebugStatus:
     '''
     repl: PdbREPL|None = None
     repl_task: Task|None = None
-    req_cs: trio.CancelScope|None = None
+    req_ctx: Context|None = None
+    req_cs: CancelScope|None = None
     repl_release: trio.Event|None = None
-
+    req_finished: trio.Event|None = None
     lock_status: LockStatus|None = None
 
-    _orig_sigint_handler: Callable | None = None
+    _orig_sigint_handler: Callable|None = None
     _trio_handler: (
         Callable[[int, FrameType|None], Any]
         |int
         | None
     ) = None
-
 
     @classmethod
     def repr(cls) -> str:
@@ -316,7 +563,7 @@ class DebugStatus:
             f'repl: {cls.repl}\n'
             f'repl_task: {cls.repl_task}\n'
             f'repl_release: {cls.repl_release}\n'
-            f'req_cs: {cls.req_cs}\n'
+            f'req_ctx: {cls.req_ctx}\n'
         )
         body: str = textwrap.indent(
             fields,
@@ -328,19 +575,37 @@ class DebugStatus:
             ')>'
         )
 
+    # TODO: how do you get this to work on a non-inited class?
+    # __repr__ = classmethod(repr)
+    # __str__ = classmethod(repr)
+
     @classmethod
     def shield_sigint(cls):
         '''
         Shield out SIGINT handling (which by default triggers
-        `trio.Task` cancellation) in subactors when the `pdb` REPL
+        `trio.Task` cancellation) in subactors when a `pdb` REPL
         is active.
 
-        Avoids cancellation of the current actor (task) when the
-        user mistakenly sends ctl-c or a signal is received from
-        an external request; explicit runtime cancel requests are
-        allowed until the use exits the REPL session using
-        'continue' or 'quit', at which point the orig SIGINT
-        handler is restored.
+        Avoids cancellation of the current actor (task) when the user
+        mistakenly sends ctl-c or via a recevied signal (from an
+        external request). Explicit runtime cancel requests are
+        allowed until the current REPL-session (the blocking call
+        `Pdb.interaction()`) exits, normally via the 'continue' or
+        'quit' command - at which point the orig SIGINT handler is
+        restored via `.unshield_sigint()` below.
+
+        Impl notes:
+        -----------
+        - we prefer that `trio`'s default handler is always used when
+          SIGINT is unshielded (hence disabling the `pdb.Pdb`
+          defaults in `mk_pdb()`) such that reliable KBI cancellation
+          is always enforced.
+
+        - we always detect whether we're running from a non-main
+          thread, in which case schedule the SIGINT shielding override
+          to in the main thread as per,
+
+          https://docs.python.org/3/library/signal.html#signals-and-threads
 
         '''
         #
@@ -364,6 +629,12 @@ class DebugStatus:
     @classmethod
     @pdbp.hideframe  # XXX NOTE XXX see below in `.pause_from_sync()`
     def unshield_sigint(cls):
+        '''
+        Un-shield SIGINT for REPL-active (su)bactor.
+
+        See details in `.shield_sigint()`.
+
+        '''
         # always restore ``trio``'s sigint handler. see notes below in
         # the pdb factory about the nightmare that is that code swapping
         # out the handler when the repl activates...
@@ -374,6 +645,11 @@ class DebugStatus:
                 cls._trio_handler,
             )
         else:
+            trio_h: Callable = cls._trio_handler
+            # XXX should never really happen XXX
+            if not trio_h:
+                mk_pdb().set_trace()
+
             signal.signal(
                 signal.SIGINT,
                 cls._trio_handler,
@@ -410,6 +686,36 @@ class DebugStatus:
         #     threading.current_thread()
         #     is not threading.main_thread()
         # )
+
+    @classmethod
+    @pdbp.hideframe
+    def release(
+        cls,
+        cancel_req_task: bool = True,
+    ):
+        try:
+            # sometimes the task might already be terminated in
+            # which case this call will raise an RTE?
+            if cls.repl_release is not None:
+                cls.repl_release.set()
+
+        finally:
+            # if req_ctx := cls.req_ctx:
+            #     req_ctx._scope.cancel()
+
+            if (
+                cancel_req_task
+                and
+                (req_cs := cls.req_cs)
+            ):
+                req_cs.cancel()
+
+            # restore original sigint handler
+            cls.unshield_sigint()
+
+            # actor-local state, irrelevant for non-root.
+            cls.repl_task = None
+            cls.repl = None
 
 
 class TractorConfig(pdbp.DefaultConfig):
@@ -466,13 +772,24 @@ class PdbREPL(pdbp.Pdb):
         try:
             super().set_continue()
         finally:
-            Lock.release()
+            DebugStatus.release()
+
+            # NOTE: for subactors the stdio lock is released via the
+            # allocated RPC locker task, so for root we have to do it
+            # manually.
+            if is_root_process():
+                Lock.release()
 
     def set_quit(self):
         try:
             super().set_quit()
         finally:
-            Lock.release()
+            DebugStatus.release(
+                    cancel_req_task=False,
+                )
+
+            if is_root_process():
+                Lock.release()
 
     # TODO: special handling where we just want the next LOC and
     # not to resume to the next pause/crash point?
@@ -515,411 +832,295 @@ class PdbREPL(pdbp.Pdb):
         return None
 
 
-@acm
-async def _acquire_debug_lock_from_root_task(
-    subactor_uid: tuple[str, str],
-    remote_task_uid: str,
-
-) -> AsyncIterator[trio.StrictFIFOLock]:
-    '''
-    Acquire a root-actor local FIFO lock which tracks mutex access of
-    the process tree's global debugger breakpoint.
-
-    This lock avoids tty clobbering (by preventing multiple processes
-    reading from stdstreams) and ensures multi-actor, sequential access
-    to the ``pdb`` repl.
-
-    '''
-    # task_name: str = current_task().name
-    we_acquired: bool = False
-
-    log.runtime(
-        f'Attempting to acquire TTY lock for,\n'
-        f'subactor_uid: {subactor_uid}\n'
-        f'remote task: {remote_task_uid}\n'
-    )
-    try:
-        pre_msg: str = (
-            f'Entering lock checkpoint for sub-actor\n'
-            f'subactor_uid: {subactor_uid}\n'
-            f'remote task: {remote_task_uid}\n'
-        )
-        stats = Lock._debug_lock.statistics()
-        if owner := stats.owner:
-            # and Lock.no_remote_has_tty is not None
-            pre_msg += (
-                f'\n'
-                f'`Lock` already held by local task\n'
-                f'{owner}\n\n'
-                f'On behalf of remote task: {Lock.remote_task_in_debug!r}\n'
-            )
-        log.runtime(pre_msg)
-
-        # NOTE: if the surrounding cancel scope from the
-        # `lock_tty_for_child()` caller is cancelled, this line should
-        # unblock and NOT leave us in some kind of
-        # a "child-locked-TTY-but-child-is-uncontactable-over-IPC"
-        # condition.
-        await Lock._debug_lock.acquire()
-        we_acquired = True
-
-        if Lock.no_remote_has_tty is None:
-            # mark the tty lock as being in use so that the runtime
-            # can try to avoid clobbering any connection from a child
-            # that's currently relying on it.
-            Lock.no_remote_has_tty = trio.Event()
-            Lock.remote_task_in_debug = remote_task_uid
-
-        Lock.global_actor_in_debug = subactor_uid
-        log.runtime(
-            f'TTY lock acquired for,\n'
-            f'subactor_uid: {subactor_uid}\n'
-            f'remote task: {remote_task_uid}\n'
-        )
-
-        # NOTE: critical section: this yield is unshielded!
-
-        # IF we received a cancel during the shielded lock entry of some
-        # next-in-queue requesting task, then the resumption here will
-        # result in that ``trio.Cancelled`` being raised to our caller
-        # (likely from ``lock_tty_for_child()`` below)!  In
-        # this case the ``finally:`` below should trigger and the
-        # surrounding caller side context should cancel normally
-        # relaying back to the caller.
-
-        yield Lock._debug_lock
-
-    finally:
-        if (
-            we_acquired
-            and
-            Lock._debug_lock.locked()
-        ):
-            Lock._debug_lock.release()
-
-        # IFF there are no more requesting tasks queued up fire, the
-        # "tty-unlocked" event thereby alerting any monitors of the lock that
-        # we are now back in the "tty unlocked" state. This is basically
-        # and edge triggered signal around an empty queue of sub-actor
-        # tasks that may have tried to acquire the lock.
-        stats = Lock._debug_lock.statistics()
-        if (
-            not stats.owner
-            # and Lock.no_remote_has_tty is not None
-        ):
-            # log.runtime(
-            log.info(
-                f'No more child ctx tasks hold the TTY lock!\n'
-                f'last subactor: {subactor_uid}\n'
-                f'remote task: {remote_task_uid}\n'
-            )
-            if Lock.no_remote_has_tty is not None:
-                # set and release
-                Lock.no_remote_has_tty.set()
-                Lock.no_remote_has_tty = None
-                Lock.remote_task_in_debug = None
-            else:
-                log.warning(
-                    'Not signalling `Lock.no_remote_has_tty` since it has value:\n'
-                    f'{Lock.no_remote_has_tty}\n'
-                )
-        else:
-            log.info(
-                f'A child ctx tasks still holds the TTY lock ??\n'
-                f'last subactor: {subactor_uid}\n'
-                f'remote task: {remote_task_uid}\n'
-                f'current local owner task: {stats.owner}\n'
-            )
-
-        Lock.global_actor_in_debug = None
-        log.runtime(
-            'TTY lock released by child\n'
-            f'last subactor: {subactor_uid}\n'
-            f'remote task: {remote_task_uid}\n'
-        )
-
-
-@tractor.context
-async def lock_tty_for_child(
-
-    ctx: tractor.Context,
-
-    # TODO: when we finally get a `Start.params: ParamSpec`
-    # working it'd sure be nice to have `msgspec` auto-decode this
-    # to an actual tuple XD
-    subactor_uid: tuple[str, str],
-    subactor_task_uid: tuple[str, int],
-
-) -> LockStatus|LockRelease:
-    '''
-    Lock the TTY in the root process of an actor tree in a new
-    inter-actor-context-task such that the ``pdbp`` debugger console
-    can be mutex-allocated to the calling sub-actor for REPL control
-    without interference by other processes / threads.
-
-    NOTE: this task must be invoked in the root process of the actor
-    tree. It is meant to be invoked as an rpc-task and should be
-    highly reliable at releasing the mutex complete!
-
-    '''
-    req_task_uid: tuple = tuple(subactor_task_uid)
-    if req_task_uid in Lock._blocked:
-        raise RuntimeError(
-            f'Double lock request!?\n'
-            f'The same remote task already has an active request for TTY lock ??\n\n'
-            f'task uid: {req_task_uid}\n'
-            f'subactor uid: {subactor_uid}\n\n'
-
-            'This might be mean that the requesting task '
-            'in `wait_for_parent_stdin_hijack()` may have crashed?\n'
-            'Consider that an internal bug exists given the TTY '
-            '`Lock`ing IPC dialog..\n'
-        )
-
-    root_task_name: str = current_task().name
-    if tuple(subactor_uid) in Lock._blocked:
-        log.warning(
-            f'Subactor is blocked from acquiring debug lock..\n'
-            f'subactor_uid: {subactor_uid}\n'
-            f'remote task: {subactor_task_uid}\n'
-        )
-        ctx._enter_debugger_on_cancel: bool = False
-        await ctx.cancel(f'Debug lock blocked for {subactor_uid}')
-        return LockStatus(
-            subactor_uid=subactor_uid,
-            cid=ctx.cid,
-            locked=False,
-        )
-
-    # TODO: when we get to true remote debugging
-    # this will deliver stdin data?
-
-    log.debug(
-        'Subactor attempting to acquire TTY lock\n'
-        f'root task: {root_task_name}\n'
-        f'subactor_uid: {subactor_uid}\n'
-        f'remote task: {subactor_task_uid}\n'
-    )
-    DebugStatus.shield_sigint()
-    try:
-        Lock._blocked.add(req_task_uid)
-        with (
-            # NOTE: though a cs is created for every subactor lock
-            # REQUEST in this ctx-child task, only the root-task
-            # holding the `Lock` (on behalf of the ctx parent task
-            # in a subactor) will set
-            # `Lock._locking_task_cs` such that if the
-            # lock holdingn task ever needs to be cancelled (since
-            # it's shielded by default) that global ref can be
-            # used to do so!
-            trio.CancelScope(shield=True) as debug_lock_cs,
-
-            # TODO: make this ONLY limit the pld_spec such that we
-            # can on-error-decode-`.pld: Raw` fields in
-            # `Context._deliver_msg()`?
-            _codec.limit_msg_spec(
-                payload_spec=__msg_spec__,
-            ) as codec,
-        ):
-            # sanity?
-            # TODO: don't need the ref right?
-            assert codec is _codec.current_codec()
-
-            async with _acquire_debug_lock_from_root_task(
-                subactor_uid,
-                subactor_task_uid,
-            ):
-                # XXX SUPER IMPORTANT BELOW IS ON THIS LINE XXX
-                # without that the root cs might be,
-                # - set and then removed in the finally block by 
-                #   a task that never acquired the lock, leaving 
-                # - the task that DID acquire the lock STUCK since
-                #   it's original cs was GC-ed bc the first task
-                #   already set the global ref to `None`
-                Lock.set_locking_task_cs(debug_lock_cs)
-
-                # indicate to child that we've locked stdio
-                await ctx.started(
-                    LockStatus(
-                        subactor_uid=subactor_uid,
-                        cid=ctx.cid,
-                        locked=True,
-                    )
-                )
-
-                log.debug( f'Actor {subactor_uid} acquired TTY lock')
-
-                # wait for unlock pdb by child
-                async with ctx.open_stream() as stream:
-                    release_msg: LockRelease = await stream.receive()
-
-                    # TODO: security around only releasing if
-                    # these match?
-                    log.pdb(
-                        f'TTY lock released requested\n\n'
-                        f'{release_msg}\n'
-                    )
-                    assert release_msg.cid == ctx.cid
-                    assert release_msg.subactor_uid == tuple(subactor_uid)
-
-                log.debug(f'Actor {subactor_uid} released TTY lock')
-
-            return LockStatus(
-                subactor_uid=subactor_uid,
-                cid=ctx.cid,
-                locked=False,
-            )
-
-    finally:
-        debug_lock_cs.cancel()
-        Lock._blocked.remove(req_task_uid)
-        Lock.set_locking_task_cs(None)
-        DebugStatus.unshield_sigint()
-
-
 @cm
-def apply_debug_codec() -> _codec.MsgCodec:
+def apply_debug_pldec() -> _codec.MsgCodec:
     '''
     Apply the subactor TTY `Lock`-ing protocol's msgspec temporarily
     (only in the current task).
 
     '''
-    with (
-        _codec.limit_msg_spec(
-            payload_spec=__msg_spec__,
-        ) as debug_codec,
-    ):
-        assert debug_codec is _codec.current_codec()
-        log.pdb(
-            'Applied `.devx._debug` msg-spec via codec\n'
-            f'{debug_codec}\n'
-        )
-        yield debug_codec
 
-    log.pdb(
-        'REMOVED `.devx._debug` msg-spec via codec\n'
-        f'{debug_codec}\n'
+    from tractor.msg import (
+        _ops as msgops,
+    )
+    orig_plrx: msgops.PldRx = msgops.current_pldrx()
+    orig_pldec: msgops.MsgDec = orig_plrx.pld_dec
+
+    try:
+        with msgops.limit_plds(
+            spec=__pld_spec__,
+        ) as debug_dec:
+            assert debug_dec is msgops.current_pldrx().pld_dec
+            log.runtime(
+                'Applied `.devx._debug` pld-spec\n\n'
+                f'{debug_dec}\n'
+            )
+            yield debug_dec
+
+    finally:
+        assert (
+            (plrx := msgops.current_pldrx()) is orig_plrx
+            and
+            plrx.pld_dec is orig_pldec
+        )
+        log.runtime(
+            'Reverted to previous pld-spec\n\n'
+            f'{orig_pldec}\n'
+        )
+
+# TODO: add this formatter to `.devx.pformat()`!
+def pformat_cs(
+    cs: CancelScope,
+    var_name: str = 'cs',
+) -> str:
+    return (
+        f'{var_name}: {cs}\n'
+        f'{var_name}.cancel_called = {cs.cancel_called}\n'
+        f'{var_name}.cancelled_caught = {cs.cancelled_caught}\n'
+        f'{var_name}._cancel_status = {cs._cancel_status}\n'
+        f'{var_name}.shield = {cs.shield}\n'
     )
 
 
-async def wait_for_parent_stdin_hijack(
+async def request_root_stdio_lock(
     actor_uid: tuple[str, str],
     task_uid: tuple[str, int],
-    task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED
+    task_status: TaskStatus[CancelScope] = trio.TASK_STATUS_IGNORED
 ):
     '''
-    Connect to the root actor via a ``Context`` and invoke a task which
-    locks a root-local TTY lock: ``lock_tty_for_child()``; this func
-    should be called in a new task from a child actor **and never the
-    root*.
+    Connect to the root actor of this process tree and RPC-invoke
+    a task which acquires a std-streams global `Lock`: a actor tree
+    global mutex which prevents other subactors from entering
+    a `PdbREPL` at the same time as any other.
 
-    This function is used by any sub-actor to acquire mutex access to
-    the ``pdb`` REPL and thus the root's TTY for interactive debugging
-    (see below inside ``pause()``). It can be used to ensure that
-    an intermediate nursery-owning actor does not clobber its children
-    if they are in debug (see below inside
-    ``maybe_wait_for_debugger()``).
+    The actual `Lock` singleton exists ONLY in the root actor's
+    memory and does nothing more then set process-tree global state.
+    The actual `PdbREPL` interaction is completely isolated to each
+    sub-actor and with the `Lock` merely providing the multi-process
+    syncing mechanism to avoid any subactor (or the root itself) from
+    entering the REPL at the same time.
 
     '''
-    from .._discovery import get_root
+    # TODO: likely we can implement this mutex more generally as
+    #      a `._sync.Lock`?
+    # -[ ] simply add the wrapping needed for the debugger specifics?
+    #   - the `__pld_spec__` impl and maybe better APIs for the client
+    #   vs. server side state tracking? (`Lock` + `DebugStatus`)
+    # -[ ] for eg. `mp` has a multi-proc lock via the manager
+    #   - https://docs.python.org/3.8/library/multiprocessing.html#synchronization-primitives
+    # -[ ] technically we need a `RLock` since re-acquire should be a noop
+    #   - https://docs.python.org/3.8/library/multiprocessing.html#multiprocessing.RLock
+    DebugStatus.req_finished = trio.Event()
+    try:
+        from tractor._discovery import get_root
+        with (
+            # NOTE: we need this to ensure that this task exits
+            # BEFORE the REPl instance raises an error like
+            # `bdb.BdbQuit` directly, OW you get a trio cs stack
+            # corruption!
+            # Further, the since this task is spawned inside the
+            # `Context._scope_nursery: trio.Nursery`, once an RPC
+            # task errors that cs is cancel_called and so if we want
+            # to debug the TPC task that failed we need to shield
+            # against that expected `.cancel()` call and instead
+            # expect all of the `PdbREPL`.set_[continue/quit/]()`
+            # methods to unblock this task by setting the
+            # `.repl_release: # trio.Event`.
+            trio.CancelScope(shield=True) as req_cs,
 
-    with (
-        trio.CancelScope(shield=True) as cs,
-        apply_debug_codec(),
-    ):
-        DebugStatus.req_cs = cs
-        try:
-            # TODO: merge into sync async with ?
-            async with get_root() as portal:
-                # this syncs to child's ``Context.started()`` call.
-                async with portal.open_context(
-                    lock_tty_for_child,
-                    subactor_uid=actor_uid,
-                    subactor_task_uid=task_uid,
+            # NOTE: set it here in the locker request task bc it's
+            # possible for multiple such requests for the lock in any
+            # single sub-actor AND there will be a race between when the
+            # root locking task delivers the `Started(pld=LockStatus)`
+            # and when the REPL is actually entered by the requesting
+            # application task who called
+            # `.pause()`/`.post_mortem()`.
+            #
+            # SO, applying the pld-spec here means it is only applied to
+            # this IPC-ctx request task, NOT any other task(s)
+            # including the one that actually enters the REPL. This
+            # is oc desired bc ow the debugged task will msg-type-error.
+            #
+            apply_debug_pldec() as debug_dec,
+        ):
+            log.critical(
+                'Request cancel-scope is:\n\n'
+                f'{pformat_cs(req_cs, var_name="req_cs")}\n\n'
 
-                ) as (ctx, resp):
-                    log.pdb(
-                        'Subactor locked TTY with msg\n\n'
-                        f'{resp}\n'
-                    )
-                    assert resp.subactor_uid == actor_uid
-                    assert resp.cid
+            )
+            DebugStatus.req_cs = req_cs
+            try:
+                # TODO: merge into single async with ?
+                async with get_root() as portal:
 
-                    async with ctx.open_stream() as stream:
-                        try:  # to unblock local caller
+                    async with portal.open_context(
+                        lock_tty_for_child,
+                        subactor_task_uid=task_uid,
+                    ) as (ctx, status):
+
+                        DebugStatus.req_ctx = ctx
+
+                        from tractor.msg import (
+                            _ops as msgops,
+                        )
+                        assert (
+                            msgops.current_pldrx().pld_dec is debug_dec
+                        )
+                        log.debug(
+                            'Subactor locked TTY with msg\n\n'
+                            f'{status}\n'
+                        )
+
+                        # mk_pdb().set_trace()
+                        assert status.subactor_uid == actor_uid
+                        assert status.cid
+
+                        # set last rxed lock dialog status.
+                        DebugStatus.lock_status = status
+
+                        async with ctx.open_stream() as stream:
                             assert DebugStatus.repl_release
-                            task_status.started(cs)
+                            task_status.started(ctx)
 
-                            # wait for local task to exit and
-                            # release the REPL
+                            # wait for local task to exit its
+                            # `PdbREPL.interaction()`, call
+                            # `DebugStatus.release()` and then
+                            # unblock here.
                             await DebugStatus.repl_release.wait()
-
-                        finally:
                             await stream.send(
                                 LockRelease(
                                     subactor_uid=actor_uid,
-                                    cid=resp.cid,
+                                    cid=status.cid,
                                 )
                             )
 
-                        # sync with callee termination
-                        status: LockStatus = await ctx.result()
-                        assert not status.locked
+                            # sync with child-side root locker task
+                            # completion
+                            status: LockStatus = await ctx.result()
+                            assert not status.locked
+                            DebugStatus.lock_status = status
 
-                log.pdb(
-                    'TTY lock was released for subactor with msg\n\n'
-                    f'{status}\n\n'
-                    'Exitting {ctx.side!r} side locking of locking ctx'
+                    log.pdb(
+                        'TTY lock was released for subactor with msg\n\n'
+                        f'{status}\n\n'
+                        f'Exitting {ctx.side!r}-side of locking ctx'
+                    )
+
+            except (
+                tractor.ContextCancelled,
+                trio.Cancelled,
+            ):
+                log.exception(
+                    'Debug lock request CANCELLED?\n\n'
+                    f'{pformat_cs(req_cs, var_name="req_cs")}\n\n'
+                    f'{pformat_cs(ctx._scope, var_name="ctx._scope")}\n\n'
+                    f'{ctx}'
                 )
+                raise
 
-        except ContextCancelled:
-            log.warning('Root actor cancelled debug lock')
-            raise
+            except (
+                BaseException,
+            ):
+                log.exception(
+                    'Failed during root TTY-lock dialog?\n'
+                    f'{ctx}\n'
 
-        finally:
-            DebugStatus.repl_task = None
-            log.debug('Exiting debugger TTY lock request func from child')
+                    f'Cancelling IPC ctx!\n'
+                )
+                await ctx.cancel()
+                raise
 
 
-    log.cancel('Reverting SIGINT handler!')
-    DebugStatus.unshield_sigint()
+    except (
+        tractor.ContextCancelled,
+        trio.Cancelled,
+    ):
+        log.cancel(
+            'Debug lock request CANCELLED?\n'
+            f'{ctx}\n'
+        )
+        raise
+
+    except BaseException:
+        log.exception('Errored during root TTY-lock dialog?')
+        raise
+
+    finally:
+        log.debug('Exiting debugger TTY lock request func from child')
+        # signal request task exit
+        DebugStatus.req_finished.set()
 
 
-
-def mk_mpdb() -> PdbREPL:
+def mk_pdb() -> PdbREPL:
     '''
-    Deliver a new `PdbREPL`: a multi-process safe `pdbp`
-    REPL using the magic of SC!
+    Deliver a new `PdbREPL`: a multi-process safe `pdbp.Pdb`-variant
+    using the magic of `tractor`'s SC-safe IPC.
+
+    B)
 
     Our `pdb.Pdb` subtype accomplishes multi-process safe debugging
     by:
 
-    - mutexing access to the root process' TTY & stdstreams
-      via an IPC managed `Lock` singleton per process tree.
+    - mutexing access to the root process' std-streams (& thus parent
+      process TTY) via an IPC managed `Lock` singleton per
+      actor-process tree.
 
-    - temporarily overriding any subactor's SIGINT handler to shield during
-      live REPL sessions in sub-actors such that cancellation is
-      never (mistakenly) triggered by a ctrl-c and instead only 
-      by either explicit requests in the runtime or 
+    - temporarily overriding any subactor's SIGINT handler to shield
+      during live REPL sessions in sub-actors such that cancellation
+      is never (mistakenly) triggered by a ctrl-c and instead only by
+      explicit runtime API requests or after the
+      `pdb.Pdb.interaction()` call has returned.
+
+    FURTHER, the `pdbp.Pdb` instance is configured to be `trio`
+    "compatible" from a SIGINT handling perspective; we mask out
+    the default `pdb` handler and instead apply `trio`s default
+    which mostly addresses all issues described in:
+
+     - https://github.com/python-trio/trio/issues/1155
+
+    The instance returned from this factory should always be
+    preferred over the default `pdb[p].set_trace()` whenever using
+    a `pdb` REPL inside a `trio` based runtime.
 
     '''
     pdb = PdbREPL()
-
-    # Always shield out SIGINTs for subactors when REPL is active.
-    #
-    # XXX detect whether we're running from a non-main thread
-    # in which case schedule the SIGINT shielding override
-    # to in the main thread.
-    # https://docs.python.org/3/library/signal.html#signals-and-threads
-    DebugStatus.shield_sigint()
 
     # XXX: These are the important flags mentioned in
     # https://github.com/python-trio/trio/issues/1155
     # which resolve the traceback spews to console.
     pdb.allow_kbdint = True
     pdb.nosigint = True
-
     return pdb
+
+
+def any_connected_locker_child() -> bool:
+    '''
+    Predicate to determine if a reported child subactor in debug
+    is actually connected.
+
+    Useful to detect stale `Lock` requests after IPC failure.
+
+    '''
+    actor: Actor = current_actor()
+
+    if not is_root_process():
+        raise RuntimeError('This is a root-actor only API!')
+
+    if (
+        (ctx := Lock.ctx_in_debug)
+        and
+        (uid_in_debug := ctx.chan.uid)
+    ):
+        chans: list[tractor.Channel] = actor._peers.get(
+            tuple(uid_in_debug)
+        )
+        if chans:
+            return any(
+                chan.connected()
+                for chan in chans
+            )
+
+    return False
 
 
 def shield_sigint_handler(
@@ -938,10 +1139,7 @@ def shield_sigint_handler(
 
     '''
     __tracebackhide__: bool = True
-    uid_in_debug: tuple[str, str]|None = Lock.global_actor_in_debug
-
     actor: Actor = current_actor()
-    case_handled: bool = False
 
     def do_cancel():
         # If we haven't tried to cancel the runtime then do that instead
@@ -956,28 +1154,8 @@ def shield_sigint_handler(
         else:
             raise KeyboardInterrupt
 
-    # try to see if the supposed (sub)actor in debug still
-    # has an active connection to *this* actor, and if not
-    # it's likely they aren't using the TTY lock / debugger
-    # and we should propagate SIGINT normally.
-    any_connected: bool = False
-    if uid_in_debug is not None:
-        chans: list[tractor.Channel] = actor._peers.get(
-            tuple(uid_in_debug)
-        )
-        if chans:
-            any_connected = any(chan.connected() for chan in chans)
-            if not any_connected:
-                log.warning(
-                    'A global actor reported to be in debug '
-                    'but no connection exists for this child!?\n'
-                    f'subactor_uid: {uid_in_debug}\n\n'
-                    'Allowing SIGINT propagation..'
-                )
-                return do_cancel()
-
     # only set in the actor actually running the REPL
-    repl: PdbREPL|None = Lock.repl
+    repl: PdbREPL|None = DebugStatus.repl
 
     # TODO: maybe we should flatten out all these cases using
     # a match/case?
@@ -985,98 +1163,102 @@ def shield_sigint_handler(
     # root actor branch that reports whether or not a child
     # has locked debugger.
     if is_root_process():
-        lock_cs: trio.CancelScope = Lock.get_locking_task_cs()
+        # try to see if the supposed (sub)actor in debug still
+        # has an active connection to *this* actor, and if not
+        # it's likely they aren't using the TTY lock / debugger
+        # and we should propagate SIGINT normally.
+        any_connected: bool = any_connected_locker_child()
+        # if not any_connected:
+        #     return do_cancel()
 
-        log.warning(
+        problem = (
             f'root {actor.uid} handling SIGINT\n'
             f'any_connected: {any_connected}\n\n'
 
             f'{Lock.repr()}\n'
         )
 
-        maybe_stale_lock_cs: bool = (
-            lock_cs is not None
-            # and not lock_cs.cancel_called
-            and uid_in_debug is None
-        )
-        if maybe_stale_lock_cs:
-            log.warning(
-                'Stale `Lock._locking_task_cs: CancelScope` DETECTED?\n'
-                f'|_{lock_cs}\n\n'
-            )
-            lock_cs.cancel()
-
-        if uid_in_debug:  # "someone" is (ostensibly) using debug `Lock`
+        if (
+            (ctx := Lock.ctx_in_debug)
+            and
+            (uid_in_debug := ctx.chan.uid) # "someone" is (ostensibly) using debug `Lock`
+        ):
             name_in_debug: str = uid_in_debug[0]
-            if (
-                not repl  # but it's NOT us, the root actor.
-            ):
-                # sanity: since no repl ref is set, we def shouldn't
-                # be the lock owner!
-                assert name_in_debug != 'root'
+            assert not repl
+            # if not repl:  # but it's NOT us, the root actor.
+            # sanity: since no repl ref is set, we def shouldn't
+            # be the lock owner!
+            assert name_in_debug != 'root'
 
+            # IDEAL CASE: child has REPL as expected
+            if any_connected:  # there are subactors we can contact
                 # XXX: only if there is an existing connection to the
                 # (sub-)actor in debug do we ignore SIGINT in this
                 # parent! Otherwise we may hang waiting for an actor
                 # which has already terminated to unlock.
-                if any_connected:  # there are subactors we can contact
-                    # NOTE: don't emit this with `.pdb()` level in
-                    # root without a higher level.
-                    log.debug(
-                        f'Ignoring SIGINT while debug REPL in use by child\n'
-                        f'subactor: {uid_in_debug}\n'
-                    )
-                    # returns here minus tail logic
-                    case_handled = True
-
-                else:
-                    message: str = (
-                        f'Ignoring SIGINT while debug REPL SUPPOSEDLY in use by child\n'
-                        f'subactor: {uid_in_debug}\n\n'
-                        f'BUT, no child actors are contactable!?!?\n\n'
-
-                        # f'Reverting to def `trio` SIGINT handler..\n'
-                    )
-
-                    if maybe_stale_lock_cs:
-                        lock_cs.cancel()
-                        message += (
-                            'Maybe `Lock._locking_task_cs: CancelScope` is stale?\n'
-                            f'|_{lock_cs}\n\n'
-                        )
-
-                    log.warning(message)
-                    # Lock.unshield_sigint()
-                    DebugStatus.unshield_sigint()
-                    case_handled = True
+                #
+                # NOTE: don't emit this with `.pdb()` level in
+                # root without a higher level.
+                log.runtime(
+                    f'Ignoring SIGINT while debug REPL in use by child '
+                    f'{uid_in_debug}\n'
+                )
+                problem = None
 
             else:
-                assert name_in_debug == 'root'  # we are the registered locker
-                assert repl  # we have a pdb REPL engaged
-                log.pdb(
-                    f'Ignoring SIGINT while debug REPL in use\n'
-                    f'root actor: {uid_in_debug}\n'
+                problem += (
+                    '\n'
+                    f'A `pdb` REPL is SUPPOSEDLY in use by child {uid_in_debug}\n'
+                    f'BUT, no child actors are IPC contactable!?!?\n'
                 )
-                # returns here minus tail logic
-                case_handled = True
 
-        # root actor still has this SIGINT handler active without
-        # an actor using the `Lock` (a bug state) ??
-        # => so immediately cancel any stale lock cs and revert
-        # the handler!
+        # IDEAL CASE: root has REPL as expected
         else:
-            # XXX revert back to ``trio`` handler since this handler shouldn't 
-            # be enabled withtout an actor using a debug REPL!
-            log.warning(
-                'Ignoring SIGINT in root actor but no actor using a `pdb` REPL?\n'
-                'Reverting SIGINT handler to `trio` default!\n'
-            )
+            # root actor still has this SIGINT handler active without
+            # an actor using the `Lock` (a bug state) ??
+            # => so immediately cancel any stale lock cs and revert
+            # the handler!
+            if not repl:
+                # TODO: WHEN should we revert back to ``trio``
+                # handler if this one is stale?
+                # -[ ] maybe after a counts work of ctl-c mashes?
+                # -[ ] use a state var like `stale_handler: bool`?
+                problem += (
+                    '\n'
+                    'No subactor is using a `pdb` REPL according `Lock.ctx_in_debug`?\n'
+                    'BUT, the root should be using it, WHY this handler ??\n'
+                )
+            else:
+                log.pdb(
+                    'Ignoring SIGINT while pdb REPL in use by root actor..\n'
+                )
+                problem = None
 
+        # XXX if one is set it means we ARE NOT operating an ideal
+        # case where a child subactor or us (the root) has the
+        # lock without any other detected problems.
+        if problem:
+
+            # detect, report and maybe clear a stale lock request
+            # cancel scope.
+            lock_cs: trio.CancelScope = Lock.get_locking_task_cs()
+            maybe_stale_lock_cs: bool = (
+                lock_cs is not None
+                and not lock_cs.cancel_called
+            )
             if maybe_stale_lock_cs:
+                problem += (
+                    '\n'
+                    'Stale `Lock.ctx_in_debug._scope: CancelScope` detected?\n'
+                    f'{Lock.ctx_in_debug}\n\n'
+
+                    '-> Calling ctx._scope.cancel()!\n'
+                )
                 lock_cs.cancel()
 
-            DebugStatus.unshield_sigint()
-            case_handled = True
+            # TODO: wen do we actually want/need this, see above.
+            # DebugStatus.unshield_sigint()
+            log.warning(problem)
 
     # child actor that has locked the debugger
     elif not is_root_process():
@@ -1092,14 +1274,13 @@ def shield_sigint_handler(
             not rent_chan.connected()
         ):
             log.warning(
-                'A global sub-actor reported to be in debug '
+                'This sub-actor thinks it is debugging '
                 'but it has no connection to its parent ??\n'
-                f'{uid_in_debug}\n'
+                f'{actor.uid}\n'
                 'Allowing SIGINT propagation..'
             )
             DebugStatus.unshield_sigint()
             # do_cancel()
-            case_handled = True
 
         task: str|None = DebugStatus.repl_task
         if (
@@ -1107,13 +1288,11 @@ def shield_sigint_handler(
             and
             repl
         ):
-        # if repl:
             log.pdb(
                 f'Ignoring SIGINT while local task using debug REPL\n'
                 f'|_{task}\n'
                 f'  |_{repl}\n'
             )
-            case_handled = True
         else:
             msg: str = (
                 'SIGINT shield handler still active BUT, \n\n'
@@ -1136,7 +1315,6 @@ def shield_sigint_handler(
                 'Reverting handler to `trio` default!\n'
             )
             DebugStatus.unshield_sigint()
-            case_handled = True
 
             # XXX ensure that the reverted-to-handler actually is
             # able to rx what should have been **this** KBI ;)
@@ -1156,7 +1334,7 @@ def shield_sigint_handler(
     # we want to alert the user that more input is expect since
     # nothing has been done dur to ignoring sigint.
     if (
-        repl  # only when this actor has a REPL engaged
+        repl  # only when current actor has a REPL engaged
     ):
         # XXX: yah, mega hack, but how else do we catch this madness XD
         if repl.shname == 'xonsh':
@@ -1174,72 +1352,19 @@ def shield_sigint_handler(
         # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
 
-    if not case_handled:
-        log.critical(
-            f'{actor.uid} UNHANDLED SIGINT !?!?\n'
-            # TODO: pprint for `Lock`?
-        )
+    # XXX only for tracing this handler
+    # log.warning('exiting SIGINT')
 
 
 _pause_msg: str = 'Attaching to pdb REPL in actor'
 
 
-def _set_trace(
-    actor: tractor.Actor|None = None,
-    pdb: PdbREPL|None = None,
-    shield: bool = False,
-
-    extra_frames_up_when_async: int = 1,
-    hide_tb: bool = True,
-):
-    __tracebackhide__: bool = hide_tb
-
-    actor: tractor.Actor = (
-        actor
-        or
-        current_actor()
-    )
-
-    # always start 1 level up from THIS in user code.
-    frame: FrameType|None
-    if frame := sys._getframe():
-        frame: FrameType = frame.f_back  # type: ignore
-
-    if (
-        frame
-        and (
-            pdb
-            and actor is not None
-        )
-    ):
-        # TODO: maybe print the actor supervion tree up to the
-        # root here? Bo
-
-        log.pdb(
-            f'{_pause_msg}\n'
-            '|\n'
-            # TODO: make an `Actor.__repr()__`
-            f'|_ {current_task()} @ {actor.uid}\n'
-        )
-        # no f!#$&* idea, but when we're in async land
-        # we need 2x frames up?
-        for i in range(extra_frames_up_when_async):
-            frame: FrameType = frame.f_back
-            log.debug(
-                f'Going up frame_{i}:\n|_{frame}\n'
-            )
-
-    # engage ze REPL
-    # B~()
-    pdb.set_trace(frame=frame)
-
-
 async def _pause(
 
-    debug_func: Callable = _set_trace,
+    debug_func: Callable|None,
 
     # NOTE: must be passed in the `.pause_from_sync()` case!
-    pdb: PdbREPL|None = None,
+    repl: PdbREPL|None = None,
 
     # TODO: allow caller to pause despite task cancellation,
     # exactly the same as wrapping with:
@@ -1249,11 +1374,15 @@ async def _pause(
     # is always show in the debugger on entry.. and there seems to
     # be no way to override it?..
     #
-    shield: bool = False,
+    # shield: bool = False,
     hide_tb: bool = True,
-    extra_frames_up_when_async: int = 4,
 
-    task_status: TaskStatus[trio.Event] = trio.TASK_STATUS_IGNORED
+    # bc, `debug_func()`, `_enter_repl_sync()` and `_pause()`
+    # extra_frames_up_when_async: int = 3,
+
+    task_status: TaskStatus[trio.Event] = trio.TASK_STATUS_IGNORED,
+
+    **debug_func_kwargs,
 
 ) -> None:
     '''
@@ -1277,8 +1406,9 @@ async def _pause(
                 'for infected `asyncio` mode!'
             ) from rte
 
-    # task_name: str = task.name
-
+    # TODO: this should be created as part of `DebugRequest()` init
+    # which should instead be a one-shot-use singleton much like
+    # the `PdbREPL`.
     if (
         not DebugStatus.repl_release
         or
@@ -1289,43 +1419,65 @@ async def _pause(
     if debug_func is not None:
         debug_func = partial(debug_func)
 
-    if pdb is None:
-        pdb: PdbREPL = mk_mpdb()
+    repl: PdbREPL = repl or mk_pdb()
 
+    # TODO: maybe make this a `PdbREPL` method or mod func?
+    # -[ ] factor out better, main reason for it is common logic for
+    #   both root and sub repl entry
     def _enter_repl_sync(
         debug_func: Callable,
     ) -> None:
         __tracebackhide__: bool = hide_tb
-        try:
-            # TODO: do we want to support using this **just** for the
-            # locking / common code (prolly to help address #320)?
-            #
-            if debug_func is None:
-                task_status.started(Lock)
-            else:
-                # block here one (at the appropriate frame *up*) where
-                # ``breakpoint()`` was awaited and begin handling stdio.
-                log.debug('Entering sync world of the `pdb` REPL..')
-                try:
-                    # log.critical(
-                    #     f'stack len: {len(pdb.stack)}\n'
-                    # )
-                    debug_func(
-                        actor,
-                        pdb,
-                        extra_frames_up_when_async=extra_frames_up_when_async,
-                        shield=shield,
-                    )
-                except BaseException:
-                    log.exception(
-                        'Failed to invoke internal `debug_func = '
-                        f'{debug_func.func.__name__}`\n'
-                    )
-                    raise
 
-        except bdb.BdbQuit:
-            Lock.release()
-            raise
+        # TODO: do we want to support using this **just** for the
+        # locking / common code (prolly to help address #320)?
+        #
+        if debug_func is None:
+            task_status.started(DebugStatus)
+        else:
+            # block here one (at the appropriate frame *up*) where
+            # ``breakpoint()`` was awaited and begin handling stdio.
+            log.debug('Entering sync world of the `pdb` REPL..')
+
+            # XXX used by the SIGINT handler to check if
+            # THIS actor is in REPL interaction
+            try:
+                # TODO: move this into a `open_debug_request()` @acm?
+                # -[ ] prolly makes the most send to do the request
+                #   task spawn as part of an `@acm` api which
+                #   delivers the `DebugRequest` instance and ensures
+                #   encapsing all the pld-spec and debug-nursery?
+                #
+                # set local actor task to avoid recurrent
+                # entries/requests from the same local task
+                # (to the root process).
+                DebugStatus.repl_task = task
+                DebugStatus.repl = repl
+                DebugStatus.shield_sigint()
+
+                # enter `PdbREPL` specific method
+                debug_func(
+                    repl=repl,
+                    hide_tb=hide_tb,
+                    **debug_func_kwargs,
+                )
+            except trio.Cancelled:
+                log.exception(
+                    'Cancelled during invoke of internal `debug_func = '
+                    f'{debug_func.func.__name__}`\n'
+                )
+                # NOTE: DON'T release lock yet
+                raise
+
+            except BaseException:
+                log.exception(
+                    'Failed to invoke internal `debug_func = '
+                    f'{debug_func.func.__name__}`\n'
+                )
+                # NOTE: OW this is ONLY called from the
+                # `.set_continue/next` hooks!
+                DebugStatus.release()
+                raise
 
     try:
         if is_root_process():
@@ -1333,7 +1485,14 @@ async def _pause(
             # we also wait in the root-parent for any child that
             # may have the tty locked prior
             # TODO: wait, what about multiple root tasks acquiring it though?
-            if Lock.global_actor_in_debug == actor.uid:
+            ctx: Context|None = Lock.ctx_in_debug
+            if (
+                ctx is None
+                and
+                DebugStatus.repl
+                and
+                DebugStatus.repl_task is task
+            ):
                 # re-entrant root process already has it: noop.
                 log.warning(
                     f'{task.name}@{actor.uid} already has TTY lock\n'
@@ -1347,8 +1506,8 @@ async def _pause(
             # callbacks. Can't think of a nicer way then this atm.
             if Lock._debug_lock.locked():
                 log.warning(
-                    'attempting to shield-acquire active TTY lock'
-                    f' owned by {Lock.global_actor_in_debug}'
+                    'attempting to shield-acquire active TTY lock owned by\n'
+                    f'{ctx}'
                 )
 
                 # must shield here to avoid hitting a ``Cancelled`` and
@@ -1358,10 +1517,6 @@ async def _pause(
             else:
                 # may be cancelled
                 await Lock._debug_lock.acquire()
-
-            Lock.global_actor_in_debug = actor.uid
-            DebugStatus.repl_task = task
-            DebugStatus.repl = Lock.repl = pdb
 
             # enter REPL from root, no TTY locking IPC ctx necessary
             _enter_repl_sync(debug_func)
@@ -1405,10 +1560,6 @@ async def _pause(
                 await DebugStatus.repl_release.wait()
                 await trio.sleep(0.1)
 
-            # mark local actor as "in debug mode" to avoid recurrent
-            # entries/requests to the root process
-            DebugStatus.repl_task = task
-
             # this **must** be awaited by the caller and is done using the
             # root nursery so that the debugger can continue to run without
             # being restricted by the scope of a new task nursery.
@@ -1420,88 +1571,106 @@ async def _pause(
             #   actor._service_n.cancel_scope.shield = shield
             # ```
             # but not entirely sure if that's a sane way to implement it?
-
-            # NOTE: MUST it here bc multiple tasks are spawned by any
-            # one sub-actor AND there will be a race between when the
-            # root locking task delivers the `Started(pld=LockStatus)`
-            # and when the REPL is actually entered here. SO ensure
-            # the codec is set before either are run!
-            #
-            with (
-                # _codec.limit_msg_spec(
-                #     payload_spec=__msg_spec__,
-                # ) as debug_codec,
-                trio.CancelScope(shield=shield),
-            ):
-                # async with trio.open_nursery() as tn:
-                #     tn.cancel_scope.shield = True
-                try:
-                    # cs: trio.CancelScope = await tn.start(
-                    cs: trio.CancelScope = await actor._service_n.start(
-                        wait_for_parent_stdin_hijack,
-                        actor.uid,
-                        (task.name, id(task)),
-                    )
-                    # our locker task should be the one in ctx
-                    # with the root actor
-                    assert DebugStatus.req_cs is cs
-
-                    # XXX used by the SIGINT handler to check if
-                    # THIS actor is in REPL interaction
-                    Lock.repl = pdb
-
-                except RuntimeError:
-                    Lock.release()
-
-                    if actor._cancel_called:
-                        # service nursery won't be usable and we
-                        # don't want to lock up the root either way since
-                        # we're in (the midst of) cancellation.
-                        return
-
-                    raise
+            try:
+                # NOTE spawn the stdio locker request task inside the
+                # current `Context._scope_nursery` to entsure that
+                # the request never can outlive the task's (parent)
+                # lifetime.
+                curr_ctx: Context = current_ipc_ctx()
+                # TODO: see `_errors_relayed_via_ipc()` where we
+                # should dynamically open a `debug_tn`  for use here,
+                # BUT it needs to be outside the normal error
+                # catching and `_maybe_enter_debugger()` call!
+                # ctx: Context = await curr_ctx._debug_tn.start(
+                ctx: Context = await actor._service_n.start(
+                    request_root_stdio_lock,
+                    actor.uid,
+                    (task.name, id(task)),  # task uuid (effectively)
+                )
+                # our locker task should be the one in ctx
+                # with the root actor
+                assert (
+                    ctx
+                    is
+                    DebugStatus.req_ctx
+                    is not
+                    curr_ctx
+                )
 
                 # enter REPL
+                _enter_repl_sync(debug_func)
 
-                try:
-                    _enter_repl_sync(debug_func)
-                finally:
-                    DebugStatus.unshield_sigint()
+            except RuntimeError:
+                if actor._cancel_called:
+                    # service nursery won't be usable and we
+                    # don't want to lock up the root either way since
+                    # we're in (the midst of) cancellation.
+                    return
 
-    except BaseException:
-        log.exception(
-            'Failed to engage debugger via `_pause()` ??\n'
-        )
+                raise
+
+    # TODO: prolly factor this plus the similar block from
+    # `_enter_repl_sync()` into a common @cm?
+    except BaseException as repl_err:
+        if isinstance(repl_err, bdb.BdbQuit):
+            log.devx(
+                'REPL for pdb was quit!\n'
+            )
+        else:
+            log.exception(
+                'Failed to engage debugger via `_pause()` ??\n'
+            )
+
+        DebugStatus.release()
+        # sanity checks for ^ on request/status teardown
+        assert DebugStatus.repl is None
+        assert DebugStatus.repl_task is None
+        req_ctx: Context = DebugStatus.req_ctx
+        if req_ctx:
+            assert req_ctx._scope.cancel_called
+
         raise
 
 
-# XXX: apparently we can't do this without showing this frame
-# in the backtrace on first entry to the REPL? Seems like an odd
-# behaviour that should have been fixed by now. This is also why
-# we scrapped all the @cm approaches that were tried previously.
-# finally:
-#     __tracebackhide__ = True
-#     # frame = sys._getframe()
-#     # last_f = frame.f_back
-#     # last_f.f_globals['__tracebackhide__'] = True
-#     # signal.signal = pdbp.hideframe(signal.signal)
+def _set_trace(
+    repl: PdbREPL,  # passed by `_pause()`
+    hide_tb: bool,
+
+    # partial-ed in by `.pause()`
+    api_frame: FrameType,
+):
+    __tracebackhide__: bool = hide_tb
+    actor: tractor.Actor = current_actor()
+
+    # else:
+    # TODO: maybe print the actor supervion tree up to the
+    # root here? Bo
+    log.pdb(
+        f'{_pause_msg}\n'
+        '|\n'
+        # TODO: make an `Actor.__repr()__`
+        f'|_ {current_task()} @ {actor.uid}\n'
+    )
+    # presuming the caller passed in the "api frame"
+    # (the last frame before user code - like `.pause()`)
+    # then we only step up one frame to where the user
+    # called our API.
+    caller_frame: FrameType = api_frame.f_back  # type: ignore
+
+    # engage ze REPL
+    # B~()
+    repl.set_trace(frame=caller_frame)
 
 
 async def pause(
+    *,
+    hide_tb: bool = True,
+    api_frame: FrameType|None = None,
 
-    debug_func: Callable|None = _set_trace,
-
-    # TODO: allow caller to pause despite task cancellation,
-    # exactly the same as wrapping with:
-    # with CancelScope(shield=True):
-    #     await pause()
-    # => the REMAINING ISSUE is that the scope's .__exit__() frame
-    # is always show in the debugger on entry.. and there seems to
-    # be no way to override it?..
-    #
+    # TODO: figure out how to still make this work:
+    # -[ ] pass it direct to `_pause()`?
+    # -[ ] use it to set the `debug_nursery.cancel_scope.shield`
     shield: bool = False,
-    task_status: TaskStatus[trio.Event] = trio.TASK_STATUS_IGNORED,
-
     **_pause_kwargs,
 
 ) -> None:
@@ -1522,19 +1691,37 @@ async def pause(
     '''
     __tracebackhide__: bool = True
 
-    with trio.CancelScope(
-        shield=shield,
-    ) as cs:
+    # always start 1 level up from THIS in user code since normally
+    # `tractor.pause()` is called explicitly by use-app code thus
+    # making it the highest up @api_frame.
+    api_frame: FrameType = api_frame or inspect.currentframe()
 
+    # XXX TODO: this was causing cs-stack corruption in trio due to
+    # usage within the `Context._scope_nursery` (which won't work
+    # based on scoping of it versus call to `_maybe_enter_debugger()`
+    # from `._rpc._invoke()`)
+    # with trio.CancelScope(
+    #     shield=shield,
+    # ) as cs:
         # NOTE: so the caller can always manually cancel even
         # if shielded!
-        task_status.started(cs)
-        return await _pause(
-            debug_func=debug_func,
-            shield=shield,
-            task_status=task_status,
-            **_pause_kwargs
-        )
+        # task_status.started(cs)
+        # log.critical(
+        #     '`.pause() cancel-scope is:\n\n'
+        #     f'{pformat_cs(cs, var_name="pause_cs")}\n\n'
+        # )
+    await _pause(
+        debug_func=partial(
+            _set_trace,
+            api_frame=api_frame,
+        ),
+
+        # task_status=task_status,
+        **_pause_kwargs
+    )
+        # XXX avoid cs stack corruption when `PdbREPL.interaction()`
+        # raises `BdbQuit`.
+        # await DebugStatus.req_finished.wait()
 
 
 _gb_mod: None|ModuleType|False = None
@@ -1626,7 +1813,7 @@ def pause_from_sync(
 
     # raises on not-found by default
     greenback: ModuleType = maybe_import_greenback()
-    mdb: PdbREPL = mk_mpdb()
+    mdb: PdbREPL = mk_pdb()
 
     # run async task which will lock out the root proc's TTY.
     if not Lock.is_main_trio_thread():
@@ -1664,10 +1851,10 @@ def pause_from_sync(
     # entering the global ``breakpoint()`` built-in from sync
     # code?
     _set_trace(
+        api_frame=inspect.current_frame(),
         actor=actor,
         pdb=mdb,
         hide_tb=hide_tb,
-        extra_frames_up_when_async=1,
 
         # TODO? will we ever need it?
         # -> the gb._await() won't be affected by cancellation?
@@ -1691,8 +1878,8 @@ async def breakpoint(**kwargs):
     )
     __tracebackhide__: bool = True
     await pause(
-        # extra_frames_up_when_async=6,
-        **kwargs
+        api_frame=inspect.currentframe(),
+        **kwargs,
     )
 
 
@@ -1702,12 +1889,15 @@ _crash_msg: str = (
 
 
 def _post_mortem(
-    actor: tractor.Actor,
-    pdb: PdbREPL,
-    shield: bool = False,
+    # provided and passed by `_pause()`
+    repl: PdbREPL,
 
-    # only for compat with `._set_trace()`..
-    extra_frames_up_when_async=1,
+    # XXX all `partial`-ed in by `post_mortem()` below!
+    tb: TracebackType,
+    api_frame: FrameType,
+
+    shield: bool = False,
+    hide_tb: bool = False,
 
 ) -> None:
     '''
@@ -1715,6 +1905,9 @@ def _post_mortem(
     debugger instance.
 
     '''
+    __tracebackhide__: bool = hide_tb
+    actor: tractor.Actor = current_actor()
+
     # TODO: print the actor supervion tree up to the root
     # here! Bo
     log.pdb(
@@ -1728,24 +1921,64 @@ def _post_mortem(
         # f'|_ {current_task()} @ {actor.name}\n'
     )
 
-    # TODO: only replacing this to add the
+    # NOTE only replacing this from `pdbp.xpm()` to add the
     # `end=''` to the print XD
-    # pdbp.xpm(Pdb=lambda: pdb)
-    info = sys.exc_info()
     print(traceback.format_exc(), end='')
-    pdbp.post_mortem(
-        t=info[2],
-        Pdb=lambda: pdb,
+
+    caller_frame: FrameType = api_frame.f_back
+
+    # NOTE: see the impl details of followings to understand usage:
+    # - `pdbp.post_mortem()`
+    # - `pdbp.xps()`
+    # - `bdb.interaction()`
+    repl.reset()
+    repl.interaction(
+        frame=caller_frame,
+        # frame=None,
+        traceback=tb,
     )
 
 
-post_mortem = partial(
-    pause,
-    debug_func=_post_mortem,
-)
+async def post_mortem(
+    *,
+    tb: TracebackType|None = None,
+    api_frame: FrameType|None = None,
+    hide_tb: bool = False,
+
+    # TODO: support shield here just like in `pause()`?
+    # shield: bool = False,
+
+    **_pause_kwargs,
+
+) -> None:
+    __tracebackhide__: bool = hide_tb
+
+    tb: TracebackType = tb or sys.exc_info()[2]
+
+    # TODO: do upward stack scan for highest @api_frame and
+    # use its parent frame as the expected user-app code
+    # interact point.
+    api_frame: FrameType = api_frame or inspect.currentframe()
+
+    await _pause(
+        debug_func=partial(
+            _post_mortem,
+            api_frame=api_frame,
+            tb=tb,
+        ),
+        hide_tb=hide_tb,
+        **_pause_kwargs
+    )
 
 
-async def _maybe_enter_pm(err):
+async def _maybe_enter_pm(
+    err: BaseException,
+    *,
+    tb: TracebackType|None = None,
+    api_frame: FrameType|None = None,
+    hide_tb: bool = False,
+):
+    from tractor._exceptions import is_multi_cancelled
     if (
         debug_mode()
 
@@ -1764,12 +1997,13 @@ async def _maybe_enter_pm(err):
         # might be a simpler check we can do?
         and not is_multi_cancelled(err)
     ):
-        log.debug("Actor crashed, entering debug mode")
-        try:
-            await post_mortem()
-        finally:
-            Lock.release()
-            return True
+        api_frame: FrameType = api_frame or inspect.currentframe()
+        tb: TracebackType = tb or sys.exc_info()[2]
+        await post_mortem(
+            api_frame=api_frame,
+            tb=tb,
+        )
+        return True
 
     else:
         return False
@@ -1796,12 +2030,12 @@ async def acquire_debug_lock(
         return
 
     async with trio.open_nursery() as n:
-        cs = await n.start(
-            wait_for_parent_stdin_hijack,
+        ctx: Context = await n.start(
+            request_root_stdio_lock,
             subactor_uid,
         )
-        yield cs
-        cs.cancel()
+        yield ctx
+        ctx.cancel()
 
 
 async def maybe_wait_for_debugger(
@@ -1830,8 +2064,8 @@ async def maybe_wait_for_debugger(
         # will make the pdb repl unusable.
         # Instead try to wait for pdb to be released before
         # tearing down.
-        in_debug: tuple[str, str]|None = Lock.global_actor_in_debug
-
+        ctx_in_debug: Context|None = Lock.ctx_in_debug
+        in_debug: tuple[str, str]|None = ctx_in_debug.chan.uid if ctx_in_debug else None
         if in_debug == current_actor().uid:
             log.debug(
                 msg
@@ -1864,17 +2098,26 @@ async def maybe_wait_for_debugger(
                 and not Lock.no_remote_has_tty.is_set()
                 and in_debug is not None
             ):
-                log.pdb(
+
+                # caller_frame_info: str = pformat_caller_frame()
+                log.debug(
                     msg
                     +
-                    '\nRoot is waiting on tty lock to release..\n'
+                    '\nRoot is waiting on tty lock to release from\n\n'
+                    # f'{caller_frame_info}\n'
                 )
+
+                if not any_connected_locker_child():
+                    Lock.get_locking_task_cs().cancel()
+
                 with trio.CancelScope(shield=True):
                     await Lock.no_remote_has_tty.wait()
+
                 log.pdb(
-                    f'Child subactor released debug lock\n'
+                    f'Subactor released debug lock\n'
                     f'|_{in_debug}\n'
                 )
+                break
 
             # is no subactor locking debugger currently?
             if (
@@ -1900,7 +2143,7 @@ async def maybe_wait_for_debugger(
                     f'poll step: {istep}\n'
                     f'poll delya: {poll_delay}'
                 )
-                with trio.CancelScope(shield=True):
+                with CancelScope(shield=True):
                     await trio.sleep(poll_delay)
                     continue
 
