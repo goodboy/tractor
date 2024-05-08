@@ -56,8 +56,7 @@ log = get_logger('tractor.msgspec')
 PayloadT = TypeVar('PayloadT')
 
 
-# TODO: PayloadMsg
-class Msg(
+class PayloadMsg(
     Struct,
     Generic[PayloadT],
 
@@ -108,6 +107,10 @@ class Msg(
     # approach is preferred over the generic parameterization 
     # approach as take by `mk_msg_spec()` below.
     pld: Raw
+
+
+# TODO: complete rename
+Msg = PayloadMsg
 
 
 class Aid(
