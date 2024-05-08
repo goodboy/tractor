@@ -646,7 +646,7 @@ class Actor:
             peers_str: str = ''
             for uid, chans in self._peers.items():
                 peers_str += (
-                    f'|_ uid: {uid}\n'
+                    f'uid: {uid}\n'
                 )
                 for i, chan in enumerate(chans):
                     peers_str += (
@@ -680,10 +680,12 @@ class Actor:
                     # XXX => YES IT DOES, when i was testing ctl-c
                     # from broken debug TTY locking due to
                     # msg-spec races on application using RunVar...
-                    pdb_user_uid: tuple = pdb_lock.global_actor_in_debug
                     if (
-                        pdb_user_uid
-                        and local_nursery
+                        (ctx_in_debug := pdb_lock.ctx_in_debug)
+                        and
+                        (pdb_user_uid := ctx_in_debug.chan.uid)
+                        and
+                        local_nursery
                     ):
                         entry: tuple|None = local_nursery._children.get(
                             tuple(pdb_user_uid)
@@ -1171,13 +1173,17 @@ class Actor:
 
             # kill any debugger request task to avoid deadlock
             # with the root actor in this tree
-            dbcs = _debug.DebugStatus.req_cs
-            if dbcs is not None:
+            debug_req = _debug.DebugStatus
+            lock_req_ctx: Context = debug_req.req_ctx
+            if lock_req_ctx is not None:
                 msg += (
                     '-> Cancelling active debugger request..\n'
-                    f'|_{_debug.Lock.pformat()}'
+                    f'|_{_debug.Lock.repr()}\n\n'
+                    f'|_{lock_req_ctx}\n\n'
                 )
-                dbcs.cancel()
+                # lock_req_ctx._scope.cancel()
+                # TODO: wrap this in a method-API..
+                debug_req.req_cs.cancel()
 
             # self-cancel **all** ongoing RPC tasks
             await self.cancel_rpc_tasks(
@@ -1377,15 +1383,17 @@ class Actor:
             "IPC channel's "
         )
         rent_chan_repr: str = (
-            f'|_{parent_chan}'
+            f'   |_{parent_chan}\n\n'
             if parent_chan
             else ''
         )
         log.cancel(
-            f'Cancelling {descr} {len(tasks)} rpc tasks\n\n'
-            f'<= `Actor.cancel_rpc_tasks()`: {req_uid}\n'
-            f'    {rent_chan_repr}\n'
-            # f'{self}\n'
+            f'Cancelling {descr} RPC tasks\n\n'
+            f'<= canceller: {req_uid}\n'
+            f'{rent_chan_repr}'
+            f'=> cancellee: {self.uid}\n'
+            f'  |_{self}.cancel_rpc_tasks()\n'
+            f'  |_tasks: {len(tasks)}\n'
             # f'{tasks_str}'
         )
         for (
@@ -1415,7 +1423,7 @@ class Actor:
         if tasks:
             log.cancel(
                 'Waiting for remaining rpc tasks to complete\n'
-                f'|_{tasks}'
+                f'|_{tasks_str}'
             )
         await self._ongoing_rpc_tasks.wait()
 
@@ -1468,7 +1476,10 @@ class Actor:
         assert self._parent_chan, "No parent channel for this actor?"
         return Portal(self._parent_chan)
 
-    def get_chans(self, uid: tuple[str, str]) -> list[Channel]:
+    def get_chans(
+        self,
+        uid: tuple[str, str],
+    ) -> list[Channel]:
         '''
         Return all IPC channels to the actor with provided `uid`.
 
@@ -1631,6 +1642,9 @@ async def async_main(
                     entered_debug: bool = await _debug._maybe_enter_pm(oserr)
                     if not entered_debug:
                         log.exception('Failed to init IPC channel server !?\n')
+                    else:
+                        log.runtime('Exited debug REPL..')
+
                     raise
 
                 accept_addrs: list[tuple[str, int]] = actor.accept_addrs
