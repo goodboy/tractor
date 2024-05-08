@@ -21,6 +21,11 @@ Log like a forester!
 from collections.abc import Mapping
 import sys
 import logging
+from logging import (
+    LoggerAdapter,
+    Logger,
+    StreamHandler,
+)
 import colorlog  # type: ignore
 
 import trio
@@ -80,7 +85,7 @@ BOLD_PALETTE = {
 
 # TODO: this isn't showing the correct '{filename}'
 # as it did before..
-class StackLevelAdapter(logging.LoggerAdapter):
+class StackLevelAdapter(LoggerAdapter):
 
     def transport(
         self,
@@ -237,6 +242,7 @@ def get_logger(
     '''Return the package log or a sub-logger for ``name`` if provided.
 
     '''
+    log: Logger
     log = rlog = logging.getLogger(_root_name)
 
     if (
@@ -291,7 +297,7 @@ def get_logger(
 def get_console_log(
     level: str | None = None,
     **kwargs,
-) -> logging.LoggerAdapter:
+) -> LoggerAdapter:
     '''Get the package logger and enable a handler which writes to stderr.
 
     Yeah yeah, i know we can use ``DictConfig``. You do it.
@@ -316,7 +322,7 @@ def get_console_log(
             None,
         )
     ):
-        handler = logging.StreamHandler()
+        handler = StreamHandler()
         formatter = colorlog.ColoredFormatter(
             LOG_FORMAT,
             datefmt=DATE_FORMAT,
@@ -336,3 +342,19 @@ def get_loglevel() -> str:
 
 # global module logger for tractor itself
 log = get_logger('tractor')
+
+
+def at_least_level(
+    log: Logger|LoggerAdapter,
+    level: int|str,
+) -> bool:
+    '''
+    Predicate to test if a given level is active.
+
+    '''
+    if isinstance(level, str):
+        level: int = LEVELS[level.upper()]
+
+    if log.getEffectiveLevel() <= level:
+        return True
+    return False
