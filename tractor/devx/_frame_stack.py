@@ -20,11 +20,8 @@ as it pertains to improving the grok-ability of our runtime!
 
 '''
 from __future__ import annotations
+from functools import partial
 import inspect
-# import msgspec
-# from pprint import pformat
-import textwrap
-import traceback
 from types import (
     FrameType,
     FunctionType,
@@ -32,9 +29,8 @@ from types import (
     # CodeType,
 )
 from typing import (
-    # Any,
+    Any,
     Callable,
-    # TYPE_CHECKING,
     Type,
 )
 
@@ -42,6 +38,7 @@ from tractor.msg import (
     pretty_struct,
     NamespacePath,
 )
+import wrapt
 
 
 # TODO: yeah, i don't love this and we should prolly just
@@ -83,6 +80,31 @@ def get_class_from_frame(fr: FrameType) -> (
     return None
 
 
+def get_ns_and_func_from_frame(
+    frame: FrameType,
+) -> Callable:
+    '''
+    Return the corresponding function object reference from
+    a `FrameType`, and return it and it's parent namespace `dict`.
+
+    '''
+    ns: dict[str, Any]
+
+    # for a method, go up a frame and lookup the name in locals()
+    if '.' in (qualname := frame.f_code.co_qualname):
+        cls_name, _, func_name = qualname.partition('.')
+        ns = frame.f_back.f_locals[cls_name].__dict__
+
+    else:
+        func_name: str = frame.f_code.co_name
+        ns = frame.f_globals
+
+    return (
+        ns,
+        ns[func_name],
+    )
+
+
 def func_ref_from_frame(
     frame: FrameType,
 ) -> Callable:
@@ -98,34 +120,63 @@ def func_ref_from_frame(
             )
 
 
-# TODO: move all this into new `.devx._code`!
-# -[ ] prolly create a `@runtime_api` dec?
-# -[ ] ^- make it capture and/or accept buncha optional
-#     meta-data like a fancier version of `@pdbp.hideframe`.
-#
 class CallerInfo(pretty_struct.Struct):
-    rt_fi: inspect.FrameInfo
-    call_frame: FrameType
+    # https://docs.python.org/dev/reference/datamodel.html#frame-objects
+    # https://docs.python.org/dev/library/inspect.html#the-interpreter-stack
+    _api_frame: FrameType
 
     @property
-    def api_func_ref(self) -> Callable|None:
-        return func_ref_from_frame(self.rt_fi.frame)
+    def api_frame(self) -> FrameType:
+        try:
+            self._api_frame.clear()
+        except RuntimeError:
+            # log.warning(
+            print(
+                f'Frame {self._api_frame} for {self.api_func} is still active!'
+            )
+
+        return self._api_frame
+
+    _api_func: Callable
+
+    @property
+    def api_func(self) -> Callable:
+        return self._api_func
+
+    _caller_frames_up: int|None = 1
+    _caller_frame: FrameType|None = None  # cached after first stack scan
 
     @property
     def api_nsp(self) -> NamespacePath|None:
-        func: FunctionType = self.api_func_ref
+        func: FunctionType = self.api_func
         if func:
             return NamespacePath.from_ref(func)
 
         return '<unknown>'
 
     @property
-    def caller_func_ref(self) -> Callable|None:
-        return func_ref_from_frame(self.call_frame)
+    def caller_frame(self) -> FrameType:
+
+        # if not already cached, scan up stack explicitly by
+        # configured count.
+        if not self._caller_frame:
+            if self._caller_frames_up:
+                for _ in range(self._caller_frames_up):
+                    caller_frame: FrameType|None = self.api_frame.f_back
+
+                if not caller_frame:
+                    raise ValueError(
+                        'No frame exists {self._caller_frames_up} up from\n'
+                        f'{self.api_frame} @ {self.api_nsp}\n'
+                    )
+
+            self._caller_frame = caller_frame
+
+        return self._caller_frame
 
     @property
     def caller_nsp(self) -> NamespacePath|None:
-        func: FunctionType = self.caller_func_ref
+        func: FunctionType = self.api_func
         if func:
             return NamespacePath.from_ref(func)
 
@@ -172,108 +223,66 @@ def find_caller_info(
                 call_frame = call_frame.f_back
 
             return CallerInfo(
-                rt_fi=fi,
-                call_frame=call_frame,
+                _api_frame=rt_frame,
+                _api_func=func_ref_from_frame(rt_frame),
+                _caller_frames_up=go_up_iframes,
             )
 
     return None
 
 
-def pformat_boxed_tb(
-    tb_str: str,
-    fields_str: str|None = None,
-    field_prefix: str = ' |_',
+_frame2callerinfo_cache: dict[FrameType, CallerInfo] = {}
 
-    tb_box_indent: int|None = None,
-    tb_body_indent: int = 1,
 
-) -> str:
-    '''
-    Create a "boxed" looking traceback string.
+# TODO: -[x] move all this into new `.devx._code`!
+# -[ ] consider rename to _callstack?
+# -[ ] prolly create a `@runtime_api` dec?
+#   |_ @api_frame seems better?
+# -[ ] ^- make it capture and/or accept buncha optional
+#     meta-data like a fancier version of `@pdbp.hideframe`.
+#
+def api_frame(
+    wrapped: Callable|None = None,
+    *,
+    caller_frames_up: int = 1,
 
-    Useful for emphasizing traceback text content as being an
-    embedded attribute of some other object (like
-    a `RemoteActorError` or other boxing remote error shuttle
-    container).
+) -> Callable:
 
-    Any other parent/container "fields" can be passed in the
-    `fields_str` input along with other prefix/indent settings.
+    # handle the decorator called WITHOUT () case,
+    # i.e. just @api_frame, NOT @api_frame(extra=<blah>)
+    if wrapped is None:
+        return partial(
+            api_frame,
+            caller_frames_up=caller_frames_up,
+        )
 
-    '''
-    if (
-        fields_str
-        and
-        field_prefix
+    @wrapt.decorator
+    async def wrapper(
+        wrapped: Callable,
+        instance: object,
+        args: tuple,
+        kwargs: dict,
     ):
-        fields: str = textwrap.indent(
-            fields_str,
-            prefix=field_prefix,
-        )
-    else:
-        fields = fields_str or ''
+        # maybe cache the API frame for this call
+        global _frame2callerinfo_cache
+        this_frame: FrameType = inspect.currentframe()
+        api_frame: FrameType = this_frame.f_back
 
-    tb_body = tb_str
-    if tb_body_indent:
-        tb_body: str = textwrap.indent(
-            tb_str,
-            prefix=tb_body_indent * ' ',
-        )
+        if not _frame2callerinfo_cache.get(api_frame):
+            _frame2callerinfo_cache[api_frame] = CallerInfo(
+                _api_frame=api_frame,
+                _api_func=wrapped,
+                _caller_frames_up=caller_frames_up,
+            )
 
-    tb_box: str = (
+        return wrapped(*args, **kwargs)
 
-        # orig
-        # f'  |\n'
-        # f'   ------ - ------\n\n'
-        # f'{tb_str}\n'
-        # f'   ------ - ------\n'
-        # f' _|\n'
-
-        f'|\n'
-        f' ------ - ------\n\n'
-        # f'{tb_str}\n'
-        f'{tb_body}'
-        f' ------ - ------\n'
-        f'_|\n'
-    )
-    tb_box_indent: str = (
-        tb_box_indent
-        or
-        1
-
-        # (len(field_prefix))
-        # ? ^-TODO-^ ? if you wanted another indent level
-    )
-    if tb_box_indent > 0:
-        tb_box: str = textwrap.indent(
-            tb_box,
-            prefix=tb_box_indent * ' ',
-        )
-
-    return (
-        fields
-        +
-        tb_box
-    )
-
-
-def pformat_caller_frame(
-    stack_limit: int = 1,
-    box_tb: bool = True,
-) -> str:
-    '''
-    Capture and return the traceback text content from
-    `stack_limit` call frames up.
-
-    '''
-    tb_str: str = (
-        '\n'.join(
-            traceback.format_stack(limit=stack_limit)
-        )
-    )
-    if box_tb:
-        tb_str: str = pformat_boxed_tb(
-            tb_str=tb_str,
-            field_prefix='  ',
-            indent='',
-        )
-    return tb_str
+    # annotate the function as a "api function", meaning it is
+    # a function for which the function above it in the call stack should be
+    # non-`tractor` code aka "user code".
+    #
+    # in the global frame cache for easy lookup from a given
+    # func-instance
+    wrapped._call_infos: dict[FrameType, CallerInfo] = _frame2callerinfo_cache
+    wrapped.__api_func__: bool = True
+    return wrapper(wrapped)

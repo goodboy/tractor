@@ -94,7 +94,7 @@ if TYPE_CHECKING:
     from ._portal import Portal
     from ._runtime import Actor
     from ._ipc import MsgTransport
-    from .devx._code import (
+    from .devx._frame_stack import (
         CallerInfo,
     )
 
@@ -2513,7 +2513,7 @@ def mk_context(
     send_chan, recv_chan = trio.open_memory_channel(msg_buffer_size)
 
     # TODO: only scan caller-info if log level so high!
-    from .devx._code import find_caller_info
+    from .devx._frame_stack import find_caller_info
     caller_info: CallerInfo|None = find_caller_info()
 
     # TODO: when/how do we apply `.limit_plds()` from here?
