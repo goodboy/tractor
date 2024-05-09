@@ -18,7 +18,7 @@
 Root actor runtime ignition(s).
 
 '''
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager as acm
 from functools import partial
 import importlib
 import logging
@@ -60,7 +60,7 @@ _default_lo_addrs: list[tuple[str, int]] = [(
 logger = log.get_logger('tractor')
 
 
-@asynccontextmanager
+@acm
 async def open_root_actor(
 
     *,
@@ -97,6 +97,7 @@ async def open_root_actor(
     Runtime init entry point for ``tractor``.
 
     '''
+    __tracebackhide__ = True
     # TODO: stick this in a `@cm` defined in `devx._debug`?
     #
     # Override the global debugger hook to make it play nice with
@@ -363,7 +364,12 @@ async def open_root_actor(
                 BaseExceptionGroup,
             ) as err:
 
-                entered: bool = await _debug._maybe_enter_pm(err)
+                import inspect
+                entered: bool = await _debug._maybe_enter_pm(
+                    err,
+                    api_frame=inspect.currentframe(),
+                )
+
                 if (
                     not entered
                     and

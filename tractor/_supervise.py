@@ -346,8 +346,6 @@ async def _open_and_supervise_one_cancels_all_nursery(
     actor: Actor,
 
 ) -> typing.AsyncGenerator[ActorNursery, None]:
-
-    # TODO: yay or nay?
     __tracebackhide__ = True
 
     # the collection of errors retreived from spawned sub-actors
@@ -519,6 +517,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
 
 @acm
+# @api_frame
 async def open_nursery(
     **kwargs,
 
@@ -538,6 +537,7 @@ async def open_nursery(
     which cancellation scopes correspond to each spawned subactor set.
 
     '''
+    __tracebackhide__ = True
     implicit_runtime: bool = False
     actor: Actor = current_actor(err_on_no_runtime=False)
     an: ActorNursery|None = None

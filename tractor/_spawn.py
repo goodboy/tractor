@@ -142,7 +142,9 @@ async def exhaust_portal(
     '''
     __tracebackhide__ = True
     try:
-        log.debug(f"Waiting on final result from {actor.uid}")
+        log.debug(
+            f'Waiting on final result from {actor.uid}'
+        )
 
         # XXX: streams should never be reaped here since they should
         # always be established and shutdown using a context manager api
@@ -195,7 +197,10 @@ async def cancel_on_completion(
     # if this call errors we store the exception for later
     # in ``errors`` which will be reraised inside
     # an exception group and we still send out a cancel request
-    result: Any|Exception = await exhaust_portal(portal, actor)
+    result: Any|Exception = await exhaust_portal(
+        portal,
+        actor,
+    )
     if isinstance(result, Exception):
         errors[actor.uid]: Exception = result
         log.cancel(
@@ -507,14 +512,6 @@ async def trio_proc(
             )
         )
 
-        # await chan.send({
-        #     '_parent_main_data': subactor._parent_main_data,
-        #     'enable_modules': subactor.enable_modules,
-        #     'reg_addrs': subactor.reg_addrs,
-        #     'bind_addrs': bind_addrs,
-        #     '_runtime_vars': _runtime_vars,
-        # })
-
         # track subactor in current nursery
         curr_actor: Actor = current_actor()
         curr_actor._actoruid2nursery[subactor.uid] = actor_nursery
@@ -558,8 +555,8 @@ async def trio_proc(
         # killing the process too early.
         if proc:
             log.cancel(f'Hard reap sequence starting for {subactor.uid}')
-            with trio.CancelScope(shield=True):
 
+            with trio.CancelScope(shield=True):
                 # don't clobber an ongoing pdb
                 if cancelled_during_spawn:
                     # Try again to avoid TTY clobbering.
