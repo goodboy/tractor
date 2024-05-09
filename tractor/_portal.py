@@ -47,6 +47,7 @@ from ._ipc import Channel
 from .log import get_logger
 from .msg import (
     # Error,
+    PayloadMsg,
     NamespacePath,
     Return,
 )
@@ -98,7 +99,8 @@ class Portal:
 
         self.chan = channel
         # during the portal's lifetime
-        self._final_result: Any|None = None
+        self._final_result_pld: Any|None = None
+        self._final_result_msg: PayloadMsg|None = None
 
         # When set to a ``Context`` (when _submit_for_result is called)
         # it is expected that ``result()`` will be awaited at some
@@ -132,7 +134,7 @@ class Portal:
                 'A pending main result has already been submitted'
             )
 
-        self._expect_result_ctx = await self.actor.start_remote_task(
+        self._expect_result_ctx: Context = await self.actor.start_remote_task(
             self.channel,
             nsf=NamespacePath(f'{ns}:{func}'),
             kwargs=kwargs,
@@ -163,13 +165,16 @@ class Portal:
         # expecting a "main" result
         assert self._expect_result_ctx
 
-        if self._final_result is None:
-            self._final_result: Any = await self._expect_result_ctx._pld_rx.recv_pld(
-                ctx=self._expect_result_ctx,
+        if self._final_result_msg is None:
+            (
+                self._final_result_msg,
+                self._final_result_pld,
+            ) = await self._expect_result_ctx._pld_rx.recv_msg_w_pld(
+                ipc=self._expect_result_ctx,
                 expect_msg=Return,
             )
 
-        return self._final_result
+        return self._final_result_pld
 
     async def _cancel_streams(self):
         # terminate all locally running async generator
