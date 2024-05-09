@@ -89,17 +89,30 @@ def test_remote_error(reg_addr, args_err):
         assert excinfo.value.boxed_type == errtype
 
     else:
-        # the root task will also error on the `.result()` call
-        # so we expect an error from there AND the child.
-        with pytest.raises(BaseExceptionGroup) as excinfo:
+        # the root task will also error on the `Portal.result()`
+        # call so we expect an error from there AND the child.
+        # |_ tho seems like on new `trio` this doesn't always
+        #    happen?
+        with pytest.raises((
+            BaseExceptionGroup,
+            tractor.RemoteActorError,
+        )) as excinfo:
             trio.run(main)
 
-        # ensure boxed errors
-        for exc in excinfo.value.exceptions:
+        # ensure boxed errors are `errtype`
+        err: BaseException = excinfo.value
+        if isinstance(err, BaseExceptionGroup):
+            suberrs: list[BaseException] = err.exceptions
+        else:
+            suberrs: list[BaseException] = [err]
+
+        for exc in suberrs:
             assert exc.boxed_type == errtype
 
 
-def test_multierror(reg_addr):
+def test_multierror(
+    reg_addr: tuple[str, int],
+):
     '''
     Verify we raise a ``BaseExceptionGroup`` out of a nursery where
     more then one actor errors.

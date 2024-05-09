@@ -444,6 +444,7 @@ def test_basic_interloop_channel_stream(reg_addr, fan_out):
                 infect_asyncio=True,
                 fan_out=fan_out,
             )
+            # should raise RAE diectly
             await portal.result()
 
     trio.run(main)
@@ -461,12 +462,11 @@ def test_trio_error_cancels_intertask_chan(reg_addr):
             # should trigger remote actor error
             await portal.result()
 
-    with pytest.raises(BaseExceptionGroup) as excinfo:
+    with pytest.raises(RemoteActorError) as excinfo:
         trio.run(main)
 
-    # ensure boxed errors
-    for exc in excinfo.value.exceptions:
-        assert exc.boxed_type == Exception
+    # ensure boxed error type
+    excinfo.value.boxed_type == Exception
 
 
 def test_trio_closes_early_and_channel_exits(reg_addr):
@@ -477,7 +477,7 @@ def test_trio_closes_early_and_channel_exits(reg_addr):
                 exit_early=True,
                 infect_asyncio=True,
             )
-            # should trigger remote actor error
+            # should raise RAE diectly
             await portal.result()
 
     # should be a quiet exit on a simple channel exit
@@ -492,15 +492,17 @@ def test_aio_errors_and_channel_propagates_and_closes(reg_addr):
                 aio_raise_err=True,
                 infect_asyncio=True,
             )
-            # should trigger remote actor error
+            # should trigger RAE directly, not an eg.
             await portal.result()
 
-    with pytest.raises(BaseExceptionGroup) as excinfo:
+    with pytest.raises(
+        # NOTE: bc we directly wait on `Portal.result()` instead
+        # of capturing it inside the `ActorNursery` machinery.
+        expected_exception=RemoteActorError,
+    ) as excinfo:
         trio.run(main)
 
-    # ensure boxed errors
-    for exc in excinfo.value.exceptions:
-        assert exc.boxed_type == Exception
+    excinfo.value.boxed_type == Exception
 
 
 @tractor.context
