@@ -44,7 +44,7 @@ from ._codec import (
 # )
 
 from .types import (
-    Msg as Msg,
+    PayloadMsg as PayloadMsg,
 
     Aid as Aid,
     SpawnSpec as SpawnSpec,

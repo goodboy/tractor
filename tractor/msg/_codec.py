@@ -432,7 +432,7 @@ class MsgCodec(Struct):
 
     # ) -> Any|Struct:
 
-    #     msg: Msg = codec.dec.decode(msg)
+    #     msg: PayloadMsg = codec.dec.decode(msg)
     #     payload_tag: str = msg.header.payload_tag
     #     payload_dec: msgpack.Decoder = codec._payload_decs[payload_tag]
     #     return payload_dec.decode(msg.pld)

@@ -302,7 +302,7 @@ class StartAck(
 
 
 class Started(
-    Msg,
+    PayloadMsg,
     Generic[PayloadT],
 ):
     '''
@@ -316,12 +316,12 @@ class Started(
 
 # TODO: instead of using our existing `Start`
 # for this (as we did with the original `{'cmd': ..}` style)
-# class Cancel(Msg):
+# class Cancel:
 #     cid: str
 
 
 class Yield(
-    Msg,
+    PayloadMsg,
     Generic[PayloadT],
 ):
     '''
@@ -348,7 +348,7 @@ class Stop(
 
 # TODO: is `Result` or `Out[come]` a better name?
 class Return(
-    Msg,
+    PayloadMsg,
     Generic[PayloadT],
 ):
     '''
@@ -360,7 +360,7 @@ class Return(
 
 
 class CancelAck(
-    Msg,
+    PayloadMsg,
     Generic[PayloadT],
 ):
     '''
@@ -466,14 +466,14 @@ def from_dict_msg(
 
 # TODO: should be make a msg version of `ContextCancelled?`
 # and/or with a scope field or a full `ActorCancelled`?
-# class Cancelled(Msg):
+# class Cancelled(MsgType):
 #     cid: str
 
 # TODO what about overruns?
-# class Overrun(Msg):
+# class Overrun(MsgType):
 #     cid: str
 
-_runtime_msgs: list[Msg] = [
+_runtime_msgs: list[Struct] = [
 
     # identity handshake on first IPC `Channel` contact.
     Aid,
@@ -499,9 +499,9 @@ _runtime_msgs: list[Msg] = [
 ]
 
 # the no-outcome-yet IAC (inter-actor-communication) sub-set which
-# can be `Msg.pld` payload field type-limited by application code
+# can be `PayloadMsg.pld` payload field type-limited by application code
 # using `apply_codec()` and `limit_msg_spec()`.
-_payload_msgs: list[Msg] = [
+_payload_msgs: list[PayloadMsg] = [
     # first <value> from `Context.started(<value>)`
     Started,
 
@@ -544,8 +544,8 @@ def mk_msg_spec(
     ] = 'indexed_generics',
 
 ) -> tuple[
-    Union[Type[Msg]],
-    list[Type[Msg]],
+    Union[MsgType],
+    list[MsgType],
 ]:
     '''
     Create a payload-(data-)type-parameterized IPC message specification.
@@ -557,7 +557,7 @@ def mk_msg_spec(
     determined by the input `payload_type_union: Union[Type]`.
 
     '''
-    submsg_types: list[Type[Msg]] = Msg.__subclasses__()
+    submsg_types: list[MsgType] = Msg.__subclasses__()
     bases: tuple = (
         # XXX NOTE XXX the below generic-parameterization seems to
         # be THE ONLY way to get this to work correctly in terms
