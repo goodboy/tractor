@@ -249,7 +249,10 @@ class Lock:
                 message: str = 'TTY lock not held by any child\n'
 
         except RuntimeError as rte:
-            message: str = 'TTY lock FAILED to release for child??\n'
+            message: str = (
+                'TTY lock FAILED to release for child??\n'
+                f'{current_task()}\n'
+            )
             log.exception(message)
 
             # uhhh makes no sense but been seeing the non-owner
@@ -755,6 +758,16 @@ class PdbREPL(pdbp.Pdb):
 
     status = DebugStatus
 
+    # NOTE: see details in stdlib's `bdb.py`
+    def user_exception(self, frame, exc_info):
+        '''
+        Called when we stop on an exception.
+        '''
+        log.warning(
+            'Exception during REPL sesh\n\n'
+            f'{frame}\n\n'
+            f'{exc_info}\n\n'
+        )
 
     # def preloop(self):
     #     print('IN PRELOOP')
@@ -780,7 +793,11 @@ class PdbREPL(pdbp.Pdb):
             # NOTE: for subactors the stdio lock is released via the
             # allocated RPC locker task, so for root we have to do it
             # manually.
-            if is_root_process():
+            if (
+                is_root_process()
+                and
+                Lock._debug_lock.locked()
+            ):
                 Lock.release()
 
     def set_quit(self):
@@ -791,7 +808,11 @@ class PdbREPL(pdbp.Pdb):
                     cancel_req_task=False,
                 )
 
-            if is_root_process():
+            if (
+                is_root_process()
+                and
+                Lock._debug_lock.locked()
+            ):
                 Lock.release()
 
     # TODO: special handling where we just want the next LOC and
@@ -803,7 +824,7 @@ class PdbREPL(pdbp.Pdb):
     #     try:
     #         super().set_next(frame)
     #     finally:
-    #         Lock.release()
+    #         pdbp.set_trace()
 
     # XXX NOTE: we only override this because apparently the stdlib pdb
     # bois likes to touch the SIGINT handler as much as i like to touch
@@ -1251,7 +1272,7 @@ def shield_sigint_handler(
 
     # child actor that has locked the debugger
     elif not is_root_process():
-        log.warning(
+        log.debug(
             f'Subactor {actor.uid} handling SIGINT\n\n'
             f'{Lock.repr()}\n'
         )
@@ -1484,8 +1505,11 @@ async def _pause(
             ):
                 # re-entrant root process already has it: noop.
                 log.warning(
-                    f'{task.name}@{actor.uid} already has TTY lock\n'
-                    f'ignoring..'
+                    f'This root actor task is already within an active REPL session\n'
+                    f'Ignoring this re-entered `tractor.pause()`\n'
+                    f'task: {task.name}\n'
+                    f'REPL: {Lock.repl}\n'
+                    # TODO: use `._frame_stack` scanner to find the @api_frame
                 )
                 await trio.lowlevel.checkpoint()
                 return
@@ -1609,6 +1633,7 @@ async def _pause(
             log.exception(
                 'Failed to engage debugger via `_pause()` ??\n'
             )
+            mk_pdb().set_trace()
 
         DebugStatus.release()
         # sanity checks for ^ on request/status teardown
@@ -1926,6 +1951,10 @@ def _post_mortem(
         # frame=None,
         traceback=tb,
     )
+    # Since we presume the post-mortem was enaged to a task-ending
+    # error, we MUST release the local REPL request so that not other
+    # local task nor the root remains blocked!
+    DebugStatus.release()
 
 
 async def post_mortem(
