@@ -202,8 +202,19 @@ class StackLevelAdapter(LoggerAdapter):
         )
 
 
+def pformat_task_uid():
+    '''
+    Return `str`-ified unique for a `trio.Task` via a combo of its
+    `.name: str` and `id()` truncated output.
+
+    '''
+    task: trio.Task = trio.lowlevel.current_task()
+    tid: str = str(id(task))
+    return f'{task.name}[{tid[:6]}]'
+
+
 _conc_name_getters = {
-    'task': lambda: trio.lowlevel.current_task().name,
+    'task': pformat_task_uid,
     'actor': lambda: current_actor(),
     'actor_name': lambda: current_actor().name,
     'actor_uid': lambda: current_actor().uid[1][:6],
@@ -211,7 +222,10 @@ _conc_name_getters = {
 
 
 class ActorContextInfo(Mapping):
-    "Dyanmic lookup for local actor and task names"
+    '''
+    Dyanmic lookup for local actor and task names.
+
+    '''
     _context_keys = (
         'task',
         'actor',
