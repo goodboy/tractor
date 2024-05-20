@@ -69,7 +69,6 @@ from .msg import (
 from tractor.msg.types import (
     CancelAck,
     Error,
-    Msg,
     MsgType,
     Return,
     Start,
@@ -248,10 +247,17 @@ async def _errors_relayed_via_ipc(
     ] = trio.TASK_STATUS_IGNORED,
 
 ) -> None:
+    # NOTE: we normally always hide this frame in call-stack tracebacks
+    # if the crash originated from an RPC task (since normally the
+    # user is only going to care about their own code not this
+    # internal runtime frame) and we DID NOT
+    # fail due to an IPC transport error!
     __tracebackhide__: bool = hide_tb
+
     # TODO: a debug nursery when in debug mode!
     # async with maybe_open_debugger_nursery() as debug_tn:
     # => see matching comment in side `._debug._pause()`
+    rpc_err: BaseException|None = None
     try:
         yield  # run RPC invoke body
 
@@ -262,16 +268,7 @@ async def _errors_relayed_via_ipc(
         BaseExceptionGroup,
         KeyboardInterrupt,
     ) as err:
-
-        # NOTE: always hide this frame from debug REPL call stack
-        # if the crash originated from an RPC task and we DID NOT
-        # fail due to an IPC transport error!
-        if (
-            is_rpc
-            and
-            chan.connected()
-        ):
-            __tracebackhide__: bool = hide_tb
+        rpc_err = err
 
         # TODO: maybe we'll want different "levels" of debugging
         # eventualy such as ('app', 'supervisory', 'runtime') ?
@@ -316,10 +313,18 @@ async def _errors_relayed_via_ipc(
                     api_frame=inspect.currentframe(),
                 )
                 if not entered_debug:
+                    # if we prolly should have entered the REPL but
+                    # didn't, maybe there was an internal error in
+                    # the above code and we do want to show this
+                    # frame!
+                    if _state.debug_mode():
+                        __tracebackhide__: bool = False
+
                     log.exception(
                         'RPC task crashed\n'
                         f'|_{ctx}'
                     )
+
 
         # ALWAYS try to ship RPC errors back to parent/caller task
         if is_rpc:
@@ -353,6 +358,20 @@ async def _errors_relayed_via_ipc(
     # `Actor._service_n`, we add "handles" to each such that
     # they can be individually ccancelled.
     finally:
+
+        # if the error is not from user code and instead a failure
+        # of a runtime RPC or transport failure we do prolly want to
+        # show this frame
+        if (
+            rpc_err
+            and (
+                not is_rpc
+                or
+                not chan.connected()
+            )
+        ):
+            __tracebackhide__: bool = False
+
         try:
             ctx: Context
             func: Callable
@@ -442,9 +461,10 @@ async def _invoke(
         # open the stream with this option.
         # allow_overruns=True,
     )
-    context: bool = False
+    context_ep_func: bool = False
 
-    assert not _state._ctxvar_Context.get()
+    # set the current IPC ctx var for this RPC task
+    _state._ctxvar_Context.set(ctx)
 
     # TODO: deprecate this style..
     if getattr(func, '_tractor_stream_function', False):
@@ -473,7 +493,7 @@ async def _invoke(
     # handle decorated ``@tractor.context`` async function
     elif getattr(func, '_tractor_context_function', False):
         kwargs['ctx'] = ctx
-        context = True
+        context_ep_func = True
 
     # errors raised inside this block are propgated back to caller
     async with _errors_relayed_via_ipc(
@@ -499,7 +519,7 @@ async def _invoke(
             raise
 
         # TODO: impl all these cases in terms of the `Context` one!
-        if not context:
+        if not context_ep_func:
             await _invoke_non_context(
                 actor,
                 cancel_scope,
@@ -569,7 +589,6 @@ async def _invoke(
             async with trio.open_nursery() as tn:
                 ctx._scope_nursery = tn
                 ctx._scope = tn.cancel_scope
-                _state._ctxvar_Context.set(ctx)
                 task_status.started(ctx)
 
                 # TODO: should would be nice to have our
@@ -829,7 +848,7 @@ async def process_messages(
       (as utilized inside `Portal.cancel_actor()` ).
 
     '''
-    assert actor._service_n  # state sanity
+    assert actor._service_n  # runtime state sanity
 
     # TODO: once `trio` get's an "obvious way" for req/resp we
     # should use it?
@@ -842,7 +861,7 @@ async def process_messages(
     #  - https://github.com/aiortc/aioquic/blob/main/src/aioquic/quic/connection.py#L1175
     #  - https://github.com/aiortc/aioquic/blob/main/src/aioquic/quic/connection.py#L659
     nursery_cancelled_before_task: bool = False
-    msg: Msg|None = None
+    msg: MsgType|None = None
     try:
         # NOTE: this internal scope allows for keeping this
         # message loop running despite the current task having
