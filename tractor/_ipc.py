@@ -716,4 +716,5 @@ async def _connect_chan(
     chan = Channel((host, port))
     await chan.connect()
     yield chan
-    await chan.aclose()
+    with trio.CancelScope(shield=True):
+        await chan.aclose()
