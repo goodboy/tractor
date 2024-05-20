@@ -41,6 +41,7 @@ from typing import (
     Callable,
     Mapping,
     Type,
+    TypeAlias,
     TYPE_CHECKING,
     Union,
 )
@@ -155,6 +156,41 @@ class Context:
     # payload receiver
     _pld_rx: msgops.PldRx
 
+    @property
+    def pld_rx(self) -> msgops.PldRx:
+        '''
+        The current `tractor.Context`'s msg-payload-receiver.
+
+        A payload receiver is the IPC-msg processing sub-sys which
+        filters inter-actor-task communicated payload data, i.e. the
+        `PayloadMsg.pld: PayloadT` field value, AFTER its container
+        shuttlle msg (eg. `Started`/`Yield`/`Return) has been
+        delivered up from `tractor`'s transport layer but BEFORE the
+        data is yielded to `tractor` application code.
+
+        The "IPC-primitive API" is normally one of a `Context` (this)` or a `MsgStream`
+        or some higher level API using one of them.
+
+        For ex. `pld_data: PayloadT = MsgStream.receive()` implicitly
+        calls into the stream's parent `Context.pld_rx.recv_pld().` to
+        receive the latest `PayloadMsg.pld` value.
+
+        Modification of the current payload spec via `limit_plds()`
+        allows a `tractor` application to contextually filter IPC
+        payload content with a type specification as supported by the
+        interchange backend.
+
+        - for `msgspec` see <PUTLINKHERE>.
+
+        Note that the `PldRx` itself is a per-`Context` instance that
+        normally only changes when some (sub-)task, on a given "side"
+        of the IPC ctx (either a "child"-side RPC or inside
+        a "parent"-side `Portal.open_context()` block), modifies it
+        using the `.msg._ops.limit_plds()` API.
+
+        '''
+        return self._pld_rx
+
     # full "namespace-path" to target RPC function
     _nsf: NamespacePath
 
@@ -231,6 +267,8 @@ class Context:
 
     # init and streaming state
     _started_called: bool = False
+    _started_msg: MsgType|None = None
+    _started_pld: Any = None
     _stream_opened: bool = False
     _stream: MsgStream|None = None
 
@@ -623,7 +661,7 @@ class Context:
         log.runtime(
             'Setting remote error for ctx\n\n'
             f'<= {self.peer_side!r}: {self.chan.uid}\n'
-            f'=> {self.side!r}\n\n'
+            f'=> {self.side!r}: {self._actor.uid}\n\n'
             f'{error}'
         )
         self._remote_error: BaseException = error
@@ -678,7 +716,7 @@ class Context:
             log.error(
                 f'Remote context error:\n\n'
                 # f'{pformat(self)}\n'
-                f'{error}\n'
+                f'{error}'
             )
 
         if self._canceller is None:
@@ -724,8 +762,10 @@ class Context:
                 )
         else:
             message: str = 'NOT cancelling `Context._scope` !\n\n'
+            # from .devx import mk_pdb
+            # mk_pdb().set_trace()
 
-        fmt_str: str = 'No `self._scope: CancelScope` was set/used ?'
+        fmt_str: str = 'No `self._scope: CancelScope` was set/used ?\n'
         if (
             cs
             and
@@ -805,6 +845,7 @@ class Context:
         #         f'{ci.api_nsp}()\n'
         #     )
 
+        # TODO: use `.dev._frame_stack` scanning to find caller!
         return 'Portal.open_context()'
 
     async def cancel(
@@ -1304,17 +1345,6 @@ class Context:
                 ctx=self,
                 hide_tb=hide_tb,
             )
-            for msg in drained_msgs:
-
-                # TODO: mask this by default..
-                if isinstance(msg, Return):
-                    # from .devx import pause
-                    # await pause()
-                    # raise InternalError(
-                    log.warning(
-                        'Final `return` msg should never be drained !?!?\n\n'
-                        f'{msg}\n'
-                    )
 
             drained_status: str = (
                 'Ctx drained to final outcome msg\n\n'
@@ -1434,6 +1464,10 @@ class Context:
             or
             self._result
         )
+
+    @property
+    def has_outcome(self) -> bool:
+        return bool(self.maybe_error) or self._final_result_is_set()
 
     # @property
     def repr_outcome(
@@ -1637,8 +1671,6 @@ class Context:
                     )
 
                 if rt_started != started_msg:
-                    # TODO: break these methods out from the struct subtype?
-
                     # TODO: make that one a mod func too..
                     diff = pretty_struct.Struct.__sub__(
                         rt_started,
@@ -1674,6 +1706,8 @@ class Context:
             ) from verr
 
         self._started_called = True
+        self._started_msg = started_msg
+        self._started_pld = value
 
     async def _drain_overflows(
         self,
@@ -1961,6 +1995,7 @@ async def open_context_from_portal(
     portal: Portal,
     func: Callable,
 
+    pld_spec: TypeAlias|None = None,
     allow_overruns: bool = False,
 
     # TODO: if we set this the wrapping `@acm` body will
@@ -2026,7 +2061,7 @@ async def open_context_from_portal(
     # XXX NOTE XXX: currenly we do NOT allow opening a contex
     # with "self" since the local feeder mem-chan processing
     # is not built for it.
-    if portal.channel.uid == portal.actor.uid:
+    if (uid := portal.channel.uid) == portal.actor.uid:
         raise RuntimeError(
             '** !! Invalid Operation !! **\n'
             'Can not open an IPC ctx with the local actor!\n'
@@ -2054,32 +2089,45 @@ async def open_context_from_portal(
     assert ctx._caller_info
     _ctxvar_Context.set(ctx)
 
-    # XXX NOTE since `._scope` is NOT set BEFORE we retreive the
-    # `Started`-msg any cancellation triggered
-    # in `._maybe_cancel_and_set_remote_error()` will
-    # NOT actually cancel the below line!
-    # -> it's expected that if there is an error in this phase of
-    # the dialog, the `Error` msg should be raised from the `msg`
-    # handling block below.
-    first: Any = await ctx._pld_rx.recv_pld(
-        ctx=ctx,
-        expect_msg=Started,
-    )
-    ctx._started_called: bool = True
-
-    uid: tuple = portal.channel.uid
-    cid: str = ctx.cid
-
     # placeholder for any exception raised in the runtime
     # or by user tasks which cause this context's closure.
     scope_err: BaseException|None = None
     ctxc_from_callee: ContextCancelled|None = None
     try:
-        async with trio.open_nursery() as nurse:
+        async with (
+            trio.open_nursery() as tn,
+            msgops.maybe_limit_plds(
+                ctx=ctx,
+                spec=pld_spec,
+            ) as maybe_msgdec,
+        ):
+            if maybe_msgdec:
+                assert maybe_msgdec.pld_spec == pld_spec
 
-            # NOTE: used to start overrun queuing tasks
-            ctx._scope_nursery: trio.Nursery = nurse
-            ctx._scope: trio.CancelScope = nurse.cancel_scope
+            # XXX NOTE since `._scope` is NOT set BEFORE we retreive the
+            # `Started`-msg any cancellation triggered
+            # in `._maybe_cancel_and_set_remote_error()` will
+            # NOT actually cancel the below line!
+            # -> it's expected that if there is an error in this phase of
+            # the dialog, the `Error` msg should be raised from the `msg`
+            # handling block below.
+            started_msg, first = await ctx._pld_rx.recv_msg_w_pld(
+                ipc=ctx,
+                expect_msg=Started,
+                passthrough_non_pld_msgs=False,
+            )
+
+            # from .devx import pause
+            # await pause()
+            ctx._started_called: bool = True
+            ctx._started_msg: bool = started_msg
+            ctx._started_pld: bool = first
+
+            # NOTE: this in an implicit runtime nursery used to,
+            # - start overrun queuing tasks when as well as
+            # for cancellation of the scope opened by the user.
+            ctx._scope_nursery: trio.Nursery = tn
+            ctx._scope: trio.CancelScope = tn.cancel_scope
 
             # deliver context instance and .started() msg value
             # in enter tuple.
@@ -2126,13 +2174,13 @@ async def open_context_from_portal(
 
             # when in allow_overruns mode there may be
             # lingering overflow sender tasks remaining?
-            if nurse.child_tasks:
+            if tn.child_tasks:
                 # XXX: ensure we are in overrun state
                 # with ``._allow_overruns=True`` bc otherwise
                 # there should be no tasks in this nursery!
                 if (
                     not ctx._allow_overruns
-                    or len(nurse.child_tasks) > 1
+                    or len(tn.child_tasks) > 1
                 ):
                     raise InternalError(
                         'Context has sub-tasks but is '
@@ -2304,8 +2352,8 @@ async def open_context_from_portal(
             ):
                 log.warning(
                     'IPC connection for context is broken?\n'
-                    f'task:{cid}\n'
-                    f'actor:{uid}'
+                    f'task: {ctx.cid}\n'
+                    f'actor: {uid}'
                 )
 
         raise  # duh
@@ -2455,9 +2503,8 @@ async def open_context_from_portal(
                 and ctx.cancel_acked
             ):
                 log.cancel(
-                    'Context cancelled by {ctx.side!r}-side task\n'
+                    f'Context cancelled by {ctx.side!r}-side task\n'
                     f'|_{ctx._task}\n\n'
-
                     f'{repr(scope_err)}\n'
                 )
 
@@ -2485,7 +2532,7 @@ async def open_context_from_portal(
             f'cid: {ctx.cid}\n'
         )
         portal.actor._contexts.pop(
-            (uid, cid),
+            (uid, ctx.cid),
             None,
         )
 
@@ -2516,8 +2563,9 @@ def mk_context(
     from .devx._frame_stack import find_caller_info
     caller_info: CallerInfo|None = find_caller_info()
 
-    # TODO: when/how do we apply `.limit_plds()` from here?
-    pld_rx: msgops.PldRx = msgops.current_pldrx()
+    pld_rx = msgops.PldRx(
+        _pld_dec=msgops._def_any_pldec,
+    )
 
     ctx = Context(
         chan=chan,
@@ -2531,13 +2579,16 @@ def mk_context(
         _caller_info=caller_info,
         **kwargs,
     )
+    pld_rx._ctx = ctx
     ctx._result = Unresolved
     return ctx
 
 
 # TODO: use the new type-parameters to annotate this in 3.13?
 # -[ ] https://peps.python.org/pep-0718/#unknown-types
-def context(func: Callable) -> Callable:
+def context(
+    func: Callable,
+) -> Callable:
     '''
     Mark an (async) function as an SC-supervised, inter-`Actor`,
     child-`trio.Task`, IPC endpoint otherwise known more

@@ -52,6 +52,7 @@ from tractor.msg import (
 
 if TYPE_CHECKING:
     from ._context import Context
+    from ._ipc import Channel
 
 
 log = get_logger(__name__)
@@ -65,10 +66,10 @@ log = get_logger(__name__)
 class MsgStream(trio.abc.Channel):
     '''
     A bidirectional message stream for receiving logically sequenced
-    values over an inter-actor IPC ``Channel``.
+    values over an inter-actor IPC `Channel`.
 
     This is the type returned to a local task which entered either
-    ``Portal.open_stream_from()`` or ``Context.open_stream()``.
+    `Portal.open_stream_from()` or `Context.open_stream()`.
 
     Termination rules:
 
@@ -95,6 +96,22 @@ class MsgStream(trio.abc.Channel):
         self._eoc: bool|trio.EndOfChannel = False
         self._closed: bool|trio.ClosedResourceError = False
 
+    @property
+    def ctx(self) -> Context:
+        '''
+        This stream's IPC `Context` ref.
+
+        '''
+        return self._ctx
+
+    @property
+    def chan(self) -> Channel:
+        '''
+        Ref to the containing `Context`'s transport `Channel`.
+
+        '''
+        return self._ctx.chan
+
     # TODO: could we make this a direct method bind to `PldRx`?
     # -> receive_nowait = PldRx.recv_pld
     # |_ means latter would have to accept `MsgStream`-as-`self`?
@@ -109,7 +126,7 @@ class MsgStream(trio.abc.Channel):
     ):
         ctx: Context = self._ctx
         return ctx._pld_rx.recv_pld_nowait(
-            ctx=ctx,
+            ipc=self,
             expect_msg=expect_msg,
         )
 
@@ -148,7 +165,7 @@ class MsgStream(trio.abc.Channel):
         try:
 
             ctx: Context = self._ctx
-            return await ctx._pld_rx.recv_pld(ctx=ctx)
+            return await ctx._pld_rx.recv_pld(ipc=self)
 
         # XXX: the stream terminates on either of:
         # - via `self._rx_chan.receive()` raising  after manual closure

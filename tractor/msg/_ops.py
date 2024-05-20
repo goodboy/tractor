@@ -22,10 +22,9 @@ operational helpers for processing transaction flows.
 '''
 from __future__ import annotations
 from contextlib import (
-    # asynccontextmanager as acm,
+    asynccontextmanager as acm,
     contextmanager as cm,
 )
-from contextvars import ContextVar
 from typing import (
     Any,
     Type,
@@ -50,6 +49,7 @@ from tractor._exceptions import (
     _mk_msg_type_err,
     pack_from_raise,
 )
+from tractor._state import current_ipc_ctx
 from ._codec import (
     mk_dec,
     MsgDec,
@@ -75,7 +75,7 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-_def_any_pldec: MsgDec = mk_dec()
+_def_any_pldec: MsgDec[Any] = mk_dec()
 
 
 class PldRx(Struct):
@@ -104,15 +104,19 @@ class PldRx(Struct):
     '''
     # TODO: better to bind it here?
     # _rx_mc: trio.MemoryReceiveChannel
-    _pldec: MsgDec
+    _pld_dec: MsgDec
+    _ctx: Context|None = None
     _ipc: Context|MsgStream|None = None
 
     @property
     def pld_dec(self) -> MsgDec:
-        return self._pldec
+        return self._pld_dec
 
+    # TODO: a better name?
+    # -[ ] when would this be used as it avoids needingn to pass the
+    #   ipc prim to every method
     @cm
-    def apply_to_ipc(
+    def wraps_ipc(
         self,
         ipc_prim: Context|MsgStream,
 
@@ -140,49 +144,50 @@ class PldRx(Struct):
         exit.
 
         '''
-        orig_dec: MsgDec = self._pldec
+        orig_dec: MsgDec = self._pld_dec
         limit_dec: MsgDec = mk_dec(spec=spec)
         try:
-            self._pldec = limit_dec
+            self._pld_dec = limit_dec
             yield limit_dec
         finally:
-            self._pldec = orig_dec
+            self._pld_dec = orig_dec
 
     @property
     def dec(self) -> msgpack.Decoder:
-        return self._pldec.dec
+        return self._pld_dec.dec
 
     def recv_pld_nowait(
         self,
         # TODO: make this `MsgStream` compat as well, see above^
         # ipc_prim: Context|MsgStream,
-        ctx: Context,
+        ipc: Context|MsgStream,
 
         ipc_msg: MsgType|None = None,
         expect_msg: Type[MsgType]|None = None,
-
+        hide_tb: bool = False,
         **dec_msg_kwargs,
 
     ) -> Any|Raw:
-        __tracebackhide__: bool = True
+        __tracebackhide__: bool = hide_tb
 
         msg: MsgType = (
             ipc_msg
             or
 
             # sync-rx msg from underlying IPC feeder (mem-)chan
-            ctx._rx_chan.receive_nowait()
+            ipc._rx_chan.receive_nowait()
         )
         return self.dec_msg(
             msg,
-            ctx=ctx,
+            ipc=ipc,
             expect_msg=expect_msg,
+            hide_tb=hide_tb,
             **dec_msg_kwargs,
         )
 
     async def recv_pld(
         self,
-        ctx: Context,
+        ipc: Context|MsgStream,
         ipc_msg: MsgType|None = None,
         expect_msg: Type[MsgType]|None = None,
         hide_tb: bool = True,
@@ -200,11 +205,11 @@ class PldRx(Struct):
             or
 
             # async-rx msg from underlying IPC feeder (mem-)chan
-            await ctx._rx_chan.receive()
+            await ipc._rx_chan.receive()
         )
         return self.dec_msg(
             msg=msg,
-            ctx=ctx,
+            ipc=ipc,
             expect_msg=expect_msg,
             **dec_msg_kwargs,
         )
@@ -212,7 +217,7 @@ class PldRx(Struct):
     def dec_msg(
         self,
         msg: MsgType,
-        ctx: Context,
+        ipc: Context|MsgStream,
         expect_msg: Type[MsgType]|None,
 
         raise_error: bool = True,
@@ -225,6 +230,9 @@ class PldRx(Struct):
 
         '''
         __tracebackhide__: bool = hide_tb
+
+        _src_err = None
+        src_err: BaseException|None = None
         match msg:
             # payload-data shuttle msg; deliver the `.pld` value
             # directly to IPC (primitive) client-consumer code.
@@ -234,7 +242,7 @@ class PldRx(Struct):
                 |Return(pld=pld)  # termination phase
             ):
                 try:
-                    pld: PayloadT = self._pldec.decode(pld)
+                    pld: PayloadT = self._pld_dec.decode(pld)
                     log.runtime(
                         'Decoded msg payload\n\n'
                         f'{msg}\n\n'
@@ -243,25 +251,30 @@ class PldRx(Struct):
                     )
                     return pld
 
-                # XXX pld-type failure
-                except ValidationError as src_err:
+                # XXX pld-value type failure
+                except ValidationError as valerr:
+                    # pack mgterr into error-msg for
+                    # reraise below; ensure remote-actor-err
+                    # info is displayed nicely?
                     msgterr: MsgTypeError = _mk_msg_type_err(
                         msg=msg,
                         codec=self.pld_dec,
-                        src_validation_error=src_err,
+                        src_validation_error=valerr,
                         is_invalid_payload=True,
                     )
                     msg: Error = pack_from_raise(
                         local_err=msgterr,
                         cid=msg.cid,
-                        src_uid=ctx.chan.uid,
+                        src_uid=ipc.chan.uid,
                     )
+                    src_err = valerr
 
                 # XXX some other decoder specific failure?
                 # except TypeError as src_error:
                 #     from .devx import mk_pdb
                 #     mk_pdb().set_trace()
                 #     raise src_error
+                # ^-TODO-^ can remove?
 
             # a runtime-internal RPC endpoint response.
             # always passthrough since (internal) runtime
@@ -299,6 +312,7 @@ class PldRx(Struct):
                     return src_err
 
             case Stop(cid=cid):
+                ctx: Context = getattr(ipc, 'ctx', ipc)
                 message: str = (
                     f'{ctx.side!r}-side of ctx received stream-`Stop` from '
                     f'{ctx.peer_side!r} peer ?\n'
@@ -341,14 +355,21 @@ class PldRx(Struct):
         # |_https://docs.python.org/3.11/library/exceptions.html#BaseException.add_note
         #
         # fallthrough and raise from `src_err`
-        _raise_from_unexpected_msg(
-            ctx=ctx,
-            msg=msg,
-            src_err=src_err,
-            log=log,
-            expect_msg=expect_msg,
-            hide_tb=hide_tb,
-        )
+        try:
+            _raise_from_unexpected_msg(
+                ctx=getattr(ipc, 'ctx', ipc),
+                msg=msg,
+                src_err=src_err,
+                log=log,
+                expect_msg=expect_msg,
+                hide_tb=hide_tb,
+            )
+        except UnboundLocalError:
+            # XXX if there's an internal lookup error in the above
+            # code (prolly on `src_err`) we want to show this frame
+            # in the tb!
+            __tracebackhide__: bool = False
+            raise
 
     async def recv_msg_w_pld(
         self,
@@ -378,50 +399,11 @@ class PldRx(Struct):
         # msg instance?
         pld: PayloadT = self.dec_msg(
             msg,
-            ctx=ipc,
+            ipc=ipc,
             expect_msg=expect_msg,
             **kwargs,
         )
         return msg, pld
-
-
-# Always maintain a task-context-global `PldRx`
-_def_pld_rx: PldRx = PldRx(
-    _pldec=_def_any_pldec,
-)
-_ctxvar_PldRx: ContextVar[PldRx] = ContextVar(
-    'pld_rx',
-    default=_def_pld_rx,
-)
-
-
-def current_pldrx() -> PldRx:
-    '''
-    Return the current `trio.Task.context`'s msg-payload-receiver.
-
-    A payload receiver is the IPC-msg processing sub-sys which
-    filters inter-actor-task communicated payload data, i.e. the
-    `PayloadMsg.pld: PayloadT` field value, AFTER it's container
-    shuttlle msg (eg. `Started`/`Yield`/`Return) has been delivered
-    up from `tractor`'s transport layer but BEFORE the data is
-    yielded to application code, normally via an IPC primitive API
-    like, for ex., `pld_data: PayloadT = MsgStream.receive()`.
-
-    Modification of the current payload spec via `limit_plds()`
-    allows a `tractor` application to contextually filter IPC
-    payload content with a type specification as supported by
-    the interchange backend.
-
-    - for `msgspec` see <PUTLINKHERE>.
-
-    NOTE that the `PldRx` itself is a per-`Context` global sub-system
-    that normally does not change other then the applied pld-spec
-    for the current `trio.Task`.
-
-    '''
-    # ctx: context = current_ipc_ctx()
-    # return ctx._pld_rx
-    return _ctxvar_PldRx.get()
 
 
 @cm
@@ -439,29 +421,55 @@ def limit_plds(
     '''
     __tracebackhide__: bool = True
     try:
-        # sanity on orig settings
-        orig_pldrx: PldRx = current_pldrx()
-        orig_pldec: MsgDec = orig_pldrx.pld_dec
+        curr_ctx: Context = current_ipc_ctx()
+        rx: PldRx = curr_ctx._pld_rx
+        orig_pldec: MsgDec = rx.pld_dec
 
-        with orig_pldrx.limit_plds(
+        with rx.limit_plds(
             spec=spec,
             **kwargs,
         ) as pldec:
-            log.info(
+            log.runtime(
                 'Applying payload-decoder\n\n'
                 f'{pldec}\n'
             )
             yield pldec
     finally:
-        log.info(
+        log.runtime(
             'Reverted to previous payload-decoder\n\n'
             f'{orig_pldec}\n'
         )
-        assert (
-            (pldrx := current_pldrx()) is orig_pldrx
-            and
-            pldrx.pld_dec is orig_pldec
-        )
+        # sanity on orig settings
+        assert rx.pld_dec is orig_pldec
+
+
+@acm
+async def maybe_limit_plds(
+    ctx: Context,
+    spec: Union[Type[Struct]]|None = None,
+    **kwargs,
+) -> MsgDec|None:
+    '''
+    Async compat maybe-payload type limiter.
+
+    Mostly for use inside other internal `@acm`s such that a separate
+    indent block isn't needed when an async one is already being
+    used.
+
+    '''
+    if spec is None:
+        yield None
+        return
+
+    # sanity on scoping
+    curr_ctx: Context = current_ipc_ctx()
+    assert ctx is curr_ctx
+
+    with ctx._pld_rx.limit_plds(spec=spec) as msgdec:
+        yield msgdec
+
+    curr_ctx: Context = current_ipc_ctx()
+    assert ctx is curr_ctx
 
 
 async def drain_to_final_msg(
@@ -543,21 +551,12 @@ async def drain_to_final_msg(
         match msg:
 
             # final result arrived!
-            case Return(
-                # cid=cid,
-                # pld=res,
-            ):
-                # ctx._result: Any = res
-                ctx._result: Any = pld
+            case Return():
                 log.runtime(
                     'Context delivered final draining msg:\n'
                     f'{pretty_struct.pformat(msg)}'
                 )
-                # XXX: only close the rx mem chan AFTER
-                # a final result is retreived.
-                # if ctx._rx_chan:
-                #     await ctx._rx_chan.aclose()
-                # TODO: ^ we don't need it right?
+                ctx._result: Any = pld
                 result_msg = msg
                 break
 
@@ -663,24 +662,6 @@ async def drain_to_final_msg(
                     )
                     result_msg = msg
                     break  # OOOOOF, yeah obvi we need this..
-
-                # XXX we should never really get here
-                # right! since `._deliver_msg()` should
-                # always have detected an {'error': ..}
-                # msg and already called this right!?!
-                # elif error := unpack_error(
-                #     msg=msg,
-                #     chan=ctx._portal.channel,
-                #     hide_tb=False,
-                # ):
-                #     log.critical('SHOULD NEVER GET HERE!?')
-                #     assert msg is ctx._cancel_msg
-                #     assert error.msgdata == ctx._remote_error.msgdata
-                #     assert error.ipc_msg == ctx._remote_error.ipc_msg
-                #     from .devx._debug import pause
-                #     await pause()
-                #     ctx._maybe_cancel_and_set_remote_error(error)
-                #     ctx._maybe_raise_remote_err(error)
 
                 else:
                     # bubble the original src key error
