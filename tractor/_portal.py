@@ -166,13 +166,19 @@ class Portal:
         assert self._expect_result_ctx
 
         if self._final_result_msg is None:
-            (
-                self._final_result_msg,
-                self._final_result_pld,
-            ) = await self._expect_result_ctx._pld_rx.recv_msg_w_pld(
-                ipc=self._expect_result_ctx,
-                expect_msg=Return,
-            )
+            try:
+                (
+                    self._final_result_msg,
+                    self._final_result_pld,
+                ) = await self._expect_result_ctx._pld_rx.recv_msg_w_pld(
+                    ipc=self._expect_result_ctx,
+                    expect_msg=Return,
+                )
+            except BaseException as err:
+                # TODO: wrap this into `@api_frame` optionally with
+                # some kinda filtering mechanism like log levels?
+                __tracebackhide__: bool = False
+                raise err
 
         return self._final_result_pld
 
@@ -306,7 +312,7 @@ class Portal:
             portal=self,
         )
         return await ctx._pld_rx.recv_pld(
-            ctx=ctx,
+            ipc=ctx,
             expect_msg=Return,
         )
 
@@ -325,6 +331,8 @@ class Portal:
         remote rpc task or a local async generator instance.
 
         '''
+        __runtimeframe__: int = 1  # noqa
+
         if isinstance(func, str):
             warnings.warn(
                 "`Portal.run(namespace: str, funcname: str)` is now"
@@ -358,7 +366,7 @@ class Portal:
             portal=self,
         )
         return await ctx._pld_rx.recv_pld(
-            ctx=ctx,
+            ipc=ctx,
             expect_msg=Return,
         )
 
