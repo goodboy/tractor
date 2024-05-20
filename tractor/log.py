@@ -57,8 +57,8 @@ LEVELS: dict[str, int] = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
     'CANCEL': 16,
+    'DEVX': 400,
     'PDB': 500,
-    'DEVX': 600,
 }
 # _custom_levels: set[str] = {
 #     lvlname.lower for lvlname in LEVELS.keys()
@@ -137,7 +137,7 @@ class StackLevelAdapter(LoggerAdapter):
         "Developer experience" sub-sys statuses.
 
         '''
-        return self.log(600, msg)
+        return self.log(400, msg)
 
     def log(
         self,
@@ -202,7 +202,12 @@ class StackLevelAdapter(LoggerAdapter):
         )
 
 
-def pformat_task_uid():
+# TODO IDEA:
+# -[ ] do per task-name and actor-name color coding
+# -[ ] unique color per task-id and actor-uuid
+def pformat_task_uid(
+    id_part: str = 'tail'
+):
     '''
     Return `str`-ified unique for a `trio.Task` via a combo of its
     `.name: str` and `id()` truncated output.
@@ -210,7 +215,12 @@ def pformat_task_uid():
     '''
     task: trio.Task = trio.lowlevel.current_task()
     tid: str = str(id(task))
-    return f'{task.name}[{tid[:6]}]'
+    if id_part == 'tail':
+        tid_part: str = tid[-6:]
+    else:
+        tid_part: str = tid[:6]
+
+    return f'{task.name}[{tid_part}]'
 
 
 _conc_name_getters = {
