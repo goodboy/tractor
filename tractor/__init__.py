@@ -43,6 +43,7 @@ from ._supervise import (
 from ._state import (
     current_actor as current_actor,
     is_root_process as is_root_process,
+    current_ipc_ctx as current_ipc_ctx,
 )
 from ._exceptions import (
     ContextCancelled as ContextCancelled,
