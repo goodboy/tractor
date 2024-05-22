@@ -694,21 +694,21 @@ class Actor:
                             proc: trio.Process
                             _, proc, _ = entry
 
-                        if (
-                            (poll := getattr(proc, 'poll', None))
-                            and poll() is None
-                        ):
-                            log.cancel(
-                                'Root actor reports no-more-peers, BUT\n'
-                                'a DISCONNECTED child still has the debug '
-                                'lock!\n\n'
-                                # f'root uid: {self.uid}\n'
-                                f'last disconnected child uid: {uid}\n'
-                                f'locking child uid: {pdb_user_uid}\n'
-                            )
-                            await _debug.maybe_wait_for_debugger(
-                                child_in_debug=True
-                            )
+                            if (
+                                (poll := getattr(proc, 'poll', None))
+                                and poll() is None
+                            ):
+                                log.cancel(
+                                    'Root actor reports no-more-peers, BUT\n'
+                                    'a DISCONNECTED child still has the debug '
+                                    'lock!\n\n'
+                                    # f'root uid: {self.uid}\n'
+                                    f'last disconnected child uid: {uid}\n'
+                                    f'locking child uid: {pdb_user_uid}\n'
+                                )
+                                await _debug.maybe_wait_for_debugger(
+                                    child_in_debug=True
+                                )
 
                     # TODO: just bc a child's transport dropped
                     # doesn't mean it's not still using the pdb
@@ -1142,7 +1142,6 @@ class Actor:
             requester_type,
             req_chan,
             log_meth,
-
         ) = (
             req_chan.uid,
             'peer',
@@ -1175,7 +1174,11 @@ class Actor:
             # with the root actor in this tree
             debug_req = _debug.DebugStatus
             lock_req_ctx: Context = debug_req.req_ctx
-            if lock_req_ctx is not None:
+            if (
+                lock_req_ctx
+                and
+                lock_req_ctx.has_outcome
+            ):
                 msg += (
                     '-> Cancelling active debugger request..\n'
                     f'|_{_debug.Lock.repr()}\n\n'
