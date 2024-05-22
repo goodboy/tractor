@@ -53,17 +53,14 @@ LOG_FORMAT = (
 
 DATE_FORMAT = '%b %d %H:%M:%S'
 
-LEVELS: dict[str, int] = {
+# FYI, ERROR is 40
+CUSTOM_LEVELS: dict[str, int] = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
     'CANCEL': 16,
-    'DEVX': 400,
+    'DEVX': 17,
     'PDB': 500,
 }
-# _custom_levels: set[str] = {
-#     lvlname.lower for lvlname in LEVELS.keys()
-# }
-
 STD_PALETTE = {
     'CRITICAL': 'red',
     'ERROR': 'red',
@@ -137,7 +134,7 @@ class StackLevelAdapter(LoggerAdapter):
         "Developer experience" sub-sys statuses.
 
         '''
-        return self.log(400, msg)
+        return self.log(17, msg)
 
     def log(
         self,
@@ -154,8 +151,7 @@ class StackLevelAdapter(LoggerAdapter):
         if self.isEnabledFor(level):
             stacklevel: int = 3
             if (
-                level in LEVELS.values()
-                # or level in _custom_levels
+                level in CUSTOM_LEVELS.values()
             ):
                 stacklevel: int = 4
 
@@ -202,7 +198,8 @@ class StackLevelAdapter(LoggerAdapter):
         )
 
 
-# TODO IDEA:
+# TODO IDEAs:
+# -[ ] move to `.devx.pformat`?
 # -[ ] do per task-name and actor-name color coding
 # -[ ] unique color per task-id and actor-uuid
 def pformat_task_uid(
@@ -309,7 +306,7 @@ def get_logger(
     logger = StackLevelAdapter(log, ActorContextInfo())
 
     # additional levels
-    for name, val in LEVELS.items():
+    for name, val in CUSTOM_LEVELS.items():
         logging.addLevelName(val, name)
 
         # ensure customs levels exist as methods
@@ -377,7 +374,7 @@ def at_least_level(
 
     '''
     if isinstance(level, str):
-        level: int = LEVELS[level.upper()]
+        level: int = CUSTOM_LEVELS[level.upper()]
 
     if log.getEffectiveLevel() <= level:
         return True
