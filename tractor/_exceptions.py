@@ -35,7 +35,6 @@ import trio
 from msgspec import (
     defstruct,
     msgpack,
-    Raw,
     structs,
     ValidationError,
 )
@@ -44,11 +43,12 @@ from tractor._state import current_actor
 from tractor.log import get_logger
 from tractor.msg import (
     Error,
+    PayloadMsg,
     MsgType,
-    Stop,
-    types as msgtypes,
     MsgCodec,
     MsgDec,
+    Stop,
+    types as msgtypes,
 )
 from tractor.msg.pretty_struct import (
     iter_fields,
@@ -156,6 +156,7 @@ def pack_from_raise(
     `Error`-msg using `pack_error()` to extract the tb info.
 
     '''
+    __tracebackhide__: bool = True
     try:
         raise local_err
     except type(local_err) as local_err:
@@ -525,10 +526,26 @@ class RemoteActorError(Exception):
             if not with_type_header:
                 body = '\n' + body
         else:
-            body: str = textwrap.indent(
-                self._message,
-                prefix='  ',
-            ) + '\n'
+            first: str = ''
+            message: str = self._message
+
+            # split off the first line so it isn't indented
+            # the same like the "boxed content".
+            if not with_type_header:
+                lines: list[str] = message.splitlines()
+                first = lines[0]
+                message = ''.join(lines[1:])
+
+            body: str = (
+                first
+                +
+                textwrap.indent(
+                    message,
+                    prefix='  ',
+                )
+                +
+                '\n'
+            )
 
         if with_type_header:
             tail: str = ')>'
@@ -734,25 +751,38 @@ class MsgTypeError(
     def from_decode(
         cls,
         message: str,
-        msgdict: dict,
+
+        ipc_msg: PayloadMsg|None = None,
+        msgdict: dict|None = None,
 
     ) -> MsgTypeError:
-        return cls(
-            message=message,
-            boxed_type=cls,
+        '''
+        Constuctor for easy creation from (presumably) catching
+        the backend interchange lib's underlying validation error
+        and passing context-specific meta-data to `_mk_msg_type_err()`
+        (which is normally the caller of this).
 
-            # NOTE: original "vanilla decode" of the msg-bytes
-            # is placed inside a value readable from
-            # `.msgdata['_msg_dict']`
-            _msg_dict=msgdict,
-
-            # expand and pack all RAE compat fields
-            # into the `._extra_msgdata` aux `dict`.
-            **{
+        '''
+        # if provided, expand and pack all RAE compat fields into the
+        # `._extra_msgdata` auxillary data `dict` internal to
+        # `RemoteActorError`.
+        extra_msgdata: dict = {}
+        if msgdict:
+            extra_msgdata: dict = {
                 k: v
                 for k, v in msgdict.items()
                 if k in _ipcmsg_keys
-            },
+            }
+            # NOTE: original "vanilla decode" of the msg-bytes
+            # is placed inside a value readable from
+            # `.msgdata['_msg_dict']`
+            extra_msgdata['_msg_dict'] = msgdict
+
+        return cls(
+            message=message,
+            boxed_type=cls,
+            ipc_msg=ipc_msg,
+            **extra_msgdata,
         )
 
 
@@ -1076,7 +1106,7 @@ _raise_from_no_key_in_msg = _raise_from_unexpected_msg
 
 
 def _mk_msg_type_err(
-    msg: Any|bytes|Raw,
+    msg: Any|bytes|MsgType,
     codec: MsgCodec|MsgDec,
 
     message: str|None = None,
@@ -1085,6 +1115,7 @@ def _mk_msg_type_err(
     src_validation_error: ValidationError|None = None,
     src_type_error: TypeError|None = None,
     is_invalid_payload: bool = False,
+    src_err_msg: Error|None = None,
 
     **mte_kwargs,
 
@@ -1159,9 +1190,10 @@ def _mk_msg_type_err(
             # only the payload being wrong?
             # -[ ] maybe the better design is to break this construct
             #   logic into a separate explicit helper raiser-func?
-            msg_dict: dict = {}
+            msg_dict = None
 
         else:
+            msg: bytes
             # decode the msg-bytes using the std msgpack
             # interchange-prot (i.e. without any
             # `msgspec.Struct` handling) so that we can
@@ -1206,6 +1238,14 @@ def _mk_msg_type_err(
         msgtyperr = MsgTypeError.from_decode(
             message=message,
             msgdict=msg_dict,
+
+            # NOTE: for the send-side `.started()` pld-validate
+            # case we actually set the `._ipc_msg` AFTER we return
+            # from here inside `Context.started()` since we actually
+            # want to emulate the `Error` from the mte we build here
+            # Bo
+            # so by default in that case this is set to `None`
+            ipc_msg=src_err_msg,
         )
         msgtyperr.__cause__ = src_validation_error
         return msgtyperr
