@@ -33,6 +33,7 @@ from .log import (
     get_logger,
 )
 from . import _state
+from .devx import _debug
 from .to_asyncio import run_as_asyncio_guest
 from ._runtime import (
     async_main,
@@ -96,7 +97,6 @@ def _mp_main(
 
 
 def _trio_main(
-
     actor: Actor,
     *,
     parent_addr: tuple[str, int] | None = None,
@@ -107,7 +107,9 @@ def _trio_main(
     Entry point for a `trio_run_in_process` subactor.
 
     '''
-    __tracebackhide__: bool = True
+    # __tracebackhide__: bool = True
+    _debug.hide_runtime_frames()
+
     _state._current_actor = actor
     trio_main = partial(
         async_main,
@@ -146,7 +148,6 @@ def _trio_main(
             +
             actor_info
         )
-
     finally:
         log.info(
             'Subactor terminated\n'

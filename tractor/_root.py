@@ -92,12 +92,16 @@ async def open_root_actor(
     # and that this call creates it.
     ensure_registry: bool = False,
 
+    hide_tb: bool = True,
+
 ) -> Actor:
     '''
     Runtime init entry point for ``tractor``.
 
     '''
-    __tracebackhide__ = True
+    __tracebackhide__: bool = hide_tb
+    _debug.hide_runtime_frames()
+
     # TODO: stick this in a `@cm` defined in `devx._debug`?
     #
     # Override the global debugger hook to make it play nice with
@@ -126,7 +130,7 @@ async def open_root_actor(
         # usage by a clobbered TTY's stdstreams!
         def block_bps(*args, **kwargs):
             raise RuntimeError(
-                'Trying to use `breakpoint()` eh?\n'
+                'Trying to use `breakpoint()` eh?\n\n'
                 'Welp, `tractor` blocks `breakpoint()` built-in calls by default!\n'
                 'If you need to use it please install `greenback` and set '
                 '`debug_mode=True` when opening the runtime '
@@ -134,7 +138,9 @@ async def open_root_actor(
             )
 
         sys.breakpointhook = block_bps
-        # os.environ['PYTHONBREAKPOINT'] = None
+        # lol ok,
+        # https://docs.python.org/3/library/sys.html#sys.breakpointhook
+        os.environ['PYTHONBREAKPOINT'] = "0"
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
@@ -203,6 +209,7 @@ async def open_root_actor(
             ) > logging.getLevelName('PDB')
         ):
             loglevel = 'PDB'
+
 
     elif debug_mode:
         raise RuntimeError(
