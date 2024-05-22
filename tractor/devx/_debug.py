@@ -48,9 +48,11 @@ from typing import (
     TYPE_CHECKING,
 )
 from types import (
+    FunctionType,
     FrameType,
     ModuleType,
     TracebackType,
+    CodeType,
 )
 
 from msgspec import Struct
@@ -90,43 +92,72 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-# XXX HACKZONE XXX
-#  hide exit stack frames on nurseries and cancel-scopes!
-# |_ so avoid seeing it when the `pdbp` REPL is first engaged from
-#    inside a `trio.open_nursery()` scope (with no line after it
-#    in before the block end??).
-#
-# TODO: FINALLY got this workin originally with
-#  `@pdbp.hideframe` around the `wrapper()` def embedded inside
-#  `_ki_protection_decoratior()`.. which is in the module:
-#  /home/goodboy/.virtualenvs/tractor311/lib/python3.11/site-packages/trio/_core/_ki.py
-#
-# -[ ] make an issue and patch for `trio` core? maybe linked
-#    to the long outstanding `pdb` one below?
-#   |_ it's funny that there's frame hiding throughout `._run.py`
-#      but not where it matters on the below exit funcs..
-#
-# -[ ] provide a patchset for the lonstanding
-#   |_ https://github.com/python-trio/trio/issues/1155
-#
-# -[ ] make a linked issue to ^ and propose allowing all the
-#     `._core._run` code to have their `__tracebackhide__` value
-#     configurable by a `RunVar` to allow getting scheduler frames
-#     if desired through configuration?
-#
-# -[ ] maybe dig into the core `pdb` issue why the extra frame is shown
-#      at all?
-#
-pdbp.hideframe(trio._core._run.NurseryManager.__aexit__)
-pdbp.hideframe(trio._core._run.CancelScope.__exit__)
-pdbp.hideframe(_GeneratorContextManager.__exit__)
-pdbp.hideframe(_AsyncGeneratorContextManager.__aexit__)
-pdbp.hideframe(trio.Event.wait)
 
-__all__ = [
-    'breakpoint',
-    'post_mortem',
-]
+def hide_runtime_frames() -> dict[FunctionType, CodeType]:
+    '''
+    Hide call-stack frames for various std-lib and `trio`-API primitives
+    such that the tracebacks presented from our runtime are as minimized
+    as possible, particularly from inside a `PdbREPL`.
+
+    '''
+    # XXX HACKZONE XXX
+    #  hide exit stack frames on nurseries and cancel-scopes!
+    # |_ so avoid seeing it when the `pdbp` REPL is first engaged from
+    #    inside a `trio.open_nursery()` scope (with no line after it
+    #    in before the block end??).
+    #
+    # TODO: FINALLY got this workin originally with
+    #  `@pdbp.hideframe` around the `wrapper()` def embedded inside
+    #  `_ki_protection_decoratior()`.. which is in the module:
+    #  /home/goodboy/.virtualenvs/tractor311/lib/python3.11/site-packages/trio/_core/_ki.py
+    #
+    # -[ ] make an issue and patch for `trio` core? maybe linked
+    #    to the long outstanding `pdb` one below?
+    #   |_ it's funny that there's frame hiding throughout `._run.py`
+    #      but not where it matters on the below exit funcs..
+    #
+    # -[ ] provide a patchset for the lonstanding
+    #   |_ https://github.com/python-trio/trio/issues/1155
+    #
+    # -[ ] make a linked issue to ^ and propose allowing all the
+    #     `._core._run` code to have their `__tracebackhide__` value
+    #     configurable by a `RunVar` to allow getting scheduler frames
+    #     if desired through configuration?
+    #
+    # -[ ] maybe dig into the core `pdb` issue why the extra frame is shown
+    #      at all?
+    #
+    funcs: list[FunctionType] = [
+        trio._core._run.NurseryManager.__aexit__,
+        trio._core._run.CancelScope.__exit__,
+         _GeneratorContextManager.__exit__,
+         _AsyncGeneratorContextManager.__aexit__,
+         _AsyncGeneratorContextManager.__aenter__,
+         trio.Event.wait,
+    ]
+    func_list_str: str = textwrap.indent(
+        "\n".join(f.__qualname__ for f in funcs),
+        prefix=' |_ ',
+    )
+    log.devx(
+        'Hiding the following runtime frames by default:\n'
+        f'{func_list_str}\n'
+    )
+
+    codes: dict[FunctionType, CodeType] = {}
+    for ref in funcs:
+        # stash a pre-modified version of each ref's code-obj
+        # so it can be reverted later if needed.
+        codes[ref] = ref.__code__
+        pdbp.hideframe(ref)
+    #
+    # pdbp.hideframe(trio._core._run.NurseryManager.__aexit__)
+    # pdbp.hideframe(trio._core._run.CancelScope.__exit__)
+    # pdbp.hideframe(_GeneratorContextManager.__exit__)
+    # pdbp.hideframe(_AsyncGeneratorContextManager.__aexit__)
+    # pdbp.hideframe(_AsyncGeneratorContextManager.__aenter__)
+    # pdbp.hideframe(trio.Event.wait)
+    return codes
 
 
 class LockStatus(
@@ -1032,15 +1063,24 @@ async def request_root_stdio_lock(
 
             except (
                 BaseException,
-            ):
-                log.exception(
-                    'Failed during root TTY-lock dialog?\n'
-                    f'{req_ctx}\n'
-
-                    f'Cancelling IPC ctx!\n'
+            ) as ctx_err:
+                message: str = (
+                    'Failed during debug request dialog with root actor?\n\n'
                 )
-                await req_ctx.cancel()
-                raise
+
+                if req_ctx:
+                    message += (
+                        f'{req_ctx}\n'
+                        f'Cancelling IPC ctx!\n'
+                    )
+                    await req_ctx.cancel()
+
+                else:
+                    message += 'Failed during `Portal.open_context()` ?\n'
+
+                log.exception(message)
+                ctx_err.add_note(message)
+                raise ctx_err
 
 
     except (
@@ -1067,6 +1107,7 @@ async def request_root_stdio_lock(
         #   ctl-c out of the currently hanging task! 
         raise DebugRequestError(
             'Failed to lock stdio from subactor IPC ctx!\n\n'
+
             f'req_ctx: {DebugStatus.req_ctx}\n'
         ) from req_err
 
@@ -1777,7 +1818,7 @@ def _set_trace(
 ):
     __tracebackhide__: bool = hide_tb
     actor: tractor.Actor = actor or current_actor()
-    task: task or current_task()
+    task: trio.Task = task or current_task()
 
     # else:
     # TODO: maybe print the actor supervion tree up to the
