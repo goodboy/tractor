@@ -43,6 +43,7 @@ from tractor._state import (
     is_main_process,
     is_root_process,
     debug_mode,
+    _runtime_vars,
 )
 from tractor.log import get_logger
 from tractor._portal import Portal
@@ -303,7 +304,6 @@ async def hard_kill(
 
 
 async def soft_kill(
-
     proc: ProcessType,
     wait_func: Callable[
         [ProcessType],
@@ -333,6 +333,18 @@ async def soft_kill(
         await wait_func(proc)
 
     except trio.Cancelled:
+        with trio.CancelScope(shield=True):
+            await maybe_wait_for_debugger(
+                child_in_debug=_runtime_vars.get(
+                    '_debug_mode', False
+                ),
+                header_msg=(
+                    'Delaying `soft_kill()` subproc reaper while debugger locked..\n'
+                ),
+                # TODO: need a diff value then default?
+                # poll_steps=9999999,
+            )
+
         # if cancelled during a soft wait, cancel the child
         # actor before entering the hard reap sequence
         # below. This means we try to do a graceful teardown
