@@ -162,7 +162,10 @@ class MsgDec(Struct):
     # TODO: would get moved into `FieldSpec.__str__()` right?
     @property
     def spec_str(self) -> str:
-        return pformat_msgspec(codec=self)
+        return pformat_msgspec(
+            codec=self,
+            join_char='|',
+        )
 
     pld_spec_str = spec_str
 
@@ -211,7 +214,7 @@ def mk_msgspec_table(
         msgtypes = [msgspec]
 
     msgt_table: dict[str, MsgType] = {
-        msgt: str(msgt)
+        msgt: str(msgt.__name__)
         for msgt in msgtypes
     }
     if msg:
