@@ -187,6 +187,9 @@ class RemoteActorError(Exception):
     ]
     extra_body_fields: list[str] = [
         'cid',
+        # NOTE: we only show this on relayed errors (aka
+        # "inceptions").
+        'relay_uid',
         'boxed_type',
     ]
 
@@ -273,7 +276,7 @@ class RemoteActorError(Exception):
     @property
     def ipc_msg(self) -> Struct:
         '''
-        Re-render the underlying `._ipc_msg: Msg` as
+        Re-render the underlying `._ipc_msg: MsgType` as
         a `pretty_struct.Struct` for introspection such that the
         returned value is a read-only copy of the original.
 
@@ -344,7 +347,7 @@ class RemoteActorError(Exception):
         return str(bt.__name__)
 
     @property
-    def boxed_type(self) -> str:
+    def boxed_type(self) -> Type[BaseException]:
         '''
         Error type boxed by last actor IPC hop.
 
@@ -409,7 +412,14 @@ class RemoteActorError(Exception):
         end_char: str = '\n',
     ) -> str:
         _repr: str = ''
+
         for key in fields:
+            if (
+                key == 'relay_uid'
+                and not self.is_inception()
+            ):
+                continue
+
             val: Any|None = (
                 getattr(self, key, None)
                 or
@@ -426,6 +436,7 @@ class RemoteActorError(Exception):
             val_str: str = repr(val)
             if val:
                 _repr += f'{key}={val_str}{end_char}'
+
 
         return _repr
 
@@ -455,15 +466,45 @@ class RemoteActorError(Exception):
             _repr
         )
 
-    def pformat(self) -> str:
+    def is_inception(self) -> bool:
+        '''
+        Predicate which determines if the shuttled error type
+        is the same as the container error type; IOW is this
+        an "error within and error" which points to some original
+        source error that was relayed through multiple
+        actor hops.
+
+        Ex. a relayed remote error will generally be some form of
+        `RemoteActorError[RemoteActorError]` with a `.src_type` which
+        is not of that same type.
+
+        '''
+        # if a single hop boxed error it was not relayed
+        # more then one hop directly from the src actor.
+        if (
+            self.boxed_type
+            is
+            self.src_type
+        ):
+            return False
+
+        return True
+
+    def pformat(
+        self,
+        with_type_header: bool = True,
+    ) -> str:
         '''
         Nicely formatted boxed error meta data + traceback, OR just
         the normal message from `.args` (for eg. as you'd want shown
         by a locally raised `ContextCancelled`).
 
         '''
-        tb_str: str = self.tb_str
-        if tb_str:
+        header: str = ''
+        if with_type_header:
+            header: str = f'<{type(self).__name__}(\n'
+
+        if tb_str := self.tb_str:
             fields: str = self._mk_fields_str(
                 _body_fields
                 +
@@ -481,19 +522,35 @@ class RemoteActorError(Exception):
                 #             |___ ..
                 tb_body_indent=1,
             )
+            if not with_type_header:
+                body = '\n' + body
         else:
             body: str = textwrap.indent(
                 self._message,
                 prefix='  ',
             ) + '\n'
+
+        if with_type_header:
+            tail: str = ')>'
+        else:
+            tail = ''
+
         return (
-            f'<{type(self).__name__}(\n'
+            header
+            +
             f'{body}'
-            ')>'
+            +
+            tail
         )
 
     __repr__ = pformat
-    __str__ = pformat
+
+    # NOTE: apparently we need this so that
+    # the full fields show in debugger tests?
+    # |_ i guess `pexepect` relies on `str`-casing
+    #    of output?
+    def __str__(self) -> str:
+        return self.pformat(with_type_header=False)
 
     def unwrap(
         self,
@@ -682,6 +739,7 @@ class MsgTypeError(
     ) -> MsgTypeError:
         return cls(
             message=message,
+            boxed_type=cls,
 
             # NOTE: original "vanilla decode" of the msg-bytes
             # is placed inside a value readable from
@@ -949,10 +1007,11 @@ def _raise_from_unexpected_msg(
     if isinstance(msg, Error):
     # match msg:
     #     case Error():
-        raise unpack_error(
+        exc: RemoteActorError = unpack_error(
             msg,
             ctx.chan,
-        ) from src_err
+        )
+        raise exc from src_err
 
     # `MsgStream` termination msg.
     # TODO: does it make more sense to pack 
@@ -966,10 +1025,11 @@ def _raise_from_unexpected_msg(
             or
             isinstance(msg, Stop)
         ):
-            log.debug(
+            message: str = (
                 f'Context[{cid}] stream was stopped by remote side\n'
                 f'cid: {cid}\n'
             )
+            log.debug(message)
 
             # TODO: if the a local task is already blocking on
             # a `Context.result()` and thus a `.receive()` on the
@@ -983,6 +1043,8 @@ def _raise_from_unexpected_msg(
                 f'Context stream ended due to msg:\n\n'
                 f'{pformat(msg)}\n'
             )
+            eoc.add_note(message)
+
             # XXX: important to set so that a new `.receive()`
             # call (likely by another task using a broadcast receiver)
             # doesn't accidentally pull the `return` message
@@ -1007,6 +1069,7 @@ def _raise_from_unexpected_msg(
         ' BUT received a non-error msg:\n\n'
         f'{struct_format(msg)}'
     ) from src_err
+    # ^-TODO-^ maybe `MsgDialogError` is better?
 
 
 _raise_from_no_key_in_msg = _raise_from_unexpected_msg
@@ -1022,6 +1085,8 @@ def _mk_msg_type_err(
     src_validation_error: ValidationError|None = None,
     src_type_error: TypeError|None = None,
     is_invalid_payload: bool = False,
+
+    **mte_kwargs,
 
 ) -> MsgTypeError:
     '''
@@ -1081,12 +1146,20 @@ def _mk_msg_type_err(
     else:
         if is_invalid_payload:
             msg_type: str = type(msg)
+            any_pld: Any = msgpack.decode(msg.pld)
             message: str = (
                 f'invalid `{msg_type.__qualname__}` payload\n\n'
-                f'<{type(msg).__qualname__}(\n'
-                f' |_pld: {codec.pld_spec_str} = {msg.pld!r}'
-                f')>\n'
+                f'value: `{any_pld!r}` does not match type-spec: ' #\n'
+                f'`{type(msg).__qualname__}.pld: {codec.pld_spec_str}`'
+                # f'<{type(msg).__qualname__}(\n'
+                # f' |_pld: {codec.pld_spec_str}\n'# != {any_pld!r}\n'
+                # f')>\n\n'
             )
+            # TODO: should we just decode the msg to a dict despite
+            # only the payload being wrong?
+            # -[ ] maybe the better design is to break this construct
+            #   logic into a separate explicit helper raiser-func?
+            msg_dict: dict = {}
 
         else:
             # decode the msg-bytes using the std msgpack
