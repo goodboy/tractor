@@ -144,9 +144,10 @@ def in_prompt_msg(
     log/REPL output for a given `pdb` interact point.
 
     '''
+    __tracebackhide__: bool = False
+
     for part in parts:
         if part not in prompt:
-
             if pause_on_false:
                 import pdbp
                 pdbp.set_trace()
@@ -165,6 +166,7 @@ def assert_before(
     **kwargs,
 
 ) -> None:
+    __tracebackhide__: bool = False
 
     # as in before the prompt end
     before: str = str(child.before.decode())
@@ -217,7 +219,10 @@ def ctlc(
     ],
     ids=lambda item: f'{item[0]} -> {item[1]}',
 )
-def test_root_actor_error(spawn, user_in_out):
+def test_root_actor_error(
+    spawn,
+    user_in_out,
+):
     '''
     Demonstrate crash handler entering pdb from basic error in root actor.
 
@@ -463,8 +468,12 @@ def test_subactor_breakpoint(
     child.expect(PROMPT)
 
     before = str(child.before.decode())
-    assert "RemoteActorError: ('breakpoint_forever'" in before
-    assert 'bdb.BdbQuit' in before
+    assert in_prompt_msg(
+        before,
+        ['RemoteActorError:',
+         "('breakpoint_forever'",
+         'bdb.BdbQuit',]
+    )
 
     if ctlc:
         do_ctlc(child)
@@ -476,8 +485,12 @@ def test_subactor_breakpoint(
     child.expect(pexpect.EOF)
 
     before = str(child.before.decode())
-    assert "RemoteActorError: ('breakpoint_forever'" in before
-    assert 'bdb.BdbQuit' in before
+    assert in_prompt_msg(
+        before,
+        ['RemoteActorError:',
+         "('breakpoint_forever'",
+         'bdb.BdbQuit',]
+    )
 
 
 @has_nested_actors
@@ -745,8 +758,9 @@ def test_multi_daemon_subactors(
             # boxed error raised in root task
             # "Attaching to pdb in crashed actor: ('root'",
             _crash_msg,
-            "('root'",
-            "_exceptions.RemoteActorError: ('name_error'",
+            "('root'",  # should attach in root
+            "_exceptions.RemoteActorError:",  # with an embedded RAE for..
+            "('name_error'",  # the src subactor which raised
         ]
     )
 
@@ -847,10 +861,11 @@ def test_multi_nested_subactors_error_through_nurseries(
     # https://github.com/goodboy/tractor/issues/320
     # ctlc: bool,
 ):
-    """Verify deeply nested actors that error trigger debugger entries
+    '''
+    Verify deeply nested actors that error trigger debugger entries
     at each actor nurserly (level) all the way up the tree.
 
-    """
+    '''
     # NOTE: previously, inside this script was a bug where if the
     # parent errors before a 2-levels-lower actor has released the lock,
     # the parent tries to cancel it but it's stuck in the debugger?
@@ -870,22 +885,31 @@ def test_multi_nested_subactors_error_through_nurseries(
         except EOF:
             break
 
-    assert_before(child, [
+    assert_before(
+        child,
+        [ # boxed source errors
+            "NameError: name 'doggypants' is not defined",
+            "tractor._exceptions.RemoteActorError:",
+            "('name_error'",
+            "bdb.BdbQuit",
 
-        # boxed source errors
-        "NameError: name 'doggypants' is not defined",
-        "tractor._exceptions.RemoteActorError: ('name_error'",
-        "bdb.BdbQuit",
+            # first level subtrees
+            # "tractor._exceptions.RemoteActorError: ('spawner0'",
+            "src_uid=('spawner0'",
 
-        # first level subtrees
-        "tractor._exceptions.RemoteActorError: ('spawner0'",
-        # "tractor._exceptions.RemoteActorError: ('spawner1'",
+            # "tractor._exceptions.RemoteActorError: ('spawner1'",
 
-        # propagation of errors up through nested subtrees
-        "tractor._exceptions.RemoteActorError: ('spawn_until_0'",
-        "tractor._exceptions.RemoteActorError: ('spawn_until_1'",
-        "tractor._exceptions.RemoteActorError: ('spawn_until_2'",
-    ])
+            # propagation of errors up through nested subtrees
+            # "tractor._exceptions.RemoteActorError: ('spawn_until_0'",
+            # "tractor._exceptions.RemoteActorError: ('spawn_until_1'",
+            # "tractor._exceptions.RemoteActorError: ('spawn_until_2'",
+            # ^-NOTE-^ old RAE repr, new one is below with a field
+            # showing the src actor's uid.
+            "src_uid=('spawn_until_0'",
+            "relay_uid=('spawn_until_1'",
+            "src_uid=('spawn_until_2'",
+        ]
+    )
 
 
 @pytest.mark.timeout(15)
@@ -1019,13 +1043,16 @@ def test_different_debug_mode_per_actor(
     # msg reported back from the debug mode actor is processed.
     # assert "tractor._exceptions.RemoteActorError: ('debugged_boi'" in before
 
-    assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
-
     # the crash boi should not have made a debugger request but
     # instead crashed completely
-    assert "tractor._exceptions.RemoteActorError: ('crash_boi'" in before
-    assert "RuntimeError" in before
-
+    assert_before(
+        child,
+        [
+            "tractor._exceptions.RemoteActorError:",
+            "src_uid=('crash_boi'",
+            "RuntimeError",
+        ]
+    )
 
 
 def test_pause_from_sync(
@@ -1044,13 +1071,15 @@ def test_pause_from_sync(
     assert_before(
         child,
         [
-            '`greenback` portal opened!',
             # pre-prompt line
-            _pause_msg, "('root'",
+            _pause_msg,
+            "<Task '__main__.main'",
+            "('root'",
         ]
     )
     if ctlc:
         do_ctlc(child)
+
     child.sendline('c')
     child.expect(PROMPT)
 
@@ -1067,6 +1096,7 @@ def test_pause_from_sync(
 
     if ctlc:
         do_ctlc(child)
+
     child.sendline('c')
     child.expect(PROMPT)
     assert_before(
@@ -1076,6 +1106,7 @@ def test_pause_from_sync(
 
     if ctlc:
         do_ctlc(child)
+
     child.sendline('c')
     child.expect(PROMPT)
     # non-main thread case
@@ -1087,5 +1118,22 @@ def test_pause_from_sync(
 
     if ctlc:
         do_ctlc(child)
+
     child.sendline('c')
     child.expect(pexpect.EOF)
+
+
+# TODO!
+def test_correct_frames_below_hidden():
+    '''
+    Ensure that once a `tractor.pause()` enages, when the user
+    inputs a "next"/"n" command the actual next line steps
+    and that using a "step"/"s" into the next LOC, particuarly
+    `tractor` APIs, you can step down into that code.
+
+    '''
+    ...
+
+
+def test_cant_pause_from_paused_task():
+    ...
