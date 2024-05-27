@@ -47,7 +47,7 @@ from tractor._exceptions import (
     _raise_from_unexpected_msg,
     MsgTypeError,
     _mk_msg_type_err,
-    pack_from_raise,
+    pack_error,
 )
 from tractor._state import current_ipc_ctx
 from ._codec import (
@@ -203,7 +203,6 @@ class PldRx(Struct):
         msg: MsgType = (
             ipc_msg
             or
-
             # async-rx msg from underlying IPC feeder (mem-)chan
             await ipc._rx_chan.receive()
         )
@@ -223,6 +222,10 @@ class PldRx(Struct):
         raise_error: bool = True,
         hide_tb: bool = True,
 
+        # XXX for special (default?) case of send side call with
+        # `Context.started(validate_pld_spec=True)`
+        is_started_send_side: bool = False,
+
     ) -> PayloadT|Raw:
         '''
         Decode a msg's payload field: `MsgType.pld: PayloadT|Raw` and
@@ -230,8 +233,6 @@ class PldRx(Struct):
 
         '''
         __tracebackhide__: bool = hide_tb
-
-        _src_err = None
         src_err: BaseException|None = None
         match msg:
             # payload-data shuttle msg; deliver the `.pld` value
@@ -256,18 +257,58 @@ class PldRx(Struct):
                     # pack mgterr into error-msg for
                     # reraise below; ensure remote-actor-err
                     # info is displayed nicely?
-                    msgterr: MsgTypeError = _mk_msg_type_err(
+                    mte: MsgTypeError = _mk_msg_type_err(
                         msg=msg,
                         codec=self.pld_dec,
                         src_validation_error=valerr,
                         is_invalid_payload=True,
+                        expected_msg=expect_msg,
+                        # ipc_msg=msg,
                     )
-                    msg: Error = pack_from_raise(
-                        local_err=msgterr,
+                    # NOTE: override the `msg` passed to
+                    # `_raise_from_unexpected_msg()` (below) so so that
+                    # we're effectively able to use that same func to
+                    # unpack and raise an "emulated remote `Error`" of
+                    # this local MTE.
+                    err_msg: Error = pack_error(
+                        exc=mte,
                         cid=msg.cid,
-                        src_uid=ipc.chan.uid,
+                        src_uid=(
+                            ipc.chan.uid
+                            if not is_started_send_side
+                            else ipc._actor.uid
+                        ),
+                        # tb=valerr.__traceback__,
+                        tb_str=mte._message,
                     )
+                    # ^-TODO-^ just raise this inline instead of all the
+                    # pack-unpack-repack non-sense!
+
+                    mte._ipc_msg = err_msg
+                    msg = err_msg
+
+                    # set emulated remote error more-or-less as the
+                    # runtime would
+                    ctx: Context = getattr(ipc, 'ctx', ipc)
+
+                    # TODO: should we instead make this explicit and
+                    # use the above masked `is_started_send_decode`,
+                    # expecting the `Context.started()` caller to set
+                    # it? Rn this is kinda, howyousayyy, implicitly
+                    # edge-case-y..
+                    if (
+                        expect_msg is not Started
+                        and not is_started_send_side
+                    ):
+                        ctx._maybe_cancel_and_set_remote_error(mte)
+
+                    # XXX NOTE: so when the `_raise_from_unexpected_msg()`
+                    # raises the boxed `err_msg` from above it raises
+                    # it from `None`.
                     src_err = valerr
+                    # if is_started_send_side:
+                    #     src_err = None
+
 
                 # XXX some other decoder specific failure?
                 # except TypeError as src_error:
@@ -379,6 +420,7 @@ class PldRx(Struct):
         # NOTE: generally speaking only for handling `Stop`-msgs that
         # arrive during a call to `drain_to_final_msg()` above!
         passthrough_non_pld_msgs: bool = True,
+        hide_tb: bool = True,
         **kwargs,
 
     ) -> tuple[MsgType, PayloadT]:
@@ -387,6 +429,7 @@ class PldRx(Struct):
         the pair of refs.
 
         '''
+        __tracebackhide__: bool = hide_tb
         msg: MsgType = await ipc._rx_chan.receive()
 
         if passthrough_non_pld_msgs:
@@ -401,6 +444,7 @@ class PldRx(Struct):
             msg,
             ipc=ipc,
             expect_msg=expect_msg,
+            hide_tb=hide_tb,
             **kwargs,
         )
         return msg, pld
@@ -414,7 +458,7 @@ def limit_plds(
 ) -> MsgDec:
     '''
     Apply a `MsgCodec` that will natively decode the SC-msg set's
-    `Msg.pld: Union[Type[Struct]]` payload fields using
+    `PayloadMsg.pld: Union[Type[Struct]]` payload fields using
     tagged-unions of `msgspec.Struct`s from the `payload_types`
     for all IPC contexts in use by the current `trio.Task`.
 
@@ -691,3 +735,11 @@ async def drain_to_final_msg(
         result_msg,
         pre_result_drained,
     )
+
+
+# TODO: factor logic from `.Context.started()` for send-side
+# validate raising!
+def validate_payload_msg(
+    msg: Started|Yield|Return,
+) -> MsgTypeError|None:
+    ...
