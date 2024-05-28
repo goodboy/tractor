@@ -664,7 +664,7 @@ class Context:
             'Setting remote error for ctx\n\n'
             f'<= {self.peer_side!r}: {self.chan.uid}\n'
             f'=> {self.side!r}: {self._actor.uid}\n\n'
-            f'{error}'
+            f'{error!r}'
         )
         self._remote_error: BaseException = error
 
@@ -718,7 +718,7 @@ class Context:
             log.error(
                 f'Remote context error:\n\n'
                 # f'{pformat(self)}\n'
-                f'{error}'
+                f'{error!r}'
             )
 
         if self._canceller is None:
@@ -742,26 +742,27 @@ class Context:
             and not cs.cancel_called
             and not cs.cancelled_caught
         ):
-            if not (
+            if (
                 msgerr
 
                 # NOTE: we allow user to config not cancelling the
                 # local scope on `MsgTypeError`s
-                and not self._cancel_on_msgerr
+                and
+                not self._cancel_on_msgerr
             ):
-                # TODO: it'd sure be handy to inject our own
-                # `trio.Cancelled` subtype here ;)
-                # https://github.com/goodboy/tractor/issues/368
-                message: str = 'Cancelling `Context._scope` !\n\n'
-                self._scope.cancel()
-
-            else:
                 message: str = (
                     'NOT Cancelling `Context._scope` since,\n'
                     f'Context._cancel_on_msgerr = {self._cancel_on_msgerr}\n\n'
                     f'AND we got a msg-type-error!\n'
                     f'{error}\n'
                 )
+            else:
+                # TODO: it'd sure be handy to inject our own
+                # `trio.Cancelled` subtype here ;)
+                # https://github.com/goodboy/tractor/issues/368
+                message: str = 'Cancelling `Context._scope` !\n\n'
+                self._scope.cancel()
+
         else:
             message: str = 'NOT cancelling `Context._scope` !\n\n'
             # from .devx import mk_pdb
@@ -2058,6 +2059,12 @@ async def open_context_from_portal(
             if maybe_msgdec:
                 assert maybe_msgdec.pld_spec == pld_spec
 
+            # NOTE: this in an implicit runtime nursery used to,
+            # - start overrun queuing tasks when as well as
+            # for cancellation of the scope opened by the user.
+            ctx._scope_nursery: trio.Nursery = tn
+            ctx._scope: trio.CancelScope = tn.cancel_scope
+
             # XXX NOTE since `._scope` is NOT set BEFORE we retreive the
             # `Started`-msg any cancellation triggered
             # in `._maybe_cancel_and_set_remote_error()` will
@@ -2065,24 +2072,41 @@ async def open_context_from_portal(
             # -> it's expected that if there is an error in this phase of
             # the dialog, the `Error` msg should be raised from the `msg`
             # handling block below.
-            started_msg, first = await ctx._pld_rx.recv_msg_w_pld(
-                ipc=ctx,
-                expect_msg=Started,
-                passthrough_non_pld_msgs=False,
-                hide_tb=hide_tb,
-            )
+            try:
+                started_msg, first = await ctx._pld_rx.recv_msg_w_pld(
+                    ipc=ctx,
+                    expect_msg=Started,
+                    passthrough_non_pld_msgs=False,
+                    hide_tb=hide_tb,
+                )
+            except trio.Cancelled as taskc:
+                ctx_cs: trio.CancelScope = ctx._scope
+                if not ctx_cs.cancel_called:
+                    raise
 
-            # from .devx import pause
-            # await pause()
+                # from .devx import pause
+                # await pause(shield=True)
+
+                log.cancel(
+                    'IPC ctx was cancelled during "child" task sync due to\n\n'
+                    f'{ctx.maybe_error}\n'
+                )
+                # OW if the ctx's scope was cancelled manually,
+                # likely the `Context` was cancelled via a call to
+                # `._maybe_cancel_and_set_remote_error()` so ensure
+                # we raise the underlying `._remote_error` directly
+                # instead of bubbling that taskc.
+                ctx.maybe_raise()
+
+                # OW, some other unexpected cancel condition
+                # that should prolly never happen right?
+                raise InternalError(
+                    'Invalid cancellation during IPC ctx sync phase?\n'
+                ) from taskc
+
             ctx._started_called: bool = True
             ctx._started_msg: bool = started_msg
             ctx._started_pld: bool = first
-
-            # NOTE: this in an implicit runtime nursery used to,
-            # - start overrun queuing tasks when as well as
-            # for cancellation of the scope opened by the user.
-            ctx._scope_nursery: trio.Nursery = tn
-            ctx._scope: trio.CancelScope = tn.cancel_scope
 
             # deliver context instance and .started() msg value
             # in enter tuple.
