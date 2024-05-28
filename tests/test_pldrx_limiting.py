@@ -6,30 +6,19 @@ related settings around IPC contexts.
 '''
 from contextlib import (
     asynccontextmanager as acm,
-    contextmanager as cm,
-)
-# import typing
-from typing import (
-    # Any,
-    TypeAlias,
-    # Union,
 )
 from contextvars import (
     Context,
 )
 
 from msgspec import (
-    # structs,
-    # msgpack,
     Struct,
-    # ValidationError,
 )
 import pytest
 import trio
 
 import tractor
 from tractor import (
-    # _state,
     MsgTypeError,
     current_ipc_ctx,
     Portal,
@@ -40,20 +29,9 @@ from tractor.msg import (
 )
 from tractor.msg import (
     _codec,
-    # _ctxvar_MsgCodec,
-
-    # NamespacePath,
-    # MsgCodec,
-    # mk_codec,
-    # apply_codec,
-    # current_codec,
 )
 from tractor.msg.types import (
     log,
-    # _payload_msgs,
-    # PayloadMsg,
-    # Started,
-    # mk_msg_spec,
 )
 
 
@@ -64,23 +42,10 @@ class PldMsg(Struct):
 maybe_msg_spec = PldMsg|None
 
 
-@cm
-def custom_spec(
-    ctx: Context,
-    spec: TypeAlias,
-) -> _codec.MsgCodec:
-    '''
-    Apply a custom payload spec, remove on exit.
-
-    '''
-    rx: msgops.PldRx = ctx._pld_rx
-
-
 @acm
 async def maybe_expect_raises(
     raises: BaseException|None = None,
     ensure_in_message: list[str]|None = None,
-
     reraise: bool = False,
     timeout: int = 3,
 ) -> None:
@@ -271,6 +236,17 @@ def test_basic_payload_spec(
             # since not opened yet.
             assert current_ipc_ctx() is None
 
+            if invalid_started:
+                msg_type_str: str = 'Started'
+                bad_value_str: str = '10'
+            elif invalid_return:
+                msg_type_str: str = 'Return'
+                bad_value_str: str = "'yo'"
+            else:
+                # XXX but should never be used below then..
+                msg_type_str: str = ''
+                bad_value_str: str = ''
+
             async with (
                 maybe_expect_raises(
                     raises=MsgTypeError if (
@@ -279,8 +255,8 @@ def test_basic_payload_spec(
                         invalid_started
                     ) else None,
                     ensure_in_message=[
-                        "invalid `Return` payload",
-                        "value: `'yo'` does not match type-spec: `Return.pld: PldMsg|NoneType`",
+                        f"invalid `{msg_type_str}` payload",
+                        f"value: `{bad_value_str}` does not match type-spec: `{msg_type_str}.pld: PldMsg|NoneType`",
                     ],
                 ),
                 p.open_context(
