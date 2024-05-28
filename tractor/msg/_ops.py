@@ -53,6 +53,8 @@ from tractor._state import current_ipc_ctx
 from ._codec import (
     mk_dec,
     MsgDec,
+    MsgCodec,
+    current_codec,
 )
 from .types import (
     CancelAck,
@@ -737,9 +739,61 @@ async def drain_to_final_msg(
     )
 
 
-# TODO: factor logic from `.Context.started()` for send-side
-# validate raising!
 def validate_payload_msg(
-    msg: Started|Yield|Return,
+    pld_msg: Started|Yield|Return,
+    pld_value: PayloadT,
+    ipc: Context|MsgStream,
+
+    raise_mte: bool = True,
+    strict_pld_parity: bool = False,
+    hide_tb: bool = True,
+
 ) -> MsgTypeError|None:
-    ...
+    '''
+    Validate a `PayloadMsg.pld` value with the current
+    IPC ctx's `PldRx` and raise an appropriate `MsgTypeError`
+    on failure.
+
+    '''
+    __tracebackhide__: bool = hide_tb
+    codec: MsgCodec = current_codec()
+    msg_bytes: bytes = codec.encode(pld_msg)
+    try:
+        roundtripped: Started = codec.decode(msg_bytes)
+        ctx: Context = getattr(ipc, 'ctx', ipc)
+        pld: PayloadT = ctx.pld_rx.dec_msg(
+            msg=roundtripped,
+            ipc=ipc,
+            expect_msg=Started,
+            hide_tb=hide_tb,
+            is_started_send_side=True,
+        )
+        if (
+            strict_pld_parity
+            and
+            pld != pld_value
+        ):
+            # TODO: make that one a mod func too..
+            diff = pretty_struct.Struct.__sub__(
+                roundtripped,
+                pld_msg,
+            )
+            complaint: str = (
+                'Started value does not match after roundtrip?\n\n'
+                f'{diff}'
+            )
+            raise ValidationError(complaint)
+
+    # raise any msg type error NO MATTER WHAT!
+    except ValidationError as verr:
+        mte: MsgTypeError = _mk_msg_type_err(
+            msg=roundtripped,
+            codec=codec,
+            src_validation_error=verr,
+            verb_header='Trying to send ',
+            is_invalid_payload=True,
+        )
+        if not raise_mte:
+            return mte
+
+        raise mte from verr
