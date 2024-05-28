@@ -1258,9 +1258,10 @@ class Actor:
             # - child returns a result before cancel-msg/ctxc-raised
             # - child self raises ctxc before parent send request,
             # - child errors prior to cancel req.
-            log.cancel(
-                'Cancel request invalid, RPC task already completed?\n\n'
-                f'<= canceller: {requesting_uid}\n\n'
+            log.runtime(
+                'Cancel request for invalid RPC task.\n'
+                'The task likely already completed or was never started!\n\n'
+                f'<= canceller: {requesting_uid}\n'
                 f'=> {cid}@{parent_chan.uid}\n'
                 f'  |_{parent_chan}\n'
             )

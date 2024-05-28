@@ -395,12 +395,18 @@ async def _errors_relayed_via_ipc(
                     f'|_{ctx._task}\n'
                     f'  >> {ctx.repr_rpc}\n'
                 )
-            else:
-                log.cancel(
-                    'Failed to de-alloc internal runtime cancel task?\n'
-                    f'|_{ctx._task}\n'
-                    f'  >> {ctx.repr_rpc}\n'
-                )
+            # TODO: remove this right? rn the only non-`is_rpc` cases
+            # are cancellation methods and according the RPC loop eps
+            # for thoses below, nothing is ever registered in
+            # `Actor._rpc_tasks` for those cases.. but should we?
+            #
+            # -[ ] maybe we should have an equiv `Actor._runtime_rpc_tasks`?
+            # else:
+            #     log.cancel(
+            #         'Failed to de-alloc internal runtime cancel task?\n'
+            #         f'|_{ctx._task}\n'
+            #         f'  >> {ctx.repr_rpc}\n'
+            #     )
 
         finally:
             if not actor._rpc_tasks:
