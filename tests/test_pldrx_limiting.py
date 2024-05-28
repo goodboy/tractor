@@ -148,12 +148,44 @@ async def child(
                 # propagate to parent?
                 if raise_on_started_mte:
                     raise
-            else:
-                if expect_started_mte:
-                    raise RuntimeError(
-                        'Child-ctx-task SHOULD HAVE raised an MTE for\n\n'
-                        f'{started_value!r}\n'
-                    )
+
+            # no-send-side-error fallthrough
+            if (
+                validate_pld_spec
+                and
+                expect_started_mte
+            ):
+                raise RuntimeError(
+                    'Child-ctx-task SHOULD HAVE raised an MTE for\n\n'
+                    f'{started_value!r}\n'
+                )
+
+            assert (
+                not expect_started_mte
+                or
+                not validate_pld_spec
+            )
+
+            # if wait_for_parent_to_cancel:
+            #     ...
+            #
+            # ^-TODO-^ logic for diff validation policies on each side:
+            #
+            # -[ ] ensure that if we don't validate on the send
+            #   side, that we are eventually error-cancelled by our
+            #   parent due to the bad `Started` payload!
+            # -[ ] the boxed error should be srced from the parent's
+            #   runtime NOT ours!
+            # -[ ] we should still error on bad `return_value`s
+            #   despite the parent not yet error-cancelling us?
+            #   |_ how do we want the parent side to look in that
+            #     case?
+            #     -[ ] maybe the equiv of "during handling of the
+            #       above error another occurred" for the case where
+            #       the parent sends a MTE to this child and while
+            #       waiting for the child to terminate it gets back
+            #       the MTE for this case?
+            #
 
             # XXX should always fail on recv side since we can't
             # really do much else beside terminate and relay the
@@ -247,13 +279,17 @@ def test_basic_payload_spec(
                 msg_type_str: str = ''
                 bad_value_str: str = ''
 
+            maybe_mte: MsgTypeError|None = None
+            should_raise: Exception|None = (
+                MsgTypeError if (
+                    invalid_return
+                    or
+                    invalid_started
+                ) else None
+            )
             async with (
                 maybe_expect_raises(
-                    raises=MsgTypeError if (
-                        invalid_return
-                        or
-                        invalid_started
-                    ) else None,
+                    raises=should_raise,
                     ensure_in_message=[
                         f"invalid `{msg_type_str}` payload",
                         f"value: `{bad_value_str}` does not match type-spec: `{msg_type_str}.pld: PldMsg|NoneType`",
@@ -274,18 +310,35 @@ def test_basic_payload_spec(
                 assert first.field == 'yo'
 
                 try:
-                    assert (await ctx.result()) is None
+                    res: None|PldMsg = await ctx.result(hide_tb=False)
+                    assert res is None
                 except MsgTypeError as mte:
+                    maybe_mte = mte
                     if not invalid_return:
                         raise
 
-                    else:  # expected this invalid `Return.pld`
-                        assert mte.cid == ctx.cid
+                    # expected this invalid `Return.pld` so audit
+                    # the error state + meta-data
+                    assert mte.expected_msg_type is Return
+                    assert mte.cid == ctx.cid
 
-                        # verify expected remote mte deats
-                        await tractor.pause()
-                        assert ctx._remote_error is mte
-                        assert mte.expected_msg_type is Return
+                    # verify expected remote mte deats
+                    try:
+                        assert ctx._local_error is None
+                        assert (
+                            mte is
+                            ctx._remote_error is
+                            ctx.maybe_error is
+                            ctx.outcome
+                        )
+                    except:
+                        # XXX should never get here..
+                        await tractor.pause(shield=True)
+                        raise
+
+
+            if should_raise is None:
+                assert maybe_mte is None
 
             await p.cancel_actor()
 
