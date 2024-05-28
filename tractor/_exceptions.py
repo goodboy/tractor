@@ -902,7 +902,7 @@ def pack_error(
         tb_str: str = (
             ''.join(traceback.format_exception(exc))
 
-            # TODO: can we remove this is `exc` is required?
+            # TODO: can we remove this since `exc` is required.. right?
             or
             # NOTE: this is just a shorthand for the "last error" as
             # provided by `sys.exeception()`, see:
@@ -917,8 +917,8 @@ def pack_error(
     # when caller provides a tb instance (say pulled from some other
     # src error's `.__traceback__`) we use that as the "boxed"
     # tb-string instead.
+    # https://docs.python.org/3/library/traceback.html#traceback.format_list
     if tb:
-        # https://docs.python.org/3/library/traceback.html#traceback.format_list
         tb_str: str = ''.join(traceback.format_tb(tb)) + tb_str
 
     error_msg: dict[  # for IPC
@@ -961,15 +961,15 @@ def pack_error(
         error_msg['src_type_str'] =  type(exc).__name__
         error_msg['boxed_type_str'] = type(exc).__name__
 
-    # XXX alawys append us the last relay in error propagation path
+    # XXX always append us the last relay in error propagation path
     error_msg.setdefault(
         'relay_path',
         [],
     ).append(our_uid)
 
-    # XXX NOTE: always ensure the traceback-str is from the
-    # locally raised error (**not** the prior relay's boxed
-    # content's in `._ipc_msg.tb_str`).
+    # XXX NOTE XXX always ensure the traceback-str content is from
+    # the locally raised error (so, NOT the prior relay's boxed
+    # `._ipc_msg.tb_str`).
     error_msg['tb_str'] = tb_str
 
     if cid is not None:
@@ -1109,6 +1109,7 @@ def _raise_from_unexpected_msg(
             msg,
             ctx.chan,
         )
+        ctx._maybe_cancel_and_set_remote_error(exc)
         raise exc from src_err
 
     # `MsgStream` termination msg.
