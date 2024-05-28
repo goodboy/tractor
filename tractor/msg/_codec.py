@@ -140,7 +140,7 @@ class MsgDec(Struct):
     #      * also a `.__contains__()` for doing `None in
     #      TypeSpec[None|int]` since rn you need to do it on
     #      `.__args__` for unions..
-    #     - `MsgSpec: Union[Type[Msg]]
+    #     - `MsgSpec: Union[MsgType]
     #
     # -[ ] auto-genning this from new (in 3.12) type parameter lists Bo
     # |_ https://docs.python.org/3/reference/compound_stmts.html#type-params
@@ -188,7 +188,7 @@ def mk_dec(
 
     return MsgDec(
         _dec=msgpack.Decoder(
-            type=spec,  # like `Msg[Any]`
+            type=spec,  # like `MsgType[Any]`
             dec_hook=dec_hook,
         )
     )
@@ -561,7 +561,7 @@ def mk_codec(
 
     '''
     # (manually) generate a msg-payload-spec for all relevant
-    # god-boxing-msg subtypes, parameterizing the `Msg.pld: PayloadT`
+    # god-boxing-msg subtypes, parameterizing the `PayloadMsg.pld: PayloadT`
     # for the decoder such that all sub-type msgs in our SCIPP
     # will automatically decode to a type-"limited" payload (`Struct`)
     # object (set).
@@ -607,7 +607,7 @@ _def_msgspec_codec: MsgCodec = mk_codec(ipc_pld_spec=Any)
 
 # The built-in IPC `Msg` spec.
 # Our composing "shuttle" protocol which allows `tractor`-app code
-# to use any `msgspec` supported type as the `Msg.pld` payload,
+# to use any `msgspec` supported type as the `PayloadMsg.pld` payload,
 # https://jcristharif.com/msgspec/supported-types.html
 #
 _def_tractor_codec: MsgCodec = mk_codec(
@@ -743,7 +743,7 @@ def limit_msg_spec(
 ) -> MsgCodec:
     '''
     Apply a `MsgCodec` that will natively decode the SC-msg set's
-    `Msg.pld: Union[Type[Struct]]` payload fields using
+    `PayloadMsg.pld: Union[Type[Struct]]` payload fields using
     tagged-unions of `msgspec.Struct`s from the `payload_types`
     for all IPC contexts in use by the current `trio.Task`.
 

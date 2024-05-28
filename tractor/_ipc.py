@@ -291,7 +291,7 @@ class MsgpackTCPStream(MsgTransport):
 
     async def send(
         self,
-        msg: msgtypes.Msg,
+        msg: msgtypes.MsgType,
 
         strict_types: bool = True,
         # hide_tb: bool = False,

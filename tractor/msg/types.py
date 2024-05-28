@@ -89,11 +89,12 @@ class PayloadMsg(
     # -[ ] `uuid.UUID` which has multi-protocol support
     #  https://jcristharif.com/msgspec/supported-types.html#uuid
 
-    # The msgs "payload" (spelled without vowels):
+    # The msg's "payload" (spelled without vowels):
     # https://en.wikipedia.org/wiki/Payload_(computing)
-    #
-    # NOTE: inherited from any `Msg` (and maybe overriden
-    # by use of `limit_msg_spec()`), but by default is
+    pld: Raw
+
+    # ^-NOTE-^ inherited from any `PayloadMsg` (and maybe type
+    # overriden via the `._ops.limit_plds()` API), but by default is
     # parameterized to be `Any`.
     #
     # XXX this `Union` must strictly NOT contain `Any` if
@@ -106,7 +107,6 @@ class PayloadMsg(
     # TODO: could also be set to `msgspec.Raw` if the sub-decoders
     # approach is preferred over the generic parameterization 
     # approach as take by `mk_msg_spec()` below.
-    pld: Raw
 
 
 # TODO: complete rename
@@ -412,19 +412,24 @@ class Error(
     relay_path: list[tuple[str, str]]
     tb_str: str
 
-    cid: str|None = None
-
-    # TODO: use UNSET or don't include them via
+    # TODO: only optionally include sub-type specfic fields?
+    # -[ ] use UNSET or don't include them via `omit_defaults` (see
+    #      inheritance-line options above)
     #
-    # `ContextCancelled`
+    # `ContextCancelled` reports the src cancelling `Actor.uid`
     canceller: tuple[str, str]|None = None
 
-    # `StreamOverrun`
+    # `StreamOverrun`-specific src `Actor.uid`
     sender: tuple[str, str]|None = None
 
-    # for the `MsgTypeError` case where the receiver side
-    # decodes the underlying original `Msg`-subtype
-    _msg_dict: dict|None = None
+    # `MsgTypeError` meta-data
+    cid: str|None = None
+    # when the receiver side fails to decode a delivered
+    # `PayloadMsg`-subtype; one and/or both the msg-struct instance
+    # and `Any`-decoded to `dict` of the msg are set and relayed
+    # (back to the sender) for introspection.
+    _bad_msg: Started|Yield|Return|None = None
+    _bad_msg_as_dict: dict|None = None
 
 
 def from_dict_msg(
@@ -436,9 +441,11 @@ def from_dict_msg(
 
 ) -> MsgType:
     '''
-    Helper to build a specific `MsgType` struct from
-    a "vanilla" decoded `dict`-ified equivalent of the
-    msg: i.e. if the `msgpack.Decoder.type == Any`.
+    Helper to build a specific `MsgType` struct from a "vanilla"
+    decoded `dict`-ified equivalent of the msg: i.e. if the
+    `msgpack.Decoder.type == Any`, the default when using
+    `msgspec.msgpack` and not "typed decoding" using
+    `msgspec.Struct`.
 
     '''
     msg_type_tag_field: str = (
