@@ -215,6 +215,9 @@ class PldRx(Struct):
             **dec_msg_kwargs,
         )
 
+    # TODO: rename to,
+    # -[ ] `.decode_pld()`?
+    # -[ ] `.dec_pld()`?
     def dec_msg(
         self,
         msg: MsgType,
@@ -248,8 +251,8 @@ class PldRx(Struct):
                     pld: PayloadT = self._pld_dec.decode(pld)
                     log.runtime(
                         'Decoded msg payload\n\n'
-                        f'{msg}\n\n'
-                        f'where payload is\n'
+                        f'{msg}\n'
+                        f'where payload decoded as\n'
                         f'|_pld={pld!r}\n'
                     )
                     return pld
@@ -265,13 +268,7 @@ class PldRx(Struct):
                         src_validation_error=valerr,
                         is_invalid_payload=True,
                         expected_msg=expect_msg,
-                        # ipc_msg=msg,
                     )
-                    # NOTE: override the `msg` passed to
-                    # `_raise_from_unexpected_msg()` (below) so so that
-                    # we're effectively able to use that same func to
-                    # unpack and raise an "emulated remote `Error`" of
-                    # this local MTE.
                     err_msg: Error = pack_error(
                         exc=mte,
                         cid=msg.cid,
@@ -283,34 +280,55 @@ class PldRx(Struct):
                         # tb=valerr.__traceback__,
                         tb_str=mte._message,
                     )
-                    # ^-TODO-^ just raise this inline instead of all the
-                    # pack-unpack-repack non-sense!
-
                     mte._ipc_msg = err_msg
-                    msg = err_msg
 
-                    # set emulated remote error more-or-less as the
-                    # runtime would
-                    ctx: Context = getattr(ipc, 'ctx', ipc)
+                    # NOTE: just raise the MTE inline instead of all
+                    # the pack-unpack-repack non-sense when this is
+                    # a "send side" validation error.
+                    if is_started_send_side:
+                        raise mte
+
+                        # XXX TODO: remove this right?
+                        # => any bad stated/return values should
+                        # always be treated a remote errors right?
+                        #
+                        # if (
+                        #     expect_msg is Return
+                        #     or expect_msg is Started
+                        # ):
+                        #     # set emulated remote error more-or-less as the
+                        #     # runtime would
+                        #     ctx: Context = getattr(ipc, 'ctx', ipc)
+                        #     ctx._maybe_cancel_and_set_remote_error(mte)
+
+
+                    # XXX override the `msg` passed to
+                    # `_raise_from_unexpected_msg()` (below) so so
+                    # that we're effectively able to use that same
+                    # func to unpack and raise an "emulated remote
+                    # `Error`" of this local MTE.
+                    msg = err_msg
+                    # XXX NOTE: so when the `_raise_from_unexpected_msg()`
+                    # raises the boxed `err_msg` from above it raises
+                    # it from the above caught interchange-lib
+                    # validation error.
+                    src_err = valerr
 
                     # TODO: should we instead make this explicit and
                     # use the above masked `is_started_send_decode`,
                     # expecting the `Context.started()` caller to set
                     # it? Rn this is kinda, howyousayyy, implicitly
                     # edge-case-y..
-                    if (
-                        expect_msg is not Started
-                        and not is_started_send_side
-                    ):
-                        ctx._maybe_cancel_and_set_remote_error(mte)
-
-                    # XXX NOTE: so when the `_raise_from_unexpected_msg()`
-                    # raises the boxed `err_msg` from above it raises
-                    # it from `None`.
-                    src_err = valerr
-                    # if is_started_send_side:
-                    #     src_err = None
-
+                    # TODO: remove this since it's been added to
+                    # `_raise_from_unexpected_msg()`..?
+                    # if (
+                    #     expect_msg is not Started
+                    #     and not is_started_send_side
+                    # ):
+                    #     # set emulated remote error more-or-less as the
+                    #     # runtime would
+                    #     ctx: Context = getattr(ipc, 'ctx', ipc)
+                    #     ctx._maybe_cancel_and_set_remote_error(mte)
 
                 # XXX some other decoder specific failure?
                 # except TypeError as src_error:
@@ -561,6 +579,7 @@ async def drain_to_final_msg(
                 ipc=ctx,
                 expect_msg=Return,
                 raise_error=False,
+                hide_tb=hide_tb,
             )
             # ^-TODO-^ some bad ideas?
             # -[ ] wrap final outcome .receive() in a scope so
