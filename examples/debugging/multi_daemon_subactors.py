@@ -4,9 +4,15 @@ import trio
 
 async def breakpoint_forever():
     "Indefinitely re-enter debugger in child actor."
-    while True:
-        yield 'yo'
-        await tractor.breakpoint()
+    try:
+        while True:
+            yield 'yo'
+            await tractor.breakpoint()
+    except BaseException:
+        tractor.log.get_console_log().exception(
+            'Cancelled while trying to enter pause point!'
+        )
+        raise
 
 
 async def name_error():
@@ -19,7 +25,7 @@ async def main():
     """
     async with tractor.open_nursery(
         debug_mode=True,
-        loglevel='error',
+        loglevel='cancel',
     ) as n:
 
         p0 = await n.start_actor('bp_forever', enable_modules=[__name__])

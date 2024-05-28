@@ -45,6 +45,7 @@ async def spawn_until(depth=0):
             )
 
 
+# TODO: notes on the new boxed-relayed errors through proxy actors
 async def main():
     """The main ``tractor`` routine.
 

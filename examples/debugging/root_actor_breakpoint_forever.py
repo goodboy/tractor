@@ -2,10 +2,13 @@ import trio
 import tractor
 
 
-async def main():
+async def main(
+    registry_addrs: tuple[str, int]|None = None
+):
 
     async with tractor.open_root_actor(
         debug_mode=True,
+        # loglevel='runtime',
     ):
         while True:
             await tractor.breakpoint()

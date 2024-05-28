@@ -7,7 +7,7 @@ def sync_pause(
     error: bool = False,
 ):
     if use_builtin:
-        breakpoint()
+        breakpoint(hide_tb=False)
 
     else:
         tractor.pause_from_sync()
@@ -20,18 +20,20 @@ def sync_pause(
 async def start_n_sync_pause(
     ctx: tractor.Context,
 ):
-    # sync to requesting peer
+    actor: tractor.Actor = tractor.current_actor()
+
+    # sync to parent-side task
     await ctx.started()
 
-    actor: tractor.Actor = tractor.current_actor()
     print(f'entering SYNC PAUSE in {actor.uid}')
     sync_pause()
     print(f'back from SYNC PAUSE in {actor.uid}')
 
 
 async def main() -> None:
-
     async with tractor.open_nursery(
+        # NOTE: required for pausing from sync funcs
+        maybe_enable_greenback=True,
         debug_mode=True,
     ) as an:
 
