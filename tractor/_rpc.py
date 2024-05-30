@@ -326,7 +326,6 @@ async def _errors_relayed_via_ipc(
                         f'|_{ctx}'
                     )
 
-
         # ALWAYS try to ship RPC errors back to parent/caller task
         if is_rpc:
 
@@ -817,6 +816,12 @@ async def try_ship_error_to_remote(
                 # TODO: use `.msg.preetty_struct` for this!
                 f'{msg}\n'
             )
+        except BaseException:
+            log.exception(
+                'Errored while attempting error shipment?'
+            )
+            __tracebackhide__: bool = False
+            raise
 
 
 async def process_messages(
