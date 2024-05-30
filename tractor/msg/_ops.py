@@ -269,19 +269,6 @@ class PldRx(Struct):
                         is_invalid_payload=True,
                         expected_msg=expect_msg,
                     )
-                    err_msg: Error = pack_error(
-                        exc=mte,
-                        cid=msg.cid,
-                        src_uid=(
-                            ipc.chan.uid
-                            if not is_started_send_side
-                            else ipc._actor.uid
-                        ),
-                        # tb=valerr.__traceback__,
-                        tb_str=mte._message,
-                    )
-                    mte._ipc_msg = err_msg
-
                     # NOTE: just raise the MTE inline instead of all
                     # the pack-unpack-repack non-sense when this is
                     # a "send side" validation error.
@@ -301,6 +288,22 @@ class PldRx(Struct):
                         #     ctx: Context = getattr(ipc, 'ctx', ipc)
                         #     ctx._maybe_cancel_and_set_remote_error(mte)
 
+                    # NOTE: the `.message` is automatically
+                    # transferred into the message as long as we
+                    # define it as a `Error.message` field.
+                    err_msg: Error = pack_error(
+                        exc=mte,
+                        cid=msg.cid,
+                        src_uid=(
+                            ipc.chan.uid
+                            if not is_started_send_side
+                            else ipc._actor.uid
+                        ),
+                        # tb=valerr.__traceback__,
+                        # tb_str=mte._message,
+                        # message=mte._message,
+                    )
+                    mte._ipc_msg = err_msg
 
                     # XXX override the `msg` passed to
                     # `_raise_from_unexpected_msg()` (below) so so
