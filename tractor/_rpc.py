@@ -391,7 +391,7 @@ async def _errors_relayed_via_ipc(
             # cancel scope will not have been inserted yet
             if is_rpc:
                 log.warning(
-                    'RPC task likely errored or cancelled before start?'
+                    'RPC task likely errored or cancelled before start?\n'
                     f'|_{ctx._task}\n'
                     f'  >> {ctx.repr_rpc}\n'
                 )
