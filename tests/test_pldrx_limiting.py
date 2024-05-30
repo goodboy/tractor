@@ -46,7 +46,7 @@ maybe_msg_spec = PldMsg|None
 async def maybe_expect_raises(
     raises: BaseException|None = None,
     ensure_in_message: list[str]|None = None,
-    reraise: bool = False,
+    post_mortem: bool = False,
     timeout: int = 3,
 ) -> None:
     '''
@@ -86,8 +86,8 @@ async def maybe_expect_raises(
                                 f'{inner_err.args}'
                         )
 
-                if reraise:
-                    raise inner_err
+                if post_mortem:
+                    await tractor.post_mortem()
 
         else:
             if raises:
@@ -314,6 +314,8 @@ def test_basic_payload_spec(
                         f"value: `{bad_value_str}` does not "
                         f"match type-spec: `{msg_type_str}.pld: PldMsg|NoneType`",
                     ],
+                    # only for debug
+                    post_mortem=True,
                 ),
                 p.open_context(
                     child,
