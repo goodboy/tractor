@@ -233,6 +233,7 @@ class MsgStream(trio.abc.Channel):
         # ctx: Context = self._ctx
         ctx.maybe_raise(
             raise_ctxc_from_self_call=True,
+            from_src_exc=src_err,
         )
 
         # propagate any error but hide low-level frame details

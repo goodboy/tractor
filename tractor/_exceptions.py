@@ -518,7 +518,6 @@ class RemoteActorError(Exception):
     def pformat(
         self,
         with_type_header: bool = True,
-        # with_ascii_box: bool = True,
 
     ) -> str:
         '''
@@ -885,9 +884,9 @@ class MsgTypeError(
             extra_msgdata['_bad_msg'] = bad_msg
             extra_msgdata['cid'] = bad_msg.cid
 
+        extra_msgdata.setdefault('boxed_type', cls)
         return cls(
             message=message,
-            boxed_type=cls,
             **extra_msgdata,
         )
 
@@ -1111,7 +1110,7 @@ def is_multi_cancelled(
 def _raise_from_unexpected_msg(
     ctx: Context,
     msg: MsgType,
-    src_err: AttributeError,
+    src_err: Exception,
     log: StackLevelAdapter,  # caller specific `log` obj
 
     expect_msg: Type[MsgType],
@@ -1212,7 +1211,7 @@ def _raise_from_unexpected_msg(
             # in case there already is some underlying remote error
             # that arrived which is probably the source of this stream
             # closure
-            ctx.maybe_raise()
+            ctx.maybe_raise(from_src_exc=src_err)
             raise eoc from src_err
 
         # TODO: our own transport/IPC-broke error subtype?
@@ -1361,6 +1360,7 @@ def _mk_msg_type_err(
             message=message,
             bad_msg=bad_msg,
             bad_msg_as_dict=msg_dict,
+            boxed_type=type(src_validation_error),
 
             # NOTE: for pld-spec MTEs we set the `._ipc_msg` manually:
             # - for the send-side `.started()` pld-validate
