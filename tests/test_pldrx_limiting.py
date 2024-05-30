@@ -315,7 +315,7 @@ def test_basic_payload_spec(
                         f"match type-spec: `{msg_type_str}.pld: PldMsg|NoneType`",
                     ],
                     # only for debug
-                    post_mortem=True,
+                    # post_mortem=True,
                 ),
                 p.open_context(
                     child,
