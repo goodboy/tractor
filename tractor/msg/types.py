@@ -410,7 +410,13 @@ class Error(
     src_type_str: str
     boxed_type_str: str
     relay_path: list[tuple[str, str]]
-    tb_str: str
+
+    # normally either both are provided or just
+    # a message for certain special cases where
+    # we pack a message for a locally raised
+    # mte or ctxc.
+    message: str|None = None
+    tb_str: str = ''
 
     # TODO: only optionally include sub-type specfic fields?
     # -[ ] use UNSET or don't include them via `omit_defaults` (see
