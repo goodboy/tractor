@@ -1600,25 +1600,27 @@ async def _pause(
                     f'REPL: {Lock.repl}\n'
                     # TODO: use `._frame_stack` scanner to find the @api_frame
                 )
-                await trio.lowlevel.checkpoint()
+                with trio.CancelScope(shield=shield):
+                    await trio.lowlevel.checkpoint()
                 return
 
             # XXX: since we need to enter pdb synchronously below,
             # we have to release the lock manually from pdb completion
             # callbacks. Can't think of a nicer way then this atm.
-            if Lock._debug_lock.locked():
-                log.warning(
-                    'attempting to shield-acquire active TTY lock owned by\n'
-                    f'{ctx}'
-                )
+            with trio.CancelScope(shield=shield):
+                if Lock._debug_lock.locked():
+                    log.warning(
+                        'attempting to shield-acquire active TTY lock owned by\n'
+                        f'{ctx}'
+                    )
 
-                # must shield here to avoid hitting a ``Cancelled`` and
-                # a child getting stuck bc we clobbered the tty
-                with trio.CancelScope(shield=True):
+                    # must shield here to avoid hitting a ``Cancelled`` and
+                    # a child getting stuck bc we clobbered the tty
+                    # with trio.CancelScope(shield=True):
                     await Lock._debug_lock.acquire()
-            else:
-                # may be cancelled
-                await Lock._debug_lock.acquire()
+                else:
+                    # may be cancelled
+                    await Lock._debug_lock.acquire()
 
             # enter REPL from root, no TTY locking IPC ctx necessary
             _enter_repl_sync(debug_func)
@@ -1659,7 +1661,8 @@ async def _pause(
                             f'{task.name}@{actor.uid} already has TTY lock\n'
                             f'ignoring..'
                         )
-                        await trio.lowlevel.checkpoint()
+                        with trio.CancelScope(shield=shield):
+                            await trio.lowlevel.checkpoint()
                         return
 
                     else:
@@ -1671,8 +1674,9 @@ async def _pause(
                             f'{task}@{actor.uid} already has TTY lock\n'
                             f'waiting for release..'
                         )
-                        await DebugStatus.repl_release.wait()
-                        await trio.sleep(0.1)
+                        with trio.CancelScope(shield=shield):
+                            await DebugStatus.repl_release.wait()
+                            await trio.sleep(0.1)
 
                 elif (
                     req_task
@@ -1683,7 +1687,8 @@ async def _pause(
 
                         'Waiting for previous request to complete..\n'
                     )
-                    await DebugStatus.req_finished.wait()
+                    with trio.CancelScope(shield=shield):
+                        await DebugStatus.req_finished.wait()
 
             # this **must** be awaited by the caller and is done using the
             # root nursery so that the debugger can continue to run without
@@ -1721,14 +1726,15 @@ async def _pause(
                 'Starting request task\n'
                 f'|_{task}\n'
             )
-            req_ctx: Context = await actor._service_n.start(
-                partial(
-                    request_root_stdio_lock,
-                    actor_uid=actor.uid,
-                    task_uid=(task.name, id(task)),  # task uuid (effectively)
-                    shield=shield,
+            with trio.CancelScope(shield=shield):
+                req_ctx: Context = await actor._service_n.start(
+                    partial(
+                        request_root_stdio_lock,
+                        actor_uid=actor.uid,
+                        task_uid=(task.name, id(task)),  # task uuid (effectively)
+                        shield=shield,
+                    )
                 )
-            )
             # XXX sanity, our locker task should be the one which
             # entered a new IPC ctx with the root actor, NOT the one
             # that exists around the task calling into `._pause()`.
@@ -2147,6 +2153,13 @@ async def post_mortem(
     **_pause_kwargs,
 
 ) -> None:
+    '''
+    `tractor`'s builtin async equivalient of `pdb.post_mortem()`
+    which can be used inside exception handlers.
+
+    It's also used for the crash handler when `debug_mode == True` ;)
+
+    '''
     __tracebackhide__: bool = hide_tb
 
     tb: TracebackType = tb or sys.exc_info()[2]

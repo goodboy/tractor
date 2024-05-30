@@ -1232,6 +1232,81 @@ def test_post_mortem_api(
     child.expect(pexpect.EOF)
 
 
+def test_shield_pause(
+    spawn,
+):
+    '''
+    Verify the `tractor.pause()/.post_mortem()` API works inside an
+    already cancelled `trio.CancelScope` and that you can step to the
+    next checkpoint wherein the cancelled will get raised.
+
+    '''
+    child = spawn('shielded_pause')
+
+    # First entry is via manual `.post_mortem()`
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _pause_msg,
+            "cancellable_pause_loop'",
+            "('cancelled_before_pause'",  # actor name
+        ]
+    )
+
+    # since 3 tries in ex. shield pause loop
+    for i in range(3):
+        child.sendline('c')
+        child.expect(PROMPT)
+        assert_before(
+            child,
+            [
+                _pause_msg,
+                "INSIDE SHIELDED PAUSE",
+                "('cancelled_before_pause'",  # actor name
+            ]
+        )
+
+    # back inside parent task that opened nursery
+    child.sendline('c')
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _crash_msg,
+            "('cancelled_before_pause'",  # actor name
+            "Failed to engage debugger via `_pause()`",
+            "trio.Cancelled",
+            "raise Cancelled._create()",
+
+            # we should be handling a taskc inside
+            # the first `.port_mortem()` sin-shield!
+            'await DebugStatus.req_finished.wait()',
+        ]
+    )
+
+    # same as above but in the root actor's task
+    child.sendline('c')
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _crash_msg,
+            "('root'",  # actor name
+            "Failed to engage debugger via `_pause()`",
+            "trio.Cancelled",
+            "raise Cancelled._create()",
+
+            # handling a taskc inside the first unshielded
+            # `.port_mortem()`.
+            # BUT in this case in the root-proc path ;)
+            'wait Lock._debug_lock.acquire()',
+        ]
+    )
+    child.sendline('c')
+    child.expect(pexpect.EOF)
+
+
 # TODO: needs ANSI code stripping tho, see `assert_before()` # above!
 def test_correct_frames_below_hidden():
     '''
@@ -1252,8 +1327,4 @@ def test_cant_pause_from_paused_task():
     by a `.pause()` line somewhere inside our runtime.
 
     '''
-    ...
-
-
-def test_shield_pause():
     ...
