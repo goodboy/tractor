@@ -1190,6 +1190,7 @@ class Context:
         self,
         remote_error: Exception,
 
+        from_src_exc: BaseException|None|bool = False,
         raise_ctxc_from_self_call: bool = False,
         raise_overrun_from_self: bool = True,
         hide_tb: bool = True,
@@ -1284,7 +1285,10 @@ class Context:
         #       runtime frames from the tb explicitly?
         # https://docs.python.org/3/reference/simple_stmts.html#the-raise-statement
         # https://stackoverflow.com/a/24752607
-        raise remote_error # from None
+        if from_src_exc is not False:
+            raise remote_error from from_src_exc
+
+        raise remote_error
 
     # TODO: change  to `.wait_for_result()`?
     async def result(
@@ -2096,7 +2100,11 @@ async def open_context_from_portal(
                 # `._maybe_cancel_and_set_remote_error()` so ensure
                 # we raise the underlying `._remote_error` directly
                 # instead of bubbling that taskc.
-                ctx.maybe_raise()
+                ctx.maybe_raise(
+                    # mask the above taskc from the tb
+                    from_src_exc=None,
+                    hide_tb=hide_tb,
+                )
 
                 # OW, some other unexpected cancel condition
                 # that should prolly never happen right?
@@ -2108,13 +2116,14 @@ async def open_context_from_portal(
             ctx._started_msg: bool = started_msg
             ctx._started_pld: bool = first
 
-            # deliver context instance and .started() msg value
-            # in enter tuple.
+            # deliver context ref and `.started()` msg payload value
+            # in `__aenter__` tuple.
             yield ctx, first
 
             # ??TODO??: do we still want to consider this or is
             # the `else:` block handling via a `.result()`
             # call below enough??
+            #
             # -[ ] pretty sure `.result()` internals do the
             # same as our ctxc handler below so it ended up
             # being same (repeated?) behaviour, but ideally we
@@ -2123,33 +2132,13 @@ async def open_context_from_portal(
             # that we can re-use it around the `yield` ^ here
             # or vice versa?
             #
-            # NOTE: between the caller exiting and arriving
-            # here the far end may have sent a ctxc-msg or
-            # other error, so check for it here immediately
-            # and maybe raise so as to engage the ctxc
-            # handling block below!
+            # maybe TODO NOTE: between the caller exiting and
+            # arriving here the far end may have sent a ctxc-msg or
+            # other error, so the quetion is whether we should check
+            # for it here immediately and maybe raise so as to engage
+            # the ctxc handling block below ????
             #
-            # if re := ctx._remote_error:
-            #     maybe_ctxc: ContextCancelled|None = ctx._maybe_raise_remote_err(
-            #         re,
-            #         # TODO: do we want this to always raise?
-            #         # - means that on self-ctxc, if/when the
-            #         #   block is exited before the msg arrives
-            #         #   but then the msg during __exit__
-            #         #   calling we may not activate the
-            #         #   ctxc-handler block below? should we
-            #         #   be?
-            #         # - if there's a remote error that arrives
-            #         #   after the child has exited, we won't
-            #         #   handle until the `finally:` block
-            #         #   where `.result()` is always called,
-            #         #   again in which case we handle it
-            #         #   differently then in the handler block
-            #         #   that would normally engage from THIS
-            #         #   block?
-            #         raise_ctxc_from_self_call=True,
-            #     )
-            #     ctxc_from_callee = maybe_ctxc
+            # self.maybe_raise()
 
             # when in allow_overruns mode there may be
             # lingering overflow sender tasks remaining?
@@ -2460,7 +2449,7 @@ async def open_context_from_portal(
             #
             # NOTE: further, this should be the only place the
             # underlying feeder channel is
-            # once-and-only-CLOSED!
+            # once-forever-and-only-CLOSED!
             with trio.CancelScope(shield=True):
                 await ctx._rx_chan.aclose()
 
