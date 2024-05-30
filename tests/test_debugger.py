@@ -159,6 +159,10 @@ def in_prompt_msg(
 
     return True
 
+
+# TODO: todo support terminal color-chars stripping so we can match
+# against call stack frame output from the the 'll' command the like!
+# -[ ] SO answer for stipping ANSI codes: https://stackoverflow.com/a/14693789
 def assert_before(
     child,
     patts: list[str],
@@ -1123,7 +1127,112 @@ def test_pause_from_sync(
     child.expect(pexpect.EOF)
 
 
-# TODO!
+def test_post_mortem_api(
+    spawn,
+    ctlc: bool,
+):
+    '''
+    Verify the `tractor.post_mortem()` API works in an exception
+    handler block.
+
+    '''
+    child = spawn('pm_in_subactor')
+
+    # First entry is via manual `.post_mortem()`
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _crash_msg,
+            "<Task 'name_error'",
+            "NameError",
+            "('child'",
+            "tractor.post_mortem()",
+        ]
+    )
+    if ctlc:
+        do_ctlc(child)
+    child.sendline('c')
+
+    # 2nd is RPC crash handler
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _crash_msg,
+            "<Task 'name_error'",
+            "NameError",
+            "('child'",
+        ]
+    )
+    if ctlc:
+        do_ctlc(child)
+    child.sendline('c')
+
+    # 3rd is via RAE bubbled to root's parent ctx task and
+    # crash-handled via another manual pm call.
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _crash_msg,
+            "<Task '__main__.main'",
+            "('root'",
+            "NameError",
+            "tractor.post_mortem()",
+            "src_uid=('child'",
+        ]
+    )
+    if ctlc:
+        do_ctlc(child)
+    child.sendline('c')
+
+    # 4th and FINAL is via RAE bubbled to root's parent ctx task and
+    # crash-handled via another manual pm call.
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _crash_msg,
+            "<Task '__main__.main'",
+            "('root'",
+            "NameError",
+            "src_uid=('child'",
+        ]
+    )
+    if ctlc:
+        do_ctlc(child)
+
+
+    # TODO: ensure we're stopped and showing the right call stack frame
+    # -[ ] need a way to strip the terminal color chars in order to
+    #    pattern match... see TODO around `assert_before()` above!
+    # child.sendline('w')
+    # child.expect(PROMPT)
+    # assert_before(
+    #     child,
+    #     [
+    #         # error src block annot at ctx open
+    #         '-> async with p.open_context(name_error) as (ctx, first):',
+    #     ]
+    # )
+
+    # # step up a frame to ensure the it's the root's nursery
+    # child.sendline('u')
+    # child.expect(PROMPT)
+    # assert_before(
+    #     child,
+    #     [
+    #         # handler block annotation
+    #         '-> async with tractor.open_nursery(',
+    #     ]
+    # )
+
+    child.sendline('c')
+    child.expect(pexpect.EOF)
+
+
+# TODO: needs ANSI code stripping tho, see `assert_before()` # above!
 def test_correct_frames_below_hidden():
     '''
     Ensure that once a `tractor.pause()` enages, when the user
@@ -1136,4 +1245,15 @@ def test_correct_frames_below_hidden():
 
 
 def test_cant_pause_from_paused_task():
+    '''
+    Pausing from with an already paused task should raise an error.
+
+    Normally this should only happen in practise while debugging the call stack of `tractor.pause()` itself, likely
+    by a `.pause()` line somewhere inside our runtime.
+
+    '''
+    ...
+
+
+def test_shield_pause():
     ...
