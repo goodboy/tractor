@@ -22,6 +22,7 @@ from __future__ import annotations
 import builtins
 import importlib
 from pprint import pformat
+import sys
 from types import (
     TracebackType,
 )
@@ -110,6 +111,7 @@ _body_fields: list[str] = list(
         'tb_str',
         'relay_path',
         'cid',
+        'message',
 
         # only ctxc should show it but `Error` does
         # have it as an optional field.
@@ -236,6 +238,7 @@ class RemoteActorError(Exception):
         self._boxed_type: BaseException = boxed_type
         self._src_type: BaseException|None = None
         self._ipc_msg: Error|None = ipc_msg
+        self._extra_msgdata = extra_msgdata
 
         if (
             extra_msgdata
@@ -250,8 +253,6 @@ class RemoteActorError(Exception):
                     k,
                     v,
                 )
-        else:
-            self._extra_msgdata = extra_msgdata
 
         # TODO: mask out eventually or place in `pack_error()`
         # pre-`return` lines?
@@ -281,6 +282,17 @@ class RemoteActorError(Exception):
 
             # ensure any roundtripping evals to the input value
             assert self.boxed_type is boxed_type
+
+    @property
+    def message(self) -> str:
+        '''
+        Be explicit, instead of trying to read it from the the parent
+        type's loosely defined `.args: tuple`:
+
+        https://docs.python.org/3/library/exceptions.html#BaseException.args
+
+        '''
+        return self._message
 
     @property
     def ipc_msg(self) -> Struct:
@@ -355,7 +367,10 @@ class RemoteActorError(Exception):
 
         '''
         bt: Type[BaseException] = self.boxed_type
-        return str(bt.__name__)
+        if bt:
+            return str(bt.__name__)
+
+        return ''
 
     @property
     def boxed_type(self) -> Type[BaseException]:
@@ -426,8 +441,7 @@ class RemoteActorError(Exception):
 
         for key in fields:
             if (
-                key == 'relay_uid'
-                and not self.is_inception()
+                key == 'relay_uid' and not self.is_inception()
             ):
                 continue
 
@@ -504,19 +518,80 @@ class RemoteActorError(Exception):
     def pformat(
         self,
         with_type_header: bool = True,
+        # with_ascii_box: bool = True,
+
     ) -> str:
         '''
-        Nicely formatted boxed error meta data + traceback, OR just
-        the normal message from `.args` (for eg. as you'd want shown
-        by a locally raised `ContextCancelled`).
+        Format any boxed remote error by multi-line display of,
+
+          - error's src or relay actor meta-data,
+          - remote runtime env's traceback,
+
+        With optional control over the format of,
+
+          - whether the boxed traceback is ascii-decorated with
+            a surrounding "box" annotating the embedded stack-trace.
+          - if the error's type name should be added as margins
+            around the field and tb content like:
+
+            `<RemoteActorError(.. <<multi-line-content>> .. )>`
+
+          - the placement of the `.message: str` (explicit equiv of
+            `.args[0]`), either placed below the `.tb_str` or in the
+            first line's header when the error is raised locally (since
+            the type name is already implicitly shown by python).
 
         '''
         header: str = ''
         body: str = ''
+        message: str = ''
 
+        # XXX when the currently raised exception is this instance,
+        # we do not ever use the "type header" style repr.
+        is_being_raised: bool = False
+        if (
+            (exc := sys.exception())
+            and
+            exc is self
+        ):
+            is_being_raised: bool = True
+
+        with_type_header: bool = (
+            with_type_header
+            and
+            not is_being_raised
+        )
+
+        # <RemoteActorError( .. )> style
         if with_type_header:
-            header: str = f'<{type(self).__name__}(\n'
+            header: str = f'<{type(self).__name__}('
 
+        if message := self._message:
+
+            # split off the first line so, if needed, it isn't
+            # indented the same like the "boxed content" which
+            # since there is no `.tb_str` is just the `.message`.
+            lines: list[str] = message.splitlines()
+            first: str = lines[0]
+            message: str = message.removeprefix(first)
+
+            # with a type-style header we,
+            # - have no special message "first line" extraction/handling
+            # - place the message a space in from the header:
+            #  `MsgTypeError( <message> ..`
+            #                 ^-here
+            # - indent the `.message` inside the type body.
+            if with_type_header:
+                first = f' {first} )>'
+
+            message: str = textwrap.indent(
+                message,
+                prefix=' '*2,
+            )
+            message: str = first + message
+
+        # IFF there is an embedded traceback-str we always
+        # draw the ascii-box around it.
         if tb_str := self.tb_str:
             fields: str = self._mk_fields_str(
                 _body_fields
@@ -535,35 +610,18 @@ class RemoteActorError(Exception):
                 #             |___ ..
                 tb_body_indent=1,
             )
-            if not with_type_header:
-                body = '\n' + body
 
-        elif message := self._message:
-            # split off the first line so it isn't indented
-            # the same like the "boxed content".
-            if not with_type_header:
-                lines: list[str] = message.splitlines()
-                first: str = lines[0]
-                message: str = message.removeprefix(first)
-
-            else:
-                first: str = ''
-
-            body: str = (
-                first
-                +
-                message
-                +
-                '\n'
-            )
-
-        if with_type_header:
-            tail: str = ')>'
-        else:
-            tail = ''
+        tail = ''
+        if (
+            with_type_header
+            and not message
+        ):
+            tail: str = '>'
 
         return (
             header
+            +
+            message
             +
             f'{body}'
             +
@@ -577,7 +635,9 @@ class RemoteActorError(Exception):
     # |_ i guess `pexepect` relies on `str`-casing
     #    of output?
     def __str__(self) -> str:
-        return self.pformat(with_type_header=False)
+        return self.pformat(
+            with_type_header=False
+        )
 
     def unwrap(
         self,
@@ -825,9 +885,6 @@ class MsgTypeError(
             extra_msgdata['_bad_msg'] = bad_msg
             extra_msgdata['cid'] = bad_msg.cid
 
-        if 'cid' not in extra_msgdata:
-            import pdbp; pdbp.set_trace()
-
         return cls(
             message=message,
             boxed_type=cls,
@@ -889,6 +946,7 @@ def pack_error(
     src_uid: tuple[str, str]|None = None,
     tb: TracebackType|None = None,
     tb_str: str = '',
+    message: str = '',
 
 ) -> Error:
     '''
@@ -971,7 +1029,7 @@ def pack_error(
     # the locally raised error (so, NOT the prior relay's boxed
     # `._ipc_msg.tb_str`).
     error_msg['tb_str'] = tb_str
-
+    error_msg['message'] = message or getattr(exc, 'message', '')
     if cid is not None:
         error_msg['cid'] = cid
 
@@ -995,26 +1053,24 @@ def unpack_error(
     if not isinstance(msg, Error):
         return None
 
-    # retrieve the remote error's msg-encoded details
-    tb_str: str = msg.tb_str
-    message: str = (
-        f'{chan.uid}\n'
-        +
-        tb_str
-    )
-
     # try to lookup a suitable error type from the local runtime
     # env then use it to construct a local instance.
     # boxed_type_str: str = error_dict['boxed_type_str']
     boxed_type_str: str = msg.boxed_type_str
     boxed_type: Type[BaseException] = get_err_type(boxed_type_str)
 
-    if boxed_type_str == 'ContextCancelled':
-        box_type = ContextCancelled
-        assert boxed_type is box_type
+    # retrieve the error's msg-encoded remotoe-env info
+    message: str = f'remote task raised a {msg.boxed_type_str!r}\n'
 
-    elif boxed_type_str == 'MsgTypeError':
-        box_type = MsgTypeError
+    # TODO: do we even really need these checks for RAEs?
+    if boxed_type_str in [
+        'ContextCancelled',
+        'MsgTypeError',
+    ]:
+        box_type = {
+            'ContextCancelled': ContextCancelled,
+            'MsgTypeError': MsgTypeError,
+        }[boxed_type_str]
         assert boxed_type is box_type
 
     # TODO: already included by `_this_mod` in else loop right?
@@ -1029,19 +1085,21 @@ def unpack_error(
     exc = box_type(
         message,
         ipc_msg=msg,
+        tb_str=msg.tb_str,
     )
 
     return exc
 
 
-def is_multi_cancelled(exc: BaseException) -> bool:
+def is_multi_cancelled(
+    exc: BaseException|BaseExceptionGroup
+) -> bool:
     '''
     Predicate to determine if a possible ``BaseExceptionGroup`` contains
     only ``trio.Cancelled`` sub-exceptions (and is likely the result of
     cancelling a collection of subtasks.
 
     '''
-    # if isinstance(exc, eg.BaseExceptionGroup):
     if isinstance(exc, BaseExceptionGroup):
         return exc.subgroup(
             lambda exc: isinstance(exc, trio.Cancelled)
@@ -1184,7 +1242,6 @@ def _mk_msg_type_err(
     src_validation_error: ValidationError|None = None,
     src_type_error: TypeError|None = None,
     is_invalid_payload: bool = False,
-    # src_err_msg: Error|None = None,
 
     **mte_kwargs,
 
@@ -1251,19 +1308,11 @@ def _mk_msg_type_err(
             msg_type: str = type(msg)
             any_pld: Any = msgpack.decode(msg.pld)
             message: str = (
-                f'invalid `{msg_type.__qualname__}` payload\n\n'
-                f'value: `{any_pld!r}` does not match type-spec: ' #\n'
+                f'invalid `{msg_type.__qualname__}` msg payload\n\n'
+                f'value: `{any_pld!r}` does not match type-spec: '
                 f'`{type(msg).__qualname__}.pld: {codec.pld_spec_str}`'
-                # f'<{type(msg).__qualname__}(\n'
-                # f' |_pld: {codec.pld_spec_str}\n'# != {any_pld!r}\n'
-                # f')>\n\n'
             )
-            # src_err_msg = msg
             bad_msg = msg
-            # TODO: should we just decode the msg to a dict despite
-            # only the payload being wrong?
-            # -[ ] maybe the better design is to break this construct
-            #   logic into a separate explicit helper raiser-func?
 
         else:
             # decode the msg-bytes using the std msgpack
@@ -1308,21 +1357,21 @@ def _mk_msg_type_err(
         if verb_header:
             message = f'{verb_header} ' + message
 
-        # if not isinstance(bad_msg, PayloadMsg):
-        #     import pdbp; pdbp.set_trace()
-
         msgtyperr = MsgTypeError.from_decode(
             message=message,
             bad_msg=bad_msg,
             bad_msg_as_dict=msg_dict,
 
-            # NOTE: for the send-side `.started()` pld-validate
-            # case we actually set the `._ipc_msg` AFTER we return
-            # from here inside `Context.started()` since we actually
-            # want to emulate the `Error` from the mte we build here
-            # Bo
-            # so by default in that case this is set to `None`
-            # ipc_msg=src_err_msg,
+            # NOTE: for pld-spec MTEs we set the `._ipc_msg` manually:
+            # - for the send-side `.started()` pld-validate
+            #   case we actually raise inline so we don't need to
+            #   set the it at all.
+            # - for recv side we set it inside `PldRx.decode_pld()`
+            #   after a manual call to `pack_error()` since we
+            #   actually want to emulate the `Error` from the mte we
+            #   build here. So by default in that case, this is left
+            #   as `None` here.
+            #   ipc_msg=src_err_msg,
         )
         msgtyperr.__cause__ = src_validation_error
         return msgtyperr
