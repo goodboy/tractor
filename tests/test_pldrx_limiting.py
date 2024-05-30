@@ -53,6 +53,9 @@ async def maybe_expect_raises(
     Async wrapper for ensuring errors propagate from the inner scope.
 
     '''
+    if tractor._state.debug_mode():
+        timeout += 999
+
     with trio.fail_after(timeout):
         try:
             yield
@@ -68,9 +71,10 @@ async def maybe_expect_raises(
                 # maybe check for error txt content
                 if ensure_in_message:
                     part: str
+                    err_repr: str = repr(inner_err)
                     for part in ensure_in_message:
                         for i, arg in enumerate(inner_err.args):
-                            if part in arg:
+                            if part in err_repr:
                                 break
                         # if part never matches an arg, then we're
                         # missing a match.
@@ -97,7 +101,7 @@ async def child(
     ctx: Context,
     started_value: int|PldMsg|None,
     return_value: str|None,
-    validate_pld_spec: bool,
+   validate_pld_spec: bool,
     raise_on_started_mte: bool = True,
 
 ) -> None:
@@ -131,19 +135,34 @@ async def child(
             # 2 cases: hdndle send-side and recv-only validation
             # - when `raise_on_started_mte == True`, send validate
             # - else, parent-recv-side only validation
+            mte: MsgTypeError|None = None
             try:
                 await ctx.started(
                     value=started_value,
                     validate_pld_spec=validate_pld_spec,
                 )
 
-            except MsgTypeError:
+            except MsgTypeError as _mte:
+                mte = _mte
                 log.exception('started()` raised an MTE!\n')
                 if not expect_started_mte:
                     raise RuntimeError(
                         'Child-ctx-task SHOULD NOT HAVE raised an MTE for\n\n'
                         f'{started_value!r}\n'
                     )
+
+                boxed_div: str = '------ - ------'
+                assert boxed_div not in mte._message
+                assert boxed_div not in mte.tb_str
+                assert boxed_div not in repr(mte)
+                assert boxed_div not in str(mte)
+                mte_repr: str = repr(mte)
+                for line in mte.message.splitlines():
+                    assert line in mte_repr
+
+                # since this is a *local error* there should be no
+                # boxed traceback content!
+                assert not mte.tb_str
 
                 # propagate to parent?
                 if raise_on_started_mte:
@@ -208,8 +227,8 @@ async def child(
 @pytest.mark.parametrize(
     'return_value',
     [
-        None,
         'yo',
+        None,
     ],
     ids=[
         'return[invalid-"yo"]',
@@ -291,8 +310,9 @@ def test_basic_payload_spec(
                 maybe_expect_raises(
                     raises=should_raise,
                     ensure_in_message=[
-                        f"invalid `{msg_type_str}` payload",
-                        f"value: `{bad_value_str}` does not match type-spec: `{msg_type_str}.pld: PldMsg|NoneType`",
+                        f"invalid `{msg_type_str}` msg payload",
+                        f"value: `{bad_value_str}` does not "
+                        f"match type-spec: `{msg_type_str}.pld: PldMsg|NoneType`",
                     ],
                 ),
                 p.open_context(
@@ -321,21 +341,21 @@ def test_basic_payload_spec(
                     # the error state + meta-data
                     assert mte.expected_msg_type is Return
                     assert mte.cid == ctx.cid
+                    mte_repr: str = repr(mte)
+                    for line in mte.message.splitlines():
+                        assert line in mte_repr
+
+                    assert mte.tb_str
+                    # await tractor.pause(shield=True)
 
                     # verify expected remote mte deats
-                    try:
-                        assert ctx._local_error is None
-                        assert (
-                            mte is
-                            ctx._remote_error is
-                            ctx.maybe_error is
-                            ctx.outcome
-                        )
-                    except:
-                        # XXX should never get here..
-                        await tractor.pause(shield=True)
-                        raise
-
+                    assert ctx._local_error is None
+                    assert (
+                        mte is
+                        ctx._remote_error is
+                        ctx.maybe_error is
+                        ctx.outcome
+                    )
 
             if should_raise is None:
                 assert maybe_mte is None
