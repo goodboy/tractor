@@ -52,10 +52,6 @@ from msgspec import (
     msgpack,
     Raw,
 )
-# from trio.lowlevel import (
-#     RunVar,
-#     RunVarToken,
-# )
 # TODO: see notes below from @mikenerone..
 # from tricycle import TreeVar
 
@@ -368,160 +364,16 @@ class MsgCodec(Struct):
         # https://jcristharif.com/msgspec/usage.html#typed-decoding
         return self._dec.decode(msg)
 
-    # TODO: a sub-decoder system as well?
-    # payload_msg_specs: Union[Type[Struct]] = Any
-    # see related comments in `.msg.types`
-    # _payload_decs: (
-    #     dict[
-    #         str,
-    #         msgpack.Decoder,
-    #     ]
-    #     |None
-    # ) = None
-    # OR
-    # ) = {
-    #     # pre-seed decoders for std-py-type-set for use when
-    #     # `MsgType.pld == None|Any`.
-    #     None: msgpack.Decoder(Any),
-    #     Any: msgpack.Decoder(Any),
-    # }
-    #
-    # -[ ] do we still want to try and support the sub-decoder with
-    # `.Raw` technique in the case that the `Generic` approach gives
-    # future grief?
-    #
-    # -[ ] <NEW-ISSUE-FOR-ThIS-HERE>
-    #  -> https://jcristharif.com/msgspec/api.html#raw
-    #
-    #def mk_pld_subdec(
-    #    self,
-    #    payload_types: Union[Type[Struct]],
 
-    #) -> msgpack.Decoder:
-    #    # TODO: sub-decoder suppor for `.pld: Raw`?
-    #    # => see similar notes inside `.msg.types`..
-    #    #
-    #    # not sure we'll end up needing this though it might have
-    #    # unforeseen advantages in terms of enabling encrypted
-    #    # appliciation layer (only) payloads?
-    #    #
-    #    # register sub-payload decoders to load `.pld: Raw`
-    #    # decoded `Msg`-packets using a dynamic lookup (table)
-    #    # instead of a pre-defined msg-spec via `Generic`
-    #    # parameterization.
-    #    #
-    #    (
-    #        tags,
-    #        payload_dec,
-    #    ) = mk_tagged_union_dec(
-    #        tagged_structs=list(payload_types.__args__),
-    #    )
-    #    # register sub-decoders by tag
-    #    subdecs: dict[str, msgpack.Decoder]|None = self._payload_decs
-    #    for name in tags:
-    #        subdecs.setdefault(
-    #            name,
-    #            payload_dec,
-    #        )
-
-    #    return payload_dec
-
-    # sub-decoders for retreiving embedded
-    # payload data and decoding to a sender
-    # side defined (struct) type.
-    # def dec_payload(
-    #     codec: MsgCodec,
-    #     msg: Msg,
-
-    # ) -> Any|Struct:
-
-    #     msg: PayloadMsg = codec.dec.decode(msg)
-    #     payload_tag: str = msg.header.payload_tag
-    #     payload_dec: msgpack.Decoder = codec._payload_decs[payload_tag]
-    #     return payload_dec.decode(msg.pld)
-
-    # def enc_payload(
-    #     codec: MsgCodec,
-    #     payload: Any,
-    #     cid: str,
-
-    # ) -> bytes:
-
-    #     # tag_field: str|None = None
-
-    #     plbytes = codec.enc.encode(payload)
-    #     if b'msg_type' in plbytes:
-    #         assert isinstance(payload, Struct)
-
-    #         # tag_field: str = type(payload).__name__
-    #         payload = msgspec.Raw(plbytes)
-
-    #     msg = Msg(
-    #         cid=cid,
-    #         pld=payload,
-    #         # Header(
-    #         #     payload_tag=tag_field,
-    #         #     # dialog_id,
-    #         # ),
-    #     )
-    #     return codec.enc.encode(msg)
-
-
-
-# TODO: sub-decoded `Raw` fields?
-# -[ ] see `MsgCodec._payload_decs` notes
+# [x] TODO: a sub-decoder system as well? => No!
 #
-# XXX if we wanted something more complex then field name str-keys
-# we might need a header field type to describe the lookup sys?
-# class Header(Struct, tag=True):
-#     '''
-#     A msg header which defines payload properties
-
-#     '''
-#     payload_tag: str|None = None
-
-
- #def mk_tagged_union_dec(
-    # tagged_structs: list[Struct],
-
- #) -> tuple[
-    # list[str],
-    # msgpack.Decoder,
- #]:
-    # '''
-    # Create a `msgpack.Decoder` for an input `list[msgspec.Struct]`
-    # and return a `list[str]` of each struct's `tag_field: str` value
-    # which can be used to "map to" the initialized dec.
-
-    # '''
-    # # See "tagged unions" docs:
-    # # https://jcristharif.com/msgspec/structs.html#tagged-unions
-
-    # # "The quickest way to enable tagged unions is to set tag=True when
-    # # defining every struct type in the union. In this case tag_field
-    # # defaults to "type", and tag defaults to the struct class name
-    # # (e.g. "Get")."
-    # first: Struct = tagged_structs[0]
-    # types_union: Union[Type[Struct]] = Union[
-    #    first
-    # ]|Any
-    # tags: list[str] = [first.__name__]
-
-    # for struct in tagged_structs[1:]:
-    #     types_union |= struct
-    #     tags.append(
-    #         getattr(
-    #             struct,
-    #             struct.__struct_config__.tag_field,
-    #             struct.__name__,
-    #         )
-    #     )
-
-    # dec = msgpack.Decoder(types_union)
-    # return (
-    #     tags,
-    #     dec,
-    # )
+# -[x] do we still want to try and support the sub-decoder with
+# `.Raw` technique in the case that the `Generic` approach gives
+# future grief?
+# => NO, since we went with the `PldRx` approach instead B)
+#
+# IF however you want to see the code that was staged for this
+# from wayyy back, see the pure removal commit.
 
 
 def mk_codec(
@@ -644,10 +496,6 @@ _def_tractor_codec: MsgCodec = mk_codec(
 # 3. We similarly set the pending values for the child nurseries
 #    of the *current* task.
 #
-
-# TODO: STOP USING THIS, since it's basically a global and won't
-# allow sub-IPC-ctxs to limit the msg-spec however desired..
-# _ctxvar_MsgCodec: MsgCodec = RunVar(
 _ctxvar_MsgCodec: ContextVar[MsgCodec] = ContextVar(
     'msgspec_codec',
     default=_def_tractor_codec,
@@ -782,3 +630,31 @@ def limit_msg_spec(
 #         # import pdbp; pdbp.set_trace()
 #         assert ext_codec.pld_spec == extended_spec
 #         yield ext_codec
+
+
+# TODO: make something similar to this inside `._codec` such that
+# user can just pass a type table of some sort?
+# -[ ] we would need to decode all msgs to `pretty_struct.Struct`
+#     and then call `.to_dict()` on them?
+# -[x] we're going to need to re-impl all the stuff changed in the
+#    runtime port such that it can handle dicts or `Msg`s?
+#
+# def mk_dict_msg_codec_hooks() -> tuple[Callable, Callable]:
+#     '''
+#     Deliver a `enc_hook()`/`dec_hook()` pair which does
+#     manual convertion from our above native `Msg` set
+#     to `dict` equivalent (wire msgs) in order to keep legacy compat
+#     with the original runtime implementation.
+#
+#     Note: this is is/was primarly used while moving the core
+#     runtime over to using native `Msg`-struct types wherein we
+#     start with the send side emitting without loading
+#     a typed-decoder and then later flipping the switch over to
+#     load to the native struct types once all runtime usage has
+#     been adjusted appropriately.
+#
+#     '''
+#     return (
+#         # enc_to_dict,
+#         dec_from_dict,
+#     )

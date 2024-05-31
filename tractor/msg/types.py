@@ -26,7 +26,6 @@ from __future__ import annotations
 import types
 from typing import (
     Any,
-    # Callable,
     Generic,
     Literal,
     Type,
@@ -159,7 +158,6 @@ class SpawnSpec(
     # -[ ] abstract into a `TransportAddr` type?
     reg_addrs: list[tuple[str, int]]
     bind_addrs: list[tuple[str, int]]
-
 
 
 # TODO: caps based RPC support in the payload?
@@ -314,8 +312,9 @@ class Started(
     pld: PayloadT|Raw
 
 
-# TODO: instead of using our existing `Start`
-# for this (as we did with the original `{'cmd': ..}` style)
+# TODO: cancel request dedicated msg?
+# -[ ] instead of using our existing `Start`?
+#
 # class Cancel:
 #     cid: str
 
@@ -477,12 +476,16 @@ def from_dict_msg(
         )
     return msgT(**dict_msg)
 
-# TODO: should be make a msg version of `ContextCancelled?`
-# and/or with a scope field or a full `ActorCancelled`?
+# TODO: should be make a set of cancel msgs?
+# -[ ] a version of `ContextCancelled`?
+#     |_ and/or with a scope field?
+# -[ ] or, a full `ActorCancelled`?
+#
 # class Cancelled(MsgType):
 #     cid: str
-
-# TODO what about overruns?
+#
+# -[ ] what about overruns?
+#
 # class Overrun(MsgType):
 #     cid: str
 
@@ -564,10 +567,17 @@ def mk_msg_spec(
     Create a payload-(data-)type-parameterized IPC message specification.
 
     Allows generating IPC msg types from the above builtin set
-    with a payload (field) restricted data-type via the `Msg.pld:
-    PayloadT` type var. This allows runtime-task contexts to use
-    the python type system to limit/filter payload values as
-    determined by the input `payload_type_union: Union[Type]`.
+    with a payload (field) restricted data-type, the `Msg.pld: PayloadT`.
+
+    This allows runtime-task contexts to use the python type system
+    to limit/filter payload values as determined by the input
+    `payload_type_union: Union[Type]`.
+
+    Notes: originally multiple approaches for constructing the
+    type-union passed to `msgspec` were attempted as selected via the
+    `spec_build_method`, but it turns out only the defaul method
+    'indexed_generics' seems to work reliably in all use cases. As
+    such, the others will likely be removed in the near future.
 
     '''
     submsg_types: list[MsgType] = Msg.__subclasses__()
@@ -707,31 +717,3 @@ def mk_msg_spec(
         +
         ipc_msg_types,
     )
-
-
-# TODO: make something similar to this inside `._codec` such that
-# user can just pass a type table of some sort?
-# -[ ] we would need to decode all msgs to `pretty_struct.Struct`
-#     and then call `.to_dict()` on them?
-# -[ ] we're going to need to re-impl all the stuff changed in the
-#    runtime port such that it can handle dicts or `Msg`s?
-#
-# def mk_dict_msg_codec_hooks() -> tuple[Callable, Callable]:
-#     '''
-#     Deliver a `enc_hook()`/`dec_hook()` pair which does
-#     manual convertion from our above native `Msg` set
-#     to `dict` equivalent (wire msgs) in order to keep legacy compat
-#     with the original runtime implementation.
-#
-#     Note: this is is/was primarly used while moving the core
-#     runtime over to using native `Msg`-struct types wherein we
-#     start with the send side emitting without loading
-#     a typed-decoder and then later flipping the switch over to
-#     load to the native struct types once all runtime usage has
-#     been adjusted appropriately.
-#
-#     '''
-#     return (
-#         # enc_to_dict,
-#         dec_from_dict,
-#     )
