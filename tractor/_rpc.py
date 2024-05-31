@@ -738,37 +738,24 @@ async def _invoke(
                 cid,
             ))
 
+            logmeth: Callable = log.runtime
             merr: Exception|None = ctx.maybe_error
-            (
-                res_type_str,
-                res_str,
-            ) = (
-                ('error', f'{type(merr)}',) if merr
-                else (
-                    'result',
-                    f'`{repr(ctx.outcome)}`',
-                )
-            )
+            descr_str: str = 'with final result `{repr(ctx.outcome)}`'
             message: str = (
-                f'IPC context terminated with a final {res_type_str}\n\n'
-                f'{ctx}'
+                f'IPC context terminated {descr_str}\n\n'
             )
             if merr:
-                from tractor import RemoteActorError
-                if not isinstance(merr, RemoteActorError):
-                    fmt_merr: str = (
-                        f'\n{merr!r}\n'
-                        # f'{merr.args[0]!r}\n'
-                    )
-                else:
-                    fmt_merr = f'\n{merr!r}'
-                log.error(
-                    message
-                    +
-                    fmt_merr
+                descr_str: str = (
+                    f'with ctx having {ctx.repr_state!r}\n'
+                    f'{ctx.repr_outcome()}\n'
                 )
-            else:
-                log.runtime(message)
+                if isinstance(merr, ContextCancelled):
+                    logmeth: Callable = log.runtime
+                else:
+                    logmeth: Callable = log.error
+                    message += f'\n{merr!r}\n'
+
+            logmeth(message)
 
 
 async def try_ship_error_to_remote(
