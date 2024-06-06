@@ -1071,6 +1071,8 @@ def test_pause_from_sync(
 
     '''
     child = spawn('sync_bp')
+
+    # first `sync_pause()` after nurseries open
     child.expect(PROMPT)
     assert_before(
         child,
@@ -1085,43 +1087,70 @@ def test_pause_from_sync(
         do_ctlc(child)
 
     child.sendline('c')
+
+
+    # first `await tractor.pause()` inside `p.open_context()` body
     child.expect(PROMPT)
 
-    # XXX shouldn't see gb loaded again
+    # XXX shouldn't see gb loaded message with PDB loglevel!
     before = str(child.before.decode())
     assert not in_prompt_msg(
         before,
         ['`greenback` portal opened!'],
     )
+    # should be same root task
     assert_before(
         child,
-        [_pause_msg, "('root'",],
+        [
+            _pause_msg,
+            "<Task '__main__.main'",
+            "('root'",
+        ]
     )
 
     if ctlc:
         do_ctlc(child)
 
-    child.sendline('c')
-    child.expect(PROMPT)
-    assert_before(
-        child,
-        [_pause_msg, "('subactor'",],
-    )
+    # one of the bg thread or subactor should have
+    # `Lock.acquire()`-ed
+    # (NOT both, which will result in REPL clobbering!)
+    attach_patts: dict[str, list[str]] = {
+        'subactor': [
+            "'start_n_sync_pause'",
+            "('subactor'",
+        ],
+        'inline_root_bg_thread': [
+            "<Thread(inline_root_bg_thread",
+            "('root'",
+        ],
+        'start_soon_root_bg_thread': [
+            "<Thread(start_soon_root_bg_thread",
+            "('root'",
+        ],
+    }
+    while attach_patts:
+        child.sendline('c')
+        child.expect(PROMPT)
+        before = str(child.before.decode())
+        for key in attach_patts.copy():
+            if key in before:
+                expected_patts: str = attach_patts.pop(key)
+                assert_before(
+                    child,
+                    [_pause_msg] + expected_patts
+                )
+                break
 
-    if ctlc:
-        do_ctlc(child)
+        # ensure no other task/threads engaged a REPL
+        # at the same time as the one that was detected above.
+        for key, other_patts in attach_patts.items():
+            assert not in_prompt_msg(
+                before,
+                other_patts,
+            )
 
-    child.sendline('c')
-    child.expect(PROMPT)
-    # non-main thread case
-    # TODO: should we agument the pre-prompt msg in this case?
-    assert_before(
-        child,
-        [_pause_msg, "('root'",],
-    )
-
-    if ctlc:
-        do_ctlc(child)
+        if ctlc:
+            do_ctlc(child)
 
     child.sendline('c')
     child.expect(pexpect.EOF)
