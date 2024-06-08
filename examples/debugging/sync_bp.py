@@ -1,6 +1,5 @@
 from functools import partial
 import time
-from threading import current_thread
 
 import trio
 import tractor
@@ -16,17 +15,9 @@ def sync_pause(
         time.sleep(pre_sleep)
 
     if use_builtin:
-        print(
-            f'Entering `breakpoint()` from\n'
-            f'{current_thread()}\n'
-        )
         breakpoint(hide_tb=hide_tb)
 
     else:
-        print(
-            f'Entering `tractor.pause_from_sync()` from\n'
-            f'{current_thread()}@{tractor.current_actor().uid}\n'
-        )
         tractor.pause_from_sync()
 
     if error:
