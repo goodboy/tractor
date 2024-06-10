@@ -95,8 +95,38 @@ log = get_logger(__name__)
 
 # TODO: refine the internal impl and APIs in this module!
 #
-# -[ ] separate `._pause()` branch-cases for calling from a root task
-#     vs. from subactors
+# -[ ] rework `._pause()` and it's branch-cases for root vs.
+#     subactor:
+#  -[ ] `._pause_from_root()` + `_pause_from_subactor()`?
+#  -[ ]  do the de-factor based on bg-thread usage in
+#    `.pause_from_sync()` & `_pause_from_bg_root_thread()`.
+#  -[ ] drop `debug_func == None` case which is confusing af..
+#  -[ ]  factor out `_enter_repl_sync()` into a util func for calling
+#    the `_set_trace()` / `_post_mortem()` APIs?
+#
+# -[ ] figure out if we need `acquire_debug_lock()` and/or re-implement
+#    it as part of the `.pause_from_sync()` rework per above?
+#
+# -[ ] pair the `._pause_from_subactor()` impl with a "debug nursery"
+#   that's dynamically allocated inside the `._rpc` task thus
+#   avoiding the `._service_n.start()` usage for the IPC request?
+#  -[ ] see the TODO inside `._rpc._errors_relayed_via_ipc()`
+#
+# -[ ] impl a `open_debug_request()` which encaps all
+#   `request_root_stdio_lock()` task scheduling deats
+#   + `DebugStatus` state mgmt; which should prolly be re-branded as
+#   a `DebugRequest` type anyway AND with suppoort for bg-thread
+#   (from root actor) usage?
+#
+# -[ ] handle the `xonsh` case for bg-root-threads in the SIGINT
+#     handler!
+#   -[ ] do we need to do the same for subactors?
+#   -[ ] make the failing tests finally pass XD
+#
+# -[ ] simplify `maybe_wait_for_debugger()` to be a root-task only
+#     API?
+#   -[ ] currently it's implemented as that so might as well make it
+#     formal?
 
 
 def hide_runtime_frames() -> dict[FunctionType, CodeType]:
