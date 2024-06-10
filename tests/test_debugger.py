@@ -12,7 +12,6 @@ TODO:
 """
 from functools import partial
 import itertools
-from typing import Optional
 import platform
 import pathlib
 import time
@@ -30,6 +29,7 @@ from tractor._testing import (
 from tractor.devx._debug import (
     _pause_msg,
     _crash_msg,
+    _repl_fail_msg,
 )
 from .conftest import (
     _ci_env,
@@ -291,7 +291,7 @@ def do_ctlc(
     child,
     count: int = 3,
     delay: float = 0.1,
-    patt: Optional[str] = None,
+    patt: str|None = None,
 
     # expect repl UX to reprint the prompt after every
     # ctrl-c send.
@@ -1304,7 +1304,7 @@ def test_shield_pause(
         [
             _crash_msg,
             "('cancelled_before_pause'",  # actor name
-            "Failed to engage debugger via `_pause()`",
+            _repl_fail_msg,
             "trio.Cancelled",
             "raise Cancelled._create()",
 
@@ -1322,7 +1322,7 @@ def test_shield_pause(
         [
             _crash_msg,
             "('root'",  # actor name
-            "Failed to engage debugger via `_pause()`",
+            _repl_fail_msg,
             "trio.Cancelled",
             "raise Cancelled._create()",
 
