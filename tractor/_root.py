@@ -120,7 +120,7 @@ async def open_root_actor(
         )
     ):
         os.environ['PYTHONBREAKPOINT'] = (
-            'tractor.devx._debug.pause_from_sync'
+            'tractor.devx._debug._sync_pause_from_builtin'
         )
         _state._runtime_vars['use_greenback'] = True
 
