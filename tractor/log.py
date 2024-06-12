@@ -57,8 +57,8 @@ DATE_FORMAT = '%b %d %H:%M:%S'
 CUSTOM_LEVELS: dict[str, int] = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
-    'CANCEL': 16,
     'DEVX': 17,
+    'CANCEL': 18,
     'PDB': 500,
 }
 STD_PALETTE = {
@@ -111,7 +111,7 @@ class StackLevelAdapter(LoggerAdapter):
 
         '''
         return self.log(
-            level=16,
+            level=22,
             msg=msg,
             # stacklevel=4,
         )
