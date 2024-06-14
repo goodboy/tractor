@@ -26,6 +26,7 @@ from contextlib import (
 from functools import partial
 import inspect
 from pprint import pformat
+import traceback
 from typing import (
     Any,
     Callable,
@@ -47,6 +48,7 @@ from ._context import (
 )
 from ._exceptions import (
     ContextCancelled,
+    RemoteActorError,
     ModuleNotExposed,
     MsgTypeError,
     TransportClosed,
@@ -197,7 +199,8 @@ async def _invoke_non_context(
                 raise ipc_err
             else:
                 log.exception(
-                    f'Failed to respond to runtime RPC request for\n\n'
+                    f'Failed to ack runtime RPC request\n\n'
+                    f'{func} x=> {ctx.chan}\n\n'
                     f'{ack}\n'
                 )
 
@@ -414,7 +417,6 @@ async def _errors_relayed_via_ipc(
 
 
 async def _invoke(
-
     actor: Actor,
     cid: str,
     chan: Channel,
@@ -690,10 +692,6 @@ async def _invoke(
                         boxed_type=trio.Cancelled,
                         canceller=canceller,
                     )
-                    # does this matter other then for
-                    # consistentcy/testing? |_ no user code should be
-                    # in this scope at this point..
-                    # ctx._local_error = ctxc
                     raise ctxc
 
         # XXX: do we ever trigger this block any more?
@@ -714,6 +712,11 @@ async def _invoke(
             # always set this (child) side's exception as the
             # local error on the context
             ctx._local_error: BaseException = scope_error
+            # ^-TODO-^ question,
+            # does this matter other then for
+            # consistentcy/testing?
+            # |_ no user code should be in this scope at this point
+            #    AND we already set this in the block below?
 
             # if a remote error was set then likely the
             # exception group was raised due to that, so
@@ -740,22 +743,32 @@ async def _invoke(
 
             logmeth: Callable = log.runtime
             merr: Exception|None = ctx.maybe_error
-            descr_str: str = 'with final result `{repr(ctx.outcome)}`'
-            message: str = (
-                f'IPC context terminated {descr_str}\n\n'
+            message: str = 'IPC context terminated '
+            descr_str: str = (
+                f'after having {ctx.repr_state!r}\n'
             )
             if merr:
-                descr_str: str = (
-                    f'with ctx having {ctx.repr_state!r}\n'
-                    f'{ctx.repr_outcome()}\n'
-                )
+
+                logmeth: Callable = log.error
                 if isinstance(merr, ContextCancelled):
                     logmeth: Callable = log.runtime
-                else:
-                    logmeth: Callable = log.error
-                    message += f'\n{merr!r}\n'
 
-            logmeth(message)
+                if not isinstance(merr, RemoteActorError):
+                    tb_str: str = ''.join(traceback.format_exception(merr))
+                    descr_str += (
+                        f'\n{merr!r}\n'  # needed?
+                        f'{tb_str}\n'
+                    )
+                else:
+                    descr_str += f'\n{merr!r}\n'
+            else:
+                descr_str += f'\nand final result {ctx.outcome!r}\n'
+
+            logmeth(
+                message
+                +
+                descr_str
+            )
 
 
 async def try_ship_error_to_remote(
