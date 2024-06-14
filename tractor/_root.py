@@ -80,6 +80,7 @@ async def open_root_actor(
     # enables the multi-process debugger support
     debug_mode: bool = False,
     maybe_enable_greenback: bool = False,  # `.pause_from_sync()/breakpoint()` support
+    enable_stack_on_sig: bool = False,
 
     # internal logging
     loglevel: str|None = None,
@@ -210,7 +211,11 @@ async def open_root_actor(
     assert _log
 
     # TODO: factor this into `.devx._stackscope`!!
-    if debug_mode:
+    if (
+        debug_mode
+        and
+        enable_stack_on_sig
+    ):
         try:
             logger.info('Enabling `stackscope` traces on SIGUSR1')
             from .devx import enable_stack_on_sig
