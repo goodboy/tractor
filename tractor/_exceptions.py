@@ -441,7 +441,8 @@ class RemoteActorError(Exception):
 
         for key in fields:
             if (
-                key == 'relay_uid' and not self.is_inception()
+                key == 'relay_uid'
+                and not self.is_inception()
             ):
                 continue
 
@@ -1291,8 +1292,7 @@ def _mk_msg_type_err(
 
         msgtyperr = MsgTypeError(
             message=message,
-            ipc_msg=msg,
-            bad_msg=msg,
+            _bad_msg=msg,
         )
         # ya, might be `None`
         msgtyperr.__cause__ = src_type_error
