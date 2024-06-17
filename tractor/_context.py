@@ -2399,7 +2399,11 @@ def mk_context(
 # |_ `return: TypeAlias`,
 # |_ `invalid_policy: str|Callable` ?
 # -[ ] prolly implement the `@acm` wrapper using
-#     a `contextlib.ContextDecorator`?
+#     a `contextlib.ContextDecorator`, i guess not if
+#     we don't need an `__aexit__` block right?
+#  |_ de hecho, @acm can already be used as a decorator as of 3.10
+#     but i dunno how that's gonna play with `trio.Nursery.start[_soon]()`
+#  |_ https://docs.python.org/3/library/contextlib.html#using-a-context-manager-as-a-function-decorator
 #
 def context(
     func: Callable|None = None,
