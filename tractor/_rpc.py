@@ -68,6 +68,7 @@ from .msg import (
     PayloadT,
     NamespacePath,
     pretty_struct,
+    _ops as msgops,
 )
 from tractor.msg.types import (
     CancelAck,
@@ -499,8 +500,19 @@ async def _invoke(
 
 
     # handle decorated ``@tractor.context`` async function
-    elif getattr(func, '_tractor_context_function', False):
-        kwargs['ctx'] = ctx
+    # - pull out any typed-pld-spec info and apply (below)
+    # - (TODO) store func-ref meta data for API-frame-info logging
+    elif (
+        ctx_meta := getattr(
+            func,
+            '_tractor_context_meta',
+            False,
+        )
+    ):
+        # kwargs['ctx'] = ctx
+        # set the required `tractor.Context` typed input argument to
+        # the allocated RPC task context.
+        kwargs[ctx_meta['ctx_var_name']] = ctx
         context_ep_func = True
 
     # errors raised inside this block are propgated back to caller
@@ -594,7 +606,14 @@ async def _invoke(
         #     `@context` marked RPC function.
         # - `._portal` is never set.
         try:
-            async with trio.open_nursery() as tn:
+            async with (
+                trio.open_nursery() as tn,
+                msgops.maybe_limit_plds(
+                    ctx=ctx,
+                    spec=ctx_meta.get('pld_spec'),
+                    dec_hook=ctx_meta.get('dec_hook'),
+                ),
+            ):
                 ctx._scope_nursery = tn
                 ctx._scope = tn.cancel_scope
                 task_status.started(ctx)
