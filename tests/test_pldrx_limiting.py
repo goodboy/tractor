@@ -7,9 +7,6 @@ related settings around IPC contexts.
 from contextlib import (
     asynccontextmanager as acm,
 )
-from contextvars import (
-    Context,
-)
 
 from msgspec import (
     Struct,
@@ -19,6 +16,7 @@ import trio
 
 import tractor
 from tractor import (
+    Context,
     MsgTypeError,
     current_ipc_ctx,
     Portal,
@@ -35,7 +33,17 @@ from tractor.msg.types import (
 )
 
 
-class PldMsg(Struct):
+class PldMsg(
+    Struct,
+
+    # TODO: with multiple structs in-spec we need to tag them!
+    # -[ ] offer a built-in `PldMsg` type to inherit from which takes
+    #      case of these details?
+    #
+    # https://jcristharif.com/msgspec/structs.html#tagged-unions
+    # tag=True,
+    # tag_field='msg_type',
+):
     field: str
 
 
@@ -96,12 +104,14 @@ async def maybe_expect_raises(
                 )
 
 
-@tractor.context
+@tractor.context(
+    pld_spec=maybe_msg_spec,
+)
 async def child(
     ctx: Context,
     started_value: int|PldMsg|None,
     return_value: str|None,
-   validate_pld_spec: bool,
+    validate_pld_spec: bool,
     raise_on_started_mte: bool = True,
 
 ) -> None:
@@ -116,112 +126,98 @@ async def child(
     assert ctx is curr_ctx
 
     rx: msgops.PldRx = ctx._pld_rx
-    orig_pldec: _codec.MsgDec = rx.pld_dec
-    # senity that default pld-spec should be set
-    assert (
-        rx.pld_dec
-        is
-        msgops._def_any_pldec
+    curr_pldec: _codec.MsgDec = rx.pld_dec
+
+    ctx_meta: dict = getattr(
+        child,
+        '_tractor_context_meta',
+        None,
     )
+    if ctx_meta:
+        assert (
+            ctx_meta['pld_spec']
+            is curr_pldec.spec
+            is curr_pldec.pld_spec
+        )
 
+    # 2 cases: hdndle send-side and recv-only validation
+    # - when `raise_on_started_mte == True`, send validate
+    # - else, parent-recv-side only validation
+    mte: MsgTypeError|None = None
     try:
-        with msgops.limit_plds(
-            spec=maybe_msg_spec,
-        ) as pldec:
-            # sanity on `MsgDec` state
-            assert rx.pld_dec is pldec
-            assert pldec.spec is maybe_msg_spec
+        await ctx.started(
+            value=started_value,
+            validate_pld_spec=validate_pld_spec,
+        )
 
-            # 2 cases: hdndle send-side and recv-only validation
-            # - when `raise_on_started_mte == True`, send validate
-            # - else, parent-recv-side only validation
-            mte: MsgTypeError|None = None
-            try:
-                await ctx.started(
-                    value=started_value,
-                    validate_pld_spec=validate_pld_spec,
-                )
-
-            except MsgTypeError as _mte:
-                mte = _mte
-                log.exception('started()` raised an MTE!\n')
-                if not expect_started_mte:
-                    raise RuntimeError(
-                        'Child-ctx-task SHOULD NOT HAVE raised an MTE for\n\n'
-                        f'{started_value!r}\n'
-                    )
-
-                boxed_div: str = '------ - ------'
-                assert boxed_div not in mte._message
-                assert boxed_div not in mte.tb_str
-                assert boxed_div not in repr(mte)
-                assert boxed_div not in str(mte)
-                mte_repr: str = repr(mte)
-                for line in mte.message.splitlines():
-                    assert line in mte_repr
-
-                # since this is a *local error* there should be no
-                # boxed traceback content!
-                assert not mte.tb_str
-
-                # propagate to parent?
-                if raise_on_started_mte:
-                    raise
-
-            # no-send-side-error fallthrough
-            if (
-                validate_pld_spec
-                and
-                expect_started_mte
-            ):
-                raise RuntimeError(
-                    'Child-ctx-task SHOULD HAVE raised an MTE for\n\n'
-                    f'{started_value!r}\n'
-                )
-
-            assert (
-                not expect_started_mte
-                or
-                not validate_pld_spec
+    except MsgTypeError as _mte:
+        mte = _mte
+        log.exception('started()` raised an MTE!\n')
+        if not expect_started_mte:
+            raise RuntimeError(
+                'Child-ctx-task SHOULD NOT HAVE raised an MTE for\n\n'
+                f'{started_value!r}\n'
             )
 
-            # if wait_for_parent_to_cancel:
-            #     ...
-            #
-            # ^-TODO-^ logic for diff validation policies on each side:
-            #
-            # -[ ] ensure that if we don't validate on the send
-            #   side, that we are eventually error-cancelled by our
-            #   parent due to the bad `Started` payload!
-            # -[ ] the boxed error should be srced from the parent's
-            #   runtime NOT ours!
-            # -[ ] we should still error on bad `return_value`s
-            #   despite the parent not yet error-cancelling us?
-            #   |_ how do we want the parent side to look in that
-            #     case?
-            #     -[ ] maybe the equiv of "during handling of the
-            #       above error another occurred" for the case where
-            #       the parent sends a MTE to this child and while
-            #       waiting for the child to terminate it gets back
-            #       the MTE for this case?
-            #
+        boxed_div: str = '------ - ------'
+        assert boxed_div not in mte._message
+        assert boxed_div not in mte.tb_str
+        assert boxed_div not in repr(mte)
+        assert boxed_div not in str(mte)
+        mte_repr: str = repr(mte)
+        for line in mte.message.splitlines():
+            assert line in mte_repr
 
-            # XXX should always fail on recv side since we can't
-            # really do much else beside terminate and relay the
-            # msg-type-error from this RPC task ;)
-            return return_value
+        # since this is a *local error* there should be no
+        # boxed traceback content!
+        assert not mte.tb_str
 
-    finally:
-        # sanity on `limit_plds()` reversion
-        assert (
-            rx.pld_dec
-            is
-            msgops._def_any_pldec
+        # propagate to parent?
+        if raise_on_started_mte:
+            raise
+
+    # no-send-side-error fallthrough
+    if (
+        validate_pld_spec
+        and
+        expect_started_mte
+    ):
+        raise RuntimeError(
+            'Child-ctx-task SHOULD HAVE raised an MTE for\n\n'
+            f'{started_value!r}\n'
         )
-        log.runtime(
-            'Reverted to previous pld-spec\n\n'
-            f'{orig_pldec}\n'
-        )
+
+    assert (
+        not expect_started_mte
+        or
+        not validate_pld_spec
+    )
+
+    # if wait_for_parent_to_cancel:
+    #     ...
+    #
+    # ^-TODO-^ logic for diff validation policies on each side:
+    #
+    # -[ ] ensure that if we don't validate on the send
+    #   side, that we are eventually error-cancelled by our
+    #   parent due to the bad `Started` payload!
+    # -[ ] the boxed error should be srced from the parent's
+    #   runtime NOT ours!
+    # -[ ] we should still error on bad `return_value`s
+    #   despite the parent not yet error-cancelling us?
+    #   |_ how do we want the parent side to look in that
+    #     case?
+    #     -[ ] maybe the equiv of "during handling of the
+    #       above error another occurred" for the case where
+    #       the parent sends a MTE to this child and while
+    #       waiting for the child to terminate it gets back
+    #       the MTE for this case?
+    #
+
+    # XXX should always fail on recv side since we can't
+    # really do much else beside terminate and relay the
+    # msg-type-error from this RPC task ;)
+    return return_value
 
 
 @pytest.mark.parametrize(
@@ -321,7 +317,6 @@ def test_basic_payload_spec(
                     child,
                     return_value=return_value,
                     started_value=started_value,
-                    pld_spec=maybe_msg_spec,
                     validate_pld_spec=pld_check_started_value,
                 ) as (ctx, first),
             ):
