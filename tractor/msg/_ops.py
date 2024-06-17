@@ -27,6 +27,7 @@ from contextlib import (
 )
 from typing import (
     Any,
+    Callable,
     Type,
     TYPE_CHECKING,
     Union,
@@ -138,6 +139,7 @@ class PldRx(Struct):
     def limit_plds(
         self,
         spec: Union[Type[Struct]],
+        **dec_kwargs,
 
     ) -> MsgDec:
         '''
@@ -147,7 +149,10 @@ class PldRx(Struct):
 
         '''
         orig_dec: MsgDec = self._pld_dec
-        limit_dec: MsgDec = mk_dec(spec=spec)
+        limit_dec: MsgDec = mk_dec(
+            spec=spec,
+            **dec_kwargs,
+        )
         try:
             self._pld_dec = limit_dec
             yield limit_dec
@@ -449,7 +454,7 @@ class PldRx(Struct):
 @cm
 def limit_plds(
     spec: Union[Type[Struct]],
-    **kwargs,
+    **dec_kwargs,
 
 ) -> MsgDec:
     '''
@@ -467,7 +472,7 @@ def limit_plds(
 
         with rx.limit_plds(
             spec=spec,
-            **kwargs,
+            **dec_kwargs,
         ) as pldec:
             log.runtime(
                 'Applying payload-decoder\n\n'
@@ -487,7 +492,9 @@ def limit_plds(
 async def maybe_limit_plds(
     ctx: Context,
     spec: Union[Type[Struct]]|None = None,
+    dec_hook: Callable|None = None,
     **kwargs,
+
 ) -> MsgDec|None:
     '''
     Async compat maybe-payload type limiter.
@@ -497,7 +504,11 @@ async def maybe_limit_plds(
     used.
 
     '''
-    if spec is None:
+    if (
+        spec is None
+        and
+        dec_hook is None
+    ):
         yield None
         return
 
@@ -505,7 +516,11 @@ async def maybe_limit_plds(
     curr_ctx: Context = current_ipc_ctx()
     assert ctx is curr_ctx
 
-    with ctx._pld_rx.limit_plds(spec=spec) as msgdec:
+    with ctx._pld_rx.limit_plds(
+        spec=spec,
+        dec_hook=dec_hook,
+        **kwargs,
+    ) as msgdec:
         yield msgdec
 
     curr_ctx: Context = current_ipc_ctx()
