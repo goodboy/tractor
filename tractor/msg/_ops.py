@@ -47,7 +47,7 @@ from tractor._exceptions import (
     InternalError,
     _raise_from_unexpected_msg,
     MsgTypeError,
-    _mk_msg_type_err,
+    _mk_recv_mte,
     pack_error,
 )
 from tractor._state import current_ipc_ctx
@@ -264,7 +264,7 @@ class PldRx(Struct):
                     # pack mgterr into error-msg for
                     # reraise below; ensure remote-actor-err
                     # info is displayed nicely?
-                    mte: MsgTypeError = _mk_msg_type_err(
+                    mte: MsgTypeError = _mk_recv_mte(
                         msg=msg,
                         codec=self.pld_dec,
                         src_validation_error=valerr,
@@ -276,19 +276,6 @@ class PldRx(Struct):
                     # a "send side" validation error.
                     if is_started_send_side:
                         raise mte
-
-                        # XXX TODO: remove this right?
-                        # => any bad stated/return values should
-                        # always be treated a remote errors right?
-                        #
-                        # if (
-                        #     expect_msg is Return
-                        #     or expect_msg is Started
-                        # ):
-                        #     # set emulated remote error more-or-less as the
-                        #     # runtime would
-                        #     ctx: Context = getattr(ipc, 'ctx', ipc)
-                        #     ctx._maybe_cancel_and_set_remote_error(mte)
 
                     # NOTE: the `.message` is automatically
                     # transferred into the message as long as we
@@ -799,13 +786,18 @@ def validate_payload_msg(
 
     # raise any msg type error NO MATTER WHAT!
     except ValidationError as verr:
-        mte: MsgTypeError = _mk_msg_type_err(
-            msg=roundtripped,
-            codec=codec,
-            src_validation_error=verr,
-            verb_header='Trying to send ',
-            is_invalid_payload=True,
-        )
+        try:
+            mte: MsgTypeError = _mk_recv_mte(
+                msg=roundtripped,
+                codec=codec,
+                src_validation_error=verr,
+                verb_header='Trying to send ',
+                is_invalid_payload=True,
+            )
+        except BaseException:
+            __tracebackhide__: bool = False
+            raise
+
         if not raise_mte:
             return mte
 

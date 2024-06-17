@@ -1232,14 +1232,13 @@ def _raise_from_unexpected_msg(
 _raise_from_no_key_in_msg = _raise_from_unexpected_msg
 
 
-def _mk_msg_type_err(
+def _mk_send_mte(
     msg: Any|bytes|MsgType,
     codec: MsgCodec|MsgDec,
 
     message: str|None = None,
     verb_header: str = '',
 
-    src_validation_error: ValidationError|None = None,
     src_type_error: TypeError|None = None,
     is_invalid_payload: bool = False,
 
@@ -1247,131 +1246,148 @@ def _mk_msg_type_err(
 
 ) -> MsgTypeError:
     '''
-    Compose a `MsgTypeError` from an input runtime context.
+    Compose a `MsgTypeError` from a `Channel.send()`-side error,
+    normally raised witih a runtime IPC `Context`.
 
     '''
-    # `Channel.send()` case
-    if src_validation_error is None:
+    if isinstance(codec, MsgDec):
+        raise RuntimeError(
+            '`codec` must be a `MsgCodec` for send-side errors?'
+        )
 
-        if isinstance(codec, MsgDec):
-            raise RuntimeError(
-                '`codec` must be a `MsgCodec` for send-side errors?'
+    from tractor.devx import (
+        pformat_caller_frame,
+    )
+    # no src error from `msgspec.msgpack.Decoder.decode()` so
+    # prolly a manual type-check on our part.
+    if message is None:
+        tb_fmt: str = pformat_caller_frame(stack_limit=3)
+        message: str = (
+            f'invalid msg -> {msg}: {type(msg)}\n\n'
+            f'{tb_fmt}\n'
+            f'Valid IPC msgs are:\n\n'
+            f'{codec.msg_spec_str}\n',
+        )
+    elif src_type_error:
+        src_message: str = str(src_type_error)
+        patt: str = 'type '
+        type_idx: int = src_message.find('type ')
+        invalid_type: str = src_message[type_idx + len(patt):].split()[0]
+
+        enc_hook: Callable|None = codec.enc.enc_hook
+        if enc_hook is None:
+            message += (
+                '\n\n'
+
+                f"The current IPC-msg codec can't encode type `{invalid_type}` !\n"
+                f'Maybe a `msgpack.Encoder.enc_hook()` extension is needed?\n\n'
+
+                f'Check the `msgspec` docs for ad-hoc type extending:\n'
+                '|_ https://jcristharif.com/msgspec/extending.html\n'
+                '|_ https://jcristharif.com/msgspec/extending.html#defining-a-custom-extension-messagepack-only\n'
             )
 
-        from tractor.devx import (
-            pformat_caller_frame,
+    msgtyperr = MsgTypeError(
+        message=message,
+        _bad_msg=msg,
+    )
+    # ya, might be `None`
+    msgtyperr.__cause__ = src_type_error
+    return msgtyperr
+
+
+def _mk_recv_mte(
+    msg: Any|bytes|MsgType,
+    codec: MsgCodec|MsgDec,
+
+    message: str|None = None,
+    verb_header: str = '',
+
+    src_validation_error: ValidationError|None = None,
+    is_invalid_payload: bool = False,
+
+    **mte_kwargs,
+
+) -> MsgTypeError:
+    '''
+    Compose a `MsgTypeError` from a
+    `Channel|Context|MsgStream.receive()`-side error,
+    normally raised witih a runtime IPC ctx or streaming
+    block.
+
+    '''
+    msg_dict: dict|None = None
+    bad_msg: PayloadMsg|None = None
+
+    if is_invalid_payload:
+        msg_type: str = type(msg)
+        any_pld: Any = msgpack.decode(msg.pld)
+        message: str = (
+            f'invalid `{msg_type.__qualname__}` msg payload\n\n'
+            f'value: `{any_pld!r}` does not match type-spec: '
+            f'`{type(msg).__qualname__}.pld: {codec.pld_spec_str}`'
         )
-        # no src error from `msgspec.msgpack.Decoder.decode()` so
-        # prolly a manual type-check on our part.
-        if message is None:
-            tb_fmt: str = pformat_caller_frame(stack_limit=3)
-            message: str = (
-                f'invalid msg -> {msg}: {type(msg)}\n\n'
-                f'{tb_fmt}\n'
-                f'Valid IPC msgs are:\n\n'
-                f'{codec.msg_spec_str}\n',
-            )
-        elif src_type_error:
-            src_message: str = str(src_type_error)
-            patt: str = 'type '
-            type_idx: int = src_message.find('type ')
-            invalid_type: str = src_message[type_idx + len(patt):].split()[0]
+        bad_msg = msg
 
-            enc_hook: Callable|None = codec.enc.enc_hook
-            if enc_hook is None:
-                message += (
-                    '\n\n'
-
-                    f"The current IPC-msg codec can't encode type `{invalid_type}` !\n"
-                    f'Maybe a `msgpack.Encoder.enc_hook()` extension is needed?\n\n'
-
-                    f'Check the `msgspec` docs for ad-hoc type extending:\n'
-                    '|_ https://jcristharif.com/msgspec/extending.html\n'
-                    '|_ https://jcristharif.com/msgspec/extending.html#defining-a-custom-extension-messagepack-only\n'
-                )
-
-        msgtyperr = MsgTypeError(
-            message=message,
-            _bad_msg=msg,
-        )
-        # ya, might be `None`
-        msgtyperr.__cause__ = src_type_error
-        return msgtyperr
-
-    # `Channel.recv()` case
     else:
-        msg_dict: dict|None = None
-        bad_msg: PayloadMsg|None = None
-
-        if is_invalid_payload:
-            msg_type: str = type(msg)
-            any_pld: Any = msgpack.decode(msg.pld)
-            message: str = (
-                f'invalid `{msg_type.__qualname__}` msg payload\n\n'
-                f'value: `{any_pld!r}` does not match type-spec: '
-                f'`{type(msg).__qualname__}.pld: {codec.pld_spec_str}`'
-            )
-            bad_msg = msg
-
-        else:
-            # decode the msg-bytes using the std msgpack
-            # interchange-prot (i.e. without any `msgspec.Struct`
-            # handling) so that we can determine what
-            # `.msg.types.PayloadMsg` is the culprit by reporting the
-            # received value.
-            msg: bytes
-            msg_dict: dict = msgpack.decode(msg)
-            msg_type_name: str = msg_dict['msg_type']
-            msg_type = getattr(msgtypes, msg_type_name)
-            message: str = (
-                f'invalid `{msg_type_name}` IPC msg\n\n'
-            )
-            # XXX be "fancy" and see if we can determine the exact
-            # invalid field such that we can comprehensively report
-            # the specific field's type problem.
-            msgspec_msg: str = src_validation_error.args[0].rstrip('`')
-            msg, _, maybe_field = msgspec_msg.rpartition('$.')
-            obj = object()
-            if (field_val := msg_dict.get(maybe_field, obj)) is not obj:
-                field_name_expr: str = (
-                    f' |_{maybe_field}: {codec.pld_spec_str} = '
-                )
-                fmt_val_lines: list[str] = pformat(field_val).splitlines()
-                fmt_val: str = (
-                    f'{fmt_val_lines[0]}\n'
-                    +
-                    textwrap.indent(
-                        '\n'.join(fmt_val_lines[1:]),
-                        prefix=' '*len(field_name_expr),
-                    )
-                )
-                message += (
-                    f'{msg.rstrip("`")}\n\n'
-                    f'<{msg_type.__qualname__}(\n'
-                    # f'{".".join([msg_type.__module__, msg_type.__qualname__])}\n'
-                    f'{field_name_expr}{fmt_val}\n'
-                    f')>'
-                )
-
-        if verb_header:
-            message = f'{verb_header} ' + message
-
-        msgtyperr = MsgTypeError.from_decode(
-            message=message,
-            bad_msg=bad_msg,
-            bad_msg_as_dict=msg_dict,
-            boxed_type=type(src_validation_error),
-
-            # NOTE: for pld-spec MTEs we set the `._ipc_msg` manually:
-            # - for the send-side `.started()` pld-validate
-            #   case we actually raise inline so we don't need to
-            #   set the it at all.
-            # - for recv side we set it inside `PldRx.decode_pld()`
-            #   after a manual call to `pack_error()` since we
-            #   actually want to emulate the `Error` from the mte we
-            #   build here. So by default in that case, this is left
-            #   as `None` here.
-            #   ipc_msg=src_err_msg,
+        # decode the msg-bytes using the std msgpack
+        # interchange-prot (i.e. without any `msgspec.Struct`
+        # handling) so that we can determine what
+        # `.msg.types.PayloadMsg` is the culprit by reporting the
+        # received value.
+        msg: bytes
+        msg_dict: dict = msgpack.decode(msg)
+        msg_type_name: str = msg_dict['msg_type']
+        msg_type = getattr(msgtypes, msg_type_name)
+        message: str = (
+            f'invalid `{msg_type_name}` IPC msg\n\n'
         )
-        msgtyperr.__cause__ = src_validation_error
-        return msgtyperr
+        # XXX be "fancy" and see if we can determine the exact
+        # invalid field such that we can comprehensively report
+        # the specific field's type problem.
+        msgspec_msg: str = src_validation_error.args[0].rstrip('`')
+        msg, _, maybe_field = msgspec_msg.rpartition('$.')
+        obj = object()
+        if (field_val := msg_dict.get(maybe_field, obj)) is not obj:
+            field_name_expr: str = (
+                f' |_{maybe_field}: {codec.pld_spec_str} = '
+            )
+            fmt_val_lines: list[str] = pformat(field_val).splitlines()
+            fmt_val: str = (
+                f'{fmt_val_lines[0]}\n'
+                +
+                textwrap.indent(
+                    '\n'.join(fmt_val_lines[1:]),
+                    prefix=' '*len(field_name_expr),
+                )
+            )
+            message += (
+                f'{msg.rstrip("`")}\n\n'
+                f'<{msg_type.__qualname__}(\n'
+                # f'{".".join([msg_type.__module__, msg_type.__qualname__])}\n'
+                f'{field_name_expr}{fmt_val}\n'
+                f')>'
+            )
+
+    if verb_header:
+        message = f'{verb_header} ' + message
+
+    msgtyperr = MsgTypeError.from_decode(
+        message=message,
+        bad_msg=bad_msg,
+        bad_msg_as_dict=msg_dict,
+        boxed_type=type(src_validation_error),
+
+        # NOTE: for pld-spec MTEs we set the `._ipc_msg` manually:
+        # - for the send-side `.started()` pld-validate
+        #   case we actually raise inline so we don't need to
+        #   set the it at all.
+        # - for recv side we set it inside `PldRx.decode_pld()`
+        #   after a manual call to `pack_error()` since we
+        #   actually want to emulate the `Error` from the mte we
+        #   build here. So by default in that case, this is left
+        #   as `None` here.
+        #   ipc_msg=src_err_msg,
+    )
+    msgtyperr.__cause__ = src_validation_error
+    return msgtyperr

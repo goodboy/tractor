@@ -49,7 +49,6 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
-    Mapping,
     Type,
     TypeAlias,
     TYPE_CHECKING,
@@ -1484,13 +1483,21 @@ class Context:
         #
         __tracebackhide__: bool = hide_tb
         if validate_pld_spec:
-            msgops.validate_payload_msg(
-                pld_msg=started_msg,
-                pld_value=value,
-                ipc=self,
-                strict_pld_parity=strict_pld_parity,
-                hide_tb=hide_tb,
-            )
+            # TODO: prolly wrap this as a `show_frame_when_not()`
+            try:
+                msgops.validate_payload_msg(
+                    pld_msg=started_msg,
+                    pld_value=value,
+                    ipc=self,
+                    strict_pld_parity=strict_pld_parity,
+                    hide_tb=hide_tb,
+                )
+            except BaseException as err:
+                if not isinstance(err, MsgTypeError):
+                    __tracebackhide__: bool = False
+
+                raise
+
 
         # TODO: maybe a flag to by-pass encode op if already done
         # here in caller?
@@ -2185,11 +2192,6 @@ async def open_context_from_portal(
             try:
                 result_or_err: Exception|Any = await ctx.result()
             except BaseException as berr:
-                # cancelled before (or maybe during?) final result capture
-                # if isinstance(trio.Cancelled, berr):
-                #     from .devx import mk_pdb
-                #     mk_pdb.set_trace()
-
                 # on normal teardown, if we get some error
                 # raised in `Context.result()` we still want to
                 # save that error on the ctx's state to
@@ -2201,7 +2203,7 @@ async def open_context_from_portal(
                 ctx._local_error: BaseException = scope_err
                 raise
 
-            # yes! this worx Bp
+            # yes this worx!
             # from .devx import _debug
             # await _debug.pause()
 

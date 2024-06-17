@@ -49,7 +49,8 @@ from tractor._exceptions import (
     MsgTypeError,
     pack_from_raise,
     TransportClosed,
-    _mk_msg_type_err,
+    _mk_send_mte,
+    _mk_recv_mte,
 )
 from tractor.msg import (
     _ctxvar_MsgCodec,
@@ -256,7 +257,7 @@ class MsgpackTCPStream(MsgTransport):
             # and always raise such that spec violations
             # are never allowed to be caught silently!
             except msgspec.ValidationError as verr:
-                msgtyperr: MsgTypeError = _mk_msg_type_err(
+                msgtyperr: MsgTypeError = _mk_recv_mte(
                     msg=msg_bytes,
                     codec=codec,
                     src_validation_error=verr,
@@ -321,7 +322,7 @@ class MsgpackTCPStream(MsgTransport):
 
             if type(msg) not in msgtypes.__msg_types__:
                 if strict_types:
-                    raise _mk_msg_type_err(
+                    raise _mk_send_mte(
                         msg,
                         codec=codec,
                     )
@@ -333,8 +334,9 @@ class MsgpackTCPStream(MsgTransport):
 
             try:
                 bytes_data: bytes = codec.encode(msg)
-            except TypeError as typerr:
-                msgtyperr: MsgTypeError = _mk_msg_type_err(
+            except TypeError as _err:
+                typerr = _err
+                msgtyperr: MsgTypeError = _mk_send_mte(
                     msg,
                     codec=codec,
                     message=(
