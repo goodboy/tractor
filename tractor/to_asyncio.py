@@ -577,14 +577,18 @@ def run_as_asyncio_guest(
                 log.runtime(f"trio_main finished: {main_outcome!r}")
 
         # start the infection: run trio on the asyncio loop in "guest mode"
-        log.info(f"Infecting asyncio process with {trio_main}")
+        log.runtime(
+            'Infecting `asyncio`-process with a `trio` guest-run of\n\n'
+            f'{trio_main!r}\n\n'
 
+            f'{trio_done_callback}\n'
+        )
         trio.lowlevel.start_guest_run(
             trio_main,
             run_sync_soon_threadsafe=loop.call_soon_threadsafe,
             done_callback=trio_done_callback,
         )
-        # ``.unwrap()`` will raise here on error
+        # NOTE `.unwrap()` will raise on error
         return (await trio_done_fut).unwrap()
 
     # might as well if it's installed.
