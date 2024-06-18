@@ -271,8 +271,11 @@ async def maybe_open_context(
         yield False, yielded
 
     else:
-        log.info(f'Reusing _Cached resource for {ctx_key}')
         _Cache.users += 1
+        log.runtime(
+            f'Reusing resource for `_Cache` user {_Cache.users}\n\n'
+            f'{ctx_key!r} -> {yielded!r}\n'
+        )
         lock.release()
         yield True, yielded
 
