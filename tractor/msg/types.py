@@ -73,11 +73,22 @@ class PayloadMsg(
     # as_array=True,
 ):
     '''
-    The "god" boxing msg type.
+    An abstract payload boxing/shuttling IPC msg type.
 
-    Boxes user data-msgs in a `.pld` and uses `msgspec`'s tagged
-    unions support to enable a spec from a common msg inheritance
-    tree.
+    Boxes data-values passed to/from user code
+
+    (i.e. any values passed by `tractor` application code using any of
+
+      |_ `._streaming.MsgStream.send/receive()`
+      |_ `._context.Context.started/result()`
+      |_ `._ipc.Channel.send/recv()`
+
+     aka our "IPC primitive APIs")
+
+    as message "payloads" set to the `.pld` field and uses
+    `msgspec`'s "tagged unions" feature to support a subset of our
+    "SC-transitive shuttle protocol" specification with
+    a `msgspec.Struct` inheritance tree.
 
     '''
     cid: str  # call/context-id
