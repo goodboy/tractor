@@ -18,11 +18,13 @@
 Infection apis for ``asyncio`` loops running ``trio`` using guest mode.
 
 '''
+from __future__ import annotations
 import asyncio
 from asyncio.exceptions import CancelledError
 from contextlib import asynccontextmanager as acm
 from dataclasses import dataclass
 import inspect
+import traceback
 from typing import (
     Any,
     Callable,
@@ -30,19 +32,20 @@ from typing import (
     Awaitable,
 )
 
-import trio
-from outcome import Error
-
-from tractor.log import get_logger
+import tractor
 from tractor._state import (
-    current_actor,
     debug_mode,
 )
+from tractor.log import get_logger
 from tractor.devx import _debug
-from tractor._exceptions import AsyncioCancelled
 from tractor.trionics._broadcast import (
     broadcast_receiver,
     BroadcastReceiver,
+)
+import trio
+from outcome import (
+    Error,
+    Outcome,
 )
 
 log = get_logger(__name__)
@@ -161,7 +164,7 @@ def _run_asyncio_task(
 
     '''
     __tracebackhide__ = True
-    if not current_actor().is_infected_aio():
+    if not tractor.current_actor().is_infected_aio():
         raise RuntimeError(
             "`infect_asyncio` mode is not enabled!?"
         )
@@ -172,7 +175,6 @@ def _run_asyncio_task(
     to_trio, from_aio = trio.open_memory_channel(qsize)  # type: ignore
 
     args = tuple(inspect.getfullargspec(func).args)
-
     if getattr(func, '_tractor_steam_function', None):
         # the assumption is that the target async routine accepts the
         # send channel then it intends to yield more then one return
@@ -346,11 +348,20 @@ def _run_asyncio_task(
             # on a checkpoint.
             cancel_scope.cancel()
 
-            # raise any ``asyncio`` side error.
+            # raise any `asyncio` side error.
             raise aio_err
 
     task.add_done_callback(cancel_trio)
     return chan
+
+
+class AsyncioCancelled(CancelledError):
+    '''
+    Asyncio cancelled translation (non-base) error
+    for use with the ``to_asyncio`` module
+    to be raised in the ``trio`` side task
+
+    '''
 
 
 @acm
@@ -516,7 +527,6 @@ async def open_channel_from(
 
 
 def run_as_asyncio_guest(
-
     trio_main: Callable,
 
 ) -> None:
@@ -548,6 +558,11 @@ def run_as_asyncio_guest(
 
         loop = asyncio.get_running_loop()
         trio_done_fut = asyncio.Future()
+        startup_msg: str = (
+            'Starting `asyncio` guest-loop-run\n'
+            '-> got running loop\n'
+            '-> built a `trio`-done future\n'
+        )
 
         if debug_mode():
             # XXX make it obvi we know this isn't supported yet!
@@ -562,34 +577,120 @@ def run_as_asyncio_guest(
         def trio_done_callback(main_outcome):
 
             if isinstance(main_outcome, Error):
-                error = main_outcome.error
+                error: BaseException = main_outcome.error
+
+                # show an dedicated `asyncio`-side tb from the error
+                tb_str: str = ''.join(traceback.format_exception(error))
+                log.exception(
+                    'Guest-run errored!?\n\n'
+                    f'{main_outcome}\n'
+                    f'{error}\n\n'
+                    f'{tb_str}\n'
+                )
                 trio_done_fut.set_exception(error)
 
-                # TODO: explicit asyncio tb?
-                # traceback.print_exception(error)
-
-                # XXX: do we need this?
-                # actor.cancel_soon()
-
+                # raise inline
                 main_outcome.unwrap()
+
             else:
                 trio_done_fut.set_result(main_outcome)
-                log.runtime(f"trio_main finished: {main_outcome!r}")
+                log.runtime(f'trio_main finished: {main_outcome!r}')
+
+        startup_msg += (
+            f'-> created {trio_done_callback!r}\n'
+            f'-> scheduling `trio_main`: {trio_main!r}\n'
+        )
 
         # start the infection: run trio on the asyncio loop in "guest mode"
         log.runtime(
-            'Infecting `asyncio`-process with a `trio` guest-run of\n\n'
-            f'{trio_main!r}\n\n'
-
-            f'{trio_done_callback}\n'
+            f'{startup_msg}\n\n'
+            +
+            'Infecting `asyncio`-process with a `trio` guest-run!\n'
         )
+
         trio.lowlevel.start_guest_run(
             trio_main,
             run_sync_soon_threadsafe=loop.call_soon_threadsafe,
             done_callback=trio_done_callback,
         )
-        # NOTE `.unwrap()` will raise on error
-        return (await trio_done_fut).unwrap()
+        try:
+            # TODO: better SIGINT handling since shielding seems to
+            # make NO DIFFERENCE XD
+            # -[ ] maybe this is due to 3.11's recent SIGINT handling
+            #  changes and we can better work with/around it?
+            # https://docs.python.org/3/library/asyncio-runner.html#handling-keyboard-interruption
+            out: Outcome = await asyncio.shield(trio_done_fut)
+            # NOTE `Error.unwrap()` will raise
+            return out.unwrap()
+
+        except asyncio.CancelledError:
+            actor: tractor.Actor = tractor.current_actor()
+            log.exception(
+                '`asyncio`-side main task was cancelled!\n'
+                'Cancelling actor-runtime..\n'
+                f'c)>\n'
+                f'  |_{actor}.cancel_soon()\n'
+
+            )
+
+            # XXX NOTE XXX the next LOC is super important!!!
+            #  => without it, we can get a guest-run abandonment case
+            #  where asyncio will not trigger `trio` in a final event
+            #  loop cycle!
+            #
+            #  our test,
+            #  `test_infected_asyncio.test_sigint_closes_lifetime_stack()`
+            #  demonstrates how if when we raise a SIGINT-signal in an infected
+            #  child we get a variable race condition outcome where
+            #  either of the following can indeterminately happen,
+            #
+            # - "silent-abandon": `asyncio` abandons the `trio`
+            #   guest-run task silently and no `trio`-guest-run or
+            #   `tractor`-actor-runtime teardown happens whatsoever..
+            #   this is the WORST (race) case outcome.
+            #
+            # - OR, "loud-abandon": the guest run get's abaondoned "loudly" with
+            #   `trio` reporting a console traceback and further tbs of all
+            #   the failed shutdown routines also show on console..
+            #
+            # our test can thus fail and (has been parametrized for)
+            # the 2 cases:
+            #
+            # - when the parent raises a KBI just after
+            #   signalling the child,
+            #  |_silent-abandon => the `Actor.lifetime_stack` will
+            #    never be closed thus leaking a resource!
+            #   -> FAIL!
+            #  |_loud-abandon => despite the abandonment at least the
+            #    stack will be closed out..
+            #   -> PASS
+            #
+            # - when the parent instead simply waits on `ctx.wait_for_result()`
+            #   (i.e. DOES not raise a KBI itself),
+            #  |_silent-abandon => test will just hang and thus the ctx
+            #    and actor will never be closed/cancelled/shutdown
+            #    resulting in leaking a (file) resource since the
+            #    `trio`/`tractor` runtime never relays a ctxc back to
+            #    the parent; the test's timeout will trigger..
+            #   -> FAIL!
+            #  |_loud-abandon => this case seems to never happen??
+            #
+            # XXX FIRST PART XXX, SO, this is a fix to the
+            # "silent-abandon" case, NOT the `trio`-guest-run
+            # abandonment issue in general, for which the NEXT LOC
+            # is apparently a working fix!
+            actor.cancel_soon()
+
+            # XXX NOTE XXX PUMP the asyncio event loop to allow `trio`-side to
+            # `trio`-guest-run to complete and teardown !!
+            #
+            # XXX WITHOUT THIS the guest-run gets race-conditionally
+            # abandoned by `asyncio`!!
+            # XD XD XD
+            await asyncio.shield(
+                asyncio.sleep(.1)  # NOPE! it can't be 0 either XD
+            )
+            raise
 
     # might as well if it's installed.
     try:
@@ -599,4 +700,6 @@ def run_as_asyncio_guest(
     except ImportError:
         pass
 
-    return asyncio.run(aio_main(trio_main))
+    return asyncio.run(
+        aio_main(trio_main),
+    )

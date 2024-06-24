@@ -2,16 +2,25 @@
 The hipster way to force SC onto the stdlib's "async": 'infection mode'.
 
 '''
-from typing import Optional, Iterable, Union
 import asyncio
 import builtins
+from contextlib import ExitStack
 import itertools
 import importlib
+import os
+from pathlib import Path
+import signal
+from typing import (
+    Callable,
+    Iterable,
+    Union,
+)
 
 import pytest
 import trio
 import tractor
 from tractor import (
+    current_actor,
     to_asyncio,
     RemoteActorError,
     ContextCancelled,
@@ -25,8 +34,8 @@ async def sleep_and_err(
 
     # just signature placeholders for compat with
     # ``to_asyncio.open_channel_from()``
-    to_trio: Optional[trio.MemorySendChannel] = None,
-    from_trio: Optional[asyncio.Queue] = None,
+    to_trio: trio.MemorySendChannel|None = None,
+    from_trio: asyncio.Queue|None = None,
 
 ):
     if to_trio:
@@ -36,7 +45,7 @@ async def sleep_and_err(
     assert 0
 
 
-async def sleep_forever():
+async def aio_sleep_forever():
     await asyncio.sleep(float('inf'))
 
 
@@ -44,7 +53,7 @@ async def trio_cancels_single_aio_task():
 
     # spawn an ``asyncio`` task to run a func and return result
     with trio.move_on_after(.2):
-        await tractor.to_asyncio.run_task(sleep_forever)
+        await tractor.to_asyncio.run_task(aio_sleep_forever)
 
 
 def test_trio_cancels_aio_on_actor_side(reg_addr):
@@ -66,14 +75,13 @@ def test_trio_cancels_aio_on_actor_side(reg_addr):
 
 
 async def asyncio_actor(
-
     target: str,
     expect_err: Exception|None = None
 
 ) -> None:
 
     assert tractor.current_actor().is_infected_aio()
-    target = globals()[target]
+    target: Callable = globals()[target]
 
     if '.' in expect_err:
         modpath, _, name = expect_err.rpartition('.')
@@ -140,7 +148,7 @@ def test_tractor_cancels_aio(reg_addr):
         async with tractor.open_nursery() as n:
             portal = await n.run_in_actor(
                 asyncio_actor,
-                target='sleep_forever',
+                target='aio_sleep_forever',
                 expect_err='trio.Cancelled',
                 infect_asyncio=True,
             )
@@ -164,7 +172,7 @@ def test_trio_cancels_aio(reg_addr):
             async with tractor.open_nursery() as n:
                 await n.run_in_actor(
                     asyncio_actor,
-                    target='sleep_forever',
+                    target='aio_sleep_forever',
                     expect_err='trio.Cancelled',
                     infect_asyncio=True,
                 )
@@ -195,7 +203,7 @@ async def trio_ctx(
             # spawn another asyncio task for the cuck of it.
             n.start_soon(
                 tractor.to_asyncio.run_task,
-                sleep_forever,
+                aio_sleep_forever,
             )
             await trio.sleep_forever()
 
@@ -285,7 +293,7 @@ async def aio_cancel():
 
     # cancel and enter sleep
     task.cancel()
-    await sleep_forever()
+    await aio_sleep_forever()
 
 
 def test_aio_cancelled_from_aio_causes_trio_cancelled(reg_addr):
@@ -355,7 +363,6 @@ async def push_from_aio_task(
 
 
 async def stream_from_aio(
-
     exit_early: bool = False,
     raise_err: bool = False,
     aio_raise_err: bool = False,
@@ -616,6 +623,200 @@ def test_echoserver_detailed_mechanics(
 
     else:
         trio.run(main)
+
+
+
+@tractor.context
+async def manage_file(
+    ctx: tractor.Context,
+    tmp_path_str: str,
+    bg_aio_task: bool = False,
+):
+    '''
+    Start an `asyncio` task that just sleeps after registering a context
+    with `Actor.lifetime_stack`. Trigger a SIGINT to kill the actor tree
+    and ensure the stack is closed in the infected mode child.
+
+    To verify the teardown state just write a tmpfile to the `testdir`
+    and delete it on actor close.
+
+    '''
+
+    tmp_path: Path = Path(tmp_path_str)
+    tmp_file: Path = tmp_path / f'{" ".join(ctx._actor.uid)}.file'
+
+    # create a the tmp file and tell the parent where it's at
+    assert not tmp_file.is_file()
+    tmp_file.touch()
+
+    stack: ExitStack = current_actor().lifetime_stack
+    stack.callback(tmp_file.unlink)
+
+    await ctx.started((
+        str(tmp_file),
+        os.getpid(),
+    ))
+
+    # expect to be cancelled from here!
+    try:
+
+        # NOTE: turns out you don't even need to sched an aio task
+        # since the original issue, even though seemingly was due to
+        # the guest-run being abandoned + a `._debug.pause()` inside
+        # `._runtime._async_main()` (which was originally trying to
+        # debug the `.lifetime_stack` not closing), IS NOT actually
+        # the core issue?
+        #
+        # further notes:
+        #
+        # - `trio` only issues the " RuntimeWarning: Trio guest run
+        #   got abandoned without properly finishing... weird stuff
+        #   might happen" IFF you DO run a asyncio task here, BUT
+        # - the original issue of the `.lifetime_stack` not closing
+        #   will still happen even if you don't run an `asyncio` task
+        #   here even though the "abandon" messgage won't be shown..
+        #
+        # => ????? honestly i'm lost but it seems to be some issue
+        #   with `asyncio` and SIGINT..
+        #
+        # XXX NOTE XXX SO, if this LINE IS UNCOMMENTED and
+        # `run_as_asyncio_guest()` is written WITHOUT THE
+        # `.cancel_soon()` soln, both of these tests will pass ??
+        # so maybe it has something to do with `asyncio` loop init
+        # state?!?
+        # honestly, this REALLY reminds me why i haven't used
+        # `asyncio` by choice in years.. XD
+        #
+        # await tractor.to_asyncio.run_task(aio_sleep_forever)
+        if bg_aio_task:
+            async with trio.open_nursery() as tn:
+                tn.start_soon(
+                    tractor.to_asyncio.run_task,
+                    aio_sleep_forever,
+                )
+
+        await trio.sleep_forever()
+
+    # signalled manually at the OS level (aka KBI) by the parent actor.
+    except KeyboardInterrupt:
+        print('child raised KBI..')
+        assert tmp_file.exists()
+        raise
+    else:
+        raise RuntimeError('shoulda received a KBI?')
+
+
+@pytest.mark.parametrize(
+    'bg_aio_task',
+    [
+        False,
+
+        # NOTE: (and see notes in `manage_file()` above as well) if
+        # we FOR SURE SPAWN AN AIO TASK in the child it seems the
+        # "silent-abandon" case (as is described in detail in
+        # `to_asyncio.run_as_asyncio_guest()`) does not happen and
+        # `asyncio`'s loop will at least abandon the `trio` side
+        # loudly? .. prolly the state-spot to start looking for
+        # a soln that results in NO ABANDONMENT.. XD
+        True,
+    ],
+    ids=[
+        'bg_aio_task',
+        'just_trio_slee',
+    ],
+)
+@pytest.mark.parametrize(
+    'wait_for_ctx',
+    [
+        False,
+        True,
+    ],
+    ids=[
+        'raise_KBI_in_rent',
+        'wait_for_ctx',
+    ],
+)
+def test_sigint_closes_lifetime_stack(
+    tmp_path: Path,
+    wait_for_ctx: bool,
+    bg_aio_task: bool,
+):
+    '''
+    Ensure that an infected child can use the `Actor.lifetime_stack`
+    to make a file on boot and it's automatically cleaned up by the
+    actor-lifetime-linked exit stack closure.
+
+    '''
+    async def main():
+        try:
+            async with tractor.open_nursery() as n:
+                p = await n.start_actor(
+                    'file_mngr',
+                    enable_modules=[__name__],
+                    infect_asyncio=True,
+                )
+                async with p.open_context(
+                    manage_file,
+                    tmp_path_str=str(tmp_path),
+                    bg_aio_task=bg_aio_task,
+                ) as (ctx, first):
+
+                    path_str, cpid = first
+                    tmp_file: Path = Path(path_str)
+                    assert tmp_file.exists()
+
+                    # XXX originally to simulate what (hopefully)
+                    # the below now triggers.. had to manually
+                    # trigger a SIGINT from a ctl-c in the root.
+                    # await trio.sleep_forever()
+
+                    # XXX NOTE XXX signal infected-`asyncio` child to
+                    # OS-cancel with SIGINT; this should trigger the
+                    # bad `asyncio` cancel behaviour that can cause
+                    # a guest-run abandon as was seen causing
+                    # shm-buffer leaks in `piker`'s live quote stream
+                    # susbys!
+                    #
+                    # await trio.sleep(.5)
+                    await trio.sleep(.2)
+                    os.kill(
+                        cpid,
+                        signal.SIGINT,
+                    )
+
+                    # XXX CASE 1: without the bug fixed, in
+                    # the non-KBI-raised-in-parent case, this
+                    # timeout should trigger!
+                    if wait_for_ctx:
+                        print('waiting for ctx outcome in parent..')
+                        try:
+                            with trio.fail_after(.7):
+                                await ctx.wait_for_result()
+                        except tractor.ContextCancelled as ctxc:
+                            assert ctxc.canceller == ctx.chan.uid
+                            raise
+
+                    # XXX CASE 2: this seems to be the source of the
+                    # original issue which exhibited BEFORE we put
+                    # a `Actor.cancel_soon()` inside
+                    # `run_as_asyncio_guest()`..
+                    else:
+                        raise KeyboardInterrupt
+
+                pytest.fail('should have raised some kinda error?!?')
+
+        except (
+            KeyboardInterrupt,
+            ContextCancelled,
+        ):
+            # XXX CASE 2: without the bug fixed, in the
+            # KBI-raised-in-parent case, the actor teardown should
+            # never get run (silently abaondoned by `asyncio`..) and
+            # thus the file should leak!
+            assert not tmp_file.exists()
+            assert ctx.maybe_error
+
+    trio.run(main)
 
 
 # TODO: debug_mode tests once we get support for `asyncio`!

@@ -973,15 +973,6 @@ class NoRuntime(RuntimeError):
     "The root actor has not been initialized yet"
 
 
-
-class AsyncioCancelled(Exception):
-    '''
-    Asyncio cancelled translation (non-base) error
-    for use with the ``to_asyncio`` module
-    to be raised in the ``trio`` side task
-
-    '''
-
 class MessagingError(Exception):
     '''
     IPC related msg (typing), transaction (ordering) or dialog
@@ -1375,7 +1366,9 @@ def _mk_recv_mte(
         any_pld: Any = msgpack.decode(msg.pld)
         message: str = (
             f'invalid `{msg_type.__qualname__}` msg payload\n\n'
-            f'value: `{any_pld!r}` does not match type-spec: '
+            f'{any_pld!r}\n\n'
+            f'has type {type(any_pld)!r}\n\n'
+            f'and does not match type-spec '
             f'`{type(msg).__qualname__}.pld: {codec.pld_spec_str}`'
         )
         bad_msg = msg
