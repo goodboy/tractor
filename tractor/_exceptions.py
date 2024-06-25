@@ -980,6 +980,17 @@ class MessagingError(Exception):
 
     '''
 
+class AsyncioCancelled(Exception):
+    '''
+    Asyncio cancelled translation (non-base) error
+    for use with the ``to_asyncio`` module
+    to be raised in the ``trio`` side task
+
+    NOTE: this should NOT inherit from `asyncio.CancelledError` or
+    tests should break!
+
+    '''
+
 
 def pack_error(
     exc: BaseException|RemoteActorError,
