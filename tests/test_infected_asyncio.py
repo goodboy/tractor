@@ -644,6 +644,7 @@ async def manage_file(
     ctx: tractor.Context,
     tmp_path_str: str,
     send_sigint_to: str,
+    trio_side_is_shielded: bool = True,
     bg_aio_task: bool = False,
 ):
     '''
@@ -693,11 +694,6 @@ async def manage_file(
         # => ????? honestly i'm lost but it seems to be some issue
         #   with `asyncio` and SIGINT..
         #
-        # XXX NOTE XXX SO, if this LINE IS UNCOMMENTED and
-        # `run_as_asyncio_guest()` is written WITHOUT THE
-        # `.cancel_soon()` soln, both of these tests will pass ??
-        # so maybe it has something to do with `asyncio` loop init
-        # state?!?
         # honestly, this REALLY reminds me why i haven't used
         # `asyncio` by choice in years.. XD
         #
@@ -715,6 +711,15 @@ async def manage_file(
             #         os.getpid(),
             #         signal.SIGINT,
             #     )
+
+            # XXX spend a half sec doing shielded checkpointing to
+            # ensure that despite the `trio`-side task ignoring the
+            # SIGINT, the `asyncio` side won't abandon the guest-run!
+            if trio_side_is_shielded:
+                with trio.CancelScope(shield=True):
+                    for i in range(5):
+                        await trio.sleep(0.1)
+
             await trio.sleep_forever()
 
     # signalled manually at the OS level (aka KBI) by the parent actor.
@@ -726,6 +731,17 @@ async def manage_file(
     raise RuntimeError('shoulda received a KBI?')
 
 
+@pytest.mark.parametrize(
+    'trio_side_is_shielded',
+    [
+        False,
+        True,
+    ],
+    ids=[
+        'trio_side_no_shielding',
+        'trio_side_does_shielded_work',
+    ],
+)
 @pytest.mark.parametrize(
     'send_sigint_to',
     [
@@ -768,6 +784,7 @@ def test_sigint_closes_lifetime_stack(
     tmp_path: Path,
     wait_for_ctx: bool,
     bg_aio_task: bool,
+    trio_side_is_shielded: bool,
     debug_mode: bool,
     send_sigint_to: str,
 ):
@@ -793,6 +810,7 @@ def test_sigint_closes_lifetime_stack(
                     tmp_path_str=str(tmp_path),
                     send_sigint_to=send_sigint_to,
                     bg_aio_task=bg_aio_task,
+                    trio_side_is_shielded=trio_side_is_shielded,
                 ) as (ctx, first):
 
                     path_str, cpid = first
