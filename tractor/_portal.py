@@ -121,7 +121,8 @@ class Portal:
         )
         return self.chan
 
-    # TODO: factor this out into an `ActorNursery` wrapper
+    # TODO: factor this out into a `.highlevel` API-wrapper that uses
+    # a single `.open_context()` call underneath.
     async def _submit_for_result(
         self,
         ns: str,
@@ -141,13 +142,22 @@ class Portal:
             portal=self,
         )
 
+    # TODO: we should deprecate this API right? since if we remove
+    # `.run_in_actor()` (and instead move it to a `.highlevel`
+    # wrapper api (around a single `.open_context()` call) we don't
+    # really have any notion of a "main" remote task any more?
+    #
     # @api_frame
-    async def result(self) -> Any:
+    async def wait_for_result(
+        self,
+        hide_tb: bool = True,
+    ) -> Any:
         '''
-        Return the result(s) from the remote actor's "main" task.
+        Return the final result delivered by a `Return`-msg from the
+        remote peer actor's "main" task's `return` statement.
 
         '''
-        __tracebackhide__ = True
+        __tracebackhide__: bool = hide_tb
         # Check for non-rpc errors slapped on the
         # channel for which we always raise
         exc = self.channel._exc
@@ -181,6 +191,23 @@ class Portal:
                 raise err
 
         return self._final_result_pld
+
+    # TODO: factor this out into a `.highlevel` API-wrapper that uses
+    # a single `.open_context()` call underneath.
+    async def result(
+        self,
+        *args,
+        **kwargs,
+    ) -> Any|Exception:
+        typname: str = type(self).__name__
+        log.warning(
+            f'`{typname}.result()` is DEPRECATED!\n'
+            f'Use `{typname}.wait_for_result()` instead!\n'
+        )
+        return await self.wait_for_result(
+            *args,
+            **kwargs,
+        )
 
     async def _cancel_streams(self):
         # terminate all locally running async generator
@@ -240,6 +267,7 @@ class Portal:
             f'{reminfo}'
         )
 
+        # XXX the one spot we set it?
         self.channel._cancel_called: bool = True
         try:
             # send cancel cmd - might not get response
@@ -279,6 +307,8 @@ class Portal:
             )
             return False
 
+    # TODO: do we still need this for low level `Actor`-runtime
+    # method calls or can we also remove it?
     async def run_from_ns(
         self,
         namespace_path: str,
@@ -316,6 +346,8 @@ class Portal:
             expect_msg=Return,
         )
 
+    # TODO: factor this out into a `.highlevel` API-wrapper that uses
+    # a single `.open_context()` call underneath.
     async def run(
         self,
         func: str,
@@ -370,6 +402,8 @@ class Portal:
             expect_msg=Return,
         )
 
+    # TODO: factor this out into a `.highlevel` API-wrapper that uses
+    # a single `.open_context()` call underneath.
     @acm
     async def open_stream_from(
         self,

@@ -149,7 +149,7 @@ async def exhaust_portal(
 
         # XXX: streams should never be reaped here since they should
         # always be established and shutdown using a context manager api
-        final: Any = await portal.result()
+        final: Any = await portal.wait_for_result()
 
     except (
         Exception,
@@ -223,8 +223,8 @@ async def cancel_on_completion(
 
 async def hard_kill(
     proc: trio.Process,
-    terminate_after: int = 1.6,
 
+    terminate_after: int = 1.6,
     # NOTE: for mucking with `.pause()`-ing inside the runtime
     # whilst also hacking on it XD
     # terminate_after: int = 99999,

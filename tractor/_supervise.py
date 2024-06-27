@@ -80,6 +80,7 @@ class ActorNursery:
     '''
     def __init__(
         self,
+        # TODO: maybe def these as fields of a struct looking type?
         actor: Actor,
         ria_nursery: trio.Nursery,
         da_nursery: trio.Nursery,
@@ -88,8 +89,10 @@ class ActorNursery:
     ) -> None:
         # self.supervisor = supervisor  # TODO
         self._actor: Actor = actor
-        self._ria_nursery = ria_nursery
+
+        # TODO: rename to `._tn` for our conventional "task-nursery"
         self._da_nursery = da_nursery
+
         self._children: dict[
             tuple[str, str],
             tuple[
@@ -98,15 +101,13 @@ class ActorNursery:
                 Portal | None,
             ]
         ] = {}
-        # portals spawned with ``run_in_actor()`` are
-        # cancelled when their "main" result arrives
-        self._cancel_after_result_on_exit: set = set()
+
         self.cancelled: bool = False
         self._join_procs = trio.Event()
         self._at_least_one_child_in_debug: bool = False
         self.errors = errors
-        self.exited = trio.Event()
         self._scope_error: BaseException|None = None
+        self.exited = trio.Event()
 
         # NOTE: when no explicit call is made to
         # `.open_root_actor()` by application code,
@@ -115,6 +116,13 @@ class ActorNursery:
         # such so that runtime components can be aware for logging
         # and syncing purposes to any actor opened nurseries.
         self._implicit_runtime_started: bool = False
+
+        # TODO: remove the `.run_in_actor()` API and thus this 2ndary
+        # nursery when that API get's moved outside this primitive!
+        self._ria_nursery = ria_nursery
+        # portals spawned with ``run_in_actor()`` are
+        # cancelled when their "main" result arrives
+        self._cancel_after_result_on_exit: set = set()
 
     async def start_actor(
         self,
@@ -126,9 +134,13 @@ class ActorNursery:
         rpc_module_paths: list[str]|None = None,
         enable_modules: list[str]|None = None,
         loglevel: str|None = None,  # set log level per subactor
-        nursery: trio.Nursery|None = None,
         debug_mode: bool|None = None,
         infect_asyncio: bool = False,
+
+        # TODO: ideally we can rm this once we no longer have
+        # a `._ria_nursery` since the dependent APIs have been
+        # removed!
+        nursery: trio.Nursery|None = None,
 
     ) -> Portal:
         '''
@@ -200,6 +212,7 @@ class ActorNursery:
     #  |_ dynamic @context decoration on child side
     #  |_ implicit `Portal.open_context() as (ctx, first):`
     #    and `return first` on parent side.
+    #  |_ mention how it's similar to `trio-parallel` API?
     # -[ ] use @api_frame on the wrapper
     async def run_in_actor(
         self,
@@ -269,11 +282,14 @@ class ActorNursery:
 
     ) -> None:
         '''
-        Cancel this nursery by instructing each subactor to cancel
-        itself and wait for all subactors to terminate.
+        Cancel this actor-nursery by instructing each subactor's
+        runtime to cancel and wait for all underlying sub-processes
+        to terminate.
 
-        If ``hard_killl`` is set to ``True`` then kill the processes
-        directly without any far end graceful ``trio`` cancellation.
+        If `hard_kill` is set then kill the processes directly using
+        the spawning-backend's API/OS-machinery without any attempt
+        at (graceful) `trio`-style cancellation using our
+        `Actor.cancel()`.
 
         '''
         __runtimeframe__: int = 1  # noqa
@@ -629,8 +645,12 @@ async def open_nursery(
             f'|_{an}\n'
         )
 
-        # shutdown runtime if it was started
         if implicit_runtime:
+            # shutdown runtime if it was started and report noisly
+            # that we're did so.
             msg += '=> Shutting down actor runtime <=\n'
+            log.info(msg)
 
-        log.info(msg)
+        else:
+            # keep noise low during std operation.
+            log.runtime(msg)
