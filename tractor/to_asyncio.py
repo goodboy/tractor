@@ -558,6 +558,8 @@ def run_as_asyncio_guest(
     # normally `Actor._async_main()` as is passed by some boostrap
     # entrypoint like `._entry._trio_main()`.
 
+    _sigint_loop_pump_delay: float = 0,
+
 ) -> None:
 # ^-TODO-^ technically whatever `trio_main` returns.. we should
 # try to use func-typevar-params at leaast by 3.13!
@@ -598,7 +600,7 @@ def run_as_asyncio_guest(
 
         '''
         loop = asyncio.get_running_loop()
-        trio_done_fut = asyncio.Future()
+        trio_done_fute = asyncio.Future()
         startup_msg: str = (
             'Starting `asyncio` guest-loop-run\n'
             '-> got running loop\n'
@@ -633,13 +635,13 @@ def run_as_asyncio_guest(
                     f'{error}\n\n'
                     f'{tb_str}\n'
                 )
-                trio_done_fut.set_exception(error)
+                trio_done_fute.set_exception(error)
 
                 # raise inline
                 main_outcome.unwrap()
 
             else:
-                trio_done_fut.set_result(main_outcome)
+                trio_done_fute.set_result(main_outcome)
 
         startup_msg += (
             f'-> created {trio_done_callback!r}\n'
@@ -660,7 +662,7 @@ def run_as_asyncio_guest(
         )
         fute_err: BaseException|None = None
         try:
-            out: Outcome = await asyncio.shield(trio_done_fut)
+            out: Outcome = await asyncio.shield(trio_done_fute)
 
             # NOTE will raise (via `Error.unwrap()`) from any
             # exception packed into the guest-run's `main_outcome`.
@@ -697,83 +699,75 @@ def run_as_asyncio_guest(
                 f'  |_{actor}.cancel_soon()\n'
             )
 
-            # TODO: reduce this comment bloc since abandon issues are
-            # now solved?
+            # XXX WARNING XXX the next LOCs are super important, since
+            # without them, we can get guest-run abandonment cases
+            # where `asyncio` will not schedule or wait on the `trio`
+            # guest-run task before final shutdown! This is
+            # particularly true if the `trio` side has tasks doing
+            # shielded work when a SIGINT condition occurs.
             #
-            # XXX NOTE XXX the next LOC is super important!!!
-            #  => without it, we can get a guest-run abandonment case
-            #  where asyncio will not trigger `trio` in a final event
-            #  loop cycle!
+            # We now have the
+            # `test_infected_asyncio.test_sigint_closes_lifetime_stack()`
+            # suite to ensure we do not suffer this issues
+            # (hopefully) ever again.
             #
-            #  our test,
-            #  `test_infected_asyncio.test_sigint_closes_lifetime_stack()`
-            #  demonstrates how if when we raise a SIGINT-signal in an infected
-            #  child we get a variable race condition outcome where
-            #  either of the following can indeterminately happen,
+            # The original abandonment issue surfaced as 2 different
+            # race-condition dependent types scenarios all to do with
+            # `asyncio` handling SIGINT from the system:
             #
-            # - "silent-abandon": `asyncio` abandons the `trio`
-            #   guest-run task silently and no `trio`-guest-run or
-            #   `tractor`-actor-runtime teardown happens whatsoever..
-            #   this is the WORST (race) case outcome.
+            # - "silent-abandon" (WORST CASE):
+            #  `asyncio` abandons the `trio` guest-run task silently
+            #  and no `trio`-guest-run or `tractor`-actor-runtime
+            #  teardown happens whatsoever..
             #
-            # - OR, "loud-abandon": the guest run get's abaondoned "loudly" with
-            #   `trio` reporting a console traceback and further tbs of all
-            #   the failed shutdown routines also show on console..
+            # - "loud-abandon" (BEST-ish CASE):
+            #   the guest run get's abaondoned "loudly" with `trio`
+            #   reporting a console traceback and further tbs of all
+            #   the (failed) GC-triggered shutdown routines which
+            #   thankfully does get dumped to console..
             #
-            # our test can thus fail and (has been parametrized for)
-            # the 2 cases:
+            # The abandonment is most easily reproduced if the `trio`
+            # side has tasks doing shielded work where those tasks
+            # ignore the normal `Cancelled` condition and continue to
+            # run, but obviously `asyncio` isn't aware of this and at
+            # some point bails on the guest-run unless we take manual
+            # intervention..
             #
-            # - when the parent raises a KBI just after
-            #   signalling the child,
-            #  |_silent-abandon => the `Actor.lifetime_stack` will
-            #    never be closed thus leaking a resource!
-            #   -> FAIL!
-            #  |_loud-abandon => despite the abandonment at least the
-            #    stack will be closed out..
-            #   -> PASS
+            # To repeat, *WITHOUT THIS* stuff below the guest-run can
+            # get race-conditionally abandoned!!
             #
-            # - when the parent instead simply waits on `ctx.wait_for_result()`
-            #   (i.e. DOES not raise a KBI itself),
-            #  |_silent-abandon => test will just hang and thus the ctx
-            #    and actor will never be closed/cancelled/shutdown
-            #    resulting in leaking a (file) resource since the
-            #    `trio`/`tractor` runtime never relays a ctxc back to
-            #    the parent; the test's timeout will trigger..
-            #   -> FAIL!
-            #  |_loud-abandon => this case seems to never happen??
+            # XXX SOLUTION XXX
+            # ------ - ------
+            # XXX FIRST PART:
+            # ------ - ------
+            # the obvious fix to the "silent-abandon" case is to
+            # explicitly cancel the actor runtime such that no
+            # runtime tasks are even left unaware that the guest-run
+            # should be terminated due to OS cancellation.
             #
-            # XXX FIRST PART XXX, SO, this is a fix to the
-            # "silent-abandon" case, NOT the `trio`-guest-run
-            # abandonment issue in general, for which the NEXT LOC
-            # is apparently a working fix!
             actor.cancel_soon()
 
-            # XXX NOTE XXX pump the `asyncio` event-loop to allow
+            # ------ - ------
+            # XXX SECOND PART:
+            # ------ - ------
+            # Pump the `asyncio` event-loop to allow
             # `trio`-side to `trio`-guest-run to complete and
             # teardown !!
             #
-            # *WITHOUT THIS* the guest-run can get race-conditionally abandoned!!
-            # XD
-            #
-            await asyncio.sleep(.1)  # `delay` can't be 0 either XD
-            while not trio_done_fut.done():
+            # oh `asyncio`, how i don't miss you at all XD
+            while not trio_done_fute.done():
                 log.runtime(
                     'Waiting on main guest-run `asyncio` task to complete..\n'
-                    f'|_trio_done_fut: {trio_done_fut}\n'
+                    f'|_trio_done_fut: {trio_done_fute}\n'
                 )
-                await asyncio.sleep(.1)
+                await asyncio.sleep(_sigint_loop_pump_delay)
 
-                # XXX: don't actually need the shield.. seems to
-                # make no difference (??) and we know it spawns an
-                # internal task..
-                # await asyncio.shield(asyncio.sleep(.1))
-
-                # XXX alt approach but can block indefinitely..
-                # so don't use?
+                # XXX is there any alt API/approach like the internal
+                # call below but that doesn't block indefinitely..?
                 # loop._run_once()
 
             try:
-                return trio_done_fut.result()
+                return trio_done_fute.result()
             except asyncio.exceptions.InvalidStateError as state_err:
 
                 # XXX be super dupere noisy about abandonment issues!
