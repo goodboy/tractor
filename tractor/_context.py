@@ -38,6 +38,7 @@ from collections import deque
 from contextlib import (
     asynccontextmanager as acm,
 )
+from contextvars import Token
 from dataclasses import (
     dataclass,
     field,
@@ -1943,7 +1944,7 @@ async def open_context_from_portal(
     )
     assert ctx._remote_func_type == 'context'
     assert ctx._caller_info
-    _ctxvar_Context.set(ctx)
+    prior_ctx_tok: Token = _ctxvar_Context.set(ctx)
 
     # placeholder for any exception raised in the runtime
     # or by user tasks which cause this context's closure.
@@ -2393,6 +2394,9 @@ async def open_context_from_portal(
             (uid, ctx.cid),
             None,
         )
+
+        # XXX revert to prior IPC-task-ctx scope
+        _ctxvar_Context.reset(prior_ctx_tok)
 
 
 def mk_context(
