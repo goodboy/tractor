@@ -18,8 +18,12 @@
 Async context manager primitives with hard ``trio``-aware semantics
 
 '''
-from contextlib import asynccontextmanager as acm
+from __future__ import annotations
+from contextlib import (
+    asynccontextmanager as acm,
+)
 import inspect
+from types import ModuleType
 from typing import (
     Any,
     AsyncContextManager,
@@ -30,12 +34,15 @@ from typing import (
     Optional,
     Sequence,
     TypeVar,
+    TYPE_CHECKING,
 )
 
 import trio
-
 from tractor._state import current_actor
 from tractor.log import get_logger
+
+if TYPE_CHECKING:
+    from tractor import ActorNursery
 
 
 log = get_logger(__name__)
@@ -46,8 +53,10 @@ T = TypeVar("T")
 
 @acm
 async def maybe_open_nursery(
-    nursery: trio.Nursery | None = None,
+    nursery: trio.Nursery|ActorNursery|None = None,
     shield: bool = False,
+    lib: ModuleType = trio,
+
 ) -> AsyncGenerator[trio.Nursery, Any]:
     '''
     Create a new nursery if None provided.
@@ -58,13 +67,12 @@ async def maybe_open_nursery(
     if nursery is not None:
         yield nursery
     else:
-        async with trio.open_nursery() as nursery:
+        async with lib.open_nursery() as nursery:
             nursery.cancel_scope.shield = shield
             yield nursery
 
 
 async def _enter_and_wait(
-
     mngr: AsyncContextManager[T],
     unwrapped: dict[int, T],
     all_entered: trio.Event,
@@ -91,7 +99,6 @@ async def _enter_and_wait(
 
 @acm
 async def gather_contexts(
-
     mngrs: Sequence[AsyncContextManager[T]],
 
 ) -> AsyncGenerator[
@@ -102,15 +109,17 @@ async def gather_contexts(
     None,
 ]:
     '''
-    Concurrently enter a sequence of async context managers, each in
-    a separate ``trio`` task and deliver the unwrapped values in the
-    same order once all managers have entered. On exit all contexts are
-    subsequently and concurrently exited.
+    Concurrently enter a sequence of async context managers (acms),
+    each from a separate `trio` task and deliver the unwrapped
+    `yield`-ed values in the same order once all managers have entered.
 
-    This function is somewhat similar to common usage of
-    ``contextlib.AsyncExitStack.enter_async_context()`` (in a loop) in
-    combo with ``asyncio.gather()`` except the managers are concurrently
-    entered and exited, and cancellation just works.
+    On exit, all acms are subsequently and concurrently exited.
+
+    This function is somewhat similar to a batch of non-blocking
+    calls to `contextlib.AsyncExitStack.enter_async_context()`
+    (inside a loop) *in combo with* a `asyncio.gather()` to get the
+    `.__aenter__()`-ed values, except the managers are both
+    concurrently entered and exited and *cancellation just works*(R).
 
     '''
     seed: int = id(mngrs)
@@ -210,9 +219,10 @@ async def maybe_open_context(
 
 ) -> AsyncIterator[tuple[bool, T]]:
     '''
-    Maybe open a context manager if there is not already a _Cached
-    version for the provided ``key`` for *this* actor. Return the
-    _Cached instance on a _Cache hit.
+    Maybe open an async-context-manager (acm) if there is not already
+    a `_Cached` version for the provided (input) `key` for *this* actor.
+
+    Return the `_Cached` instance on a _Cache hit.
 
     '''
     fid = id(acm_func)
@@ -273,8 +283,13 @@ async def maybe_open_context(
     else:
         _Cache.users += 1
         log.runtime(
-            f'Reusing resource for `_Cache` user {_Cache.users}\n\n'
-            f'{ctx_key!r} -> {yielded!r}\n'
+            f'Re-using cached resource for user {_Cache.users}\n\n'
+            f'{ctx_key!r} -> {type(yielded)}\n'
+
+            # TODO: make this work with values but without
+            # `msgspec.Struct` causing frickin crashes on field-type
+            # lookups..
+            # f'{ctx_key!r} -> {yielded!r}\n'
         )
         lock.release()
         yield True, yielded

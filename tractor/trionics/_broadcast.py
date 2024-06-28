@@ -156,11 +156,12 @@ class BroadcastState(Struct):
 
 class BroadcastReceiver(ReceiveChannel):
     '''
-    A memory receive channel broadcaster which is non-lossy for the
-    fastest consumer.
+    A memory receive channel broadcaster which is non-lossy for
+    the fastest consumer.
 
-    Additional consumer tasks can receive all produced values by registering
-    with ``.subscribe()`` and receiving from the new instance it delivers.
+    Additional consumer tasks can receive all produced values by
+    registering with ``.subscribe()`` and receiving from the new
+    instance it delivers.
 
     '''
     def __init__(
