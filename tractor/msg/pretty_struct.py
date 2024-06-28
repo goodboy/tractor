@@ -34,6 +34,9 @@ from pprint import (
     saferepr,
 )
 
+from tractor.log import get_logger
+
+log = get_logger()
 # TODO: auto-gen type sig for input func both for
 # type-msgs and logging of RPC tasks?
 # taken and modified from:
@@ -143,7 +146,13 @@ def pformat(
 
         else:  # the `pprint` recursion-safe format:
             # https://docs.python.org/3.11/library/pprint.html#pprint.saferepr
-            val_str: str = saferepr(v)
+            try:
+                val_str: str = saferepr(v)
+            except Exception:
+                log.exception(
+                    'Failed to `saferepr({type(struct)})` !?\n'
+                )
+            return _Struct.__repr__(struct)
 
         # TODO: LOLOL use `textwrap.indent()` instead dawwwwwg!
         obj_str += (field_ws + f'{k}: {typ_name} = {val_str},\n')
@@ -194,12 +203,20 @@ class Struct(
         return sin_props
 
     pformat = pformat
+    # __repr__ = pformat
     # __str__ = __repr__ = pformat
     # TODO: use a pprint.PrettyPrinter instance around ONLY rendering
     # inside a known tty?
     # def __repr__(self) -> str:
     #     ...
-    __repr__ = pformat
+    def __repr__(self) -> str:
+        try:
+            return pformat(self)
+        except Exception:
+            log.exception(
+                f'Failed to `pformat({type(self)})` !?\n'
+            )
+            return _Struct.__repr__(self)
 
     def copy(
         self,
