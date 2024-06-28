@@ -285,14 +285,14 @@ def test_basic_payload_spec(
 
             if invalid_started:
                 msg_type_str: str = 'Started'
-                bad_value_str: str = '10'
+                bad_value: int = 10
             elif invalid_return:
                 msg_type_str: str = 'Return'
-                bad_value_str: str = "'yo'"
+                bad_value: str = 'yo'
             else:
                 # XXX but should never be used below then..
                 msg_type_str: str = ''
-                bad_value_str: str = ''
+                bad_value: str = ''
 
             maybe_mte: MsgTypeError|None = None
             should_raise: Exception|None = (
@@ -307,8 +307,10 @@ def test_basic_payload_spec(
                     raises=should_raise,
                     ensure_in_message=[
                         f"invalid `{msg_type_str}` msg payload",
-                        f"value: `{bad_value_str}` does not "
-                        f"match type-spec: `{msg_type_str}.pld: PldMsg|NoneType`",
+                        f'{bad_value}',
+                        f'has type {type(bad_value)!r}',
+                        'not match type-spec',
+                        f'`{msg_type_str}.pld: PldMsg|NoneType`',
                     ],
                     # only for debug
                     # post_mortem=True,
