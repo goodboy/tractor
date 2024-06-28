@@ -69,6 +69,7 @@ from trio import (
 import tractor
 from tractor.log import get_logger
 from tractor._context import Context
+from tractor import _state
 from tractor._state import (
     current_actor,
     is_root_process,
@@ -86,9 +87,6 @@ if TYPE_CHECKING:
     from tractor._ipc import Channel
     from tractor._runtime import (
         Actor,
-    )
-    from tractor.msg import (
-        _codec,
     )
 
 log = get_logger(__name__)
@@ -1599,12 +1597,16 @@ async def _pause(
     try:
         task: Task = current_task()
     except RuntimeError as rte:
-        log.exception('Failed to get current task?')
-        if actor.is_infected_aio():
-            raise RuntimeError(
-                '`tractor.pause[_from_sync]()` not yet supported '
-                'for infected `asyncio` mode!'
-            ) from rte
+        __tracebackhide__: bool = False
+        log.exception(
+            'Failed to get current `trio`-task?'
+        )
+        # if actor.is_infected_aio():
+            # mk_pdb().set_trace()
+            # raise RuntimeError(
+            #     '`tractor.pause[_from_sync]()` not yet supported '
+            #     'directly (infected) `asyncio` tasks!'
+            # ) from rte
 
         raise
 
@@ -2163,20 +2165,20 @@ def maybe_import_greenback(
         return False
 
 
-async def maybe_init_greenback(
-    **kwargs,
-) -> None|ModuleType:
-
-    if mod := maybe_import_greenback(**kwargs):
-        await mod.ensure_portal()
-        log.devx(
-            '`greenback` portal opened!\n'
-            'Sync debug support activated!\n'
-        )
-        return mod
+async def maybe_init_greenback(**kwargs) -> None|ModuleType:
+    try:
+        if mod := maybe_import_greenback(**kwargs):
+            await mod.ensure_portal()
+            log.devx(
+                '`greenback` portal opened!\n'
+                'Sync debug support activated!\n'
+            )
+            return mod
+    except BaseException:
+        log.exception('Failed to init `greenback`..')
+        raise
 
     return None
-
 
 
 async def _pause_from_bg_root_thread(
@@ -2324,6 +2326,12 @@ def pause_from_sync(
 
         # TODO: once supported, remove this AND the one
         # inside `._pause()`!
+        # outstanding impl fixes:
+        # -[ ] need to make `.shield_sigint()` below work here!
+        # -[ ] how to handle `asyncio`'s new SIGINT-handler
+        #     injection?
+        # -[ ] should `breakpoint()` work and what does it normally
+        #     do in `asyncio` ctxs?
         if actor.is_infected_aio():
             raise RuntimeError(
                 '`tractor.pause[_from_sync]()` not yet supported '
@@ -2399,18 +2407,37 @@ def pause_from_sync(
         else:  # we are presumably the `trio.run()` + main thread
             # raises on not-found by default
             greenback: ModuleType = maybe_import_greenback()
+
+            # TODO: how to ensure this is either dynamically (if
+            # needed) called here (in some bg tn??) or that the
+            # subactor always already called it?
+            # greenback: ModuleType = await maybe_init_greenback()
+
             message += f'-> imported {greenback}\n'
             repl_owner: Task = current_task()
             message += '-> calling `greenback.await_(_pause(debug_func=None))` from sync caller..\n'
-            out = greenback.await_(
-                _pause(
-                    debug_func=None,
-                    repl=repl,
-                    hide_tb=hide_tb,
-                    called_from_sync=True,
-                    **_pause_kwargs,
+            try:
+                out = greenback.await_(
+                    _pause(
+                        debug_func=None,
+                        repl=repl,
+                        hide_tb=hide_tb,
+                        called_from_sync=True,
+                        **_pause_kwargs,
+                    )
                 )
-            )
+            except RuntimeError as rte:
+                if not _state._runtime_vars.get(
+                        'use_greenback',
+                        False,
+                ):
+                    raise RuntimeError(
+                        '`greenback` was never initialized in this actor!?\n\n'
+                        f'{_state._runtime_vars}\n'
+                    ) from rte
+
+                raise
+
             if out:
                 bg_task, repl = out
                 assert repl is repl
@@ -2801,10 +2828,10 @@ def open_crash_handler(
       `trio.run()`.
 
     '''
+    err: BaseException
     try:
         yield
     except tuple(catch) as err:
-
         if type(err) not in ignore:
             pdbp.xpm()
 

@@ -21,6 +21,7 @@ Root actor runtime ignition(s).
 from contextlib import asynccontextmanager as acm
 from functools import partial
 import importlib
+import inspect
 import logging
 import os
 import signal
@@ -115,10 +116,16 @@ async def open_root_actor(
     if (
         debug_mode
         and maybe_enable_greenback
-        and await _debug.maybe_init_greenback(
-            raise_not_found=False,
+        and (
+            maybe_mod := await _debug.maybe_init_greenback(
+                raise_not_found=False,
+            )
         )
     ):
+        logger.info(
+            f'Found `greenback` installed @ {maybe_mod}\n'
+            'Enabling `tractor.pause_from_sync()` support!\n'
+        )
         os.environ['PYTHONBREAKPOINT'] = (
             'tractor.devx._debug._sync_pause_from_builtin'
         )
@@ -264,7 +271,9 @@ async def open_root_actor(
 
         except OSError:
             # TODO: make this a "discovery" log level?
-            logger.warning(f'No actor registry found @ {addr}')
+            logger.info(
+                f'No actor registry found @ {addr}\n'
+            )
 
     async with trio.open_nursery() as tn:
         for addr in registry_addrs:
@@ -278,7 +287,6 @@ async def open_root_actor(
     # Create a new local root-actor instance which IS NOT THE
     # REGISTRAR
     if ponged_addrs:
-
         if ensure_registry:
             raise RuntimeError(
                  f'Failed to open `{name}`@{ponged_addrs}: '
@@ -365,24 +373,25 @@ async def open_root_actor(
             )
             try:
                 yield actor
-
             except (
                 Exception,
                 BaseExceptionGroup,
             ) as err:
-
-                import inspect
+                # XXX NOTE XXX see equiv note inside
+                # `._runtime.Actor._stream_handler()` where in the
+                # non-root or root-that-opened-this-mahually case we
+                # wait for the local actor-nursery to exit before
+                # exiting the transport channel handler.
                 entered: bool = await _debug._maybe_enter_pm(
                     err,
                     api_frame=inspect.currentframe(),
                 )
-
                 if (
                     not entered
                     and
                     not is_multi_cancelled(err)
                 ):
-                    logger.exception('Root actor crashed:\n')
+                    logger.exception('Root actor crashed\n')
 
                 # ALWAYS re-raise any error bubbled up from the
                 # runtime!

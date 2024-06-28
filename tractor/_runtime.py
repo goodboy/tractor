@@ -1048,6 +1048,10 @@ class Actor:
                 # TODO: another `Struct` for rtvs..
                 rvs: dict[str, Any] = spawnspec._runtime_vars
                 if rvs['_debug_mode']:
+                    from .devx import (
+                        enable_stack_on_sig,
+                        maybe_init_greenback,
+                    )
                     try:
                         # TODO: maybe return some status msgs upward
                         # to that we can emit them in `con_status`
@@ -1055,12 +1059,26 @@ class Actor:
                         log.devx(
                             'Enabling `stackscope` traces on SIGUSR1'
                         )
-                        from .devx import enable_stack_on_sig
                         enable_stack_on_sig()
+
                     except ImportError:
                         log.warning(
                             '`stackscope` not installed for use in debug mode!'
                         )
+
+                    if rvs.get('use_greenback', False):
+                        maybe_mod: ModuleType|None = await maybe_init_greenback()
+                        if maybe_mod:
+                            log.devx(
+                                'Activated `greenback` '
+                                'for `tractor.pause_from_sync()` support!'
+                            )
+                        else:
+                            rvs['use_greenback'] = False
+                            log.warning(
+                                '`greenback` not installed for use in debug mode!\n'
+                                '`tractor.pause_from_sync()` not available!'
+                            )
 
                 rvs['_is_root'] = False
                 _state._runtime_vars.update(rvs)
@@ -1720,8 +1738,8 @@ async def async_main(
 
                 # Register with the arbiter if we're told its addr
                 log.runtime(
-                    f'Registering `{actor.name}` ->\n'
-                    f'{pformat(accept_addrs)}'
+                    f'Registering `{actor.name}` => {pformat(accept_addrs)}\n'
+                    # ^-TODO-^ we should instead show the maddr here^^
                 )
 
                 # TODO: ideally we don't fan out to all registrars
@@ -1779,57 +1797,90 @@ async def async_main(
 
         # Blocks here as expected until the root nursery is
         # killed (i.e. this actor is cancelled or signalled by the parent)
-    except Exception as err:
-        log.runtime("Closing all actor lifetime contexts")
-        actor.lifetime_stack.close()
-
+    except Exception as internal_err:
         if not is_registered:
+            err_report: str = (
+                '\n'
+                "Actor runtime (internally) failed BEFORE contacting the registry?\n"
+                f'registrars -> {actor.reg_addrs} ?!?!\n\n'
+
+                '^^^ THIS IS PROBABLY AN INTERNAL `tractor` BUG! ^^^\n\n'
+                '\t>> CALMLY CANCEL YOUR CHILDREN AND CALL YOUR PARENTS <<\n\n'
+
+                '\tIf this is a sub-actor hopefully its parent will keep running '
+                'and cancel/reap this sub-process..\n'
+                '(well, presuming this error was propagated upward)\n\n'
+
+                '\t---------------------------------------------\n'
+                '\tPLEASE REPORT THIS TRACEBACK IN A BUG REPORT @ '  # oneline
+                'https://github.com/goodboy/tractor/issues\n'
+                '\t---------------------------------------------\n'
+            )
+
             # TODO: I guess we could try to connect back
             # to the parent through a channel and engage a debugger
             # once we have that all working with std streams locking?
-            log.exception(
-                f"Actor errored and failed to register with arbiter "
-                f"@ {actor.reg_addrs[0]}?")
-            log.error(
-                "\n\n\t^^^ THIS IS PROBABLY AN INTERNAL `tractor` BUG! ^^^\n\n"
-                "\t>> CALMLY CALL THE AUTHORITIES AND HIDE YOUR CHILDREN <<\n\n"
-                "\tIf this is a sub-actor hopefully its parent will keep running "
-                "correctly presuming this error was safely ignored..\n\n"
-                "\tPLEASE REPORT THIS TRACEBACK IN A BUG REPORT: "
-                "https://github.com/goodboy/tractor/issues\n"
-            )
+            log.exception(err_report)
 
         if actor._parent_chan:
             await try_ship_error_to_remote(
                 actor._parent_chan,
-                err,
+                internal_err,
             )
 
         # always!
-        match err:
+        match internal_err:
             case ContextCancelled():
                 log.cancel(
                     f'Actor: {actor.uid} was task-context-cancelled with,\n'
-                    f'str(err)'
+                    f'str(internal_err)'
                 )
             case _:
-                log.exception("Actor errored:")
-        raise
+                log.exception(
+                    'Main actor-runtime task errored\n'
+                    f'<x)\n'
+                    f' |_{actor}\n'
+                )
+
+        raise internal_err
 
     finally:
-        log.runtime(
-            'Runtime nursery complete'
-            '-> Closing all actor lifetime contexts..'
+        teardown_report: str = (
+            'Main actor-runtime task completed\n'
         )
-        # tear down all lifetime contexts if not in guest mode
-        # XXX: should this just be in the entrypoint?
-        actor.lifetime_stack.close()
 
-        # TODO: we can't actually do this bc the debugger
-        # uses the _service_n to spawn the lock task, BUT,
-        # in theory if we had the root nursery surround this finally
-        # block it might be actually possible to debug THIS
-        # machinery in the same way as user task code?
+        # ?TODO? should this be in `._entry`/`._root` mods instead?
+        #
+        # teardown any actor-lifetime-bound contexts
+        ls: ExitStack = actor.lifetime_stack
+        # only report if there are any registered
+        cbs: list[Callable] = [
+            repr(tup[1].__wrapped__)
+            for tup in ls._exit_callbacks
+        ]
+        if cbs:
+            cbs_str: str = '\n'.join(cbs)
+            teardown_report += (
+                '-> Closing actor-lifetime-bound callbacks\n\n'
+                f'}}>\n'
+                f' |_{ls}\n'
+                f'   |_{cbs_str}\n'
+            )
+            # XXX NOTE XXX this will cause an error which
+            # prevents any `infected_aio` actor from continuing
+            # and any callbacks in the `ls` here WILL NOT be
+            # called!!
+            # await _debug.pause(shield=True)
+
+        ls.close()
+
+        # XXX TODO but hard XXX
+        # we can't actually do this bc the debugger uses the
+        # _service_n to spawn the lock task, BUT, in theory if we had
+        # the root nursery surround this finally block it might be
+        # actually possible to debug THIS machinery in the same way
+        # as user task code?
+        #
         # if actor.name == 'brokerd.ib':
         #     with CancelScope(shield=True):
         #         await _debug.breakpoint()
@@ -1859,9 +1910,9 @@ async def async_main(
                     failed = True
 
                 if failed:
-                    log.warning(
-                        f'Failed to unregister {actor.name} from '
-                        f'registar @ {addr}'
+                    teardown_report += (
+                        f'-> Failed to unregister {actor.name} from '
+                        f'registar @ {addr}\n'
                     )
 
         # Ensure all peers (actors connected to us as clients) are finished
@@ -1869,13 +1920,17 @@ async def async_main(
             if any(
                 chan.connected() for chan in chain(*actor._peers.values())
             ):
-                log.runtime(
-                    f"Waiting for remaining peers {actor._peers} to clear")
+                teardown_report += (
+                    f'-> Waiting for remaining peers {actor._peers} to clear..\n'
+                )
+                log.runtime(teardown_report)
                 with CancelScope(shield=True):
                     await actor._no_more_peers.wait()
-        log.runtime("All peer channels are complete")
 
-    log.runtime("Runtime completed")
+        teardown_report += ('-> All peer channels are complete\n')
+
+    teardown_report += ('Actor runtime exited')
+    log.info(teardown_report)
 
 
 # TODO: rename to `Registry` and move to `._discovery`!

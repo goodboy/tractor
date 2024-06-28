@@ -29,6 +29,7 @@ from ._debug import (
     shield_sigint_handler as shield_sigint_handler,
     open_crash_handler as open_crash_handler,
     maybe_open_crash_handler as maybe_open_crash_handler,
+    maybe_init_greenback as maybe_init_greenback,
     post_mortem as post_mortem,
     mk_pdb as mk_pdb,
 )

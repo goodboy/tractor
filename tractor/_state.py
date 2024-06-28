@@ -44,7 +44,7 @@ _runtime_vars: dict[str, Any] = {
     '_root_mailbox': (None, None),
     '_registry_addrs': [],
 
-    # for `breakpoint()` support
+    # for `tractor.pause_from_sync()` & `breakpoint()` support
     'use_greenback': False,
 }
 
