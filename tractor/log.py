@@ -54,11 +54,12 @@ LOG_FORMAT = (
 DATE_FORMAT = '%b %d %H:%M:%S'
 
 # FYI, ERROR is 40
+# TODO: use a `bidict` to avoid the :155 check?
 CUSTOM_LEVELS: dict[str, int] = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
     'DEVX': 17,
-    'CANCEL': 18,
+    'CANCEL': 22,
     'PDB': 500,
 }
 STD_PALETTE = {
@@ -146,6 +147,8 @@ class StackLevelAdapter(LoggerAdapter):
         '''
         Delegate a log call to the underlying logger, after adding
         contextual information from this adapter instance.
+
+        NOTE: all custom level methods (above) delegate to this!
 
         '''
         if self.isEnabledFor(level):
