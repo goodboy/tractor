@@ -1336,6 +1336,23 @@ def test_shield_pause(
     child.expect(pexpect.EOF)
 
 
+# TODO: better error for "non-ideal" usage from the root actor.
+# -[ ] if called from an async scope emit a message that suggests
+#    using `await tractor.pause()` instead since it's less overhead
+#    (in terms of `greenback` and/or extra threads) and if it's from
+#    a sync scope suggest that usage must first call
+#    `ensure_portal()` in the (eventual parent) async calling scope?
+def test_sync_pause_from_bg_task_in_root_actor_():
+    '''
+    When used from the root actor, normally we can only implicitly
+    support `.pause_from_sync()` from the main-parent-task (that
+    opens the runtime via `open_root_actor()`) since `greenback`
+    requires a `.ensure_portal()` call per `trio.Task` where it is
+    used.
+
+    '''
+    ...
+
 # TODO: needs ANSI code stripping tho, see `assert_before()` # above!
 def test_correct_frames_below_hidden():
     '''
