@@ -50,6 +50,7 @@ from ._exceptions import (
     ModuleNotExposed as ModuleNotExposed,
     MsgTypeError as MsgTypeError,
     RemoteActorError as RemoteActorError,
+    TransportClosed as TransportClosed,
 )
 from .devx import (
     breakpoint as breakpoint,

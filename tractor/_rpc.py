@@ -1196,7 +1196,7 @@ async def process_messages(
                 parent_chan=chan,
             )
 
-    except TransportClosed:
+    except TransportClosed as tc:
         # channels "breaking" (for TCP streams by EOF or 104
         # connection-reset) is ok since we don't have a teardown
         # handshake for them (yet) and instead we simply bail out of
@@ -1204,12 +1204,20 @@ async def process_messages(
         # up..
         #
         # TODO: maybe add a teardown handshake? and,
-        # -[ ] don't show this msg if it's an ephemeral discovery ep call?
+        # -[x] don't show this msg if it's an ephemeral discovery ep call?
+        #  |_ see the below `.report_n_maybe_raise()` impl as well as
+        #     tc-exc input details in `MsgpackTCPStream._iter_pkts()`
+        #     for different read-failure cases.
         # -[ ] figure out how this will break with other transports?
-        log.runtime(
-            f'IPC channel closed abruptly\n'
-            f'<=x peer: {chan.uid}\n'
-            f'   |_{chan.raddr}\n'
+        tc.report_n_maybe_raise(
+            message=(
+                f'peer IPC channel closed abruptly?\n\n'
+                f'<=x {chan}\n'
+                f'  |_{chan.raddr}\n\n'
+            )
+            +
+            tc.message
+
         )
 
         # transport **WAS** disconnected

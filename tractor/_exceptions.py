@@ -906,8 +906,59 @@ class StreamOverrun(
     '''
 
 
-class TransportClosed(trio.ClosedResourceError):
-    "Underlying channel transport was closed prior to use"
+class TransportClosed(trio.BrokenResourceError):
+    '''
+    IPC transport (protocol) connection was closed or broke and
+    indicates that the wrapping communication `Channel` can no longer
+    be used to send/receive msgs from the remote peer.
+
+    '''
+    def __init__(
+        self,
+        message: str,
+        loglevel: str = 'transport',
+        cause: BaseException|None = None,
+        raise_on_report: bool = False,
+
+    ) -> None:
+        self.message: str = message
+        self._loglevel = loglevel
+        super().__init__(message)
+
+        if cause is not None:
+            self.__cause__ = cause
+
+        # flag to toggle whether the msg loop should raise
+        # the exc in its `TransportClosed` handler block.
+        self._raise_on_report = raise_on_report
+
+    def report_n_maybe_raise(
+        self,
+        message: str|None = None,
+
+    ) -> None:
+        '''
+        Using the init-specified log level emit a logging report
+        for this error.
+
+        '''
+        message: str = message or self.message
+        # when a cause is set, slap it onto the log emission.
+        if cause := self.__cause__:
+            cause_tb_str: str = ''.join(
+                traceback.format_tb(cause.__traceback__)
+            )
+            message += (
+                f'{cause_tb_str}\n'  # tb
+                f'    {cause}\n'  # exc repr
+            )
+
+        getattr(log, self._loglevel)(message)
+
+        # some errors we want to blow up from
+        # inside the RPC msg loop
+        if self._raise_on_report:
+            raise self from cause
 
 
 class NoResult(RuntimeError):
