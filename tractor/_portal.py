@@ -97,7 +97,7 @@ class Portal:
         channel: Channel,
     ) -> None:
 
-        self.chan = channel
+        self._chan: Channel = channel
         # during the portal's lifetime
         self._final_result_pld: Any|None = None
         self._final_result_msg: PayloadMsg|None = None
@@ -108,6 +108,10 @@ class Portal:
         self._expect_result_ctx: Context|None = None
         self._streams: set[MsgStream] = set()
         self.actor: Actor = current_actor()
+
+    @property
+    def chan(self) -> Channel:
+        return self._chan
 
     @property
     def channel(self) -> Channel:
