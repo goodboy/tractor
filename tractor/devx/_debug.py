@@ -299,7 +299,6 @@ class Lock:
     @pdbp.hideframe
     def release(
         cls,
-        force: bool = False,
         raise_on_thread: bool = True,
 
     ) -> bool:
@@ -347,12 +346,9 @@ class Lock:
             lock: trio.StrictFIFOLock = cls._debug_lock
             owner: Task = lock.statistics().owner
             if (
-                (lock.locked() or force)
-                # ^-TODO-NOTE-^ should we just remove this, since the
-                # RTE case above will always happen when you force
-                # from the wrong task?
-
-                and (owner is task)
+                lock.locked()
+                and
+                (owner is task)
                 # ^-NOTE-^ if we do NOT ensure this, `trio` will
                 # raise a RTE when a non-owner tries to releasee the
                 # lock.
@@ -553,6 +549,7 @@ async def lock_stdio_for_peer(
     # can try to avoid clobbering any connection from a child
     # that's currently relying on it.
     we_finished = Lock.req_handler_finished = trio.Event()
+    lock_blocked: bool = False
     try:
         if ctx.cid in Lock._blocked:
             raise RuntimeError(
@@ -565,7 +562,8 @@ async def lock_stdio_for_peer(
                 'Consider that an internal bug exists given the TTY '
                 '`Lock`ing IPC dialog..\n'
             )
-
+        Lock._blocked.add(ctx.cid)
+        lock_blocked = True
         root_task_name: str = current_task().name
         if tuple(subactor_uid) in Lock._blocked:
             log.warning(
@@ -575,7 +573,11 @@ async def lock_stdio_for_peer(
             )
             ctx._enter_debugger_on_cancel: bool = False
             message: str = (
-                f'Debug lock blocked for {subactor_uid}\n'
+                f'Debug lock blocked for subactor\n\n'
+                f'x)<= {subactor_uid}\n\n'
+
+                f'Likely because the root actor already started shutdown and is '
+                'closing IPC connections for this child!\n\n'
                 'Cancelling debug request!\n'
             )
             log.cancel(message)
@@ -589,7 +591,6 @@ async def lock_stdio_for_peer(
             f'remote task: {subactor_task_uid}\n'
         )
         DebugStatus.shield_sigint()
-        Lock._blocked.add(ctx.cid)
 
         # NOTE: we use the IPC ctx's cancel scope directly in order to
         # ensure that on any transport failure, or cancellation request
@@ -648,31 +649,34 @@ async def lock_stdio_for_peer(
         )
 
     except BaseException as req_err:
-        message: str = (
-            f'On behalf of remote peer {subactor_task_uid!r}@{ctx.chan.uid!r}\n\n'
-            'Forcing `Lock.release()` for req-ctx since likely an '
-            'internal error!\n\n'
-            f'{ctx}'
+        fail_reason: str = (
+            f'on behalf of peer\n\n'
+            f'x)<=\n'
+            f'  |_{subactor_task_uid!r}@{ctx.chan.uid!r}\n\n'
+
+            'Forcing `Lock.release()` due to acquire failure!\n\n'
+            f'x)=> {ctx}\n'
         )
         if isinstance(req_err, trio.Cancelled):
-            message = (
-                'Cancelled during root TTY-lock dialog\n'
+            fail_reason = (
+                'Cancelled during stdio-mutex request '
                 +
-                message
+                fail_reason
             )
         else:
-            message = (
-                'Errored during root TTY-lock dialog\n'
+            fail_reason = (
+                'Failed to deliver stdio-mutex request '
                 +
-                message
+                fail_reason
             )
 
-        log.exception(message)
-        Lock.release() #force=True)
+        log.exception(fail_reason)
+        Lock.release()
         raise
 
     finally:
-        Lock._blocked.remove(ctx.cid)
+        if lock_blocked:
+            Lock._blocked.remove(ctx.cid)
 
         # wakeup any waiters since the lock was (presumably)
         # released, possibly only temporarily.
@@ -1167,7 +1171,7 @@ async def request_root_stdio_lock(
             ):
                 log.cancel(
                     'Debug lock request was CANCELLED?\n\n'
-                    f'{req_ctx}\n'
+                    f'<=c) {req_ctx}\n'
                     # f'{pformat_cs(req_cs, var_name="req_cs")}\n\n'
                     # f'{pformat_cs(req_ctx._scope, var_name="req_ctx._scope")}\n\n'
                 )
@@ -1179,21 +1183,25 @@ async def request_root_stdio_lock(
                 message: str = (
                     'Failed during debug request dialog with root actor?\n\n'
                 )
-
-                if req_ctx:
+                if (req_ctx := DebugStatus.req_ctx):
                     message += (
-                        f'{req_ctx}\n'
+                        f'<=x) {req_ctx}\n\n'
                         f'Cancelling IPC ctx!\n'
                     )
-                    await req_ctx.cancel()
+                    try:
+                        await req_ctx.cancel()
+                    except trio.ClosedResourceError  as terr:
+                        ctx_err.add_note(
+                            # f'Failed with {type(terr)!r} x)> `req_ctx.cancel()` '
+                            f'Failed with `req_ctx.cancel()` <x) {type(terr)!r} '
+                        )
 
                 else:
-                    message += 'Failed during `Portal.open_context()` ?\n'
+                    message += 'Failed in `Portal.open_context()` call ??\n'
 
                 log.exception(message)
                 ctx_err.add_note(message)
                 raise ctx_err
-
 
     except (
         tractor.ContextCancelled,
@@ -1218,9 +1226,10 @@ async def request_root_stdio_lock(
         # -[ ]FURTHER, after we 'continue', we should be able to
         #   ctl-c out of the currently hanging task! 
         raise DebugRequestError(
-            'Failed to lock stdio from subactor IPC ctx!\n\n'
+            'Failed during stdio-locking dialog from root actor\n\n'
 
-            f'req_ctx: {DebugStatus.req_ctx}\n'
+            f'<=x)\n'
+            f'|_{DebugStatus.req_ctx}\n'
         ) from req_err
 
     finally:
@@ -1998,10 +2007,10 @@ async def _pause(
         # sanity, for when hackin on all this?
         if not isinstance(pause_err, trio.Cancelled):
             req_ctx: Context = DebugStatus.req_ctx
-            if req_ctx:
-                # XXX, bc the child-task in root might cancel it?
-                # assert req_ctx._scope.cancel_called
-                assert req_ctx.maybe_error
+            # if req_ctx:
+            #     # XXX, bc the child-task in root might cancel it?
+            #     # assert req_ctx._scope.cancel_called
+            #     assert req_ctx.maybe_error
 
         raise
 
@@ -2041,11 +2050,12 @@ def _set_trace(
     # root here? Bo
     log.pdb(
         f'{_pause_msg}\n'
-        '|\n'
-        # TODO: more compact pformating?
+        # '|\n'
+        f'>(\n'
+        f' |_ {task} @ {actor.uid}\n'
+        # ^-TODO-^ more compact pformating?
         # -[ ] make an `Actor.__repr()__`
         # -[ ] should we use `log.pformat_task_uid()`?
-        f'|_ {task} @ {actor.uid}\n'
     )
     # presuming the caller passed in the "api frame"
     # (the last frame before user code - like `.pause()`)
@@ -2541,9 +2551,9 @@ def _post_mortem(
     # here! Bo
     log.pdb(
         f'{_crash_msg}\n'
-        '|\n'
-        # f'|_ {current_task()}\n'
-        f'|_ {current_task()} @ {actor.uid}\n'
+        # '|\n'
+        f'x>(\n'
+        f'  |_ {current_task()} @ {actor.uid}\n'
 
         # f'|_ @{actor.uid}\n'
         # TODO: make an `Actor.__repr()__`
