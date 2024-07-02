@@ -66,10 +66,11 @@ from trio import (
 )
 
 from tractor.msg import (
-    pretty_struct,
-    NamespacePath,
-    types as msgtypes,
     MsgType,
+    NamespacePath,
+    Stop,
+    pretty_struct,
+    types as msgtypes,
 )
 from ._ipc import Channel
 from ._context import (
@@ -547,7 +548,8 @@ class Actor:
             ):
                 log.cancel(
                     'Waiting on cancel request to peer\n'
-                    f'`Portal.cancel_actor()` => {chan.uid}\n'
+                    f'c)=>\n'
+                    f' |_{chan.uid}\n'
                 )
 
                 # XXX: this is a soft wait on the channel (and its
@@ -644,12 +646,14 @@ class Actor:
                         # and
                         an_exit_cs.cancelled_caught
                     ):
-                        log.warning(
+                        report: str = (
                             'Timed out waiting on local actor-nursery to exit?\n'
                             f'{local_nursery}\n'
-                            f' |_{pformat(local_nursery._children)}\n'
                         )
-                        # await _debug.pause()
+                        if children := local_nursery._children:
+                            report += f' |_{pformat(children)}\n'
+
+                        log.warning(report)
 
                 if disconnected:
                     # if the transport died and this actor is still
@@ -821,14 +825,17 @@ class Actor:
                 # side,
             )]
         except KeyError:
-            log.warning(
+            report: str = (
                 'Ignoring invalid IPC ctx msg!\n\n'
-                f'<= sender: {uid}\n\n'
-                # XXX don't need right since it's always in msg?
-                # f'=> cid: {cid}\n\n'
-
-                f'{pretty_struct.pformat(msg)}\n'
+                f'<=? {uid}\n\n'
+                f'  |_{pretty_struct.pformat(msg)}\n'
             )
+            match msg:
+                case Stop():
+                    log.runtime(report)
+                case _:
+                    log.warning(report)
+
             return
 
         # if isinstance(msg, MsgTypeError):
@@ -1340,10 +1347,11 @@ class Actor:
             return True
 
         log.cancel(
-            'Cancel request for RPC task\n\n'
-            f'<= Actor._cancel_task(): {requesting_uid}\n\n'
-            f'=> {ctx._task}\n'
-            f'  |_ >> {ctx.repr_rpc}\n'
+            'Rxed cancel request for RPC task\n'
+            f'<=c) {requesting_uid}\n'
+            f'  |_{ctx._task}\n'
+            f'    >> {ctx.repr_rpc}\n'
+            # f'=> {ctx._task}\n'
             # f'  >> Actor._cancel_task() => {ctx._task}\n'
             # f'  |_ {ctx._task}\n\n'
 

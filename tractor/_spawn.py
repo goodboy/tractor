@@ -250,8 +250,9 @@ async def hard_kill(
 
     '''
     log.cancel(
-        'Terminating sub-proc:\n'
-        f'|_{proc}\n'
+        'Terminating sub-proc\n'
+        f'>x)\n'
+        f' |_{proc}\n'
     )
     # NOTE: this timeout used to do nothing since we were shielding
     # the ``.wait()`` inside ``new_proc()`` which will pretty much
@@ -297,8 +298,8 @@ async def hard_kill(
         log.critical(
             # 'Well, the #ZOMBIE_LORD_IS_HERE# to collect\n'
             '#T-800 deployed to collect zombie B0\n'
-            f'|\n'
-            f'|_{proc}\n'
+            f'>x)\n'
+            f' |_{proc}\n'
         )
         proc.kill()
 
@@ -326,8 +327,9 @@ async def soft_kill(
     uid: tuple[str, str] = portal.channel.uid
     try:
         log.cancel(
-            'Soft killing sub-actor via `Portal.cancel_actor()`\n'
-            f'|_{proc}\n'
+            'Soft killing sub-actor via portal request\n'
+            f'c)> {portal.chan.uid}\n'
+            f' |_{proc}\n'
         )
         # wait on sub-proc to signal termination
         await wait_func(proc)
@@ -556,8 +558,9 @@ async def trio_proc(
             # cancel result waiter that may have been spawned in
             # tandem if not done already
             log.cancel(
-                'Cancelling existing result waiter task for '
-                f'{subactor.uid}'
+                'Cancelling portal result reaper task\n'
+                f'>c)\n'
+                f' |_{subactor.uid}\n'
             )
             nursery.cancel_scope.cancel()
 
@@ -566,7 +569,11 @@ async def trio_proc(
         # allowed! Do this **after** cancellation/teardown to avoid
         # killing the process too early.
         if proc:
-            log.cancel(f'Hard reap sequence starting for {subactor.uid}')
+            log.cancel(
+                f'Hard reap sequence starting for subactor\n'
+                f'>x)\n'
+                f' |_{subactor}@{subactor.uid}\n'
+            )
 
             with trio.CancelScope(shield=True):
                 # don't clobber an ongoing pdb

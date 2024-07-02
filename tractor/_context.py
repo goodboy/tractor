@@ -933,13 +933,14 @@ class Context:
         self.cancel_called = True
 
         header: str = (
-            f'Cancelling ctx with peer from {side.upper()} side\n\n'
+            f'Cancelling ctx from {side.upper()}-side\n'
         )
         reminfo: str = (
             # ' =>\n'
-            f'Context.cancel() => {self.chan.uid}\n'
+            # f'Context.cancel() => {self.chan.uid}\n'
+            f'c)=> {self.chan.uid}\n'
             # f'{self.chan.uid}\n'
-            f'  |_ @{self.dst_maddr}\n'
+            f' |_ @{self.dst_maddr}\n'
             f'    >> {self.repr_rpc}\n'
             # f'    >> {self._nsf}() -> {codec}[dict]:\n\n'
             # TODO: pull msg-type from spec re #320
@@ -1267,6 +1268,12 @@ class Context:
 
     @property
     def maybe_error(self) -> BaseException|None:
+        '''
+        Return the (remote) error as outcome or `None`.
+
+        Remote errors take precedence over local ones.
+
+        '''
         le: BaseException|None = self._local_error
         re: RemoteActorError|ContextCancelled|None = self._remote_error
 
@@ -2182,9 +2189,16 @@ async def open_context_from_portal(
         # handled in the block above ^^^ !!
         # await _debug.pause()
         # log.cancel(
-        log.exception(
-            f'{ctx.side}-side of `Context` terminated with '
-            f'.outcome => {ctx.repr_outcome()}\n'
+        match scope_err:
+            case trio.Cancelled:
+                logmeth = log.cancel
+
+            # XXX explicitly report on any non-graceful-taskc cases
+            case _:
+                logmeth = log.exception
+
+        logmeth(
+            f'ctx {ctx.side!r}-side exited with {ctx.repr_outcome()}\n'
         )
 
         if debug_mode():

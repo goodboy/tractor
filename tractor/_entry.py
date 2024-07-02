@@ -265,7 +265,7 @@ def _trio_main(
     except BaseException as err:
         logmeth = log.error
         exit_status: str = (
-            'Main actor task crashed during exit?\n'
+            'Main actor task exited due to crash?\n'
             +
             nest_from_op(
                 input_op='x)>',  # closed by error
