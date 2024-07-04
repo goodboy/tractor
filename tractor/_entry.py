@@ -243,6 +243,7 @@ def _trio_main(
         nest_from_op(
             input_op=')>',  # like a "closed-to-play"-icon from super perspective
             tree_str=actor_info,
+            back_from_op=1,
         )
     )
     try:

@@ -441,10 +441,10 @@ class Actor:
 
             TransportClosed,
         ):
-            # XXX: This may propagate up from ``Channel._aiter_recv()``
-            # and ``MsgpackStream._inter_packets()`` on a read from the
+            # XXX: This may propagate up from `Channel._aiter_recv()`
+            # and `MsgpackStream._inter_packets()` on a read from the
             # stream particularly when the runtime is first starting up
-            # inside ``open_root_actor()`` where there is a check for
+            # inside `open_root_actor()` where there is a check for
             # a bound listener on the "arbiter" addr.  the reset will be
             # because the handshake was never meant took place.
             log.runtime(
@@ -509,8 +509,9 @@ class Actor:
             )
         except trio.Cancelled:
             log.cancel(
-                'IPC transport msg loop was cancelled for \n'
-                f'|_{chan}\n'
+                'IPC transport msg loop was cancelled\n'
+                f'c)>\n'
+                f' |_{chan}\n'
             )
             raise
 
@@ -547,9 +548,9 @@ class Actor:
 
             ):
                 log.cancel(
-                    'Waiting on cancel request to peer\n'
+                    'Waiting on cancel request to peer..\n'
                     f'c)=>\n'
-                    f' |_{chan.uid}\n'
+                    f'  |_{chan.uid}\n'
                 )
 
                 # XXX: this is a soft wait on the channel (and its
@@ -648,10 +649,14 @@ class Actor:
                     ):
                         report: str = (
                             'Timed out waiting on local actor-nursery to exit?\n'
-                            f'{local_nursery}\n'
+                            f'c)>\n'
+                            f' |_{local_nursery}\n'
                         )
                         if children := local_nursery._children:
-                            report += f' |_{pformat(children)}\n'
+                            # indent from above local-nurse repr
+                            report += (
+                                f'   |_{pformat(children)}\n'
+                            )
 
                         log.warning(report)
 
@@ -1238,8 +1243,9 @@ class Actor:
         # TODO: just use the new `Context.repr_rpc: str` (and
         # other) repr fields instead of doing this all manual..
         msg: str = (
-            f'Runtime cancel request from {requester_type}:\n\n'
-            f'<= .cancel(): {requesting_uid}\n\n'
+            f'Actor-runtime cancel request from {requester_type}\n\n'
+            f'<=c) {requesting_uid}\n'
+            f' |_{self}\n'
         )
 
         # TODO: what happens here when we self-cancel tho?
@@ -1349,7 +1355,7 @@ class Actor:
         log.cancel(
             'Rxed cancel request for RPC task\n'
             f'<=c) {requesting_uid}\n'
-            f'  |_{ctx._task}\n'
+            f' |_{ctx._task}\n'
             f'    >> {ctx.repr_rpc}\n'
             # f'=> {ctx._task}\n'
             # f'  >> Actor._cancel_task() => {ctx._task}\n'
@@ -1467,17 +1473,17 @@ class Actor:
             "IPC channel's "
         )
         rent_chan_repr: str = (
-            f'   |_{parent_chan}\n\n'
+            f' |_{parent_chan}\n\n'
             if parent_chan
             else ''
         )
         log.cancel(
             f'Cancelling {descr} RPC tasks\n\n'
-            f'<= canceller: {req_uid}\n'
+            f'<=c) {req_uid} [canceller]\n'
             f'{rent_chan_repr}'
-            f'=> cancellee: {self.uid}\n'
-            f'  |_{self}.cancel_rpc_tasks()\n'
-            f'  |_tasks: {len(tasks)}\n'
+            f'c)=> {self.uid} [cancellee]\n'
+            f'  |_{self} [with {len(tasks)} tasks]\n'
+            # f'  |_tasks: {len(tasks)}\n'
             # f'{tasks_str}'
         )
         for (
@@ -1935,9 +1941,15 @@ async def async_main(
                 with CancelScope(shield=True):
                     await actor._no_more_peers.wait()
 
-        teardown_report += ('-> All peer channels are complete\n')
+        teardown_report += (
+            '-> All peer channels are complete\n'
+        )
 
-    teardown_report += ('Actor runtime exited')
+    teardown_report += (
+        'Actor runtime exiting\n'
+        f'>)\n'
+        f'|_{actor}\n'
+    )
     log.info(teardown_report)
 
 

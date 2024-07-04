@@ -2376,8 +2376,9 @@ async def open_context_from_portal(
                 and ctx.cancel_acked
             ):
                 log.cancel(
-                    f'Context cancelled by {ctx.side!r}-side task\n'
-                    f'|_{ctx._task}\n\n'
+                    f'Context cancelled by local {ctx.side!r}-side task\n'
+                    f'c)>\n'
+                    f' |_{ctx._task}\n\n'
                     f'{repr(scope_err)}\n'
                 )
 
@@ -2393,8 +2394,10 @@ async def open_context_from_portal(
                     # type_only=True,
                 )
                 log.cancel(
-                    f'Context terminated due to local {ctx.side!r}-side error:\n\n'
-                    f'{ctx.chan.uid} => {outcome_str}\n'
+                    f'Context terminated due to {ctx.side!r}-side\n\n'
+                    # TODO: do an x)> on err and c)> only for ctxc?
+                    f'c)> {outcome_str}\n'
+                    f' |_{ctx.repr_rpc}\n'
                 )
 
         # FINALLY, remove the context from runtime tracking and
