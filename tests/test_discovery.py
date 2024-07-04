@@ -26,7 +26,7 @@ async def test_reg_then_unreg(reg_addr):
         portal = await n.start_actor('actor', enable_modules=[__name__])
         uid = portal.channel.uid
 
-        async with tractor.get_arbiter(*reg_addr) as aportal:
+        async with tractor.get_registry(*reg_addr) as aportal:
             # this local actor should be the arbiter
             assert actor is aportal.actor
 
@@ -160,7 +160,7 @@ async def spawn_and_check_registry(
     async with tractor.open_root_actor(
         registry_addrs=[reg_addr],
     ):
-        async with tractor.get_arbiter(*reg_addr) as portal:
+        async with tractor.get_registry(*reg_addr) as portal:
             # runtime needs to be up to call this
             actor = tractor.current_actor()
 
@@ -298,7 +298,7 @@ async def close_chans_before_nursery(
     async with tractor.open_root_actor(
         registry_addrs=[reg_addr],
     ):
-        async with tractor.get_arbiter(*reg_addr) as aportal:
+        async with tractor.get_registry(*reg_addr) as aportal:
             try:
                 get_reg = partial(unpack_reg, aportal)
 

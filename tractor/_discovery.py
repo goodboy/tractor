@@ -26,8 +26,8 @@ from typing import (
     TYPE_CHECKING,
 )
 from contextlib import asynccontextmanager as acm
-import warnings
 
+from tractor.log import get_logger
 from .trionics import gather_contexts
 from ._ipc import _connect_chan, Channel
 from ._portal import (
@@ -40,9 +40,11 @@ from ._state import (
     _runtime_vars,
 )
 
-
 if TYPE_CHECKING:
     from ._runtime import Actor
+
+
+log = get_logger(__name__)
 
 
 @acm
@@ -56,14 +58,12 @@ async def get_registry(
 ]:
     '''
     Return a portal instance connected to a local or remote
-    arbiter.
+    registry-service actor; if a connection already exists re-use it
+    (presumably to call a `.register_actor()` registry runtime RPC
+    ep).
 
     '''
-    actor = current_actor()
-
-    if not actor:
-        raise RuntimeError("No actor instance has been defined yet?")
-
+    actor: Actor = current_actor()
     if actor.is_registrar:
         # we're already the arbiter
         # (likely a re-entrant call from the arbiter actor)
@@ -72,25 +72,14 @@ async def get_registry(
             Channel((host, port))
         )
     else:
+        # TODO: try to look pre-existing connection from
+        # `Actor._peers` and use it instead?
         async with (
             _connect_chan(host, port) as chan,
             open_portal(chan) as regstr_ptl,
         ):
             yield regstr_ptl
 
-
-
-# TODO: deprecate and this remove _arbiter form!
-@acm
-async def get_arbiter(*args, **kwargs):
-    warnings.warn(
-        '`tractor.get_arbiter()` is now deprecated!\n'
-        'Use `.get_registry()` instead!',
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    async with get_registry(*args, **kwargs) as to_yield:
-        yield to_yield
 
 
 @acm
@@ -110,22 +99,53 @@ async def get_root(
         yield portal
 
 
+def get_peer_by_name(
+    name: str,
+    # uuid: str|None = None,
+
+) -> list[Channel]|None:  # at least 1
+    '''
+    Scan for an existing connection (set) to a named actor
+    and return any channels from `Actor._peers`.
+
+    This is an optimization method over querying the registrar for
+    the same info.
+
+    '''
+    actor: Actor = current_actor()
+    to_scan: dict[tuple, list[Channel]] = actor._peers.copy()
+    pchan: Channel|None = actor._parent_chan
+    if pchan:
+        to_scan[pchan.uid].append(pchan)
+
+    for aid, chans in to_scan.items():
+        _, peer_name = aid
+        if name == peer_name:
+            if not chans:
+                log.warning(
+                    'No IPC chans for matching peer {peer_name}\n'
+                )
+                continue
+            return chans
+
+    return None
+
+
 @acm
 async def query_actor(
     name: str,
-    arbiter_sockaddr: tuple[str, int] | None = None,
-    regaddr: tuple[str, int] | None = None,
+    regaddr: tuple[str, int]|None = None,
 
 ) -> AsyncGenerator[
-    tuple[str, int] | None,
+    tuple[str, int]|None,
     None,
 ]:
     '''
-    Make a transport address lookup for an actor name to a specific
-    registrar.
+    Lookup a transport address (by actor name) via querying a registrar
+    listening @ `regaddr`.
 
-    Returns the (socket) address or ``None`` if no entry under that
-    name exists for the given registrar listening @ `regaddr`.
+    Returns the transport protocol (socket) address or `None` if no
+    entry under that name exists.
 
     '''
     actor: Actor = current_actor()
@@ -137,14 +157,10 @@ async def query_actor(
             'The current actor IS the registry!?'
         )
 
-    if arbiter_sockaddr is not None:
-        warnings.warn(
-            '`tractor.query_actor(regaddr=<blah>)` is deprecated.\n'
-            'Use `registry_addrs: list[tuple]` instead!',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        regaddr: list[tuple[str, int]] = arbiter_sockaddr
+    maybe_peers: list[Channel]|None = get_peer_by_name(name)
+    if maybe_peers:
+        yield maybe_peers[0].raddr
+        return
 
     reg_portal: Portal
     regaddr: tuple[str, int] = regaddr or actor.reg_addrs[0]
@@ -160,9 +176,27 @@ async def query_actor(
 
 
 @acm
+async def maybe_open_portal(
+    addr: tuple[str, int],
+    name: str,
+):
+    async with query_actor(
+        name=name,
+        regaddr=addr,
+    ) as sockaddr:
+        pass
+
+    if sockaddr:
+        async with _connect_chan(*sockaddr) as chan:
+            async with open_portal(chan) as portal:
+                yield portal
+    else:
+        yield None
+
+
+@acm
 async def find_actor(
     name: str,
-    arbiter_sockaddr: tuple[str, int]|None = None,
     registry_addrs: list[tuple[str, int]]|None = None,
 
     only_first: bool = True,
@@ -179,29 +213,12 @@ async def find_actor(
     known to the arbiter.
 
     '''
-    if arbiter_sockaddr is not None:
-        warnings.warn(
-            '`tractor.find_actor(arbiter_sockaddr=<blah>)` is deprecated.\n'
-            'Use `registry_addrs: list[tuple]` instead!',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        registry_addrs: list[tuple[str, int]] = [arbiter_sockaddr]
-
-    @acm
-    async def maybe_open_portal_from_reg_addr(
-        addr: tuple[str, int],
-    ):
-        async with query_actor(
-            name=name,
-            regaddr=addr,
-        ) as sockaddr:
-            if sockaddr:
-                async with _connect_chan(*sockaddr) as chan:
-                    async with open_portal(chan) as portal:
-                        yield portal
-            else:
-                yield None
+    # optimization path, use any pre-existing peer channel
+    maybe_peers: list[Channel]|None = get_peer_by_name(name)
+    if maybe_peers and only_first:
+        async with open_portal(maybe_peers[0]) as peer_portal:
+            yield peer_portal
+            return
 
     if not registry_addrs:
         # XXX NOTE: make sure to dynamically read the value on
@@ -217,10 +234,13 @@ async def find_actor(
     maybe_portals: list[
         AsyncContextManager[tuple[str, int]]
     ] = list(
-        maybe_open_portal_from_reg_addr(addr)
+        maybe_open_portal(
+            addr=addr,
+            name=name,
+        )
         for addr in registry_addrs
     )
-
+    portals: list[Portal]
     async with gather_contexts(
         mngrs=maybe_portals,
     ) as portals:
@@ -254,31 +274,31 @@ async def find_actor(
 @acm
 async def wait_for_actor(
     name: str,
-    arbiter_sockaddr: tuple[str, int] | None = None,
     registry_addr: tuple[str, int] | None = None,
 
 ) -> AsyncGenerator[Portal, None]:
     '''
-    Wait on an actor to register with the arbiter.
-
-    A portal to the first registered actor is returned.
+    Wait on at least one peer actor to register `name` with the
+    registrar, yield a `Portal to the first registree.
 
     '''
     actor: Actor = current_actor()
 
-    if arbiter_sockaddr is not None:
-        warnings.warn(
-            '`tractor.wait_for_actor(arbiter_sockaddr=<foo>)` is deprecated.\n'
-            'Use `registry_addr: tuple` instead!',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        registry_addr: tuple[str, int] = arbiter_sockaddr
+    # optimization path, use any pre-existing peer channel
+    maybe_peers: list[Channel]|None = get_peer_by_name(name)
+    if maybe_peers:
+        async with open_portal(maybe_peers[0]) as peer_portal:
+            yield peer_portal
+            return
 
+    regaddr: tuple[str, int] = (
+        registry_addr
+        or
+        actor.reg_addrs[0]
+    )
     # TODO: use `.trionics.gather_contexts()` like
     # above in `find_actor()` as well?
     reg_portal: Portal
-    regaddr: tuple[str, int] = registry_addr or actor.reg_addrs[0]
     async with get_registry(*regaddr) as reg_portal:
         sockaddrs = await reg_portal.run_from_ns(
             'self',

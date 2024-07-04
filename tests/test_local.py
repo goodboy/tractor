@@ -38,7 +38,7 @@ async def test_self_is_registered_localportal(reg_addr):
     "Verify waiting on the arbiter to register itself using a local portal."
     actor = tractor.current_actor()
     assert actor.is_arbiter
-    async with tractor.get_arbiter(*reg_addr) as portal:
+    async with tractor.get_registry(*reg_addr) as portal:
         assert isinstance(portal, tractor._portal.LocalPortal)
 
         with trio.fail_after(0.2):

@@ -111,25 +111,26 @@ class Actor:
     '''
     The fundamental "runtime" concurrency primitive.
 
-    An *actor* is the combination of a regular Python process executing
-    a ``trio`` task tree, communicating with other actors through
-    "memory boundary portals" - which provide a native async API around
-    IPC transport "channels" which themselves encapsulate various
-    (swappable) network protocols.
+    An "actor" is the combination of a regular Python process
+    executing a `trio.run()` task tree, communicating with other
+    "actors" through "memory boundary portals": `Portal`, which
+    provide a high-level async API around IPC "channels" (`Channel`)
+    which themselves encapsulate various (swappable) network
+    transport protocols for sending msgs between said memory domains
+    (processes, hosts, non-GIL threads).
 
-
-    Each "actor" is ``trio.run()`` scheduled "runtime" composed of
-    many concurrent tasks in a single thread. The "runtime" tasks
-    conduct a slew of low(er) level functions to make it possible
-    for message passing between actors as well as the ability to
-    create new actors (aka new "runtimes" in new processes which
-    are supervised via a nursery construct). Each task which sends
-    messages to a task in a "peer" (not necessarily a parent-child,
+    Each "actor" is `trio.run()` scheduled "runtime" composed of many
+    concurrent tasks in a single thread. The "runtime" tasks conduct
+    a slew of low(er) level functions to make it possible for message
+    passing between actors as well as the ability to create new
+    actors (aka new "runtimes" in new processes which are supervised
+    via an "actor-nursery" construct). Each task which sends messages
+    to a task in a "peer" actor (not necessarily a parent-child,
     depth hierarchy) is able to do so via an "address", which maps
     IPC connections across memory boundaries, and a task request id
-    which allows for per-actor tasks to send and receive messages
-    to specific peer-actor tasks with which there is an ongoing
-    RPC/IPC dialog.
+    which allows for per-actor tasks to send and receive messages to
+    specific peer-actor tasks with which there is an ongoing RPC/IPC
+    dialog.
 
     '''
     # ugh, we need to get rid of this and replace with a "registry" sys
@@ -226,17 +227,20 @@ class Actor:
         # by the user (currently called the "arbiter")
         self._spawn_method: str = spawn_method
 
-        self._peers: defaultdict = defaultdict(list)
+        self._peers: defaultdict[
+            str,  # uaid
+            list[Channel],  # IPC conns from peer
+        ] = defaultdict(list)
         self._peer_connected: dict[tuple[str, str], trio.Event] = {}
         self._no_more_peers = trio.Event()
         self._no_more_peers.set()
+
+        # RPC state
         self._ongoing_rpc_tasks = trio.Event()
         self._ongoing_rpc_tasks.set()
-
-        # (chan, cid) -> (cancel_scope, func)
         self._rpc_tasks: dict[
-            tuple[Channel, str],
-            tuple[Context, Callable, trio.Event]
+            tuple[Channel, str],  # (chan, cid)
+            tuple[Context, Callable, trio.Event]  # (ctx=>, fn(), done?)
         ] = {}
 
         # map {actor uids -> Context}
@@ -313,7 +317,10 @@ class Actor:
         event = self._peer_connected.setdefault(uid, trio.Event())
         await event.wait()
         log.debug(f'{uid!r} successfully connected back to us')
-        return event, self._peers[uid][-1]
+        return (
+            event,
+            self._peers[uid][-1],
+        )
 
     def load_modules(
         self,
@@ -404,32 +411,11 @@ class Actor:
         '''
         self._no_more_peers = trio.Event()  # unset by making new
         chan = Channel.from_stream(stream)
-        their_uid: tuple[str, str]|None = chan.uid
-        if their_uid:
-            log.warning(
-                f'Re-connection from already known {their_uid}'
-            )
-        else:
-           log.runtime(f'New connection to us @{chan.raddr}')
-
-        con_status: str = ''
-
-        # TODO: remove this branch since can never happen?
-        # NOTE: `.uid` is only set after first contact
-        if their_uid:
-            con_status = (
-                'IPC Re-connection from already known peer?\n'
-            )
-        else:
-            con_status = (
-                'New inbound IPC connection <=\n'
-            )
-
-        con_status += (
+        con_status: str = (
+            'New inbound IPC connection <=\n'
             f'|_{chan}\n'
-            # f' |_@{chan.raddr}\n\n'
-            # ^-TODO-^ remove since alfready in chan.__repr__()?
         )
+
         # send/receive initial handshake response
         try:
             uid: tuple|None = await self._do_handshake(chan)
@@ -454,9 +440,22 @@ class Actor:
             )
             return
 
+        familiar: str = 'new-peer'
+        if _pre_chan := self._peers.get(uid):
+            familiar: str = 'pre-existing-peer'
+        uid_short: str = f'{uid[0]}[{uid[1][-6:]}]'
         con_status += (
-            f' -> Handshake with actor `{uid[0]}[{uid[1][-6:]}]` complete\n'
+            f' -> Handshake with {familiar} `{uid_short}` complete\n'
         )
+
+        if _pre_chan:
+            log.warning(
+            # con_status += (
+            # ^TODO^ swap once we minimize conn duplication
+                f' -> Wait, we already have IPC with `{uid_short}`??\n'
+                f'   |_{_pre_chan}\n'
+            )
+
         # IPC connection tracking for both peers and new children:
         # - if this is a new channel to a locally spawned
         #   sub-actor there will be a spawn wait even registered
@@ -1552,7 +1551,7 @@ class Actor:
     def accept_addr(self) -> tuple[str, int]:
         '''
         Primary address to which the IPC transport server is
-        bound.
+        bound and listening for new connections.
 
         '''
         # throws OSError on failure
@@ -1569,6 +1568,7 @@ class Actor:
     def get_chans(
         self,
         uid: tuple[str, str],
+
     ) -> list[Channel]:
         '''
         Return all IPC channels to the actor with provided `uid`.

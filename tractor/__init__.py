@@ -31,7 +31,7 @@ from ._streaming import (
     stream as stream,
 )
 from ._discovery import (
-    get_arbiter as get_arbiter,
+    get_registry as get_registry,
     find_actor as find_actor,
     wait_for_actor as wait_for_actor,
     query_actor as query_actor,
