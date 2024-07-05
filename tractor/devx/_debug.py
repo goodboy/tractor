@@ -1552,7 +1552,7 @@ def shield_sigint_handler(
     log.devx('exiting SIGINT')
 
 
-_pause_msg: str = 'Attaching to pdb REPL in actor'
+_pause_msg: str = 'Opening a pdb REPL in paused actor'
 
 
 class DebugRequestError(RuntimeError):
@@ -2050,9 +2050,8 @@ def _set_trace(
     # root here? Bo
     log.pdb(
         f'{_pause_msg}\n'
-        # '|\n'
         f'>(\n'
-        f' |_ {task} @ {actor.uid}\n'
+        f'|_ {task} @ {actor.uid}\n'
         # ^-TODO-^ more compact pformating?
         # -[ ] make an `Actor.__repr()__`
         # -[ ] should we use `log.pformat_task_uid()`?
@@ -2523,7 +2522,7 @@ async def breakpoint(
 
 
 _crash_msg: str = (
-    'Attaching to pdb REPL in crashed actor'
+    'Opening a pdb REPL in crashed actor'
 )
 
 
@@ -2551,11 +2550,9 @@ def _post_mortem(
     # here! Bo
     log.pdb(
         f'{_crash_msg}\n'
-        # '|\n'
         f'x>(\n'
-        f'  |_ {current_task()} @ {actor.uid}\n'
+        f' |_ {current_task()} @ {actor.uid}\n'
 
-        # f'|_ @{actor.uid}\n'
         # TODO: make an `Actor.__repr()__`
         # f'|_ {current_task()} @ {actor.name}\n'
     )
