@@ -299,7 +299,9 @@ def do_ctlc(
     # needs some further investigation potentially...
     expect_prompt: bool = not _ci_env,
 
-) -> None:
+) -> str|None:
+
+    before: str|None = None
 
     # make sure ctl-c sends don't do anything but repeat output
     for _ in range(count):
@@ -309,14 +311,17 @@ def do_ctlc(
         # TODO: figure out why this makes CI fail..
         # if you run this test manually it works just fine..
         if expect_prompt:
-            before = str(child.before.decode())
             time.sleep(delay)
             child.expect(PROMPT)
+            before = str(child.before.decode())
             time.sleep(delay)
 
             if patt:
                 # should see the last line on console
                 assert patt in before
+
+    # return the console content up to the final prompt
+    return before
 
 
 def test_root_actor_bp_forever(
@@ -1085,9 +1090,9 @@ def test_pause_from_sync(
     )
     if ctlc:
         do_ctlc(child)
+        # ^NOTE^ subactor not spawned yet; don't need extra delay.
 
     child.sendline('c')
-
 
     # first `await tractor.pause()` inside `p.open_context()` body
     child.expect(PROMPT)
@@ -1109,7 +1114,27 @@ def test_pause_from_sync(
     )
 
     if ctlc:
-        do_ctlc(child)
+        do_ctlc(
+            child,
+            # NOTE: setting this to 0 (or some other sufficient
+            # small val) can cause the test to fail since the
+            # `subactor` suffers a race where the root/parent
+            # sends an actor-cancel prior to it hitting its pause
+            # point; by def the value is 0.1
+            delay=0.3,
+        )
+
+    # XXX, fwiw without a brief sleep here the SIGINT might actually
+    # trigger "subactor" cancellation by its parent  before the
+    # shield-handler is engaged.
+    #
+    # => similar to the `delay` input to `do_ctlc()` below, setting
+    # this too low can cause the test to fail since the `subactor`
+    # suffers a race where the root/parent sends an actor-cancel
+    # prior to the context task hitting its pause point (and thus
+    # engaging the `sigint_shield()` handler in time); this value
+    # seems be good enuf?
+    time.sleep(0.6)
 
     # one of the bg thread or subactor should have
     # `Lock.acquire()`-ed
@@ -1128,29 +1153,45 @@ def test_pause_from_sync(
             "('root'",
         ],
     }
+    conts: int = 0  # for debugging below matching logic on failure
     while attach_patts:
         child.sendline('c')
+        conts += 1
         child.expect(PROMPT)
         before = str(child.before.decode())
-        for key in attach_patts.copy():
+        for key in attach_patts:
             if key in before:
+                attach_key: str = key
                 expected_patts: str = attach_patts.pop(key)
                 assert_before(
                     child,
-                    [_pause_msg] + expected_patts
+                    [_pause_msg]
+                    +
+                    expected_patts
                 )
                 break
+        else:
+            pytest.fail(
+                f'No keys found?\n\n'
+                f'{attach_patts.keys()}\n\n'
+                f'{before}\n'
+            )
 
         # ensure no other task/threads engaged a REPL
         # at the same time as the one that was detected above.
-        for key, other_patts in attach_patts.items():
+        for key, other_patts in attach_patts.copy().items():
             assert not in_prompt_msg(
                 before,
                 other_patts,
             )
 
         if ctlc:
-            do_ctlc(child)
+            do_ctlc(
+                child,
+                patt=attach_key,
+                # NOTE same as comment above
+                delay=0.3,
+            )
 
     child.sendline('c')
     child.expect(pexpect.EOF)

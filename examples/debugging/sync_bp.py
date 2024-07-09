@@ -4,6 +4,13 @@ import time
 import trio
 import tractor
 
+# TODO: only import these when not running from test harness?
+# can we detect `pexpect` usage maybe?
+# from tractor.devx._debug import (
+#     get_lock,
+#     get_debug_req,
+# )
+
 
 def sync_pause(
     use_builtin: bool = False,
@@ -18,7 +25,13 @@ def sync_pause(
         breakpoint(hide_tb=hide_tb)
 
     else:
+        # TODO: maybe for testing some kind of cm style interface
+        # where the `._set_trace()` call doesn't happen until block
+        # exit?
+        # assert get_lock().ctx_in_debug is None
+        # assert get_debug_req().repl is None
         tractor.pause_from_sync()
+        # assert get_debug_req().repl is None
 
     if error:
         raise RuntimeError('yoyo sync code error')
@@ -41,10 +54,11 @@ async def start_n_sync_pause(
 async def main() -> None:
     async with (
         tractor.open_nursery(
-            # NOTE: required for pausing from sync funcs
-            maybe_enable_greenback=True,
             debug_mode=True,
-            # loglevel='cancel',
+            maybe_enable_greenback=True,
+            enable_stack_on_sig=True,
+            # loglevel='warning',
+            # loglevel='devx',
         ) as an,
         trio.open_nursery() as tn,
     ):
@@ -138,7 +152,9 @@ async def main() -> None:
                     # the case 2. from above still exists!
                     use_builtin=True,
                 ),
-                abandon_on_cancel=False,
+                # TODO: with this `False` we can hang!??!
+                # abandon_on_cancel=False,
+                abandon_on_cancel=True,
                 thread_name='inline_root_bg_thread',
             )
 
