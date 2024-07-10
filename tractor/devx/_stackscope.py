@@ -24,13 +24,24 @@ disjoint, parallel executing tasks in separate actors.
 
 '''
 from __future__ import annotations
+# from functools import partial
+from threading import (
+    current_thread,
+    Thread,
+    RLock,
+)
 import multiprocessing as mp
 from signal import (
     signal,
+    getsignal,
     SIGUSR1,
 )
-import traceback
-from typing import TYPE_CHECKING
+# import traceback
+from types import ModuleType
+from typing import (
+    Callable,
+    TYPE_CHECKING,
+)
 
 import trio
 from tractor import (
@@ -51,26 +62,45 @@ if TYPE_CHECKING:
 
 @trio.lowlevel.disable_ki_protection
 def dump_task_tree() -> None:
-    import stackscope
-    from tractor.log import get_console_log
+    '''
+    Do a classic `stackscope.extract()` task-tree dump to console at
+    `.devx()` level.
 
+    '''
+    import stackscope
     tree_str: str = str(
         stackscope.extract(
             trio.lowlevel.current_root_task(),
             recurse_child_tasks=True
         )
     )
-    log = get_console_log(
-        name=__name__,
-        level='cancel',
-    )
     actor: Actor = _state.current_actor()
+    thr: Thread = current_thread()
     log.devx(
         f'Dumping `stackscope` tree for actor\n'
-        f'{actor.name}: {actor}\n'
-        f' |_{mp.current_process()}\n\n'
+        f'{actor.uid}:\n'
+        f'|_{mp.current_process()}\n'
+        f'  |_{thr}\n'
+        f'    |_{actor}\n\n'
+
+        # start-of-trace-tree delimiter (mostly for testing)
+        '------ - ------\n'
+        '\n'
+        +
         f'{tree_str}\n'
+        +
+        # end-of-trace-tree delimiter (mostly for testing)
+        f'\n'
+        f'------ {actor.uid!r} ------\n'
     )
+    # TODO: can remove this right?
+    # -[ ] was original code from author
+    #
+    # print(
+    #     'DUMPING FROM PRINT\n'
+    #     +
+    #     content
+    # )
     # import logging
     # try:
     #     with open("/dev/tty", "w") as tty:
@@ -80,58 +110,130 @@ def dump_task_tree() -> None:
     #         "task_tree"
     #     ).exception("Error printing task tree")
 
+_handler_lock = RLock()
+_tree_dumped: bool = False
 
-def signal_handler(
+
+def dump_tree_on_sig(
     sig: int,
     frame: object,
 
     relay_to_subs: bool = True,
 
 ) -> None:
-    try:
-        trio.lowlevel.current_trio_token(
-        ).run_sync_soon(dump_task_tree)
-    except RuntimeError:
-        # not in async context -- print a normal traceback
-        traceback.print_stack()
+    global _tree_dumped, _handler_lock
+    with _handler_lock:
+        if _tree_dumped:
+            log.warning(
+                'Already dumped for this actor...??'
+            )
+            return
+
+        _tree_dumped = True
+
+        # actor: Actor = _state.current_actor()
+        log.devx(
+            'Trying to dump `stackscope` tree..\n'
+        )
+        try:
+            dump_task_tree()
+            # await actor._service_n.start_soon(
+            #     partial(
+            #         trio.to_thread.run_sync,
+            #         dump_task_tree,
+            #     )
+            # )
+            # trio.lowlevel.current_trio_token().run_sync_soon(
+            #     dump_task_tree
+            # )
+
+        except RuntimeError:
+            log.exception(
+                'Failed to dump `stackscope` tree..\n'
+            )
+            # not in async context -- print a normal traceback
+            # traceback.print_stack()
+            raise
+
+        except BaseException:
+            log.exception(
+                'Failed to dump `stackscope` tree..\n'
+            )
+            raise
+
+        log.devx(
+            'Supposedly we dumped just fine..?'
+        )
 
     if not relay_to_subs:
         return
 
     an: ActorNursery
     for an in _state.current_actor()._actoruid2nursery.values():
-
         subproc: ProcessType
         subactor: Actor
         for subactor, subproc, _ in an._children.values():
-            log.devx(
+            log.warning(
                 f'Relaying `SIGUSR1`[{sig}] to sub-actor\n'
                 f'{subactor}\n'
                 f' |_{subproc}\n'
             )
 
-            if isinstance(subproc, trio.Process):
-                subproc.send_signal(sig)
+            # bc of course stdlib can't have a std API.. XD
+            match subproc:
+                case trio.Process():
+                    subproc.send_signal(sig)
 
-            elif isinstance(subproc, mp.Process):
-                subproc._send_signal(sig)
+                case mp.Process():
+                    subproc._send_signal(sig)
 
 
 def enable_stack_on_sig(
-    sig: int = SIGUSR1
-) -> None:
+    sig: int = SIGUSR1,
+) -> ModuleType:
     '''
     Enable `stackscope` tracing on reception of a signal; by
     default this is SIGUSR1.
 
+    HOT TIP: a task/ctx-tree dump can be triggered from a shell with
+    fancy cmds.
+
+    For ex. from `bash` using `pgrep` and cmd-sustitution
+    (https://www.gnu.org/software/bash/manual/bash.html#Command-Substitution)
+    you could use:
+
+    >> kill -SIGUSR1 $(pgrep -f '<cmd>')
+
+    Or with with `xonsh` (which has diff capture-from-subproc syntax)
+
+    >> kill -SIGUSR1 @$(pgrep -f '<cmd>')
+
     '''
+    try:
+        import stackscope
+    except ImportError:
+        log.warning(
+            '`stackscope` not installed for use in debug mode!'
+        )
+        return None
+
+    handler: Callable|int = getsignal(sig)
+    if handler is dump_tree_on_sig:
+        log.devx(
+            'A `SIGUSR1` handler already exists?\n'
+            f'|_ {handler!r}\n'
+        )
+        return
+
     signal(
         sig,
-        signal_handler,
+        dump_tree_on_sig,
     )
-    # NOTE: not the above can be triggered from
-    # a (xonsh) shell using:
-    # kill -SIGUSR1 @$(pgrep -f '<cmd>')
-    #
-    # for example if you were looking to trace a `pytest` run
-    # kill -SIGUSR1 @$(pgrep -f 'pytest')
+    log.devx(
+        'Enabling trace-trees on `SIGUSR1` '
+        'since `stackscope` is installed @ \n'
+        f'{stackscope!r}\n\n'
+        f'With `SIGUSR1` handler\n'
+        f'|_{dump_tree_on_sig}\n'
+    )
+    return stackscope

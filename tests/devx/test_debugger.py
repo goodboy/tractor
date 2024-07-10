@@ -16,15 +16,11 @@ import platform
 import time
 
 import pytest
-import pexpect
 from pexpect.exceptions import (
     TIMEOUT,
     EOF,
 )
 
-from tractor._testing import (
-    mk_cmd,
-)
 from tractor.devx._debug import (
     _pause_msg,
     _crash_msg,
@@ -32,6 +28,9 @@ from tractor.devx._debug import (
 )
 from .conftest import (
     _ci_env,
+    expect,
+    in_prompt_msg,
+    assert_before,
 )
 
 # TODO: The next great debugger audit could be done by you!
@@ -69,152 +68,7 @@ has_nested_actors = pytest.mark.has_nested_actors
 # )
 
 
-@pytest.fixture
-def spawn(
-    start_method,
-    testdir,
-    reg_addr,
-
-) -> 'pexpect.spawn':
-    '''
-    Use the `pexpect` module shipped via `testdir.spawn()` to
-    run an `./examples/..` script by name.
-
-    '''
-    if start_method != 'trio':
-        pytest.skip(
-            '`pexpect` based tests only supported on `trio` backend'
-        )
-
-    def _spawn(
-        cmd: str,
-        **mkcmd_kwargs,
-    ):
-        return testdir.spawn(
-            cmd=mk_cmd(
-                cmd,
-                **mkcmd_kwargs,
-            ),
-            expect_timeout=3,
-        )
-
-    # such that test-dep can pass input script name.
-    return _spawn
-
-
 PROMPT = r"\(Pdb\+\)"
-
-
-def expect(
-    child,
-
-    # prompt by default
-    patt: str = PROMPT,
-
-    **kwargs,
-
-) -> None:
-    '''
-    Expect wrapper that prints last seen console
-    data before failing.
-
-    '''
-    try:
-        child.expect(
-            patt,
-            **kwargs,
-        )
-    except TIMEOUT:
-        before = str(child.before.decode())
-        print(before)
-        raise
-
-
-def in_prompt_msg(
-    prompt: str,
-    parts: list[str],
-
-    pause_on_false: bool = False,
-    print_prompt_on_false: bool = True,
-
-) -> bool:
-    '''
-    Predicate check if (the prompt's) std-streams output has all
-    `str`-parts in it.
-
-    Can be used in test asserts for bulk matching expected
-    log/REPL output for a given `pdb` interact point.
-
-    '''
-    __tracebackhide__: bool = False
-
-    for part in parts:
-        if part not in prompt:
-            if pause_on_false:
-                import pdbp
-                pdbp.set_trace()
-
-            if print_prompt_on_false:
-                print(prompt)
-
-            return False
-
-    return True
-
-
-# TODO: todo support terminal color-chars stripping so we can match
-# against call stack frame output from the the 'll' command the like!
-# -[ ] SO answer for stipping ANSI codes: https://stackoverflow.com/a/14693789
-def assert_before(
-    child,
-    patts: list[str],
-
-    **kwargs,
-
-) -> None:
-    __tracebackhide__: bool = False
-
-    # as in before the prompt end
-    before: str = str(child.before.decode())
-    assert in_prompt_msg(
-        prompt=before,
-        parts=patts,
-
-        **kwargs
-    )
-
-
-@pytest.fixture(
-    params=[False, True],
-    ids='ctl-c={}'.format,
-)
-def ctlc(
-    request,
-    ci_env: bool,
-
-) -> bool:
-
-    use_ctlc = request.param
-
-    node = request.node
-    markers = node.own_markers
-    for mark in markers:
-        if mark.name == 'has_nested_actors':
-            pytest.skip(
-                f'Test {node} has nested actors and fails with Ctrl-C.\n'
-                f'The test can sometimes run fine locally but until'
-                ' we solve' 'this issue this CI test will be xfail:\n'
-                'https://github.com/goodboy/tractor/issues/320'
-            )
-
-    if use_ctlc:
-        # XXX: disable pygments highlighting for auto-tests
-        # since some envs (like actions CI) will struggle
-        # the the added color-char encoding..
-        from tractor.devx._debug import TractorConfig
-        TractorConfig.use_pygements = False
-
-    yield use_ctlc
 
 
 @pytest.mark.parametrize(
@@ -281,7 +135,7 @@ def test_root_actor_bp(spawn, user_in_out):
     child.expect('\r\n')
 
     # process should exit
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
     if expect_err_str is None:
         assert 'Error' not in str(child.before)
@@ -365,7 +219,7 @@ def test_root_actor_bp_forever(
 
     # quit out of the loop
     child.sendline('q')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 @pytest.mark.parametrize(
@@ -430,7 +284,7 @@ def test_subactor_error(
     child.expect('\r\n')
 
     # process should exit
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 def test_subactor_breakpoint(
@@ -493,7 +347,7 @@ def test_subactor_breakpoint(
     child.sendline('c')
 
     # process should exit
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
     before = str(child.before.decode())
     assert in_prompt_msg(
@@ -636,7 +490,7 @@ def test_multi_subactors(
 
     # process should exit
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
     # repeat of previous multierror for final output
     assert_before(child, [
@@ -776,7 +630,7 @@ def test_multi_daemon_subactors(
     )
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 @has_nested_actors
@@ -852,7 +706,7 @@ def test_multi_subactors_root_errors(
     ])
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
     assert_before(child, [
         # "Attaching to pdb in crashed actor: ('root'",
@@ -982,7 +836,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
 
     for i in range(3):
         try:
-            child.expect(pexpect.EOF, timeout=0.5)
+            child.expect(EOF, timeout=0.5)
             break
         except TIMEOUT:
             child.sendline('c')
@@ -1024,7 +878,7 @@ def test_root_cancels_child_context_during_startup(
         do_ctlc(child)
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 def test_different_debug_mode_per_actor(
@@ -1045,7 +899,7 @@ def test_different_debug_mode_per_actor(
         do_ctlc(child)
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
     before = str(child.before.decode())
 
@@ -1196,7 +1050,7 @@ def test_pause_from_sync(
             )
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 def test_post_mortem_api(
@@ -1301,7 +1155,7 @@ def test_post_mortem_api(
     # )
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 def test_shield_pause(
@@ -1376,7 +1230,7 @@ def test_shield_pause(
         ]
     )
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 # TODO: better error for "non-ideal" usage from the root actor.

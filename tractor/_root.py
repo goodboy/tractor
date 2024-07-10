@@ -80,7 +80,7 @@ async def open_root_actor(
 
     # enables the multi-process debugger support
     debug_mode: bool = False,
-    maybe_enable_greenback: bool = False,  # `.pause_from_sync()/breakpoint()` support
+    maybe_enable_greenback: bool = True,  # `.pause_from_sync()/breakpoint()` support
     enable_stack_on_sig: bool = False,
 
     # internal logging
@@ -233,14 +233,8 @@ async def open_root_actor(
         and
         enable_stack_on_sig
     ):
-        try:
-            logger.info('Enabling `stackscope` traces on SIGUSR1')
-            from .devx import enable_stack_on_sig
-            enable_stack_on_sig()
-        except ImportError:
-            logger.warning(
-                '`stackscope` not installed for use in debug mode!'
-            )
+        from .devx._stackscope import enable_stack_on_sig
+        enable_stack_on_sig()
 
     # closed into below ping task-func
     ponged_addrs: list[tuple[str, int]] = []
