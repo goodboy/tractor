@@ -13,7 +13,6 @@ TODO:
 from functools import partial
 import itertools
 import platform
-import pathlib
 import time
 
 import pytest
@@ -24,7 +23,7 @@ from pexpect.exceptions import (
 )
 
 from tractor._testing import (
-    examples_dir,
+    mk_cmd,
 )
 from tractor.devx._debug import (
     _pause_msg,
@@ -52,15 +51,6 @@ if platform.system() == 'Windows':
     )
 
 
-def mk_cmd(ex_name: str) -> str:
-    '''
-    Generate a command suitable to pass to ``pexpect.spawn()``.
-
-    '''
-    script_path: pathlib.Path = examples_dir() / 'debugging' / f'{ex_name}.py'
-    return ' '.join(['python', str(script_path)])
-
-
 # TODO: was trying to this xfail style but some weird bug i see in CI
 # that's happening at collect time.. pretty soon gonna dump actions i'm
 # thinkin...
@@ -84,19 +74,31 @@ def spawn(
     start_method,
     testdir,
     reg_addr,
-) -> 'pexpect.spawn':
 
+) -> 'pexpect.spawn':
+    '''
+    Use the `pexpect` module shipped via `testdir.spawn()` to
+    run an `./examples/..` script by name.
+
+    '''
     if start_method != 'trio':
         pytest.skip(
-            "Debugger tests are only supported on the trio backend"
+            '`pexpect` based tests only supported on `trio` backend'
         )
 
-    def _spawn(cmd):
+    def _spawn(
+        cmd: str,
+        **mkcmd_kwargs,
+    ):
         return testdir.spawn(
-            cmd=mk_cmd(cmd),
+            cmd=mk_cmd(
+                cmd,
+                **mkcmd_kwargs,
+            ),
             expect_timeout=3,
         )
 
+    # such that test-dep can pass input script name.
     return _spawn
 
 
@@ -1121,7 +1123,7 @@ def test_pause_from_sync(
             # `subactor` suffers a race where the root/parent
             # sends an actor-cancel prior to it hitting its pause
             # point; by def the value is 0.1
-            delay=0.3,
+            delay=0.4,
         )
 
     # XXX, fwiw without a brief sleep here the SIGINT might actually
@@ -1190,7 +1192,7 @@ def test_pause_from_sync(
                 child,
                 patt=attach_key,
                 # NOTE same as comment above
-                delay=0.3,
+                delay=0.4,
             )
 
     child.sendline('c')
