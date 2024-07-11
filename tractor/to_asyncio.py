@@ -276,7 +276,10 @@ def _run_asyncio_task(
     chan._aio_task: asyncio.Task = task
 
     # XXX TODO XXX get this actually workin.. XD
-    # maybe setup `greenback` for `asyncio`-side task REPLing
+    # -[ ] we need logic to setup `greenback` for `asyncio`-side task
+    #     REPLing.. which should normally be nearly the same as for
+    #     `trio`?
+    # -[ ] add to a new `.devx._greenback.maybe_init_for_asyncio()`?
     if (
         debug_mode()
         and
@@ -305,15 +308,22 @@ def _run_asyncio_task(
 
             msg: str = (
                 'Infected `asyncio` task {etype_str}\n'
-                f'|_{task}\n'
             )
             if isinstance(terr, CancelledError):
+                msg += (
+                    f'c)>\n'
+                    f' |_{task}\n'
+                )
                 log.cancel(
                     msg.format(etype_str='cancelled')
                 )
             else:
+                msg += (
+                    f'x)>\n'
+                    f' |_{task}\n'
+                )
                 log.exception(
-                    msg.format(etype_str='cancelled')
+                    msg.format(etype_str='errored')
                 )
 
             assert type(terr) is type(aio_err), (
@@ -619,9 +629,10 @@ def run_as_asyncio_guest(
         #     )
 
         def trio_done_callback(main_outcome):
-            log.info(
-                f'trio_main finished with\n'
-                f'|_{main_outcome!r}'
+            log.runtime(
+                f'`trio` guest-run finishing with outcome\n'
+                f'>) {main_outcome}\n'
+                f'|_{trio_done_fute}\n'
             )
 
             if isinstance(main_outcome, Error):
@@ -642,6 +653,12 @@ def run_as_asyncio_guest(
 
             else:
                 trio_done_fute.set_result(main_outcome)
+
+            log.info(
+                f'`trio` guest-run finished with outcome\n'
+                f')>\n'
+                f'|_{trio_done_fute}\n'
+            )
 
         startup_msg += (
             f'-> created {trio_done_callback!r}\n'
@@ -681,7 +698,8 @@ def run_as_asyncio_guest(
             # error path in `asyncio`'s runtime..?
             asyncio.CancelledError,
 
-        ) as fute_err:
+        ) as _fute_err:
+            fute_err = _fute_err
             err_message: str = (
                 'main `asyncio` task '
             )
