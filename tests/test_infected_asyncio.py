@@ -21,9 +21,11 @@ import trio
 import tractor
 from tractor import (
     current_actor,
+    Actor,
     to_asyncio,
     RemoteActorError,
     ContextCancelled,
+    _state,
 )
 from tractor.trionics import BroadcastReceiver
 from tractor._testing import expect_ctxc
@@ -80,7 +82,16 @@ async def asyncio_actor(
 
 ) -> None:
 
-    assert tractor.current_actor().is_infected_aio()
+    # ensure internal runtime state is consistent
+    actor: Actor = tractor.current_actor()
+    assert (
+        actor.is_infected_aio()
+        and
+        actor._infected_aio
+        and
+        _state._runtime_vars['_is_infected_aio']
+    )
+
     target: Callable = globals()[target]
 
     if '.' in expect_err:
@@ -136,7 +147,7 @@ def test_aio_simple_error(reg_addr):
         assert err
 
     assert isinstance(err, RemoteActorError)
-    assert err.boxed_type == AssertionError
+    assert err.boxed_type is AssertionError
 
 
 def test_tractor_cancels_aio(reg_addr):

@@ -59,6 +59,7 @@ from types import ModuleType
 import warnings
 
 import trio
+from trio._core import _run as trio_runtime
 from trio import (
     CancelScope,
     Nursery,
@@ -80,6 +81,7 @@ from ._context import (
 from .log import get_logger
 from ._exceptions import (
     ContextCancelled,
+    InternalError,
     ModuleNotExposed,
     MsgTypeError,
     unpack_error,
@@ -98,6 +100,7 @@ from ._rpc import (
 
 if TYPE_CHECKING:
     from ._supervise import ActorNursery
+    from trio._channel import MemoryChannelState
 
 
 log = get_logger('tractor')
@@ -896,11 +899,15 @@ class Actor:
                 f'peer: {chan.uid}\n'
                 f'cid:{cid}\n'
             )
-            ctx._allow_overruns = allow_overruns
+            ctx._allow_overruns: bool = allow_overruns
 
             # adjust buffer size if specified
-            state = ctx._send_chan._state  # type: ignore
-            if msg_buffer_size and state.max_buffer_size != msg_buffer_size:
+            state: MemoryChannelState  = ctx._send_chan._state  # type: ignore
+            if (
+                msg_buffer_size
+                and
+                state.max_buffer_size != msg_buffer_size
+            ):
                 state.max_buffer_size = msg_buffer_size
 
         except KeyError:
@@ -1094,7 +1101,36 @@ class Actor:
                                 '`tractor.pause_from_sync()` not available!'
                             )
 
-                rvs['_is_root'] = False
+                # XXX ensure the "infected `asyncio` mode" setting
+                # passed down from our spawning parent is consistent
+                # with `trio`-runtime initialization:
+                # - during sub-proc boot, the entrypoint func
+                #   (`._entry.<spawn_backend>_main()`) should set
+                #   `._infected_aio = True` before calling
+                #   `run_as_asyncio_guest()`,
+                # - the value of `infect_asyncio: bool = True` as
+                #   passed to `ActorNursery.start_actor()` must be
+                #   the same as `_runtime_vars['_is_infected_aio']`
+                if (
+                    (aio_rtv := rvs['_is_infected_aio'])
+                    !=
+                    (aio_attr := self._infected_aio)
+                ):
+                    raise InternalError(
+                        'Parent sent runtime-vars that mismatch for the '
+                        '"infected `asyncio` mode" settings ?!?\n\n'
+
+                        f'rvs["_is_infected_aio"] = {aio_rtv}\n'
+                        f'self._infected_aio = {aio_attr}\n'
+                    )
+                if aio_rtv:
+                    assert trio_runtime.GLOBAL_RUN_CONTEXT.runner.is_guest
+                    # ^TODO^ possibly add a `sniffio` or
+                    # `trio` pub-API for `is_guest_mode()`?
+
+                rvs['_is_root'] = False  # obvi XD
+
+                # update process-wide globals
                 _state._runtime_vars.update(rvs)
 
                 # XXX: ``msgspec`` doesn't support serializing tuples

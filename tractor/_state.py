@@ -44,6 +44,8 @@ _runtime_vars: dict[str, Any] = {
     '_root_mailbox': (None, None),
     '_registry_addrs': [],
 
+    '_is_infected_aio': False,
+
     # for `tractor.pause_from_sync()` & `breakpoint()` support
     'use_greenback': False,
 }
@@ -70,7 +72,8 @@ def current_actor(
     '''
     if (
         err_on_no_runtime
-        and _current_actor is None
+        and
+        _current_actor is None
     ):
         msg: str = 'No local actor has been initialized yet?\n'
         from ._exceptions import NoRuntime
