@@ -291,7 +291,7 @@ def test_context_spawns_aio_task_that_errors(
 
         err = excinfo.value
         assert isinstance(err, expect)
-        assert err.boxed_type == AssertionError
+        assert err.boxed_type is AssertionError
 
 
 async def aio_cancel():
@@ -497,7 +497,7 @@ def test_trio_error_cancels_intertask_chan(reg_addr):
         trio.run(main)
 
     # ensure boxed error type
-    excinfo.value.boxed_type == Exception
+    excinfo.value.boxed_type is Exception
 
 
 def test_trio_closes_early_and_channel_exits(reg_addr):
@@ -533,7 +533,7 @@ def test_aio_errors_and_channel_propagates_and_closes(reg_addr):
     ) as excinfo:
         trio.run(main)
 
-    excinfo.value.boxed_type == Exception
+    excinfo.value.boxed_type is Exception
 
 
 @tractor.context

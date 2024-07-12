@@ -94,14 +94,15 @@ def test_root_actor_error(
     # scan for the prompt
     expect(child, PROMPT)
 
-    before = str(child.before.decode())
-
     # make sure expected logging and error arrives
     assert in_prompt_msg(
-        before,
-        [_crash_msg, "('root'"]
+        child,
+        [
+            _crash_msg,
+            "('root'",
+            'AssertionError',
+        ]
     )
-    assert 'AssertionError' in before
 
     # send user command
     child.sendline(user_input)
@@ -241,10 +242,12 @@ def test_subactor_error(
     # scan for the prompt
     child.expect(PROMPT)
 
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
-        [_crash_msg, "('name_error'"]
+        child,
+        [
+            _crash_msg,
+            "('name_error'",
+        ]
     )
 
     if do_next:
@@ -263,17 +266,15 @@ def test_subactor_error(
         child.sendline('continue')
 
     child.expect(PROMPT)
-    before = str(child.before.decode())
-
-    # root actor gets debugger engaged
     assert in_prompt_msg(
-        before,
-        [_crash_msg, "('root'"]
-    )
-    # error is a remote error propagated from the subactor
-    assert in_prompt_msg(
-        before,
-        [_crash_msg, "('name_error'"]
+        child,
+        [
+            _crash_msg,
+            # root actor gets debugger engaged
+            "('root'",
+            # error is a remote error propagated from the subactor
+            "('name_error'",
+        ]
     )
 
     # another round
@@ -294,14 +295,11 @@ def test_subactor_breakpoint(
     "Single subactor with an infinite breakpoint loop"
 
     child = spawn('subactor_breakpoint')
-
-    # scan for the prompt
     child.expect(PROMPT)
-
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
-        [_pause_msg, "('breakpoint_forever'"]
+        child,
+        [_pause_msg,
+         "('breakpoint_forever'",]
     )
 
     # do some "next" commands to demonstrate recurrent breakpoint
@@ -317,9 +315,8 @@ def test_subactor_breakpoint(
     for _ in range(5):
         child.sendline('continue')
         child.expect(PROMPT)
-        before = str(child.before.decode())
         assert in_prompt_msg(
-            before,
+            child,
             [_pause_msg, "('breakpoint_forever'"]
         )
 
@@ -332,9 +329,8 @@ def test_subactor_breakpoint(
     # child process should exit but parent will capture pdb.BdbQuit
     child.expect(PROMPT)
 
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         ['RemoteActorError:',
          "('breakpoint_forever'",
          'bdb.BdbQuit',]
@@ -349,9 +345,8 @@ def test_subactor_breakpoint(
     # process should exit
     child.expect(EOF)
 
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         ['RemoteActorError:',
          "('breakpoint_forever'",
          'bdb.BdbQuit',]
@@ -375,7 +370,7 @@ def test_multi_subactors(
 
     before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         [_pause_msg, "('breakpoint_forever'"]
     )
 
@@ -396,12 +391,14 @@ def test_multi_subactors(
 
     # first name_error failure
     child.expect(PROMPT)
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
-        [_crash_msg, "('name_error'"]
+        child,
+        [
+            _crash_msg,
+            "('name_error'",
+            "NameError",
+        ]
     )
-    assert "NameError" in before
 
     if ctlc:
         do_ctlc(child)
@@ -425,9 +422,8 @@ def test_multi_subactors(
     # breakpoint loop should re-engage
     child.sendline('c')
     child.expect(PROMPT)
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         [_pause_msg, "('breakpoint_forever'"]
     )
 
@@ -520,25 +516,28 @@ def test_multi_daemon_subactors(
     # the root's tty lock first so anticipate either crash
     # message on the first entry.
 
-    bp_forev_parts = [_pause_msg, "('bp_forever'"]
+    bp_forev_parts = [
+        _pause_msg,
+        "('bp_forever'",
+    ]
     bp_forev_in_msg = partial(
         in_prompt_msg,
         parts=bp_forev_parts,
     )
 
-    name_error_msg = "NameError: name 'doggypants' is not defined"
-    name_error_parts = [name_error_msg]
+    name_error_msg: str = "NameError: name 'doggypants' is not defined"
+    name_error_parts: list[str] = [name_error_msg]
 
     before = str(child.before.decode())
 
-    if bp_forev_in_msg(prompt=before):
+    if bp_forev_in_msg(child=child):
         next_parts = name_error_parts
 
     elif name_error_msg in before:
         next_parts = bp_forev_parts
 
     else:
-        raise ValueError("Neither log msg was found !?")
+        raise ValueError('Neither log msg was found !?')
 
     if ctlc:
         do_ctlc(child)
@@ -607,14 +606,12 @@ def test_multi_daemon_subactors(
     # wait for final error in root
     # where it crashs with boxed error
     while True:
-        try:
-            child.sendline('c')
-            child.expect(PROMPT)
-            assert_before(
-                child,
-                bp_forev_parts
-            )
-        except AssertionError:
+        child.sendline('c')
+        child.expect(PROMPT)
+        if not in_prompt_msg(
+            child,
+            bp_forev_parts
+        ):
             break
 
     assert_before(
@@ -795,10 +792,13 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
     child = spawn('root_cancelled_but_child_is_in_tty_lock')
 
     child.expect(PROMPT)
-
-    before = str(child.before.decode())
-    assert "NameError: name 'doggypants' is not defined" in before
-    assert "tractor._exceptions.RemoteActorError: ('name_error'" not in before
+    assert_before(
+        child,
+        [
+            "NameError: name 'doggypants' is not defined",
+            "tractor._exceptions.RemoteActorError: ('name_error'",
+        ],
+    )
     time.sleep(0.5)
 
     if ctlc:
@@ -889,9 +889,8 @@ def test_different_debug_mode_per_actor(
     child.expect(PROMPT)
 
     # only one actor should enter the debugger
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         [_crash_msg, "('debugged_boi'", "RuntimeError"],
     )
 
@@ -900,8 +899,6 @@ def test_different_debug_mode_per_actor(
 
     child.sendline('c')
     child.expect(EOF)
-
-    before = str(child.before.decode())
 
     # NOTE: this debugged actor error currently WON'T show up since the
     # root will actually cancel and terminate the nursery before the error
@@ -954,9 +951,8 @@ def test_pause_from_sync(
     child.expect(PROMPT)
 
     # XXX shouldn't see gb loaded message with PDB loglevel!
-    before = str(child.before.decode())
     assert not in_prompt_msg(
-        before,
+        child,
         ['`greenback` portal opened!'],
     )
     # should be same root task
@@ -1037,7 +1033,7 @@ def test_pause_from_sync(
         # at the same time as the one that was detected above.
         for key, other_patts in attach_patts.copy().items():
             assert not in_prompt_msg(
-                before,
+                child,
                 other_patts,
             )
 

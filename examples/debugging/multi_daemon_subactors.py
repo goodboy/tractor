@@ -25,7 +25,8 @@ async def main():
     """
     async with tractor.open_nursery(
         debug_mode=True,
-        loglevel='cancel',
+        # loglevel='cancel',
+        # loglevel='devx',
     ) as n:
 
         p0 = await n.start_actor('bp_forever', enable_modules=[__name__])

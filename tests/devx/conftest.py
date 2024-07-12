@@ -10,6 +10,7 @@ import pytest
 from pexpect.exceptions import (
     TIMEOUT,
 )
+from pexpect.spawnbase import SpawnBase
 from tractor._testing import (
     mk_cmd,
 )
@@ -107,7 +108,7 @@ def expect(
 
 
 def in_prompt_msg(
-    prompt: str,
+    child: SpawnBase,
     parts: list[str],
 
     pause_on_false: bool = False,
@@ -125,18 +126,20 @@ def in_prompt_msg(
     '''
     __tracebackhide__: bool = False
 
+    before: str = str(child.before.decode())
     for part in parts:
-        if part not in prompt:
+        if part not in before:
             if pause_on_false:
                 import pdbp
                 pdbp.set_trace()
 
             if print_prompt_on_false:
-                print(prompt)
+                print(before)
 
             if err_on_false:
                 raise ValueError(
-                    f'Could not find pattern: {part!r} in `before` output?'
+                    f'Could not find pattern in `before` output?\n'
+                    f'part: {part!r}\n'
                 )
             return False
 
@@ -147,7 +150,7 @@ def in_prompt_msg(
 # against call stack frame output from the the 'll' command the like!
 # -[ ] SO answer for stipping ANSI codes: https://stackoverflow.com/a/14693789
 def assert_before(
-    child,
+    child: SpawnBase,
     patts: list[str],
 
     **kwargs,
@@ -155,10 +158,8 @@ def assert_before(
 ) -> None:
     __tracebackhide__: bool = False
 
-    # as in before the prompt end
-    before: str = str(child.before.decode())
     assert in_prompt_msg(
-        prompt=before,
+        child=child,
         parts=patts,
 
         # since this is an "assert" helper ;)
