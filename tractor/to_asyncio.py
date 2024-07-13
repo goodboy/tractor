@@ -562,6 +562,101 @@ class AsyncioRuntimeTranslationError(RuntimeError):
     '''
 
 
+def run_trio_task_in_future(
+    async_fn,
+    *args,
+) -> asyncio.Future:
+    '''
+    Run an async-func as a `trio` task from an `asyncio.Task` wrapped
+    in a `asyncio.Future` which is returned to the caller.
+
+    Another astounding feat by the great @oremanj !!
+
+    Bo
+
+    '''
+    result_future = asyncio.Future()
+    cancel_scope = trio.CancelScope()
+    finished: bool = False
+
+    # monkey-patch the future's `.cancel()` meth to
+    # allow cancellation relay to `trio`-task.
+    cancel_message: str|None = None
+    orig_cancel = result_future.cancel
+
+    def wrapped_cancel(
+        msg: str|None = None,
+    ):
+        nonlocal cancel_message
+        if finished:
+            # We're being called back after the task completed
+            if msg is not None:
+                return orig_cancel(msg)
+            elif cancel_message is not None:
+                return orig_cancel(cancel_message)
+            else:
+                return orig_cancel()
+
+        if result_future.done():
+            return False
+
+        # Forward cancellation to the Trio task, don't mark
+        # future as cancelled until it completes
+        cancel_message = msg
+        cancel_scope.cancel()
+        return True
+
+    result_future.cancel = wrapped_cancel
+
+    async def trio_task() -> None:
+        nonlocal finished
+        try:
+            with cancel_scope:
+                try:
+                    # TODO: type this with new tech in 3.13
+                    result: Any = await async_fn(*args)
+                finally:
+                    finished = True
+
+            # Propagate result or cancellation to the Future
+            if cancel_scope.cancelled_caught:
+                result_future.cancel()
+
+            elif not result_future.cancelled():
+                result_future.set_result(result)
+
+        except BaseException as exc:
+            # the result future gets all the non-Cancelled
+            # exceptions. Any Cancelled need to keep propagating
+            # out of this stack frame in order to reach the cancel
+            # scope for which they're intended.
+            cancelled: BaseException|None
+            rest: BaseException|None
+            if isinstance(exc, BaseExceptionGroup):
+                cancelled, rest = exc.split(trio.Cancelled)
+
+            elif isinstance(exc, trio.Cancelled):
+                cancelled, rest = exc, None
+
+            else:
+                cancelled, rest = None, exc
+
+            if not result_future.cancelled():
+                if rest:
+                    result_future.set_exception(rest)
+                else:
+                    result_future.cancel()
+
+            if cancelled:
+                raise cancelled
+
+    trio.lowlevel.spawn_system_task(
+        trio_task,
+        name=async_fn,
+    )
+    return result_future
+
+
 def run_as_asyncio_guest(
     trio_main: Callable,
     # ^-NOTE-^ when spawned with `infected_aio=True` this func is

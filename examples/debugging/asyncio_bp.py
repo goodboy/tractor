@@ -2,7 +2,10 @@ import asyncio
 
 import trio
 import tractor
-from tractor import to_asyncio
+from tractor import (
+    to_asyncio,
+    Portal,
+)
 
 
 async def aio_sleep_forever():
@@ -43,7 +46,7 @@ async def bp_then_error(
 @tractor.context
 async def trio_ctx(
     ctx: tractor.Context,
-    bp_before_started: bool = False,
+    bp_before_started: bool = True,
 ):
 
     # this will block until the ``asyncio`` task sends a "first"
@@ -57,7 +60,6 @@ async def trio_ctx(
 
         trio.open_nursery() as n,
     ):
-
         assert first == 'start'
 
         if bp_before_started:
@@ -73,15 +75,18 @@ async def trio_ctx(
 
 
 async def main(
-    bps_all_over: bool = False,
+    bps_all_over: bool = True,
 
 ) -> None:
 
     async with tractor.open_nursery(
-        # debug_mode=True,
+        debug_mode=True,
+        maybe_enable_greenback=True,
+        # loglevel='devx',
+        # loglevel='runtime',
     ) as n:
 
-        p = await n.start_actor(
+        ptl: Portal = await n.start_actor(
             'aio_daemon',
             enable_modules=[__name__],
             infect_asyncio=True,
@@ -89,7 +94,7 @@ async def main(
             loglevel='cancel',
         )
 
-        async with p.open_context(
+        async with ptl.open_context(
             trio_ctx,
             bp_before_started=bps_all_over,
         ) as (ctx, first):
@@ -105,7 +110,7 @@ async def main(
 
         # TODO: case where we cancel from trio-side while asyncio task
         # has debugger lock?
-        # await p.cancel_actor()
+        # await ptl.cancel_actor()
 
 
 if __name__ == '__main__':
