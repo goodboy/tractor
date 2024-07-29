@@ -2491,10 +2491,7 @@ def pause_from_sync(
                     message += (
                         f'-> called from a root-actor bg {thread}\n'
                     )
-                elif is_aio:
-                    message += (
-                        f'-> called from a `asyncio`-task bg {thread}\n'
-                    )
+
                 message += (
                     '-> scheduling `._pause_from_bg_root_thread()`..\n'
                 )
@@ -2551,6 +2548,7 @@ def pause_from_sync(
         elif is_aio:
             greenback: ModuleType = maybe_import_greenback()
             repl_owner: Task = asyncio.current_task()
+            DebugStatus.shield_sigint()
             fute: asyncio.Future = run_trio_task_in_future(
                 partial(
                     _pause,
@@ -2566,6 +2564,7 @@ def pause_from_sync(
                     **_pause_kwargs
                 )
             )
+
             # TODO: for async version -> `.pause_from_aio()`?
             # bg_task, _ = await fute
             bg_task, _ = greenback.await_(fute)
@@ -2700,8 +2699,7 @@ _crash_msg: str = (
 
 
 def _post_mortem(
-    # provided and passed by `_pause()`
-    repl: PdbREPL,
+    repl: PdbREPL,  # normally passed by `_pause()`
 
     # XXX all `partial`-ed in by `post_mortem()` below!
     tb: TracebackType,
@@ -3018,7 +3016,17 @@ def open_crash_handler(
         yield
     except tuple(catch) as err:
         if type(err) not in ignore:
-            pdbp.xpm()
+
+            # use our re-impl-ed version
+            _post_mortem(
+                repl=mk_pdb(),
+                tb=sys.exc_info()[2],
+                api_frame=inspect.currentframe().f_back,
+            )
+
+            # XXX NOTE, `pdbp`'s version seems to lose the up-stack
+            # tb-info?
+            # pdbp.xpm()
 
         raise
 
