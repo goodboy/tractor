@@ -83,15 +83,13 @@ async def main(
         debug_mode=True,
         maybe_enable_greenback=True,
         # loglevel='devx',
-        # loglevel='runtime',
     ) as n:
-
         ptl: Portal = await n.start_actor(
             'aio_daemon',
             enable_modules=[__name__],
             infect_asyncio=True,
             debug_mode=True,
-            loglevel='cancel',
+            # loglevel='cancel',
         )
 
         async with ptl.open_context(
