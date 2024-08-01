@@ -2989,6 +2989,7 @@ async def maybe_wait_for_debugger(
 # - [ ] optional runtime plugging?
 # - [ ] detection for sync vs. async code?
 # - [ ] specialized REPL entry when in distributed mode?
+# -[x] hide tb by def
 # - [x] allow ignoring kbi Bo
 @cm
 def open_crash_handler(
@@ -2999,6 +3000,7 @@ def open_crash_handler(
     ignore: set[BaseException] = {
         KeyboardInterrupt,
     },
+    tb_hide: bool = True,
 ):
     '''
     Generic "post mortem" crash handler using `pdbp` REPL debugger.
@@ -3011,6 +3013,8 @@ def open_crash_handler(
       `trio.run()`.
 
     '''
+    __tracebackhide__: bool = tb_hide
+
     err: BaseException
     try:
         yield
@@ -3034,6 +3038,7 @@ def open_crash_handler(
 @cm
 def maybe_open_crash_handler(
     pdb: bool = False,
+    tb_hide: bool = True,
 ):
     '''
     Same as `open_crash_handler()` but with bool input flag
@@ -3042,6 +3047,8 @@ def maybe_open_crash_handler(
     Normally this is used with CLI endpoints such that if the --pdb
     flag is passed the pdb REPL is engaed on any crashes B)
     '''
+    __tracebackhide__: bool = tb_hide
+
     rtctx = nullcontext
     if pdb:
         rtctx = open_crash_handler
