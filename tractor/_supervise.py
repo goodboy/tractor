@@ -373,11 +373,12 @@ class ActorNursery:
 @acm
 async def _open_and_supervise_one_cancels_all_nursery(
     actor: Actor,
+    tb_hide: bool = False,
 
 ) -> typing.AsyncGenerator[ActorNursery, None]:
 
     # normally don't need to show user by default
-    __tracebackhide__: bool = True
+    __tracebackhide__: bool = tb_hide
 
     outer_err: BaseException|None = None
     inner_err: BaseException|None = None
