@@ -72,6 +72,10 @@ from tractor.to_asyncio import run_trio_task_in_future
 from tractor.log import get_logger
 from tractor._context import Context
 from tractor import _state
+from tractor._exceptions import (
+    InternalError,
+    NoRuntime,
+)
 from tractor._state import (
     current_actor,
     is_root_process,
@@ -691,6 +695,14 @@ async def lock_stdio_for_peer(
         DebugStatus.unshield_sigint()
 
 
+class DebugStateError(InternalError):
+    '''
+    Something inconsistent or unexpected happend with a sub-actor's
+    debug mutex request to the root actor.
+
+    '''
+
+
 # TODO: rename to ReplState or somethin?
 # DebugRequest, make it a singleton instance?
 class DebugStatus:
@@ -860,20 +872,37 @@ class DebugStatus:
         `trio.to_thread.run_sync()`.
 
         '''
+        try:
+            async_lib: str = sniffio.current_async_library()
+        except sniffio.AsyncLibraryNotFoundError:
+            async_lib = None
+
+        is_main_thread: bool = trio._util.is_main_thread()
+        # ^TODO, since this is private, @oremanj says
+        # we should just copy the impl for now..?
+        if is_main_thread:
+            thread_name: str = 'main'
+        else:
+            thread_name: str = threading.current_thread().name
+
         is_trio_main = (
-            # TODO: since this is private, @oremanj says
-            # we should just copy the impl for now..
-            (is_main_thread := trio._util.is_main_thread())
+            is_main_thread
             and
-            (async_lib := sniffio.current_async_library()) == 'trio'
+            (async_lib == 'trio')
         )
-        if (
-            not is_trio_main
-            and is_main_thread
-        ):
-            log.warning(
+
+        report: str = f'Running thread: {thread_name!r}\n'
+        if async_lib:
+            report += (
                 f'Current async-lib detected by `sniffio`: {async_lib}\n'
             )
+        else:
+            report += (
+                'No async-lib detected (by `sniffio`) ??\n'
+            )
+        if not is_trio_main:
+            log.warning(report)
+
         return is_trio_main
         # XXX apparently unreliable..see ^
         # (
@@ -2615,7 +2644,15 @@ def pause_from_sync(
                 bg_task: Task = current_task()
 
             # assert repl is repl
-            assert bg_task is repl_owner
+            # assert bg_task is repl_owner
+            if bg_task is not repl_owner:
+                raise DebugStateError(
+                    f'The registered bg task for this debug request is NOT its owner ??\n'
+                    f'bg_task: {bg_task}\n'
+                    f'repl_owner: {repl_owner}\n\n'
+
+                    f'{DebugStatus.repr()}\n'
+                )
 
         # NOTE: normally set inside `_enter_repl_sync()`
         DebugStatus.repl_task: str = repl_owner
@@ -2715,17 +2752,28 @@ def _post_mortem(
 
     '''
     __tracebackhide__: bool = hide_tb
-    actor: tractor.Actor = current_actor()
+    try:
+        actor: tractor.Actor = current_actor()
+        actor_repr: str = str(actor.uid)
+        # ^TODO, instead a nice runtime-info + maddr + uid?
+        # -[ ] impl a `Actor.__repr()__`??
+        #  |_ <task>:<thread> @ <actor>
+
+    except NoRuntime:
+        actor_repr: str = '<no-actor-runtime?>'
+
+    try:
+        task_repr: Task = current_task()
+    except RuntimeError:
+        task_repr: str = '<unknown-Task>'
 
     # TODO: print the actor supervion tree up to the root
     # here! Bo
     log.pdb(
         f'{_crash_msg}\n'
         f'x>(\n'
-        f' |_ {current_task()} @ {actor.uid}\n'
+        f' |_ {task_repr} @ {actor_repr}\n'
 
-        # TODO: make an `Actor.__repr()__`
-        # f'|_ {current_task()} @ {actor.name}\n'
     )
 
     # NOTE only replacing this from `pdbp.xpm()` to add the
@@ -3022,11 +3070,15 @@ def open_crash_handler(
         if type(err) not in ignore:
 
             # use our re-impl-ed version
-            _post_mortem(
-                repl=mk_pdb(),
-                tb=sys.exc_info()[2],
-                api_frame=inspect.currentframe().f_back,
-            )
+            try:
+                _post_mortem(
+                    repl=mk_pdb(),
+                    tb=sys.exc_info()[2],
+                    api_frame=inspect.currentframe().f_back,
+                )
+            except bdb.BdbQuit:
+                __tracebackhide__: bool = False
+                raise
 
             # XXX NOTE, `pdbp`'s version seems to lose the up-stack
             # tb-info?
