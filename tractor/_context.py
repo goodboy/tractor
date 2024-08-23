@@ -46,6 +46,7 @@ from dataclasses import (
 from functools import partial
 import inspect
 from pprint import pformat
+import textwrap
 from typing import (
     Any,
     AsyncGenerator,
@@ -335,6 +336,7 @@ class Context:
         extra_fields: dict[str, Any]|None = None,
         # ^-TODO-^ some built-in extra state fields
         # we'll want in some devx specific cases?
+        indent: str|None = None,
 
     ) -> str:
         ds: str = '='
@@ -354,7 +356,6 @@ class Context:
             show_error_fields=True
         )
         fmtstr: str = (
-            f'<Context(\n'
             # f'\n'
             # f'   ---\n'
             f' |_ipc: {self.dst_maddr}\n'
@@ -401,11 +402,20 @@ class Context:
                     f'   {key}{ds}{val!r}\n'
                 )
 
+        if indent:
+            fmtstr = textwrap.indent(
+                fmtstr,
+                prefix=indent,
+            )
+
         return (
+            '<Context(\n'
+            +
             fmtstr
             +
-            ')>\n'
+            f'{indent})>\n'
         )
+
     # NOTE: making this return a value that can be passed to
     # `eval()` is entirely **optional** dawggg B)
     # https://docs.python.org/3/library/functions.html#repr
