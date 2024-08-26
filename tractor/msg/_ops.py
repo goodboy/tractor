@@ -590,15 +590,36 @@ async def drain_to_final_msg(
         #    SHOULD NOT raise that far end error,
         # 2. WE DID NOT REQUEST that cancel and thus
         #    SHOULD RAISE HERE!
-        except trio.Cancelled as taskc:
+        except trio.Cancelled as _taskc:
+            taskc: trio.Cancelled = _taskc
+
+            # report when the cancellation wasn't (ostensibly) due to
+            # RPC operation, some surrounding parent cancel-scope.
+            if not ctx._scope.cancel_called:
+                task: trio.lowlevel.Task = trio.lowlevel.current_task()
+                rent_n: trio.Nursery = task.parent_nursery
+                if (
+                    (local_cs := rent_n.cancel_scope).cancel_called
+                ):
+                    log.cancel(
+                        'RPC-ctx cancelled by local-parent scope during drain!\n\n'
+                        f'c}}>\n'
+                        f' |_{rent_n}\n'
+                        f'   |_.cancel_scope = {local_cs}\n'
+                        f'   |_>c}}\n'
+                        f'      |_{ctx.pformat(indent=" "*9)}'
+                        # ^TODO, some (other) simpler repr here?
+                    )
+                    __tracebackhide__: bool = False
+
             # CASE 2: mask the local cancelled-error(s)
             # only when we are sure the remote error is
             # the source cause of this local task's
             # cancellation.
             ctx.maybe_raise(
                 hide_tb=hide_tb,
-                # TODO: when use this?
-                # from_src_exc=taskc,
+                from_src_exc=taskc,
+                # ?TODO? when *should* we use this?
             )
 
             # CASE 1: we DID request the cancel we simply
