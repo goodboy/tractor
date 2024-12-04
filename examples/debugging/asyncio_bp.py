@@ -58,7 +58,7 @@ async def trio_ctx(
             raise_after_bp=not bp_before_started,
         ) as (first, chan),
 
-        trio.open_nursery() as n,
+        trio.open_nursery() as tn,
     ):
         assert first == 'start'
 
@@ -67,7 +67,7 @@ async def trio_ctx(
 
         await ctx.started(first)
 
-        n.start_soon(
+        tn.start_soon(
             to_asyncio.run_task,
             aio_sleep_forever,
         )
@@ -83,8 +83,8 @@ async def main(
         debug_mode=True,
         maybe_enable_greenback=True,
         # loglevel='devx',
-    ) as n:
-        ptl: Portal = await n.start_actor(
+    ) as an:
+        ptl: Portal = await an.start_actor(
             'aio_daemon',
             enable_modules=[__name__],
             infect_asyncio=True,
