@@ -1229,6 +1229,53 @@ def test_shield_pause(
     child.expect(EOF)
 
 
+def test_breakpoint_hook_restored(
+    spawn,
+):
+    '''
+    Ensures our actor runtime sets a custom `breakpoint()` hook
+    on open then restores the stdlib's default on close.
+
+    The hook state validation is done via `assert`s inside the
+    invoked script with only `breakpoint()` (not `tractor.pause()`)
+    calls used.
+
+    '''
+    child = spawn('restore_builtin_breakpoint')
+
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _pause_msg,
+            "<Task '__main__.main'",
+            "('root'",
+            "first bp, tractor hook set",
+        ]
+    )
+    child.sendline('c')
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            "last bp, stdlib hook restored",
+        ]
+    )
+
+    # since the stdlib hook was already restored there should be NO
+    # `tractor` `log.pdb()` content from console!
+    assert not in_prompt_msg(
+        child,
+        [
+            _pause_msg,
+            "<Task '__main__.main'",
+            "('root'",
+        ],
+    )
+    child.sendline('c')
+    child.expect(EOF)
+
+
 # TODO: better error for "non-ideal" usage from the root actor.
 # -[ ] if called from an async scope emit a message that suggests
 #    using `await tractor.pause()` instead since it's less overhead
@@ -1246,6 +1293,7 @@ def test_sync_pause_from_bg_task_in_root_actor_():
     '''
     ...
 
+
 # TODO: needs ANSI code stripping tho, see `assert_before()` # above!
 def test_correct_frames_below_hidden():
     '''
@@ -1262,8 +1310,9 @@ def test_cant_pause_from_paused_task():
     '''
     Pausing from with an already paused task should raise an error.
 
-    Normally this should only happen in practise while debugging the call stack of `tractor.pause()` itself, likely
-    by a `.pause()` line somewhere inside our runtime.
+    Normally this should only happen in practise while debugging the
+    call stack of `tractor.pause()` itself, likely by a `.pause()`
+    line somewhere inside our runtime.
 
     '''
     ...
