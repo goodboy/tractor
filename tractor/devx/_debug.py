@@ -1420,6 +1420,10 @@ def any_connected_locker_child() -> bool:
     return False
 
 
+_ctlc_ignore_header: str = (
+    'Ignoring SIGINT while debug REPL in use'
+)
+
 def sigint_shield(
     signum: int,
     frame: 'frame',  # type: ignore # noqa
@@ -1501,7 +1505,9 @@ def sigint_shield(
                 # NOTE: don't emit this with `.pdb()` level in
                 # root without a higher level.
                 log.runtime(
-                    f'Ignoring SIGINT while debug REPL in use by child '
+                    _ctlc_ignore_header
+                    +
+                    f' by child '
                     f'{uid_in_debug}\n'
                 )
                 problem = None
@@ -1535,7 +1541,9 @@ def sigint_shield(
                 # NOTE: since we emit this msg on ctl-c, we should
                 # also always re-print the prompt the tail block!
                 log.pdb(
-                    'Ignoring SIGINT while pdb REPL in use by root actor..\n'
+                    _ctlc_ignore_header
+                    +
+                    f' by root actor..\n'
                     f'{DebugStatus.repl_task}\n'
                     f' |_{repl}\n'
                 )
@@ -1596,16 +1604,20 @@ def sigint_shield(
             repl
         ):
             log.pdb(
-                f'Ignoring SIGINT while local task using debug REPL\n'
-                f'|_{repl_task}\n'
-                f'  |_{repl}\n'
+                _ctlc_ignore_header
+                +
+                f' by local task\n\n'
+                f'{repl_task}\n'
+                f' |_{repl}\n'
             )
         elif req_task:
             log.debug(
-                'Ignoring SIGINT while debug request task is open but either,\n'
-                '- someone else is already REPL-in and has the `Lock`, or\n'
-                '- some other local task already is replin?\n'
-                f'|_{req_task}\n'
+                _ctlc_ignore_header
+                +
+                f' by local request-task and either,\n'
+                f'- someone else is already REPL-in and has the `Lock`, or\n'
+                f'- some other local task already is replin?\n\n'
+                f'{req_task}\n'
             )
 
         # TODO can we remove this now?
