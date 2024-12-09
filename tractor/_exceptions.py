@@ -609,6 +609,7 @@ class RemoteActorError(Exception):
                 # just after <Type(
                 #             |___ ..
                 tb_body_indent=1,
+                boxer_header=self.relay_uid,
             )
 
         tail = ''
