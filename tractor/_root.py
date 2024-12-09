@@ -95,6 +95,10 @@ async def open_root_actor(
 
     hide_tb: bool = True,
 
+    # TODO, a way for actors to augment passing derived
+    # read-only state to sublayers?
+    # extra_rt_vars: dict|None = None,
+
 ) -> Actor:
     '''
     Runtime init entry point for ``tractor``.
