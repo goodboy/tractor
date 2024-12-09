@@ -245,14 +245,14 @@ def _run_asyncio_task(
                 result != orig and
                 aio_err is None and
 
-                # in the ``open_channel_from()`` case we don't
+                # in the `open_channel_from()` case we don't
                 # relay through the "return value".
                 not provide_channels
             ):
                 to_trio.send_nowait(result)
 
         finally:
-            # if the task was spawned using ``open_channel_from()``
+            # if the task was spawned using `open_channel_from()`
             # then we close the channels on exit.
             if provide_channels:
                 # only close the sender side which will relay
@@ -500,7 +500,7 @@ async def run_task(
 
     '''
     # simple async func
-    chan = _run_asyncio_task(
+    chan: LinkedTaskChannel = _run_asyncio_task(
         func,
         qsize=1,
         **kwargs,
@@ -530,7 +530,7 @@ async def open_channel_from(
     spawned ``asyncio`` task and ``trio``.
 
     '''
-    chan = _run_asyncio_task(
+    chan: LinkedTaskChannel = _run_asyncio_task(
         target,
         qsize=2**8,
         provide_channels=True,
