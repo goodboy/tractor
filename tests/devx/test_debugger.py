@@ -21,7 +21,9 @@ from pexpect.exceptions import (
     EOF,
 )
 
-from tractor.devx._debug import (
+from .conftest import (
+    do_ctlc,
+    PROMPT,
     _pause_msg,
     _crash_msg,
     _repl_fail_msg,
@@ -66,9 +68,6 @@ has_nested_actors = pytest.mark.has_nested_actors
 #         'https://github.com/goodboy/tractor/issues/320'
 #     )
 # )
-
-
-PROMPT = r"\(Pdb\+\)"
 
 
 @pytest.mark.parametrize(
@@ -121,8 +120,10 @@ def test_root_actor_error(
     ids=lambda item: f'{item[0]} -> {item[1]}',
 )
 def test_root_actor_bp(spawn, user_in_out):
-    """Demonstrate breakpoint from in root actor.
-    """
+    '''
+    Demonstrate breakpoint from in root actor.
+
+    '''
     user_input, expect_err_str = user_in_out
     child = spawn('root_actor_breakpoint')
 
@@ -142,43 +143,6 @@ def test_root_actor_bp(spawn, user_in_out):
         assert 'Error' not in str(child.before)
     else:
         assert expect_err_str in str(child.before)
-
-
-def do_ctlc(
-    child,
-    count: int = 3,
-    delay: float = 0.1,
-    patt: str|None = None,
-
-    # expect repl UX to reprint the prompt after every
-    # ctrl-c send.
-    # XXX: no idea but, in CI this never seems to work even on 3.10 so
-    # needs some further investigation potentially...
-    expect_prompt: bool = not _ci_env,
-
-) -> str|None:
-
-    before: str|None = None
-
-    # make sure ctl-c sends don't do anything but repeat output
-    for _ in range(count):
-        time.sleep(delay)
-        child.sendcontrol('c')
-
-        # TODO: figure out why this makes CI fail..
-        # if you run this test manually it works just fine..
-        if expect_prompt:
-            time.sleep(delay)
-            child.expect(PROMPT)
-            before = str(child.before.decode())
-            time.sleep(delay)
-
-            if patt:
-                # should see the last line on console
-                assert patt in before
-
-    # return the console content up to the final prompt
-    return before
 
 
 def test_root_actor_bp_forever(
@@ -917,138 +881,6 @@ def test_different_debug_mode_per_actor(
     )
 
 
-def test_pause_from_sync(
-    spawn,
-    ctlc: bool
-):
-    '''
-    Verify we can use the `pdbp` REPL from sync functions AND from
-    any thread spawned with `trio.to_thread.run_sync()`.
-
-    `examples/debugging/sync_bp.py`
-
-    '''
-    child = spawn('sync_bp')
-
-    # first `sync_pause()` after nurseries open
-    child.expect(PROMPT)
-    assert_before(
-        child,
-        [
-            # pre-prompt line
-            _pause_msg,
-            "<Task '__main__.main'",
-            "('root'",
-        ]
-    )
-    if ctlc:
-        do_ctlc(child)
-        # ^NOTE^ subactor not spawned yet; don't need extra delay.
-
-    child.sendline('c')
-
-    # first `await tractor.pause()` inside `p.open_context()` body
-    child.expect(PROMPT)
-
-    # XXX shouldn't see gb loaded message with PDB loglevel!
-    assert not in_prompt_msg(
-        child,
-        ['`greenback` portal opened!'],
-    )
-    # should be same root task
-    assert_before(
-        child,
-        [
-            _pause_msg,
-            "<Task '__main__.main'",
-            "('root'",
-        ]
-    )
-
-    if ctlc:
-        do_ctlc(
-            child,
-            # NOTE: setting this to 0 (or some other sufficient
-            # small val) can cause the test to fail since the
-            # `subactor` suffers a race where the root/parent
-            # sends an actor-cancel prior to it hitting its pause
-            # point; by def the value is 0.1
-            delay=0.4,
-        )
-
-    # XXX, fwiw without a brief sleep here the SIGINT might actually
-    # trigger "subactor" cancellation by its parent  before the
-    # shield-handler is engaged.
-    #
-    # => similar to the `delay` input to `do_ctlc()` below, setting
-    # this too low can cause the test to fail since the `subactor`
-    # suffers a race where the root/parent sends an actor-cancel
-    # prior to the context task hitting its pause point (and thus
-    # engaging the `sigint_shield()` handler in time); this value
-    # seems be good enuf?
-    time.sleep(0.6)
-
-    # one of the bg thread or subactor should have
-    # `Lock.acquire()`-ed
-    # (NOT both, which will result in REPL clobbering!)
-    attach_patts: dict[str, list[str]] = {
-        'subactor': [
-            "'start_n_sync_pause'",
-            "('subactor'",
-        ],
-        'inline_root_bg_thread': [
-            "<Thread(inline_root_bg_thread",
-            "('root'",
-        ],
-        'start_soon_root_bg_thread': [
-            "<Thread(start_soon_root_bg_thread",
-            "('root'",
-        ],
-    }
-    conts: int = 0  # for debugging below matching logic on failure
-    while attach_patts:
-        child.sendline('c')
-        conts += 1
-        child.expect(PROMPT)
-        before = str(child.before.decode())
-        for key in attach_patts:
-            if key in before:
-                attach_key: str = key
-                expected_patts: str = attach_patts.pop(key)
-                assert_before(
-                    child,
-                    [_pause_msg]
-                    +
-                    expected_patts
-                )
-                break
-        else:
-            pytest.fail(
-                f'No keys found?\n\n'
-                f'{attach_patts.keys()}\n\n'
-                f'{before}\n'
-            )
-
-        # ensure no other task/threads engaged a REPL
-        # at the same time as the one that was detected above.
-        for key, other_patts in attach_patts.copy().items():
-            assert not in_prompt_msg(
-                child,
-                other_patts,
-            )
-
-        if ctlc:
-            do_ctlc(
-                child,
-                patt=attach_key,
-                # NOTE same as comment above
-                delay=0.4,
-            )
-
-    child.sendline('c')
-    child.expect(EOF)
-
-
 def test_post_mortem_api(
     spawn,
     ctlc: bool,
@@ -1229,53 +1061,6 @@ def test_shield_pause(
     child.expect(EOF)
 
 
-def test_breakpoint_hook_restored(
-    spawn,
-):
-    '''
-    Ensures our actor runtime sets a custom `breakpoint()` hook
-    on open then restores the stdlib's default on close.
-
-    The hook state validation is done via `assert`s inside the
-    invoked script with only `breakpoint()` (not `tractor.pause()`)
-    calls used.
-
-    '''
-    child = spawn('restore_builtin_breakpoint')
-
-    child.expect(PROMPT)
-    assert_before(
-        child,
-        [
-            _pause_msg,
-            "<Task '__main__.main'",
-            "('root'",
-            "first bp, tractor hook set",
-        ]
-    )
-    child.sendline('c')
-    child.expect(PROMPT)
-    assert_before(
-        child,
-        [
-            "last bp, stdlib hook restored",
-        ]
-    )
-
-    # since the stdlib hook was already restored there should be NO
-    # `tractor` `log.pdb()` content from console!
-    assert not in_prompt_msg(
-        child,
-        [
-            _pause_msg,
-            "<Task '__main__.main'",
-            "('root'",
-        ],
-    )
-    child.sendline('c')
-    child.expect(EOF)
-
-
 # TODO: better error for "non-ideal" usage from the root actor.
 # -[ ] if called from an async scope emit a message that suggests
 #    using `await tractor.pause()` instead since it's less overhead
@@ -1293,7 +1078,6 @@ def test_sync_pause_from_bg_task_in_root_actor_():
     '''
     ...
 
-
 # TODO: needs ANSI code stripping tho, see `assert_before()` # above!
 def test_correct_frames_below_hidden():
     '''
@@ -1310,9 +1094,8 @@ def test_cant_pause_from_paused_task():
     '''
     Pausing from with an already paused task should raise an error.
 
-    Normally this should only happen in practise while debugging the
-    call stack of `tractor.pause()` itself, likely by a `.pause()`
-    line somewhere inside our runtime.
+    Normally this should only happen in practise while debugging the call stack of `tractor.pause()` itself, likely
+    by a `.pause()` line somewhere inside our runtime.
 
     '''
     ...

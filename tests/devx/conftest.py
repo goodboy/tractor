@@ -2,6 +2,7 @@
 `tractor.devx.*` tooling sub-pkg test space.
 
 '''
+import time
 from typing import (
     Callable,
 )
@@ -11,8 +12,18 @@ from pexpect.exceptions import (
     TIMEOUT,
 )
 from pexpect.spawnbase import SpawnBase
+
 from tractor._testing import (
     mk_cmd,
+)
+from tractor.devx._debug import (
+    _pause_msg as _pause_msg,
+    _crash_msg as _crash_msg,
+    _repl_fail_msg as _repl_fail_msg,
+    _ctlc_ignore_header as _ctlc_ignore_header,
+)
+from conftest import (
+    _ci_env,
 )
 
 
@@ -107,6 +118,9 @@ def expect(
         raise
 
 
+PROMPT = r"\(Pdb\+\)"
+
+
 def in_prompt_msg(
     child: SpawnBase,
     parts: list[str],
@@ -166,3 +180,40 @@ def assert_before(
         err_on_false=True,
         **kwargs
     )
+
+
+def do_ctlc(
+    child,
+    count: int = 3,
+    delay: float = 0.1,
+    patt: str|None = None,
+
+    # expect repl UX to reprint the prompt after every
+    # ctrl-c send.
+    # XXX: no idea but, in CI this never seems to work even on 3.10 so
+    # needs some further investigation potentially...
+    expect_prompt: bool = not _ci_env,
+
+) -> str|None:
+
+    before: str|None = None
+
+    # make sure ctl-c sends don't do anything but repeat output
+    for _ in range(count):
+        time.sleep(delay)
+        child.sendcontrol('c')
+
+        # TODO: figure out why this makes CI fail..
+        # if you run this test manually it works just fine..
+        if expect_prompt:
+            time.sleep(delay)
+            child.expect(PROMPT)
+            before = str(child.before.decode())
+            time.sleep(delay)
+
+            if patt:
+                # should see the last line on console
+                assert patt in before
+
+    # return the console content up to the final prompt
+    return before

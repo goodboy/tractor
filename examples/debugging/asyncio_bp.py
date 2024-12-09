@@ -1,3 +1,8 @@
+'''
+Examples of using the builtin `breakpoint()` from an `asyncio.Task`
+running in a subactor spawned with `infect_asyncio=True`.
+
+'''
 import asyncio
 
 import trio
@@ -26,15 +31,16 @@ async def bp_then_error(
     # NOTE: what happens here inside the hook needs some refinement..
     # => seems like it's still `._debug._set_trace()` but
     #    we set `Lock.local_task_in_debug = 'sync'`, we probably want
-    #    some further, at least, meta-data about the task/actoq in debug
-    #    in terms of making it clear it's asyncio mucking about.
+    #    some further, at least, meta-data about the task/actor in debug
+    #    in terms of making it clear it's `asyncio` mucking about.
     breakpoint()
 
+
     # short checkpoint / delay
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.5)  # asyncio-side
 
     if raise_after_bp:
-        raise ValueError('blah')
+        raise ValueError('asyncio side error!')
 
     # TODO: test case with this so that it gets cancelled?
     else:
@@ -46,7 +52,7 @@ async def bp_then_error(
 @tractor.context
 async def trio_ctx(
     ctx: tractor.Context,
-    bp_before_started: bool = True,
+    bp_before_started: bool = False,
 ):
 
     # this will block until the ``asyncio`` task sends a "first"
@@ -55,7 +61,7 @@ async def trio_ctx(
 
         to_asyncio.open_channel_from(
             bp_then_error,
-            raise_after_bp=not bp_before_started,
+            # raise_after_bp=not bp_before_started,
         ) as (first, chan),
 
         trio.open_nursery() as tn,
@@ -63,9 +69,9 @@ async def trio_ctx(
         assert first == 'start'
 
         if bp_before_started:
-            await tractor.breakpoint()
+            await tractor.pause()
 
-        await ctx.started(first)
+        await ctx.started(first)  # trio-side
 
         tn.start_soon(
             to_asyncio.run_task,
@@ -76,6 +82,10 @@ async def trio_ctx(
 
 async def main(
     bps_all_over: bool = True,
+
+    # TODO, WHICH OF THESE HAZ BUGZ?
+    cancel_from_root: bool = False,
+    err_from_root: bool = False,
 
 ) -> None:
 
@@ -99,12 +109,18 @@ async def main(
 
             assert first == 'start'
 
-            if bps_all_over:
-                await tractor.breakpoint()
+            # pause in parent to ensure no cross-actor
+            # locking problems exist!
+            await tractor.pause()
 
-            # await trio.sleep_forever()
-            await ctx.cancel()
-            assert 0
+            if cancel_from_root:
+                await ctx.cancel()
+
+            if err_from_root:
+                assert 0
+            else:
+                await trio.sleep_forever()
+
 
         # TODO: case where we cancel from trio-side while asyncio task
         # has debugger lock?
