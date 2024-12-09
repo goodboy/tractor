@@ -955,7 +955,7 @@ async def echo_back_sequence(
     )
 
     await ctx.started()
-    # await tractor.breakpoint()
+    # await tractor.pause()
     async with ctx.open_stream(
         msg_buffer_size=msg_buffer_size,
 

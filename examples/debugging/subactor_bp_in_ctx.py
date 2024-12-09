@@ -4,9 +4,9 @@ import trio
 
 async def gen():
     yield 'yo'
-    await tractor.breakpoint()
+    await tractor.pause()
     yield 'yo'
-    await tractor.breakpoint()
+    await tractor.pause()
 
 
 @tractor.context
@@ -15,7 +15,7 @@ async def just_bp(
 ) -> None:
 
     await ctx.started()
-    await tractor.breakpoint()
+    await tractor.pause()
 
     # TODO: bps and errors in this call..
     async for val in gen():

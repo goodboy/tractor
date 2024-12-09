@@ -7,7 +7,7 @@ async def breakpoint_forever():
     try:
         while True:
             yield 'yo'
-            await tractor.breakpoint()
+            await tractor.pause()
     except BaseException:
         tractor.log.get_console_log().exception(
             'Cancelled while trying to enter pause point!'

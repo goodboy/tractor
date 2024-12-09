@@ -271,7 +271,7 @@ def test_faster_task_to_recv_is_cancelled_by_slower(
                         # the faster subtask was cancelled
                         break
 
-                # await tractor.breakpoint()
+                # await tractor.pause()
                 # await stream.receive()
                 print(f'final value: {value}')
 

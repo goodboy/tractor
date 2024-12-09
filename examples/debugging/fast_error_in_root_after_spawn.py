@@ -1,5 +1,5 @@
 '''
-Fast fail test with a context.
+Fast fail test with a `Context`.
 
 Ensure the partially initialized sub-actor process
 doesn't cause a hang on error/cancel of the parent
