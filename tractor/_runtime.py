@@ -449,11 +449,14 @@ class Actor:
         )
 
         if _pre_chan:
-            log.warning(
             # con_status += (
             # ^TODO^ swap once we minimize conn duplication
-                f' -> Wait, we already have IPC with `{uid_short}`??\n'
-                f'   |_{_pre_chan}\n'
+            # -[ ] last thing might be reg/unreg runtime reqs?
+            # log.warning(
+            log.debug(
+                f'?Wait?\n'
+                f'We already have IPC with peer {uid_short!r}\n'
+                f'|_{_pre_chan}\n'
             )
 
         # IPC connection tracking for both peers and new children:
