@@ -30,9 +30,9 @@ from msgspec import (
     Struct as _Struct,
     structs,
 )
-from pprint import (
-    saferepr,
-)
+# from pprint import (
+#     saferepr,
+# )
 
 from tractor.log import get_logger
 
@@ -75,8 +75,8 @@ class DiffDump(UserList):
         for k, left, right in self:
             repstr += (
                 f'({k},\n'
-                f'\t{repr(left)},\n'
-                f'\t{repr(right)},\n'
+                f' |_{repr(left)},\n'
+                f' |_{repr(right)},\n'
                 ')\n'
             )
         repstr += ']\n'
@@ -144,15 +144,22 @@ def pformat(
                 field_indent=indent + field_indent,
             )
 
-        else:  # the `pprint` recursion-safe format:
+        else:
+            val_str: str = repr(v)
+
+            # XXX LOL, below just seems to be f#$%in causing
+            # recursion errs..
+            #
+            # the `pprint` recursion-safe format:
             # https://docs.python.org/3.11/library/pprint.html#pprint.saferepr
-            try:
-                val_str: str = saferepr(v)
-            except Exception:
-                log.exception(
-                    'Failed to `saferepr({type(struct)})` !?\n'
-                )
-            return _Struct.__repr__(struct)
+            # try:
+            #     val_str: str = saferepr(v)
+            # except Exception:
+            #     log.exception(
+            #         'Failed to `saferepr({type(struct)})` !?\n'
+            #     )
+                # raise
+                # return _Struct.__repr__(struct)
 
         # TODO: LOLOL use `textwrap.indent()` instead dawwwwwg!
         obj_str += (field_ws + f'{k}: {typ_name} = {val_str},\n')
@@ -203,12 +210,7 @@ class Struct(
         return sin_props
 
     pformat = pformat
-    # __repr__ = pformat
-    # __str__ = __repr__ = pformat
-    # TODO: use a pprint.PrettyPrinter instance around ONLY rendering
-    # inside a known tty?
-    # def __repr__(self) -> str:
-    #     ...
+
     def __repr__(self) -> str:
         try:
             return pformat(self)
@@ -217,6 +219,13 @@ class Struct(
                 f'Failed to `pformat({type(self)})` !?\n'
             )
             return _Struct.__repr__(self)
+
+    # __repr__ = pformat
+    # __str__ = __repr__ = pformat
+    # TODO: use a pprint.PrettyPrinter instance around ONLY rendering
+    # inside a known tty?
+    # def __repr__(self) -> str:
+    #     ...
 
     def copy(
         self,
@@ -267,13 +276,15 @@ class Struct(
                 fi.type(getattr(self, fi.name)),
             )
 
+    # TODO: make a mod func instead and just point to it here for
+    # method impl?
     def __sub__(
         self,
         other: Struct,
 
     ) -> DiffDump[tuple[str, Any, Any]]:
         '''
-        Compare fields/items key-wise and return a ``DiffDump``
+        Compare fields/items key-wise and return a `DiffDump`
         for easy visual REPL comparison B)
 
         '''
@@ -287,6 +298,45 @@ class Struct(
                     attr_name,
                     ours,
                     theirs,
+                ))
+
+        return diffs
+
+    @classmethod
+    def fields_diff(
+        cls,
+        other: dict|Struct,
+
+    ) -> DiffDump[tuple[str, Any, Any]]:
+        '''
+        Very similar to `PrettyStruct.__sub__()` except accepts an
+        input `other: dict` (presumably that would normally be called
+        like `Struct(**other)`) which returns a `DiffDump` of the
+        fields of the struct and the `dict`'s fields.
+
+        '''
+        nullish = object()
+        consumed: dict = other.copy()
+        diffs: DiffDump[tuple[str, Any, Any]] = DiffDump()
+        for fi in structs.fields(cls):
+            field_name: str = fi.name
+            # ours: Any = getattr(self, field_name)
+            theirs: Any = consumed.pop(field_name, nullish)
+            if theirs is nullish:
+                diffs.append((
+                    field_name,
+                    f'{fi.type!r}',
+                    'NOT-DEFINED in `other: dict`',
+                ))
+
+        # when there are lingering fields in `other` that this struct
+        # DOES NOT define we also append those.
+        if consumed:
+            for k, v in consumed.items():
+                diffs.append((
+                    k,
+                    f'NOT-DEFINED for `{cls.__name__}`',
+                    f'`other: dict` has value = {v!r}',
                 ))
 
         return diffs
