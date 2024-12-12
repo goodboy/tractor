@@ -47,6 +47,9 @@ from functools import partial
 import inspect
 from pprint import pformat
 import textwrap
+from types import (
+    UnionType,
+)
 from typing import (
     Any,
     AsyncGenerator,
@@ -2548,7 +2551,14 @@ def context(
     name: str
     param: Type
     for name, param in annots.items():
-        if param is Context:
+        if (
+            param is Context
+            or (
+                isinstance(param, UnionType)
+                and
+                Context in param.__args__
+            )
+        ):
             ctx_var_name: str = name
             break
     else:
