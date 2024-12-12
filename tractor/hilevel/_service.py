@@ -160,8 +160,8 @@ async def open_service_mngr(
     ):
         # impl specific obvi..
         init_kwargs.update({
-            'actor_n': an,
-            'service_n': tn,
+            'an': an,
+            'tn': tn,
         })
 
         mngr: ServiceMngr|None
@@ -174,15 +174,11 @@ async def open_service_mngr(
             # eventual `@singleton_acm` API wrapper.
             #
             # assign globally for future daemon/task creation
-            mngr.actor_n = an
-            mngr.service_n = tn
+            mngr.an = an
+            mngr.tn = tn
 
         else:
-            assert (
-                mngr.actor_n
-                and
-                mngr.service_tn
-            )
+            assert (mngr.an and mngr.tn)
             log.info(
                 'Using extant service mngr!\n\n'
                 f'{mngr!r}\n'  # it has a nice `.__repr__()` of services state
@@ -349,8 +345,8 @@ class ServiceMngr:
     process tree.
 
     '''
-    actor_n: ActorNursery
-    service_n: trio.Nursery
+    an: ActorNursery
+    tn: trio.Nursery
     debug_mode: bool = False # tractor sub-actor debug mode flag
 
     service_tasks: dict[
@@ -423,7 +419,7 @@ class ServiceMngr:
         (
             cs,
             complete,
-        ) = await self.service_n.start(_task_manager_start)
+        ) = await self.tn.start(_task_manager_start)
 
         # store the cancel scope and portal for later cancellation or
         # retstart if needed.
@@ -485,7 +481,7 @@ class ServiceMngr:
         for details.
 
         '''
-        cs, ipc_ctx, complete, started = await self.service_n.start(
+        cs, ipc_ctx, complete, started = await self.tn.start(
             functools.partial(
                 _open_and_supervise_service_ctx,
                 serman=self,
@@ -542,7 +538,7 @@ class ServiceMngr:
             return sub_ctx
 
         if daemon_name not in self.service_ctxs:
-            portal: Portal = await self.actor_n.start_actor(
+            portal: Portal = await self.an.start_actor(
                 daemon_name,
                 debug_mode=(  # maybe set globally during allocate
                     debug_mode
