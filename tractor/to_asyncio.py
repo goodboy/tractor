@@ -36,6 +36,7 @@ import tractor
 from tractor._exceptions import AsyncioCancelled
 from tractor._state import (
     debug_mode,
+    _runtime_vars,
 )
 from tractor.devx import _debug
 from tractor.log import get_logger
@@ -767,12 +768,16 @@ def run_as_asyncio_guest(
             'Infecting `asyncio`-process with a `trio` guest-run!\n'
         )
 
+        # TODO, somehow bootstrap this!
+        _runtime_vars['_is_infected_aio'] = True
+
         trio.lowlevel.start_guest_run(
             trio_main,
             run_sync_soon_threadsafe=loop.call_soon_threadsafe,
             done_callback=trio_done_callback,
         )
         fute_err: BaseException|None = None
+
         try:
             out: Outcome = await asyncio.shield(trio_done_fute)
 

@@ -334,6 +334,10 @@ async def open_root_actor(
             loglevel=loglevel,
             enable_modules=enable_modules,
         )
+        # XXX, in case the root actor runtime was actually run from
+        # `tractor.to_asyncio.run_as_asyncio_guest()` and NOt
+        # `.trio.run()`.
+        actor._infected_aio = _state._runtime_vars['_is_infected_aio']
 
     # Start up main task set via core actor-runtime nurseries.
     try:
