@@ -92,7 +92,7 @@ def pformat_boxed_tb(
         f' ------ {boxer_header} ------\n'
         f'{tb_body}'
         f' ------ {boxer_header}- ------\n'
-        f'_|\n'
+        f'_|'
     )
     tb_box_indent: str = (
         tb_box_indent
