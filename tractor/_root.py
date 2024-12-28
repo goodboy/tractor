@@ -95,6 +95,13 @@ async def open_root_actor(
 
     hide_tb: bool = True,
 
+    # XXX, proxied directly to `.devx._debug._maybe_enter_pm()`
+    # for REPL-entry logic.
+    debug_filter: Callable[
+        [BaseException|BaseExceptionGroup],
+        bool,
+    ] = lambda err: not is_multi_cancelled(err),
+
     # TODO, a way for actors to augment passing derived
     # read-only state to sublayers?
     # extra_rt_vars: dict|None = None,
@@ -379,6 +386,7 @@ async def open_root_actor(
                 Exception,
                 BaseExceptionGroup,
             ) as err:
+
                 # XXX NOTE XXX see equiv note inside
                 # `._runtime.Actor._stream_handler()` where in the
                 # non-root or root-that-opened-this-mahually case we
@@ -387,11 +395,15 @@ async def open_root_actor(
                 entered: bool = await _debug._maybe_enter_pm(
                     err,
                     api_frame=inspect.currentframe(),
+                    debug_filter=debug_filter,
                 )
+
                 if (
                     not entered
                     and
-                    not is_multi_cancelled(err)
+                    not is_multi_cancelled(
+                        err,
+                    )
                 ):
                     logger.exception('Root actor crashed\n')
 
