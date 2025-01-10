@@ -3,6 +3,10 @@ Reminders for oddities in `trio` that we need to stay aware of and/or
 want to see changed.
 
 '''
+from contextlib import (
+    asynccontextmanager as acm,
+)
+
 import pytest
 import trio
 from trio import TaskStatus
@@ -80,3 +84,60 @@ def test_stashed_child_nursery(use_start_soon):
 
     with pytest.raises(NameError):
         trio.run(main)
+
+
+# @pytest.mark.parametrize(
+#     'open_tn_outside_acm',
+#     [True, False]
+#     # ids='aio_err_triggered={}'.format
+# )
+@pytest.mark.parametrize(
+    'canc_from_finally',
+    [True, False]
+    # ids='aio_err_triggered={}'.format
+)
+def test_acm_embedded_nursery_propagates_enter_err(
+    canc_from_finally: bool,
+    # open_tn_outside_acm: bool,
+):
+    # from tractor.trionics import maybe_open_nursery
+
+    # async def canc_then_checkpoint(tn):
+    #     tn.cancel_scope.cancel()
+    #     await trio.lowlevel.checkpoint()
+
+    @acm
+    async def wraps_tn_that_always_cancels(
+        # maybe_tn: trio.Nursery|None = None
+    ):
+        # async with maybe_open_nursery(maybe_tn) as tn:
+        async with trio.open_nursery() as tn:
+            try:
+                yield tn
+            finally:
+                if canc_from_finally:
+                    # await canc_then_checkpoint(tn)
+                    tn.cancel_scope.cancel()
+                    await trio.lowlevel.checkpoint()
+
+    async def _main():
+        # open_nursery = (
+        #     trio.open_nursery if open_tn_outside_acm
+        #     else nullcontext
+        # )
+
+        async with (
+            # open_nursery() as tn,
+            # wraps_tn_that_always_cancels(maybe_tn=tn) as tn
+            wraps_tn_that_always_cancels() as tn
+        ):
+            assert not tn.cancel_scope.cancel_called
+            assert 0
+
+    with pytest.raises(ExceptionGroup) as excinfo:
+        trio.run(_main)
+
+    eg = excinfo.value
+    assert_eg, rest_eg = eg.split(AssertionError)
+
+    assert len(assert_eg.exceptions) == 1
