@@ -317,6 +317,7 @@ class Lock:
         we_released: bool = False
         ctx_in_debug: Context|None = cls.ctx_in_debug
         repl_task: Task|Thread|None = DebugStatus.repl_task
+        message: str = ''
 
         try:
             if not DebugStatus.is_main_trio_thread():
@@ -444,7 +445,10 @@ class Lock:
                         f'|_{repl_task}\n'
                     )
 
-            log.devx(message)
+            if message:
+                log.devx(message)
+            else:
+                import pdbp; pdbp.set_trace()
 
         return we_released
 
@@ -3168,7 +3172,7 @@ async def maybe_wait_for_debugger(
 @cm
 def open_crash_handler(
     catch: set[BaseException] = {
-        Exception,
+        # Exception,
         BaseException,
     },
     ignore: set[BaseException] = {
@@ -3189,10 +3193,20 @@ def open_crash_handler(
     '''
     __tracebackhide__: bool = tb_hide
 
+    class BoxedMaybeException(Struct):
+        value: BaseException|None = None
+
+    # TODO, yield a `outcome.Error`-like boxed type?
+    # -[~] use `outcome.Value/Error` X-> frozen!
+    # -[x] write our own..?
+    # -[ ] consider just wtv is used by `pytest.raises()`?
+    #
+    boxed_maybe_exc = BoxedMaybeException()
     err: BaseException
     try:
-        yield
+        yield boxed_maybe_exc
     except tuple(catch) as err:
+        boxed_maybe_exc.value = err
         if (
             type(err) not in ignore
             and
@@ -3210,13 +3224,13 @@ def open_crash_handler(
                 )
             except bdb.BdbQuit:
                 __tracebackhide__: bool = False
-                raise
+                raise err
 
             # XXX NOTE, `pdbp`'s version seems to lose the up-stack
             # tb-info?
             # pdbp.xpm()
 
-        raise
+        raise err
 
 
 @cm
