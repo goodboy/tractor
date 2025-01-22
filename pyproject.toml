@@ -1,3 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tractor"
+version = "0.1.0a6dev0"
+description = 'structured concurrent `trio`-"actors"'
+authors = [{ name = "Tyler Goodlet", email = "goodboy_foss@protonmail.com" }]
+requires-python = "~=3.11"
+readme = "docs/README.rst"
+license = "AGPL-3.0-or-later"
+keywords = [
+    "trio",
+    "async",
+    "concurrency",
+    "structured concurrency",
+    "actor model",
+    "distributed",
+    "multiprocessing",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Operating System :: POSIX :: Linux",
+    "Framework :: Trio",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = [
+    "trio>=0.24,<0.25",
+    "tricycle>=0.4.1,<0.5",
+    "trio-typing>=0.10.0,<0.11",
+    "wrapt>=1.16.0,<2",
+    "colorlog>=6.8.2,<7",
+    "pdbp>=1.5.0,<2",
+    "msgspec",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2.0,<9",
+    "pexpect>=4.9.0,<5",
+    "greenback>=1.2.1,<2",
+    "stackscope>=0.2.2,<0.3",
+    "xontrib-vox>=0.0.1,<0.0.2",
+    "prompt-toolkit>=3.0.43,<4",
+    "xonsh-vox-tabcomplete>=0.5,<0.6",
+]
+
+[tool.uv.sources]
+msgspec = { git = "https://github.com/jcrist/msgspec.git" }
+
+[tool.hatch.build.targets.sdist]
+include = ["tractor"]
+
+[tool.hatch.build.targets.wheel]
+include = ["tractor"]
+
 [tool.towncrier]
 package = "tractor"
 filename = "NEWS.rst"
@@ -7,26 +68,25 @@ title_format = "tractor {version} ({project_date})"
 template = "nooz/_template.rst"
 all_bullets = true
 
-  [[tool.towncrier.type]]
+[[tool.towncrier.type]]
   directory = "feature"
   name = "Features"
   showcontent = true
 
-  [[tool.towncrier.type]]
+[[tool.towncrier.type]]
   directory = "bugfix"
   name = "Bug Fixes"
   showcontent = true
 
-  [[tool.towncrier.type]]
+[[tool.towncrier.type]]
   directory = "doc"
   name = "Improved Documentation"
   showcontent = true
 
-  [[tool.towncrier.type]]
+[[tool.towncrier.type]]
   directory = "trivial"
   name = "Trivial/Internal Changes"
   showcontent = true
-
 
 [tool.pytest.ini_options]
 minversion = '6.0'
