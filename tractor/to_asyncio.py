@@ -34,7 +34,6 @@ from typing import (
 
 import tractor
 from tractor._exceptions import (
-    AsyncioCancelled,
     is_multi_cancelled,
 )
 from tractor._state import (
@@ -46,6 +45,11 @@ from tractor.log import (
     get_logger,
     StackLevelAdapter,
 )
+# TODO, wite the equiv of `trio.abc.Channel` but without attrs..
+# -[ ] `trionics.chan_types.ChanStruct` maybe?
+# from tractor.msg import (
+#     pretty_struct,
+# )
 from tractor.trionics._broadcast import (
     broadcast_receiver,
     BroadcastReceiver,
@@ -66,7 +70,12 @@ __all__ = [
 
 
 @dataclass
-class LinkedTaskChannel(trio.abc.Channel):
+class LinkedTaskChannel(
+    trio.abc.Channel,
+
+    # XXX LAME! meta-base conflict..
+    # pretty_struct.Struct,
+):
     '''
     A "linked task channel" which allows for two-way synchronized msg
     passing between a ``trio``-in-guest-mode task and an ``asyncio``
@@ -77,12 +86,14 @@ class LinkedTaskChannel(trio.abc.Channel):
     _from_aio: trio.MemoryReceiveChannel
     _to_trio: trio.MemorySendChannel
     _trio_cs: trio.CancelScope
+    _trio_task: trio.Task
     _aio_task_complete: trio.Event
 
     _trio_err: BaseException|None = None
     _trio_exited: bool = False
 
     # set after ``asyncio.create_task()``
+    # _aio_first: Any|None = None
     _aio_task: asyncio.Task|None = None
     _aio_err: BaseException|None = None
     _broadcaster: BroadcastReceiver|None = None
@@ -90,6 +101,25 @@ class LinkedTaskChannel(trio.abc.Channel):
     async def aclose(self) -> None:
         await self._from_aio.aclose()
 
+    def started(
+        self,
+        val: Any = None,
+    ) -> None:
+        self._aio_started_val = val
+        return self._to_trio.send_nowait(val)
+
+    # TODO, mk this side-agnostic?
+    #
+    # -[ ] add private meths for both sides and dynamically
+    #    determine which to use based on task-type read at calltime?
+    #    -[ ] `._recv_trio()`: receive to trio<-asyncio
+    #    -[ ] `._send_trio()`: send from trio->asyncio
+    #    -[ ] `._recv_aio()`: send from asyncio->trio
+    #    -[ ] `._send_aio()`: receive to asyncio<-trio
+    #
+    # -[ ] pass the instance to the aio side instead of the separate
+    #    per-side chan types?
+    #
     async def receive(self) -> Any:
         '''
         Receive a value from the paired `asyncio.Task` with
@@ -115,7 +145,16 @@ class LinkedTaskChannel(trio.abc.Channel):
             ):
                 raise err
 
-    async def wait_asyncio_complete(self) -> None:
+    async def send(self, item: Any) -> None:
+        '''
+        Send a value through to the asyncio task presuming
+        it defines a ``from_trio`` argument, if it does not
+        this method will raise an error.
+
+        '''
+        self._to_aio.put_nowait(item)
+
+    async def wait_aio_complete(self) -> None:
         await self._aio_task_complete.wait()
 
     def cancel_asyncio_task(
@@ -125,15 +164,6 @@ class LinkedTaskChannel(trio.abc.Channel):
         self._aio_task.cancel(
             msg=msg,
         )
-
-    async def send(self, item: Any) -> None:
-        '''
-        Send a value through to the asyncio task presuming
-        it defines a ``from_trio`` argument, if it does not
-        this method will raise an error.
-
-        '''
-        self._to_aio.put_nowait(item)
 
     def closed(self) -> bool:
         return self._from_aio._closed  # type: ignore
@@ -218,7 +248,8 @@ def _run_asyncio_task(
 
     coro = func(**kwargs)
 
-    cancel_scope = trio.CancelScope()
+    trio_task: trio.Task = trio.lowlevel.current_task()
+    trio_cs = trio.CancelScope()
     aio_task_complete = trio.Event()
     aio_err: BaseException|None = None
 
@@ -226,7 +257,8 @@ def _run_asyncio_task(
         _to_aio=aio_q,  # asyncio.Queue
         _from_aio=from_aio,  # recv chan
         _to_trio=to_trio,  # send chan
-        _trio_cs=cancel_scope,
+        _trio_cs=trio_cs,
+        _trio_task=trio_task,
         _aio_task_complete=aio_task_complete,
     )
 
@@ -274,6 +306,9 @@ def _run_asyncio_task(
                 to_trio.send_nowait(result)
 
         finally:
+            # breakpoint()
+            # import pdbp; pdbp.set_trace()
+
             # if the task was spawned using `open_channel_from()`
             # then we close the channels on exit.
             if provide_channels:
@@ -281,7 +316,6 @@ def _run_asyncio_task(
                 # a ``trio.EndOfChannel`` to the trio (consumer) side.
                 to_trio.close()
 
-            # import pdbp; pdbp.set_trace()
             aio_task_complete.set()
             # await asyncio.sleep(0.1)
             log.info(
@@ -325,14 +359,17 @@ def _run_asyncio_task(
         )
         greenback.bestow_portal(task)
 
-    def cancel_trio(task: asyncio.Task) -> None:
+    def cancel_trio(
+        task: asyncio.Task,
+    ) -> None:
         '''
-        Cancel the calling `trio` task on error.
+        Cancel the parent `trio` task on any error raised by the
+        `asyncio` side.
 
         '''
         nonlocal chan
-        aio_err: BaseException|None = chan._aio_err
-        task_err: BaseException|None = None
+        relayed_aio_err: BaseException|None = chan._aio_err
+        aio_err: BaseException|None = None
 
         # only to avoid `asyncio` complaining about uncaptured
         # task exceptions
@@ -343,20 +380,20 @@ def _run_asyncio_task(
                 f'|_{res}\n'
             )
         except BaseException as _aio_err:
-            task_err: BaseException = _aio_err
-
+            aio_err: BaseException = _aio_err
             # read again AFTER the `asyncio` side errors in case
             # it was cancelled due to an error from `trio` (or
-            # some other out of band exc).
-            aio_err: BaseException|None = chan._aio_err
+            # some other out of band exc) and then set to something
+            # else?
+            relayed_aio_err: BaseException|None = chan._aio_err
 
             # always true right?
             assert (
-                type(_aio_err) is type(aio_err)
+                type(_aio_err) is type(relayed_aio_err)
             ), (
                 f'`asyncio`-side task errors mismatch?!?\n\n'
-                f'caught: {_aio_err}\n'
-                f'chan._aio_err: {aio_err}\n'
+                f'(caught) aio_err: {aio_err}\n'
+                f'chan._aio_err: {relayed_aio_err}\n'
             )
 
             msg: str = (
@@ -381,12 +418,13 @@ def _run_asyncio_task(
                     msg.format(etype_str='errored')
                 )
 
-
-        if aio_err is not None:
+        trio_err: BaseException|None = chan._trio_err
+        if (
+            relayed_aio_err
+            or
+            trio_err
+        ):
             # import pdbp; pdbp.set_trace()
-            # XXX: uhh is this true?
-            # assert task_err, f'Asyncio task {task.get_name()} discrepancy!?'
-
             # NOTE: currently mem chan closure may act as a form
             # of error relay (at least in the `asyncio.CancelledError`
             # case) since we have no way to directly trigger a `trio`
@@ -394,8 +432,6 @@ def _run_asyncio_task(
             # We might want to change this in the future though.
             from_aio.close()
 
-            if task_err is None:
-                assert aio_err
                 # wait, wut?
                 # aio_err.with_traceback(aio_err.__traceback__)
 
@@ -404,7 +440,7 @@ def _run_asyncio_task(
             # elif (
             #     type(aio_err) is CancelledError
             #     and  # trio was the cause?
-            #     cancel_scope.cancel_called
+            #     trio_cs.cancel_called
             # ):
             #     log.cancel(
             #         'infected task was cancelled by `trio`-side'
@@ -415,24 +451,81 @@ def _run_asyncio_task(
             # error in case the trio task is blocking on
             # a checkpoint.
             if (
-                not cancel_scope.cancelled_caught
+                not trio_cs.cancelled_caught
                 or
-                not cancel_scope.cancel_called
+                not trio_cs.cancel_called
             ):
                 # import pdbp; pdbp.set_trace()
-                cancel_scope.cancel()
+                trio_cs.cancel()
 
-            if task_err:
+            # maybe the `trio` task errored independent from the
+            # `asyncio` one and likely in between
+            # a guest-run-sched-tick.
+            #
+            # The obvious ex. is where one side errors during
+            # the current tick and then the other side immediately
+            # errors before its next checkpoint; i.e. the 2 errors
+            # are "independent".
+            #
+            # "Independent" here means in the sense that neither task
+            # was the explicit cause of the other side's exception
+            # according to our `tractor.to_asyncio` SC API's error
+            # relaying mechanism(s); the error pair is *possibly
+            # due-to* but **not necessarily** inter-related by some
+            # (subsys) state between the tasks,
+            #
+            # NOTE, also see the `test_trio_prestarted_task_bubbles`
+            # for reproducing detailed edge cases as per the above
+            # cases.
+            #
+            if (
+                not trio_cs.cancelled_caught
+                and
+                (trio_err := chan._trio_err)
+                and
+                type(trio_err) not in {
+                    trio.Cancelled,
+                }
+                and (
+                    aio_err
+                    and
+                    type(aio_err) not in {
+                        asyncio.CancelledError
+                    }
+                )
+            ):
+                eg = ExceptionGroup(
+                    'Both the `trio` and `asyncio` tasks errored independently!!\n',
+                    (trio_err, aio_err),
+                )
+                chan._trio_err = eg
+                chan._aio_err = eg
+                raise eg
+
+            elif aio_err:
                 # XXX raise any `asyncio` side error IFF it doesn't
                 # match the one we just caught from the task above!
                 # (that would indicate something weird/very-wrong
                 # going on?)
-                if aio_err is not task_err:
-                    # import pdbp; pdbp.set_trace()
-                    raise aio_err from task_err
+                if aio_err is not relayed_aio_err:
+                    raise aio_err from relayed_aio_err
+
+                raise aio_err
 
     task.add_done_callback(cancel_trio)
     return chan
+
+
+class AsyncioCancelled(Exception):
+    '''
+    Asyncio cancelled translation (non-base) error
+    for use with the ``to_asyncio`` module
+    to be raised in the ``trio`` side task
+
+    NOTE: this should NOT inherit from `asyncio.CancelledError` or
+    tests should break!
+
+    '''
 
 
 class TrioTaskExited(AsyncioCancelled):
@@ -483,12 +576,11 @@ async def translate_aio_errors(
 
         # import pdbp; pdbp.set_trace()  # lolevel-debug
 
-        # relay cancel through to called ``asyncio`` task
+        # relay cancel through to called `asyncio` task
         chan._aio_err = AsyncioCancelled(
             f'trio`-side cancelled the `asyncio`-side,\n'
             f'c)>\n'
             f'  |_{trio_task}\n\n'
-
 
             f'{trio_err!r}\n'
         )
@@ -546,6 +638,7 @@ async def translate_aio_errors(
             raise
 
     except BaseException as _trio_err:
+        # await tractor.pause(shield=True)
         trio_err = _trio_err
         log.exception(
             '`trio`-side task errored?'
@@ -619,11 +712,17 @@ async def translate_aio_errors(
                 # pump the other side's task? needed?
                 await trio.lowlevel.checkpoint()
 
+                # from tractor._state import is_root_process
+                # if is_root_process():
+                #     breakpoint()
+
                 if (
                     not chan._trio_err
                     and
                     (fut := aio_task._fut_waiter)
                 ):
+                    # await trio.lowlevel.checkpoint()
+                    # import pdbp; pdbp.set_trace()
                     fut.set_exception(
                         TrioTaskExited(
                             f'The peer `asyncio` task is still blocking/running?\n'
@@ -632,11 +731,6 @@ async def translate_aio_errors(
                         )
                     )
                 else:
-                    # from tractor._state import is_root_process
-                    # if is_root_process():
-                    #     breakpoint()
-                    #     import pdbp; pdbp.set_trace()
-
                     aio_taskc_warn: str = (
                         f'\n'
                         f'MANUALLY Cancelling `asyncio`-task: {aio_task.get_name()}!\n\n'
@@ -663,7 +757,7 @@ async def translate_aio_errors(
         # it erroed out up there!
         #
         if wait_on_aio_task:
-            # await chan.wait_asyncio_complete()
+            # await chan.wait_aio_complete()
             await chan._aio_task_complete.wait()
             log.info(
                 'asyncio-task is done and unblocked trio-side!\n'
@@ -771,11 +865,22 @@ async def open_channel_from(
             # sync to a "started()"-like first delivered value from the
             # ``asyncio`` task.
             try:
-                with chan._trio_cs:
+                with (cs := chan._trio_cs):
                     first = await chan.receive()
 
                     # deliver stream handle upward
                     yield first, chan
+            except trio.Cancelled as taskc:
+                # await tractor.pause(shield=True)  # ya it worx ;)
+                if cs.cancel_called:
+                    log.cancel(
+                        f'trio-side was manually cancelled by aio side\n'
+                        f'|_c>}}{cs!r}?\n'
+                    )
+                    # TODO, maybe a special `TrioCancelled`???
+
+                raise taskc
+
             finally:
                 chan._trio_exited = True
                 chan._to_trio.close()
@@ -893,12 +998,12 @@ def run_as_asyncio_guest(
     _sigint_loop_pump_delay: float = 0,
 
 ) -> None:
-# ^-TODO-^ technically whatever `trio_main` returns.. we should
-# try to use func-typevar-params at leaast by 3.13!
-# -[ ] https://typing.readthedocs.io/en/latest/spec/callables.html#callback-protocols
-# -[ ] https://peps.python.org/pep-0646/#using-type-variable-tuples-in-functions
-# -[ ] https://typing.readthedocs.io/en/latest/spec/callables.html#unpack-for-keyword-arguments
-# -[ ] https://peps.python.org/pep-0718/
+    # ^-TODO-^ technically whatever `trio_main` returns.. we should
+    # try to use func-typevar-params at leaast by 3.13!
+    # -[ ] https://typing.readthedocs.io/en/latest/spec/callables.html#callback-protocols
+    # -[ ] https://peps.python.org/pep-0646/#using-type-variable-tuples-in-functions
+    # -[ ] https://typing.readthedocs.io/en/latest/spec/callables.html#unpack-for-keyword-arguments
+    # -[ ] https://peps.python.org/pep-0718/
     '''
     Entry for an "infected ``asyncio`` actor".
 
@@ -957,15 +1062,15 @@ def run_as_asyncio_guest(
             #     force_reload=True,
             # )
 
-        def trio_done_callback(main_outcome):
+        def trio_done_callback(main_outcome: Outcome):
             log.runtime(
                 f'`trio` guest-run finishing with outcome\n'
                 f'>) {main_outcome}\n'
                 f'|_{trio_done_fute}\n'
             )
 
+            # import pdbp; pdbp.set_trace()
             if isinstance(main_outcome, Error):
-                # import pdbp; pdbp.set_trace()
                 error: BaseException = main_outcome.error
 
                 # show an dedicated `asyncio`-side tb from the error
@@ -1164,6 +1269,10 @@ def run_as_asyncio_guest(
                     '"RuntimeWarning: Trio guest run got abandoned.." !!\n'
                 )
                 raise AsyncioRuntimeTranslationError(message) from state_err
+
+        # XXX, should never get here ;)
+        # else:
+        #     import pdbp; pdbp.set_trace()
 
     # might as well if it's installed.
     try:
