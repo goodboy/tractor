@@ -218,10 +218,9 @@ def expect_any_of(
         )
 
     return expected_patts
-    # yield child
 
 
-def test_pause_from_asyncio_task(
+def test_sync_pause_from_aio_task(
     spawn,
     ctlc: bool
     # ^TODO, fix for `asyncio`!!
@@ -327,3 +326,25 @@ def test_pause_from_asyncio_task(
 
     child.sendline('c')
     child.expect(EOF)
+
+
+def test_sync_pause_from_non_greenbacked_aio_task():
+    '''
+    Where the `breakpoint()` caller task is NOT spawned by
+    `tractor.to_asyncio` and thus never activates
+    a `greenback.ensure_portal()` beforehand, presumably bc the task
+    was started by some lib/dep as in often seen in the field.
+
+    Ensure sync pausing works when the pause is in,
+
+    - the root actor running in infected-mode?
+      |_ since we don't need any IPC to acquire the debug lock?
+      |_ is there some way to handle this like the non-main-thread case?
+
+    All other cases need to error out appropriately right?
+
+    - for any subactor we can't avoid needing the repl lock..
+      |_ is there a way to hook into `asyncio.ensure_future(obj)`?
+
+    '''
+    pass
