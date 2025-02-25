@@ -35,3 +35,43 @@ from ._debug import (
 from ._stackscope import (
     enable_stack_on_sig as enable_stack_on_sig,
 )
+from .pformat import (
+    add_div as add_div,
+    pformat_caller_frame as pformat_caller_frame,
+    pformat_boxed_tb as pformat_boxed_tb,
+)
+
+
+def _enable_readline_feats() -> str:
+    '''
+    Handle `readline` when compiled with `libedit` to avoid breaking
+    tab completion in `pdbp` (and its dep `tabcompleter`)
+    particularly since `uv` cpython distis are compiled this way..
+
+    See docs for deats,
+    https://docs.python.org/3/library/readline.html#module-readline
+
+    Originally discovered soln via SO answer,
+    https://stackoverflow.com/q/49287102
+
+    '''
+    import readline
+    if (
+        # 3.13+ attr
+        # https://docs.python.org/3/library/readline.html#readline.backend
+        (getattr(readline, 'backend', False) == 'libedit')
+        or
+        'libedit' in readline.__doc__
+    ):
+        readline.parse_and_bind("python:bind -v")
+        readline.parse_and_bind("python:bind ^I rl_complete")
+        return 'libedit'
+    else:
+        readline.parse_and_bind("tab: complete")
+        readline.parse_and_bind("set editing-mode vi")
+        readline.parse_and_bind("set keymap vi")
+        return 'readline'
+
+
+# TODO, move this to a new `.devx._pdbp` mod?
+_enable_readline_feats()
