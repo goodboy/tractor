@@ -300,6 +300,7 @@ dependencies = [
     { name = "colorlog" },
     { name = "msgspec" },
     { name = "pdbp" },
+    { name = "tabcompleter" },
     { name = "tricycle" },
     { name = "trio" },
     { name = "wrapt" },
@@ -314,17 +315,16 @@ dev = [
     { name = "pytest" },
     { name = "stackscope" },
     { name = "xonsh" },
-    { name = "xonsh-vox-tabcomplete" },
-    { name = "xontrib-vox" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "colorlog", specifier = ">=6.8.2,<7" },
     { name = "msgspec", git = "https://github.com/jcrist/msgspec.git" },
-    { name = "pdbp", specifier = ">=1.5.0,<2" },
+    { name = "pdbp", specifier = ">=1.6,<2" },
+    { name = "tabcompleter", specifier = ">=1.4.0" },
     { name = "tricycle", specifier = ">=0.4.1,<0.5" },
-    { name = "trio", specifier = ">=0.24,<0.25" },
+    { name = "trio", specifier = ">0.27" },
     { name = "wrapt", specifier = ">=1.16.0,<2" },
 ]
 
@@ -332,13 +332,11 @@ requires-dist = [
 dev = [
     { name = "greenback", specifier = ">=1.2.1,<2" },
     { name = "pexpect", specifier = ">=4.9.0,<5" },
-    { name = "prompt-toolkit", specifier = ">=3.0.43,<4" },
+    { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "pyperclip", specifier = ">=1.9.0" },
     { name = "pytest", specifier = ">=8.2.0,<9" },
     { name = "stackscope", specifier = ">=0.2.2,<0.3" },
-    { name = "xonsh", specifier = ">=0.19.1" },
-    { name = "xonsh-vox-tabcomplete", specifier = ">=0.5,<0.6" },
-    { name = "xontrib-vox", specifier = ">=0.0.1,<0.0.2" },
+    { name = "xonsh", specifier = ">=0.19.2" },
 ]
 
 [[package]]
@@ -355,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "trio"
-version = "0.24.0"
+version = "0.29.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -365,9 +363,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "sortedcontainers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8a/f3/07c152213222c615fe2391b8e1fea0f5af83599219050a549c20fcbd9ba2/trio-0.24.0.tar.gz", hash = "sha256:ffa09a74a6bf81b84f8613909fb0beaee84757450183a7a2e0b47b455c0cac5d", size = 545131 }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/47/f62e62a1a6f37909aed0bf8f5d5411e06fa03846cfcb64540cd1180ccc9f/trio-0.29.0.tar.gz", hash = "sha256:ea0d3967159fc130acb6939a0be0e558e364fee26b5deeecc893a6b08c361bdf", size = 588952 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/fb/9299cf74953f473a15accfdbe2c15218e766bae8c796f2567c83bae03e98/trio-0.24.0-py3-none-any.whl", hash = "sha256:c3bd3a4e3e3025cd9a2241eae75637c43fe0b9e88b4c97b9161a55b9e54cd72c", size = 460205 },
+    { url = "https://files.pythonhosted.org/packages/c9/55/c4d9bea8b3d7937901958f65124123512419ab0eb73695e5f382521abbfb/trio-0.29.0-py3-none-any.whl", hash = "sha256:d8c463f1a9cc776ff63e331aba44c125f423a5a13c684307e828d930e625ba66", size = 492920 },
 ]
 
 [[package]]
@@ -434,33 +432,13 @@ wheels = [
 
 [[package]]
 name = "xonsh"
-version = "0.19.1"
+version = "0.19.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/98/6e/b54a0b2685535995ee50f655103c463f9d339455c9b08c4bce3e03e7bb17/xonsh-0.19.1.tar.gz", hash = "sha256:5d3de649c909f6d14bc69232219bcbdb8152c830e91ddf17ad169c672397fb97", size = 796468 }
+sdist = { url = "https://files.pythonhosted.org/packages/68/4e/56e95a5e607eb3b0da37396f87cde70588efc8ef819ab16f02d5b8378dc4/xonsh-0.19.2.tar.gz", hash = "sha256:cfdd0680d954a2c3aefd6caddcc7143a3d06aa417ed18365a08219bb71b960b0", size = 799960 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8c/e6/db44068c5725af9678e37980ae9503165393d51b80dc8517fa4ec74af1cf/xonsh-0.19.1-py310-none-any.whl", hash = "sha256:83eb6610ed3535f8542abd80af9554fb7e2805b0b3f96e445f98d4b5cf1f7046", size = 640686 },
-    { url = "https://files.pythonhosted.org/packages/77/4e/e487e82349866b245c559433c9ba626026a2e66bd17d7f9ac1045082f146/xonsh-0.19.1-py311-none-any.whl", hash = "sha256:c176e515b0260ab803963d1f0924f1e32f1064aa6fd5d791aa0cf6cda3a924ae", size = 640680 },
-    { url = "https://files.pythonhosted.org/packages/5d/88/09060815548219b8f6953a06c247cb5c92d03cbdf7a02a980bda1b5754db/xonsh-0.19.1-py312-none-any.whl", hash = "sha256:fe1266c86b117aced3bdc4d5972420bda715864435d0bd3722d63451e8001036", size = 640604 },
-    { url = "https://files.pythonhosted.org/packages/83/ff/7873cb8184cffeafddbf861712831c2baa2e9dbecdbfd33b1228f0db0019/xonsh-0.19.1-py313-none-any.whl", hash = "sha256:3f158b6fc0bba954e0b989004d4261bafc4bd94c68c2abd75b825da23e5a869c", size = 641166 },
-    { url = "https://files.pythonhosted.org/packages/cc/03/b9f8dd338df0a330011d104e63d4d0acd8bbbc1e990ff049487b6bdf585d/xonsh-0.19.1-py39-none-any.whl", hash = "sha256:a900a6eb87d881a7ef90b1ac8522ba3699582f0bcb1e9abd863d32f6d63faf04", size = 632912 },
-]
-
-[[package]]
-name = "xonsh-vox-tabcomplete"
-version = "0.5"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/fd/af0c2ee6c067c2a4dc64ec03598c94de1f6ec5984b3116af917f3add4a16/xonsh_vox_tabcomplete-0.5-py3-none-any.whl", hash = "sha256:9701b198180f167071234e77eab87b7befa97c1873b088d0b3fbbe6d6d8dcaad", size = 14381 },
-]
-
-[[package]]
-name = "xontrib-vox"
-version = "0.0.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "xonsh" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/ac/a5db68a1f2e4036f7ff4c8546b1cbe29edee2ff40e0ff931836745988b79/xontrib-vox-0.0.1.tar.gz", hash = "sha256:c1f0b155992b4b0ebe6dcfd651084a8707ade7372f7e456c484d2a85339d9907", size = 16504 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/58/dcdf11849c8340033da00669527ce75d8292a4e8d82605c082ed236a081a/xontrib_vox-0.0.1-py3-none-any.whl", hash = "sha256:df2bbb815832db5b04d46684f540eac967ee40ef265add2662a95d6947d04c70", size = 13467 },
+    { url = "https://files.pythonhosted.org/packages/6c/13/281094759df87b23b3c02dc4a16603ab08ea54d7f6acfeb69f3341137c7a/xonsh-0.19.2-py310-none-any.whl", hash = "sha256:ec7f163fd3a4943782aa34069d4e72793328c916a5975949dbec8536cbfc089b", size = 642301 },
+    { url = "https://files.pythonhosted.org/packages/29/41/a51e4c3918fe9a293b150cb949b1b8c6d45eb17dfed480dcb76ea43df4e7/xonsh-0.19.2-py311-none-any.whl", hash = "sha256:53c45f7a767901f2f518f9b8dd60fc653e0498e56e89825e1710bb0859985049", size = 642286 },
+    { url = "https://files.pythonhosted.org/packages/0a/93/9a77b731f492fac27c577dea2afb5a2bcc2a6a1c79be0c86c95498060270/xonsh-0.19.2-py312-none-any.whl", hash = "sha256:b24c619aa52b59eae4d35c4195dba9b19a2c548fb5c42c6f85f2b8ccb96807b5", size = 642386 },
+    { url = "https://files.pythonhosted.org/packages/be/75/070324769c1ff88d971ce040f4f486339be98e0a365c8dd9991eb654265b/xonsh-0.19.2-py313-none-any.whl", hash = "sha256:c53ef6c19f781fbc399ed1b382b5c2aac2125010679a3b61d643978273c27df0", size = 642873 },
+    { url = "https://files.pythonhosted.org/packages/fa/cb/2c7ccec54f5b0e73fdf7650e8336582ff0347d9001c5ef8271dc00c034fe/xonsh-0.19.2-py39-none-any.whl", hash = "sha256:bcc0225dc3847f1ed2f175dac6122fbcc54cea67d9c2dc2753d9615e2a5ff284", size = 634602 },
 ]
