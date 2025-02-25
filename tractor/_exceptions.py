@@ -1015,18 +1015,6 @@ class MessagingError(Exception):
 
     '''
 
-class AsyncioCancelled(Exception):
-    '''
-    Asyncio cancelled translation (non-base) error
-    for use with the ``to_asyncio`` module
-    to be raised in the ``trio`` side task
-
-    NOTE: this should NOT inherit from `asyncio.CancelledError` or
-    tests should break!
-
-    '''
-
-
 def pack_error(
     exc: BaseException|RemoteActorError,
 
@@ -1206,7 +1194,7 @@ def is_multi_cancelled(
         trio.Cancelled in ignore_nested
         # XXX always count-in `trio`'s native signal
     ):
-        ignore_nested |= {trio.Cancelled}
+        ignore_nested.update({trio.Cancelled})
 
     if isinstance(exc, BaseExceptionGroup):
         matched_exc: BaseExceptionGroup|None = exc.subgroup(
