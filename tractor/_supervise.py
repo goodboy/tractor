@@ -395,7 +395,10 @@ async def _open_and_supervise_one_cancels_all_nursery(
     # `ActorNursery.start_actor()`).
 
     # errors from this daemon actor nursery bubble up to caller
-    async with trio.open_nursery() as da_nursery:
+    async with trio.open_nursery(
+        strict_exception_groups=False,
+        # ^XXX^ TODO? instead unpack any RAE as per "loose" style?
+    ) as da_nursery:
         try:
             # This is the inner level "run in actor" nursery. It is
             # awaited first since actors spawned in this way (using
@@ -405,7 +408,10 @@ async def _open_and_supervise_one_cancels_all_nursery(
             # immediately raised for handling by a supervisor strategy.
             # As such if the strategy propagates any error(s) upwards
             # the above "daemon actor" nursery will be notified.
-            async with trio.open_nursery() as ria_nursery:
+            async with trio.open_nursery(
+                strict_exception_groups=False,
+                # ^XXX^ TODO? instead unpack any RAE as per "loose" style?
+            ) as ria_nursery:
 
                 an = ActorNursery(
                     actor,

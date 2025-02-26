@@ -620,7 +620,11 @@ async def _invoke(
             tn: trio.Nursery
             rpc_ctx_cs: CancelScope
             async with (
-                trio.open_nursery() as tn,
+                trio.open_nursery(
+                    strict_exception_groups=False,
+                    # ^XXX^ TODO? instead unpack any RAE as per "loose" style?
+
+                ) as tn,
                 msgops.maybe_limit_plds(
                     ctx=ctx,
                     spec=ctx_meta.get('pld_spec'),
@@ -733,8 +737,8 @@ async def _invoke(
         # XXX: do we ever trigger this block any more?
         except (
             BaseExceptionGroup,
-            trio.Cancelled,
             BaseException,
+            trio.Cancelled,
 
         ) as scope_error:
             if (

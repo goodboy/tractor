@@ -1982,7 +1982,10 @@ async def open_context_from_portal(
     ctxc_from_callee: ContextCancelled|None = None
     try:
         async with (
-            trio.open_nursery() as tn,
+            trio.open_nursery(
+                strict_exception_groups=False,
+            ) as tn,
+
             msgops.maybe_limit_plds(
                 ctx=ctx,
                 spec=ctx_meta.get('pld_spec'),

@@ -362,7 +362,10 @@ async def open_root_actor(
         )
 
         # start the actor runtime in a new task
-        async with trio.open_nursery() as nursery:
+        async with trio.open_nursery(
+            strict_exception_groups=False,
+            # ^XXX^ TODO? instead unpack any RAE as per "loose" style?
+        ) as nursery:
 
             # ``_runtime.async_main()`` creates an internal nursery
             # and blocks here until any underlying actor(-process)
@@ -457,12 +460,19 @@ def run_daemon(
 
     start_method: str | None = None,
     debug_mode: bool = False,
+
+    # TODO, support `infected_aio=True` mode by,
+    # - calling the appropriate entrypoint-func from `.to_asyncio`
+    # - maybe init-ing `greenback` as done above in
+    #   `open_root_actor()`.
+
     **kwargs
 
 ) -> None:
     '''
-    Spawn daemon actor which will respond to RPC; the main task simply
-    starts the runtime and then sleeps forever.
+    Spawn a root (daemon) actor which will respond to RPC; the main
+    task simply starts the runtime and then blocks via embedded
+    `trio.sleep_forever()`.
 
     This is a very minimal convenience wrapper around starting
     a "run-until-cancelled" root actor which can be started with a set
@@ -475,7 +485,6 @@ def run_daemon(
         importlib.import_module(path)
 
     async def _main():
-
         async with open_root_actor(
             registry_addrs=registry_addrs,
             name=name,
