@@ -533,6 +533,10 @@ async def open_portal(
     async with maybe_open_nursery(
         tn,
         shield=shield,
+        strict_exception_groups=False,
+        # ^XXX^ TODO? soo roll our own then ??
+        # -> since we kinda want the "if only one `.exception` then
+        # just raise that" interface?
     ) as tn:
 
         if not channel.connected():

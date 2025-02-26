@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-``tokio`` style broadcast channel.
+`tokio` style broadcast channel.
 https://docs.rs/tokio/1.11.0/tokio/sync/broadcast/index.html
 
 '''

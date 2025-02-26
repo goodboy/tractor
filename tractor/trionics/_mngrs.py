@@ -57,6 +57,8 @@ async def maybe_open_nursery(
     shield: bool = False,
     lib: ModuleType = trio,
 
+    **kwargs,  # proxy thru
+
 ) -> AsyncGenerator[trio.Nursery, Any]:
     '''
     Create a new nursery if None provided.
@@ -67,7 +69,7 @@ async def maybe_open_nursery(
     if nursery is not None:
         yield nursery
     else:
-        async with lib.open_nursery() as nursery:
+        async with lib.open_nursery(**kwargs) as nursery:
             nursery.cancel_scope.shield = shield
             yield nursery
 
@@ -143,9 +145,14 @@ async def gather_contexts(
             'Use a non-lazy iterator or sequence type intead!'
         )
 
-    async with trio.open_nursery() as n:
+    async with trio.open_nursery(
+        strict_exception_groups=False,
+        # ^XXX^ TODO? soo roll our own then ??
+        # -> since we kinda want the "if only one `.exception` then
+        # just raise that" interface?
+    ) as tn:
         for mngr in mngrs:
-            n.start_soon(
+            tn.start_soon(
                 _enter_and_wait,
                 mngr,
                 unwrapped,
