@@ -1283,7 +1283,8 @@ class Actor:
         msg: str = (
             f'Actor-runtime cancel request from {requester_type}\n\n'
             f'<=c) {requesting_uid}\n'
-            f' |_{self}\n'
+            f'  |_{self}\n'
+            f'\n'
         )
 
         # TODO: what happens here when we self-cancel tho?
@@ -1303,13 +1304,15 @@ class Actor:
                 lock_req_ctx.has_outcome
             ):
                 msg += (
-                    '-> Cancelling active debugger request..\n'
+                    f'\n'
+                    f'-> Cancelling active debugger request..\n'
                     f'|_{_debug.Lock.repr()}\n\n'
                     f'|_{lock_req_ctx}\n\n'
                 )
                 # lock_req_ctx._scope.cancel()
                 # TODO: wrap this in a method-API..
                 debug_req.req_cs.cancel()
+                # if lock_req_ctx:
 
             # self-cancel **all** ongoing RPC tasks
             await self.cancel_rpc_tasks(

@@ -950,7 +950,7 @@ class Context:
             # f'Context.cancel() => {self.chan.uid}\n'
             f'c)=> {self.chan.uid}\n'
             # f'{self.chan.uid}\n'
-            f' |_ @{self.dst_maddr}\n'
+            f'  |_ @{self.dst_maddr}\n'
             f'    >> {self.repr_rpc}\n'
             # f'    >> {self._nsf}() -> {codec}[dict]:\n\n'
             # TODO: pull msg-type from spec re #320
@@ -1003,7 +1003,8 @@ class Context:
                     )
                 else:
                     log.cancel(
-                        'Timed out on cancel request of remote task?\n'
+                        f'Timed out on cancel request of remote task?\n'
+                        f'\n'
                         f'{reminfo}'
                     )
 
