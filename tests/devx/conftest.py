@@ -30,7 +30,7 @@ from ..conftest import (
 @pytest.fixture
 def spawn(
     start_method,
-    testdir: pytest.Testdir,
+    testdir: pytest.Pytester,
     reg_addr: tuple[str, int],
 
 ) -> Callable[[str], None]:
@@ -44,16 +44,32 @@ def spawn(
             '`pexpect` based tests only supported on `trio` backend'
         )
 
+    def unset_colors():
+        '''
+        Python 3.13 introduced colored tracebacks that break patt
+        matching,
+
+        https://docs.python.org/3/using/cmdline.html#envvar-PYTHON_COLORS
+        https://docs.python.org/3/using/cmdline.html#using-on-controlling-color
+
+        '''
+        import os
+        os.environ['PYTHON_COLORS'] = '0'
+
     def _spawn(
         cmd: str,
         **mkcmd_kwargs,
     ):
+        unset_colors()
         return testdir.spawn(
             cmd=mk_cmd(
                 cmd,
                 **mkcmd_kwargs,
             ),
             expect_timeout=3,
+            # preexec_fn=unset_colors,
+            # ^TODO? get `pytest` core to expose underlying
+            # `pexpect.spawn()` stuff?
         )
 
     # such that test-dep can pass input script name.
