@@ -402,7 +402,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
         try:
             # This is the inner level "run in actor" nursery. It is
             # awaited first since actors spawned in this way (using
-            # ``ActorNusery.run_in_actor()``) are expected to only
+            # `ActorNusery.run_in_actor()`) are expected to only
             # return a single result and then complete (i.e. be canclled
             # gracefully). Errors collected from these actors are
             # immediately raised for handling by a supervisor strategy.
@@ -478,8 +478,8 @@ async def _open_and_supervise_one_cancels_all_nursery(
                             ContextCancelled,
                         }:
                             log.cancel(
-                                'Actor-nursery caught remote cancellation\n\n'
-
+                                'Actor-nursery caught remote cancellation\n'
+                                '\n'
                                 f'{inner_err.tb_str}'
                             )
                         else:
@@ -571,7 +571,9 @@ async def _open_and_supervise_one_cancels_all_nursery(
 @acm
 # @api_frame
 async def open_nursery(
+    hide_tb: bool = False,
     **kwargs,
+    # ^TODO, paramspec for `open_root_actor()`
 
 ) -> typing.AsyncGenerator[ActorNursery, None]:
     '''
@@ -589,7 +591,7 @@ async def open_nursery(
     which cancellation scopes correspond to each spawned subactor set.
 
     '''
-    __tracebackhide__: bool = True
+    __tracebackhide__: bool = hide_tb
     implicit_runtime: bool = False
     actor: Actor = current_actor(err_on_no_runtime=False)
     an: ActorNursery|None = None
@@ -605,7 +607,10 @@ async def open_nursery(
             # mark us for teardown on exit
             implicit_runtime: bool = True
 
-            async with open_root_actor(**kwargs) as actor:
+            async with open_root_actor(
+                hide_tb=hide_tb,
+                **kwargs,
+            ) as actor:
                 assert actor is current_actor()
 
                 try:
@@ -643,8 +648,10 @@ async def open_nursery(
         # show frame on any internal runtime-scope error
         if (
             an
-            and not an.cancelled
-            and an._scope_error
+            and
+            not an.cancelled
+            and
+            an._scope_error
         ):
             __tracebackhide__: bool = False
 

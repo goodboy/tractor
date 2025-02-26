@@ -111,8 +111,8 @@ async def open_root_actor(
     Runtime init entry point for ``tractor``.
 
     '''
-    __tracebackhide__: bool = hide_tb
     _debug.hide_runtime_frames()
+    __tracebackhide__: bool = hide_tb
 
     # TODO: stick this in a `@cm` defined in `devx._debug`?
     #
@@ -390,6 +390,12 @@ async def open_root_actor(
                 BaseExceptionGroup,
             ) as err:
 
+                # TODO, in beginning to handle the subsubactor with
+                # crashed grandparent cases..
+                #
+                # was_locked: bool = await _debug.maybe_wait_for_debugger(
+                #     child_in_debug=True,
+                # )
                 # XXX NOTE XXX see equiv note inside
                 # `._runtime.Actor._stream_handler()` where in the
                 # non-root or root-that-opened-this-mahually case we
