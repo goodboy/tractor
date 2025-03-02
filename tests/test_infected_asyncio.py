@@ -32,6 +32,17 @@ from tractor.trionics import BroadcastReceiver
 from tractor._testing import expect_ctxc
 
 
+@pytest.fixture(
+    scope='module',
+    # autouse=True,
+)
+def delay(debug_mode: bool) -> int:
+    if debug_mode:
+        return 999
+    else:
+        return 1
+
+
 async def sleep_and_err(
     sleep_for: float = 0.1,
 
@@ -59,20 +70,24 @@ async def trio_cancels_single_aio_task():
         await tractor.to_asyncio.run_task(aio_sleep_forever)
 
 
-def test_trio_cancels_aio_on_actor_side(reg_addr):
+def test_trio_cancels_aio_on_actor_side(
+    reg_addr: tuple[str, int],
+    delay: int,
+):
     '''
     Spawn an infected actor that is cancelled by the ``trio`` side
     task using std cancel scope apis.
 
     '''
     async def main():
-        async with tractor.open_nursery(
-            registry_addrs=[reg_addr]
-        ) as n:
-            await n.run_in_actor(
-                trio_cancels_single_aio_task,
-                infect_asyncio=True,
-            )
+        with trio.fail_after(1 + delay):
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr]
+            ) as n:
+                await n.run_in_actor(
+                    trio_cancels_single_aio_task,
+                    infect_asyncio=True,
+                )
 
     trio.run(main)
 
@@ -116,7 +131,9 @@ async def asyncio_actor(
         raise
 
 
-def test_aio_simple_error(reg_addr):
+def test_aio_simple_error(
+    reg_addr: tuple[str, int],
+):
     '''
     Verify a simple remote asyncio error propagates back through trio
     to the parent actor.
@@ -153,7 +170,9 @@ def test_aio_simple_error(reg_addr):
     assert err.boxed_type is AssertionError
 
 
-def test_tractor_cancels_aio(reg_addr):
+def test_tractor_cancels_aio(
+    reg_addr: tuple[str, int],
+):
     '''
     Verify we can cancel a spawned asyncio task gracefully.
 
@@ -172,7 +191,9 @@ def test_tractor_cancels_aio(reg_addr):
     trio.run(main)
 
 
-def test_trio_cancels_aio(reg_addr):
+def test_trio_cancels_aio(
+    reg_addr: tuple[str, int],
+):
     '''
     Much like the above test with ``tractor.Portal.cancel_actor()``
     except we just use a standard ``trio`` cancellation api.
@@ -203,7 +224,8 @@ async def trio_ctx(
 
     # this will block until the ``asyncio`` task sends a "first"
     # message.
-    with trio.fail_after(2):
+    delay: int = 999 if tractor.debug_mode() else 1
+    with trio.fail_after(1 + delay):
         try:
             async with (
                 trio.open_nursery(
@@ -239,7 +261,8 @@ async def trio_ctx(
     ids='parent_actor_cancels_child={}'.format
 )
 def test_context_spawns_aio_task_that_errors(
-    reg_addr,
+    reg_addr: tuple[str, int],
+    delay: int,
     parent_cancels: bool,
 ):
     '''
@@ -249,7 +272,7 @@ def test_context_spawns_aio_task_that_errors(
 
     '''
     async def main():
-        with trio.fail_after(2):
+        with trio.fail_after(1 + delay):
             async with tractor.open_nursery() as n:
                 p = await n.start_actor(
                     'aio_daemon',
@@ -322,11 +345,12 @@ async def aio_cancel():
 
 def test_aio_cancelled_from_aio_causes_trio_cancelled(
     reg_addr: tuple,
+    delay: int,
 ):
     '''
-    When the `asyncio.Task` cancels itself the `trio` side cshould
+    When the `asyncio.Task` cancels itself the `trio` side should
     also cancel and teardown and relay the cancellation cross-process
-    to the caller (parent).
+    to the parent caller.
 
     '''
     async def main():
@@ -342,7 +366,7 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(
             # NOTE: normally the `an.__aexit__()` waits on the
             # portal's result but we do it explicitly here
             # to avoid indent levels.
-            with trio.fail_after(1):
+            with trio.fail_after(1 + delay):
                 await p.wait_for_result()
 
     with pytest.raises(
@@ -353,11 +377,10 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(
     # might get multiple `trio.Cancelled`s as well inside an inception
     err: RemoteActorError|ExceptionGroup = excinfo.value
     if isinstance(err, ExceptionGroup):
-        err = next(itertools.dropwhile(
-            lambda exc: not isinstance(exc, tractor.RemoteActorError),
-            err.exceptions
-        ))
-        assert err
+        excs = err.exceptions
+        assert len(excs) == 1
+        final_exc = excs[0]
+        assert isinstance(final_exc, tractor.RemoteActorError)
 
     # relayed boxed error should be our `trio`-task's
     # cancel-signal-proxy-equivalent of `asyncio.CancelledError`.
@@ -370,15 +393,18 @@ async def no_to_trio_in_args():
 
 
 async def push_from_aio_task(
-
     sequence: Iterable,
     to_trio: trio.abc.SendChannel,
     expect_cancel: False,
     fail_early: bool,
+    exit_early: bool,
 
 ) -> None:
 
     try:
+        # print('trying breakpoint')
+        # breakpoint()
+
         # sync caller ctx manager
         to_trio.send_nowait(True)
 
@@ -387,10 +413,27 @@ async def push_from_aio_task(
             to_trio.send_nowait(i)
             await asyncio.sleep(0.001)
 
-            if i == 50 and fail_early:
-                raise Exception
+            if (
+                i == 50
+            ):
+                if fail_early:
+                    print('Raising exc from aio side!')
+                    raise Exception
 
-        print('asyncio streamer complete!')
+                if exit_early:
+                    # TODO? really you could enforce the same
+                    # SC-proto we use for actors here with asyncio
+                    # such that a Return[None] msg would be
+                    # implicitly delivered to the trio side?
+                    #
+                    # XXX => this might be the end-all soln for
+                    # converting any-inter-task system (regardless
+                    # of maybe-remote runtime or language) to be
+                    # SC-compat no?
+                    print(f'asyncio breaking early @ {i!r}')
+                    break
+
+        print('asyncio streaming complete!')
 
     except asyncio.CancelledError:
         if not expect_cancel:
@@ -402,9 +445,10 @@ async def push_from_aio_task(
 
 
 async def stream_from_aio(
-    exit_early: bool = False,
-    raise_err: bool = False,
+    trio_exit_early: bool = False,
+    trio_raise_err: bool = False,
     aio_raise_err: bool = False,
+    aio_exit_early: bool = False,
     fan_out: bool = False,
 
 ) -> None:
@@ -417,8 +461,17 @@ async def stream_from_aio(
         async with to_asyncio.open_channel_from(
             push_from_aio_task,
             sequence=seq,
-            expect_cancel=raise_err or exit_early,
+            expect_cancel=trio_raise_err or trio_exit_early,
             fail_early=aio_raise_err,
+            exit_early=aio_exit_early,
+
+            # such that we can test exit early cases
+            # for each side explicitly.
+            suppress_graceful_exits=(not(
+                aio_exit_early
+                or
+                trio_exit_early
+            ))
 
         ) as (first, chan):
 
@@ -435,9 +488,9 @@ async def stream_from_aio(
                     pulled.append(value)
 
                     if value == 50:
-                        if raise_err:
+                        if trio_raise_err:
                             raise Exception
-                        elif exit_early:
+                        elif trio_exit_early:
                             print('`consume()` breaking early!\n')
                             break
 
@@ -471,10 +524,14 @@ async def stream_from_aio(
 
     finally:
 
-        if (
-            not raise_err and
-            not exit_early and
-            not aio_raise_err
+        if not (
+            trio_raise_err
+            or
+            trio_exit_early
+            or
+            aio_raise_err
+            or
+            aio_exit_early
         ):
             if fan_out:
                 # we get double the pulled values in the
@@ -484,6 +541,7 @@ async def stream_from_aio(
                 assert list(sorted(pulled)) == expect
 
             else:
+                # await tractor.pause()
                 assert pulled == expect
         else:
             assert not fan_out
@@ -497,7 +555,10 @@ async def stream_from_aio(
     'fan_out', [False, True],
     ids='fan_out_w_chan_subscribe={}'.format
 )
-def test_basic_interloop_channel_stream(reg_addr, fan_out):
+def test_basic_interloop_channel_stream(
+    reg_addr: tuple[str, int],
+    fan_out: bool,
+):
     async def main():
         async with tractor.open_nursery() as n:
             portal = await n.run_in_actor(
@@ -517,7 +578,7 @@ def test_trio_error_cancels_intertask_chan(reg_addr):
         async with tractor.open_nursery() as n:
             portal = await n.run_in_actor(
                 stream_from_aio,
-                raise_err=True,
+                trio_raise_err=True,
                 infect_asyncio=True,
             )
             # should trigger remote actor error
@@ -530,42 +591,114 @@ def test_trio_error_cancels_intertask_chan(reg_addr):
     excinfo.value.boxed_type is Exception
 
 
-def test_trio_closes_early_and_channel_exits(
+def test_trio_closes_early_causes_aio_checkpoint_raise(
     reg_addr: tuple[str, int],
+    delay: int,
 ):
     '''
-    Check that if the `trio`-task "exits early" on `async for`ing the
-    inter-task-channel (via a `break`) we exit silently from the
-    `open_channel_from()` block and get a final `Return[None]` msg.
+    Check that if the `trio`-task "exits early and silently" (in this
+    case during `async for`-ing the inter-task-channel via
+    a `break`-from-loop), we raise `TrioTaskExited` on the
+    `asyncio`-side which also then bubbles up through the
+    `open_channel_from()` block indicating that the `asyncio.Task`
+    hit a ran another checkpoint despite the `trio.Task` exit.
 
     '''
     async def main():
-        with trio.fail_after(2):
+        with trio.fail_after(1 + delay):
             async with tractor.open_nursery(
                 # debug_mode=True,
                 # enable_stack_on_sig=True,
             ) as n:
                 portal = await n.run_in_actor(
                     stream_from_aio,
-                    exit_early=True,
+                    trio_exit_early=True,
                     infect_asyncio=True,
                 )
                 # should raise RAE diectly
                 print('waiting on final infected subactor result..')
                 res: None = await portal.wait_for_result()
                 assert res is None
-                print('infected subactor returned result: {res!r}\n')
+                print(f'infected subactor returned result: {res!r}\n')
 
     # should be a quiet exit on a simple channel exit
-    trio.run(
-        main,
-        # strict_exception_groups=False,
-    )
+    with pytest.raises(RemoteActorError) as excinfo:
+        trio.run(main)
+
+    # ensure remote error is an explicit `AsyncioCancelled` sub-type
+    # which indicates to the aio task that the trio side exited
+    # silently WITHOUT raising a `trio.Cancelled` (which would
+    # normally be raised instead as a `AsyncioCancelled`).
+    excinfo.value.boxed_type is to_asyncio.TrioTaskExited
 
 
-def test_aio_errors_and_channel_propagates_and_closes(reg_addr):
+def test_aio_exits_early_relays_AsyncioTaskExited(
+    # TODO, parametrize the 3 possible trio side conditions:
+    # - trio blocking on receive, aio exits early
+    # - trio cancelled AND aio exits early on its next tick
+    # - trio errors AND aio exits early on its next tick
+    reg_addr: tuple[str, int],
+    debug_mode: bool,
+    delay: int,
+):
+    '''
+    Check that if the `asyncio`-task "exits early and silently" (in this
+    case during `push_from_aio_task()` pushing to the `InterLoopTaskChannel`
+    it `break`s from the loop), we raise `AsyncioTaskExited` on the
+    `trio`-side which then DOES NOT BUBBLE up through the
+    `open_channel_from()` block UNLESS,
+
+    - the trio.Task also errored/cancelled, in which case we wrap
+      both errors in an eg
+    - the trio.Task was blocking on rxing a value from the
+      `InterLoopTaskChannel`.
+
+    '''
     async def main():
-        async with tractor.open_nursery() as n:
+        with trio.fail_after(1 + delay):
+            async with tractor.open_nursery(
+                debug_mode=debug_mode,
+                # enable_stack_on_sig=True,
+            ) as an:
+                portal = await an.run_in_actor(
+                    stream_from_aio,
+                    infect_asyncio=True,
+                    trio_exit_early=False,
+                    aio_exit_early=True,
+                )
+                # should raise RAE diectly
+                print('waiting on final infected subactor result..')
+                res: None = await portal.wait_for_result()
+                assert res is None
+                print(f'infected subactor returned result: {res!r}\n')
+
+    # should be a quiet exit on a simple channel exit
+    with pytest.raises(RemoteActorError) as excinfo:
+        trio.run(main)
+
+    exc = excinfo.value
+
+    # TODO, wow bug!
+    # -[ ] bp handler not replaced!?!?
+    # breakpoint()
+
+    # import pdbp; pdbp.set_trace()
+
+    # ensure remote error is an explicit `AsyncioCancelled` sub-type
+    # which indicates to the aio task that the trio side exited
+    # silently WITHOUT raising a `trio.Cancelled` (which would
+    # normally be raised instead as a `AsyncioCancelled`).
+    assert exc.boxed_type is to_asyncio.AsyncioTaskExited
+
+
+def test_aio_errors_and_channel_propagates_and_closes(
+    reg_addr: tuple[str, int],
+    debug_mode: bool,
+):
+    async def main():
+        async with tractor.open_nursery(
+            debug_mode=debug_mode,
+        ) as n:
             portal = await n.run_in_actor(
                 stream_from_aio,
                 aio_raise_err=True,
@@ -852,6 +985,8 @@ def test_sigint_closes_lifetime_stack(
 
     '''
     async def main():
+
+        delay = 999 if tractor.debug_mode() else 1
         try:
             an: tractor.ActorNursery
             async with tractor.open_nursery(
@@ -902,7 +1037,7 @@ def test_sigint_closes_lifetime_stack(
                     if wait_for_ctx:
                         print('waiting for ctx outcome in parent..')
                         try:
-                            with trio.fail_after(1):
+                            with trio.fail_after(1 + delay):
                                 await ctx.wait_for_result()
                         except tractor.ContextCancelled as ctxc:
                             assert ctxc.canceller == ctx.chan.uid

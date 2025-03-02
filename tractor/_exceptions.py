@@ -82,6 +82,39 @@ class InternalError(RuntimeError):
 
     '''
 
+class AsyncioCancelled(Exception):
+    '''
+    Asyncio cancelled translation (non-base) error
+    for use with the ``to_asyncio`` module
+    to be raised in the ``trio`` side task
+
+    NOTE: this should NOT inherit from `asyncio.CancelledError` or
+    tests should break!
+
+    '''
+
+
+class AsyncioTaskExited(Exception):
+    '''
+    asyncio.Task "exited" translation error for use with the
+    `to_asyncio` APIs to be raised in the `trio` side task indicating
+    on `.run_task()`/`.open_channel_from()` exit that the aio side
+    exited early/silently.
+
+    '''
+
+class TrioTaskExited(AsyncioCancelled):
+    '''
+    The `trio`-side task exited without explicitly cancelling the
+    `asyncio.Task` peer.
+
+    This is very similar to how `trio.ClosedResource` acts as
+    a "clean shutdown" signal to the consumer side of a mem-chan,
+
+    https://trio.readthedocs.io/en/stable/reference-core.html#clean-shutdown-with-channels
+
+    '''
+
 
 # NOTE: more or less should be close to these:
 # 'boxed_type',
@@ -127,8 +160,8 @@ _body_fields: list[str] = list(
 
 def get_err_type(type_name: str) -> BaseException|None:
     '''
-    Look up an exception type by name from the set of locally
-    known namespaces:
+    Look up an exception type by name from the set of locally known
+    namespaces:
 
     - `builtins`
     - `tractor._exceptions`
@@ -357,6 +390,13 @@ class RemoteActorError(Exception):
             self._src_type = get_err_type(
                 self._ipc_msg.src_type_str
             )
+
+            if not self._src_type:
+                raise TypeError(
+                    f'Failed to lookup src error type with '
+                    f'`tractor._exceptions.get_err_type()` :\n'
+                    f'{self.src_type_str}'
+                )
 
         return self._src_type
 
@@ -652,16 +692,10 @@ class RemoteActorError(Exception):
         failing actor's remote env.
 
         '''
-        src_type_ref: Type[BaseException] = self.src_type
-        if not src_type_ref:
-            raise TypeError(
-                'Failed to lookup src error type:\n'
-                f'{self.src_type_str}'
-            )
-
         # TODO: better tb insertion and all the fancier dunder
         # metadata stuff as per `.__context__` etc. and friends:
         # https://github.com/python-trio/trio/issues/611
+        src_type_ref: Type[BaseException] = self.src_type
         return src_type_ref(self.tb_str)
 
     # TODO: local recontruction of nested inception for a given
