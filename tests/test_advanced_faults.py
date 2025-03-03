@@ -255,15 +255,16 @@ async def break_ipc_after_started(
 
 def test_stream_closed_right_after_ipc_break_and_zombie_lord_engages():
     '''
-    Verify that is a subactor's IPC goes down just after bringing up a stream
-    the parent can trigger a SIGINT and the child will be reaped out-of-IPC by
-    the localhost process supervision machinery: aka "zombie lord".
+    Verify that is a subactor's IPC goes down just after bringing up
+    a stream the parent can trigger a SIGINT and the child will be
+    reaped out-of-IPC by the localhost process supervision machinery:
+    aka "zombie lord".
 
     '''
     async def main():
         with trio.fail_after(3):
-            async with tractor.open_nursery() as n:
-                portal = await n.start_actor(
+            async with tractor.open_nursery() as an:
+                portal = await an.start_actor(
                     'ipc_breaker',
                     enable_modules=[__name__],
                 )
