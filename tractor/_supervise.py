@@ -571,7 +571,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 @acm
 # @api_frame
 async def open_nursery(
-    hide_tb: bool = False,
+    hide_tb: bool = True,
     **kwargs,
     # ^TODO, paramspec for `open_root_actor()`
 
