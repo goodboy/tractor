@@ -1721,11 +1721,15 @@ async def async_main(
         # parent is kept alive as a resilient service until
         # cancellation steps have (mostly) occurred in
         # a deterministic way.
-        async with trio.open_nursery() as root_nursery:
+        async with trio.open_nursery(
+            strict_exception_groups=False,
+        ) as root_nursery:
             actor._root_n = root_nursery
             assert actor._root_n
 
-            async with trio.open_nursery() as service_nursery:
+            async with trio.open_nursery(
+                strict_exception_groups=False,
+            ) as service_nursery:
                 # This nursery is used to handle all inbound
                 # connections to us such that if the TCP server
                 # is killed, connections can continue to process
