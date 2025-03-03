@@ -20,7 +20,6 @@ first-class-`trio` from a historical perspective B)
 
 '''
 from contextlib import (
-    # bontextmanager as cm,
     asynccontextmanager as acm,
 )
 
