@@ -29,3 +29,6 @@ from ._broadcast import (
     BroadcastReceiver as BroadcastReceiver,
     Lagged as Lagged,
 )
+from ._beg import (
+    collapse_eg as collapse_eg,
+)
