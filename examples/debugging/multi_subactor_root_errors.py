@@ -40,7 +40,7 @@ async def main():
     """
     async with tractor.open_nursery(
         debug_mode=True,
-        # loglevel='cancel',
+        loglevel='devx',
     ) as n:
 
         # spawn both actors

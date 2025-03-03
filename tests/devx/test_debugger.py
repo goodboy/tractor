@@ -309,10 +309,13 @@ def test_subactor_breakpoint(
     child.expect(EOF)
 
     assert in_prompt_msg(
-        child,
-        ['RemoteActorError:',
+        child, [
+        'MessagingError:',
+        'RemoteActorError:',
          "('breakpoint_forever'",
-         'bdb.BdbQuit',]
+         'bdb.BdbQuit',
+        ],
+        pause_on_false=True,
     )
 
 

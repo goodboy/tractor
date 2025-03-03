@@ -3,7 +3,6 @@ Sketchy network blackoutz, ugly byzantine gens, puedes eschuchar la
 cancelacion?..
 
 '''
-import itertools
 from functools import partial
 from types import ModuleType
 
@@ -230,13 +229,10 @@ def test_ipc_channel_break_during_stream(
     # get raw instance from pytest wrapper
     value = excinfo.value
     if isinstance(value, ExceptionGroup):
-        value = next(
-            itertools.dropwhile(
-                lambda exc: not isinstance(exc, expect_final_exc),
-                value.exceptions,
-            )
-        )
-        assert value
+        excs = value.exceptions
+        assert len(excs) == 1
+        final_exc = excs[0]
+        assert isinstance(final_exc, expect_final_exc)
 
 
 @tractor.context

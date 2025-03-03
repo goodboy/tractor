@@ -62,7 +62,9 @@ async def recv_and_spawn_net_killers(
     await ctx.started()
     async with (
         ctx.open_stream() as stream,
-        trio.open_nursery() as n,
+        trio.open_nursery(
+            strict_exception_groups=False,
+        ) as tn,
     ):
         async for i in stream:
             print(f'child echoing {i}')
@@ -77,11 +79,11 @@ async def recv_and_spawn_net_killers(
                 i >= break_ipc_after
             ):
                 broke_ipc = True
-                n.start_soon(
+                tn.start_soon(
                     iter_ipc_stream,
                     stream,
                 )
-                n.start_soon(
+                tn.start_soon(
                     partial(
                         break_ipc_then_error,
                         stream=stream,

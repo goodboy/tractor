@@ -181,7 +181,9 @@ async def spawn_and_check_registry(
 
             try:
                 async with tractor.open_nursery() as n:
-                    async with trio.open_nursery() as trion:
+                    async with trio.open_nursery(
+                        strict_exception_groups=False,
+                    ) as trion:
 
                         portals = {}
                         for i in range(3):

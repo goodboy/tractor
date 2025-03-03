@@ -101,6 +101,7 @@ def test_stashed_child_nursery(use_start_soon):
 def test_acm_embedded_nursery_propagates_enter_err(
     canc_from_finally: bool,
     unmask_from_canc: bool,
+    debug_mode: bool,
 ):
     '''
     Demo how a masking `trio.Cancelled` could be handled by unmasking from the
@@ -174,7 +175,9 @@ def test_acm_embedded_nursery_propagates_enter_err(
                     await trio.lowlevel.checkpoint()
 
     async def _main():
-        with tractor.devx.open_crash_handler() as bxerr:
+        with tractor.devx.maybe_open_crash_handler(
+            pdb=debug_mode,
+        ) as bxerr:
             assert not bxerr.value
 
             async with (

@@ -307,7 +307,15 @@ async def inf_streamer(
 
     async with (
         ctx.open_stream() as stream,
-        trio.open_nursery() as tn,
+
+        # XXX TODO, INTERESTING CASE!!
+        # - if we don't collapse the eg then the embedded
+        # `trio.EndOfChannel` doesn't propagate directly to the above
+        # .open_stream() parent, resulting in it also raising instead
+        # of gracefully absorbing as normal.. so how to handle?
+        trio.open_nursery(
+            strict_exception_groups=False,
+        ) as tn,
     ):
         async def close_stream_on_sentinel():
             async for msg in stream:

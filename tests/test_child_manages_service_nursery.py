@@ -95,8 +95,8 @@ async def trio_main(
 
     # stash a "service nursery" as "actor local" (aka a Python global)
     global _nursery
-    n = _nursery
-    assert n
+    tn = _nursery
+    assert tn
 
     async def consume_stream():
         async with wrapper_mngr() as stream:
@@ -104,10 +104,10 @@ async def trio_main(
                 print(msg)
 
     # run 2 tasks to ensure broadcaster chan use
-    n.start_soon(consume_stream)
-    n.start_soon(consume_stream)
+    tn.start_soon(consume_stream)
+    tn.start_soon(consume_stream)
 
-    n.start_soon(trio_sleep_and_err)
+    tn.start_soon(trio_sleep_and_err)
 
     await trio.sleep_forever()
 
@@ -119,8 +119,8 @@ async def open_actor_local_nursery(
     global _nursery
     async with trio.open_nursery(
         strict_exception_groups=False,
-    ) as n:
-        _nursery = n
+    ) as tn:
+        _nursery = tn
         await ctx.started()
         await trio.sleep(10)
         # await trio.sleep(1)
@@ -134,7 +134,7 @@ async def open_actor_local_nursery(
         # never yields back.. aka a scenario where the
         # ``tractor.context`` task IS NOT in the service n's cancel
         # scope.
-        n.cancel_scope.cancel()
+        tn.cancel_scope.cancel()
 
 
 @pytest.mark.parametrize(
@@ -159,7 +159,7 @@ def test_actor_managed_trio_nursery_task_error_cancels_aio(
         async with tractor.open_nursery() as n:
             p = await n.start_actor(
                 'nursery_mngr',
-                infect_asyncio=asyncio_mode,
+                infect_asyncio=asyncio_mode,  # TODO, is this enabling debug mode?
                 enable_modules=[__name__],
             )
             async with (

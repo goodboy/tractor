@@ -519,7 +519,9 @@ def test_cancel_via_SIGINT_other_task(
     async def main():
         # should never timeout since SIGINT should cancel the current program
         with trio.fail_after(timeout):
-            async with trio.open_nursery() as n:
+            async with trio.open_nursery(
+                strict_exception_groups=False,
+            ) as n:
                 await n.start(spawn_and_sleep_forever)
                 if 'mp' in spawn_backend:
                     time.sleep(0.1)
@@ -612,6 +614,12 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
                     nurse.start_soon(delayed_kbi)
 
                     await p.run(do_nuthin)
+
+        # need to explicitly re-raise the lone kbi..now
+        except* KeyboardInterrupt as kbi_eg:
+            assert (len(excs := kbi_eg.exceptions) == 1)
+            raise excs[0]
+
         finally:
             duration = time.time() - start
             if duration > timeout:
