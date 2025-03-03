@@ -796,6 +796,7 @@ def validate_payload_msg(
     __tracebackhide__: bool = hide_tb
     codec: MsgCodec = current_codec()
     msg_bytes: bytes = codec.encode(pld_msg)
+    roundtripped: Started|None = None
     try:
         roundtripped: Started = codec.decode(msg_bytes)
         ctx: Context = getattr(ipc, 'ctx', ipc)
@@ -832,9 +833,13 @@ def validate_payload_msg(
                 verb_header='Trying to send ',
                 is_invalid_payload=True,
             )
-        except BaseException:
+        except BaseException as _be:
+            if not roundtripped:
+                raise verr
+
+            be = _be
             __tracebackhide__: bool = False
-            raise
+            raise be
 
         if not raise_mte:
             return mte
