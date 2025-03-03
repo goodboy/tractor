@@ -255,8 +255,8 @@ class MsgpackTCPStream(MsgTransport):
                 raise TransportClosed(
                     message=(
                         f'IPC transport already closed by peer\n'
-                        f'x)> {type(trans_err)}\n'
-                        f' |_{self}\n'
+                        f'x]> {type(trans_err)}\n'
+                        f'  |_{self}\n'
                     ),
                     loglevel=loglevel,
                 ) from trans_err
@@ -273,8 +273,8 @@ class MsgpackTCPStream(MsgTransport):
                 raise TransportClosed(
                     message=(
                         f'IPC transport already manually closed locally?\n'
-                        f'x)> {type(closure_err)} \n'
-                        f' |_{self}\n'
+                        f'x]> {type(closure_err)} \n'
+                        f'  |_{self}\n'
                     ),
                     loglevel='error',
                     raise_on_report=(
@@ -289,8 +289,8 @@ class MsgpackTCPStream(MsgTransport):
                 raise TransportClosed(
                     message=(
                         f'IPC transport already gracefully closed\n'
-                        f')>\n'
-                        f'|_{self}\n'
+                        f']>\n'
+                        f' |_{self}\n'
                     ),
                     loglevel='transport',
                     # cause=???  # handy or no?

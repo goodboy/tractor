@@ -851,7 +851,7 @@ async def try_ship_error_to_remote(
             log.critical(
                 'IPC transport failure -> '
                 f'failed to ship error to {remote_descr}!\n\n'
-                f'{type(msg)!r}[{msg.boxed_type}] X=> {channel.uid}\n'
+                f'{type(msg)!r}[{msg.boxed_type_str}] X=> {channel.uid}\n'
                 f'\n'
                 # TODO: use `.msg.preetty_struct` for this!
                 f'{msg}\n'
