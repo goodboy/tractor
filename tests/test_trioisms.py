@@ -64,7 +64,9 @@ def test_stashed_child_nursery(use_start_soon):
     async def main():
 
         async with (
-            trio.open_nursery() as pn,
+            trio.open_nursery(
+                strict_exception_groups=False,
+            ) as pn,
         ):
             cn = await pn.start(mk_child_nursery)
             assert cn
