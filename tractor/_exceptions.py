@@ -103,7 +103,16 @@ class AsyncioTaskExited(Exception):
 
     '''
 
-class TrioTaskExited(AsyncioCancelled):
+class TrioCancelled(Exception):
+    '''
+    Trio cancelled translation (non-base) error
+    for use with the `to_asyncio` module
+    to be raised in the `asyncio.Task` to indicate
+    that the `trio` side raised `Cancelled` or an error.
+
+    '''
+
+class TrioTaskExited(Exception):
     '''
     The `trio`-side task exited without explicitly cancelling the
     `asyncio.Task` peer.
@@ -406,6 +415,9 @@ class RemoteActorError(Exception):
         String-name of the (last hop's) boxed error type.
 
         '''
+        # TODO, maybe support also serializing the
+        # `ExceptionGroup.exeptions: list[BaseException]` set under
+        # certain conditions?
         bt: Type[BaseException] = self.boxed_type
         if bt:
             return str(bt.__name__)
@@ -821,8 +833,11 @@ class MsgTypeError(
         '''
         if (
             (_bad_msg := self.msgdata.get('_bad_msg'))
-            and
-            isinstance(_bad_msg, PayloadMsg)
+            and (
+                isinstance(_bad_msg, PayloadMsg)
+                or
+                isinstance(_bad_msg, msgtypes.Start)
+            )
         ):
             return _bad_msg
 
