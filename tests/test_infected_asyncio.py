@@ -34,7 +34,6 @@ from tractor._testing import expect_ctxc
 
 @pytest.fixture(
     scope='module',
-    # autouse=True,
 )
 def delay(debug_mode: bool) -> int:
     if debug_mode:
@@ -73,6 +72,7 @@ async def trio_cancels_single_aio_task():
 def test_trio_cancels_aio_on_actor_side(
     reg_addr: tuple[str, int],
     delay: int,
+    debug_mode: bool,
 ):
     '''
     Spawn an infected actor that is cancelled by the ``trio`` side
@@ -82,9 +82,10 @@ def test_trio_cancels_aio_on_actor_side(
     async def main():
         with trio.fail_after(1 + delay):
             async with tractor.open_nursery(
-                registry_addrs=[reg_addr]
-            ) as n:
-                await n.run_in_actor(
+                registry_addrs=[reg_addr],
+                debug_mode=debug_mode,
+            ) as an:
+                await an.run_in_actor(
                     trio_cancels_single_aio_task,
                     infect_asyncio=True,
                 )
@@ -133,6 +134,7 @@ async def asyncio_actor(
 
 def test_aio_simple_error(
     reg_addr: tuple[str, int],
+    debug_mode: bool,
 ):
     '''
     Verify a simple remote asyncio error propagates back through trio
@@ -142,9 +144,10 @@ def test_aio_simple_error(
     '''
     async def main():
         async with tractor.open_nursery(
-            registry_addrs=[reg_addr]
-        ) as n:
-            await n.run_in_actor(
+            registry_addrs=[reg_addr],
+            debug_mode=debug_mode,
+        ) as an:
+            await an.run_in_actor(
                 asyncio_actor,
                 target='sleep_and_err',
                 expect_err='AssertionError',
@@ -172,14 +175,17 @@ def test_aio_simple_error(
 
 def test_tractor_cancels_aio(
     reg_addr: tuple[str, int],
+    debug_mode: bool,
 ):
     '''
     Verify we can cancel a spawned asyncio task gracefully.
 
     '''
     async def main():
-        async with tractor.open_nursery() as n:
-            portal = await n.run_in_actor(
+        async with tractor.open_nursery(
+            debug_mode=debug_mode,
+        ) as an:
+            portal = await an.run_in_actor(
                 asyncio_actor,
                 target='aio_sleep_forever',
                 expect_err='trio.Cancelled',
@@ -264,6 +270,7 @@ def test_context_spawns_aio_task_that_errors(
     reg_addr: tuple[str, int],
     delay: int,
     parent_cancels: bool,
+    debug_mode: bool,
 ):
     '''
     Verify that spawning a task via an intertask channel ctx mngr that
@@ -273,12 +280,12 @@ def test_context_spawns_aio_task_that_errors(
     '''
     async def main():
         with trio.fail_after(1 + delay):
-            async with tractor.open_nursery() as n:
-                p = await n.start_actor(
+            async with tractor.open_nursery() as an:
+                p = await an.start_actor(
                     'aio_daemon',
                     enable_modules=[__name__],
                     infect_asyncio=True,
-                    # debug_mode=True,
+                    debug_mode=debug_mode,
                     loglevel='cancel',
                 )
                 async with (
@@ -507,11 +514,11 @@ async def stream_from_aio(
                     # tasks are joined..
                     chan.subscribe() as br,
 
-                    trio.open_nursery() as n,
+                    trio.open_nursery() as tn,
                 ):
                     # start 2nd task that get's broadcast the same
                     # value set.
-                    n.start_soon(consume, br)
+                    tn.start_soon(consume, br)
                     await consume(chan)
 
             else:
@@ -560,8 +567,8 @@ def test_basic_interloop_channel_stream(
     fan_out: bool,
 ):
     async def main():
-        async with tractor.open_nursery() as n:
-            portal = await n.run_in_actor(
+        async with tractor.open_nursery() as an:
+            portal = await an.run_in_actor(
                 stream_from_aio,
                 infect_asyncio=True,
                 fan_out=fan_out,
@@ -575,8 +582,8 @@ def test_basic_interloop_channel_stream(
 # TODO: parametrize the above test and avoid the duplication here?
 def test_trio_error_cancels_intertask_chan(reg_addr):
     async def main():
-        async with tractor.open_nursery() as n:
-            portal = await n.run_in_actor(
+        async with tractor.open_nursery() as an:
+            portal = await an.run_in_actor(
                 stream_from_aio,
                 trio_raise_err=True,
                 infect_asyncio=True,
@@ -594,6 +601,7 @@ def test_trio_error_cancels_intertask_chan(reg_addr):
 def test_trio_closes_early_causes_aio_checkpoint_raise(
     reg_addr: tuple[str, int],
     delay: int,
+    debug_mode: bool,
 ):
     '''
     Check that if the `trio`-task "exits early and silently" (in this
@@ -607,10 +615,10 @@ def test_trio_closes_early_causes_aio_checkpoint_raise(
     async def main():
         with trio.fail_after(1 + delay):
             async with tractor.open_nursery(
-                # debug_mode=True,
+                debug_mode=debug_mode,
                 # enable_stack_on_sig=True,
-            ) as n:
-                portal = await n.run_in_actor(
+            ) as an:
+                portal = await an.run_in_actor(
                     stream_from_aio,
                     trio_exit_early=True,
                     infect_asyncio=True,
@@ -698,8 +706,8 @@ def test_aio_errors_and_channel_propagates_and_closes(
     async def main():
         async with tractor.open_nursery(
             debug_mode=debug_mode,
-        ) as n:
-            portal = await n.run_in_actor(
+        ) as an:
+            portal = await an.run_in_actor(
                 stream_from_aio,
                 aio_raise_err=True,
                 infect_asyncio=True,
@@ -774,13 +782,15 @@ async def trio_to_aio_echo_server(
     ids='raise_error={}'.format,
 )
 def test_echoserver_detailed_mechanics(
-    reg_addr,
+    reg_addr: tuple[str, int],
+    debug_mode: bool,
     raise_error_mid_stream,
 ):
-
     async def main():
-        async with tractor.open_nursery() as n:
-            p = await n.start_actor(
+        async with tractor.open_nursery(
+            debug_mode=debug_mode,
+        ) as an:
+            p = await an.start_actor(
                 'aio_server',
                 enable_modules=[__name__],
                 infect_asyncio=True,
