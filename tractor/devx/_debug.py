@@ -2287,6 +2287,13 @@ def _set_trace(
     repl.set_trace(frame=caller_frame)
 
 
+# XXX TODO! XXX, ensure `pytest -s` doesn't just
+# hang on this being called in a test.. XD
+# -[ ] maybe something in our test suite or is there
+#     some way we can detect output capture is enabled
+#     from the process itself?
+# |_ronny: ?
+#
 async def pause(
     *,
     hide_tb: bool = True,
@@ -3194,6 +3201,15 @@ async def maybe_wait_for_debugger(
     return False
 
 
+class BoxedMaybeException(Struct):
+    '''
+    Box a maybe-exception for post-crash introspection usage
+    from the body of a `open_crash_handler()` scope.
+
+    '''
+    value: BaseException|None = None
+
+
 # TODO: better naming and what additionals?
 # - [ ] optional runtime plugging?
 # - [ ] detection for sync vs. async code?
@@ -3223,9 +3239,6 @@ def open_crash_handler(
 
     '''
     __tracebackhide__: bool = tb_hide
-
-    class BoxedMaybeException(Struct):
-        value: BaseException|None = None
 
     # TODO, yield a `outcome.Error`-like boxed type?
     # -[~] use `outcome.Value/Error` X-> frozen!
@@ -3268,6 +3281,8 @@ def open_crash_handler(
 def maybe_open_crash_handler(
     pdb: bool = False,
     tb_hide: bool = True,
+
+    **kwargs,
 ):
     '''
     Same as `open_crash_handler()` but with bool input flag
@@ -3278,9 +3293,11 @@ def maybe_open_crash_handler(
     '''
     __tracebackhide__: bool = tb_hide
 
-    rtctx = nullcontext
+    rtctx = nullcontext(
+        enter_result=BoxedMaybeException()
+    )
     if pdb:
-        rtctx = open_crash_handler
+        rtctx = open_crash_handler(**kwargs)
 
-    with rtctx():
-        yield
+    with rtctx as boxed_maybe_exc:
+        yield boxed_maybe_exc
