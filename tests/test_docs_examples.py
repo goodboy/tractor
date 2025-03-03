@@ -19,7 +19,7 @@ from tractor._testing import (
 @pytest.fixture
 def run_example_in_subproc(
     loglevel: str,
-    testdir: pytest.Testdir,
+    testdir: pytest.Pytester,
     reg_addr: tuple[str, int],
 ):
 
@@ -81,28 +81,36 @@ def run_example_in_subproc(
 
     # walk yields: (dirpath, dirnames, filenames)
     [
-        (p[0], f) for p in os.walk(examples_dir()) for f in p[2]
+        (p[0], f)
+        for p in os.walk(examples_dir())
+        for f in p[2]
 
-        if '__' not in f
-        and f[0] != '_'
-        and 'debugging' not in p[0]
-        and 'integration' not in p[0]
-        and 'advanced_faults' not in p[0]
-        and 'multihost' not in p[0]
+        if (
+            '__' not in f
+            and f[0] != '_'
+            and 'debugging' not in p[0]
+            and 'integration' not in p[0]
+            and 'advanced_faults' not in p[0]
+            and 'multihost' not in p[0]
+        )
     ],
-
     ids=lambda t: t[1],
 )
-def test_example(run_example_in_subproc, example_script):
-    """Load and run scripts from this repo's ``examples/`` dir as a user
+def test_example(
+    run_example_in_subproc,
+    example_script,
+):
+    '''
+    Load and run scripts from this repo's ``examples/`` dir as a user
     would copy and pasing them into their editor.
 
     On windows a little more "finessing" is done to make
     ``multiprocessing`` play nice: we copy the ``__main__.py`` into the
     test directory and invoke the script as a module with ``python -m
     test_example``.
-    """
-    ex_file = os.path.join(*example_script)
+
+    '''
+    ex_file: str = os.path.join(*example_script)
 
     if 'rpc_bidir_streaming' in ex_file and sys.version_info < (3, 9):
         pytest.skip("2-way streaming example requires py3.9 async with syntax")
@@ -128,7 +136,8 @@ def test_example(run_example_in_subproc, example_script):
                     # shouldn't eventually once we figure out what's
                     # a better way to be explicit about aio side
                     # cancels?
-                    and 'asyncio.exceptions.CancelledError' not in last_error
+                    and
+                    'asyncio.exceptions.CancelledError' not in last_error
                 ):
                     raise Exception(errmsg)
 
