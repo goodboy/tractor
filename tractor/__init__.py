@@ -44,6 +44,7 @@ from ._state import (
     current_actor as current_actor,
     is_root_process as is_root_process,
     current_ipc_ctx as current_ipc_ctx,
+    debug_mode as debug_mode
 )
 from ._exceptions import (
     ContextCancelled as ContextCancelled,
@@ -66,3 +67,4 @@ from ._root import (
 from ._ipc import Channel as Channel
 from ._portal import Portal as Portal
 from ._runtime import Actor as Actor
+from . import hilevel as hilevel
