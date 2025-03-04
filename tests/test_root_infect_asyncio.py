@@ -39,7 +39,7 @@ def test_infected_root_actor(
 
     '''
     async def _trio_main():
-        with trio.fail_after(2):
+        with trio.fail_after(2 if not debug_mode else 999):
             first: str
             chan: to_asyncio.LinkedTaskChannel
             async with (
@@ -59,7 +59,11 @@ def test_infected_root_actor(
                     assert out == i
                     print(f'asyncio echoing {i}')
 
-                    if raise_error_mid_stream and i == 500:
+                    if (
+                        raise_error_mid_stream
+                        and
+                        i == 500
+                    ):
                         raise raise_error_mid_stream
 
                     if out is None:

@@ -491,7 +491,13 @@ async def stream_from_aio(
                 ],
             ):
                 async for value in chan:
-                    print(f'trio received {value}')
+                    print(f'trio received: {value!r}')
+
+                    # XXX, debugging EoC not being handled correctly
+                    # in `transate_aio_errors()`..
+                    # if value is None:
+                    #     await tractor.pause(shield=True)
+
                     pulled.append(value)
 
                     if value == 50:
@@ -733,7 +739,13 @@ async def aio_echo_server(
     to_trio.send_nowait('start')
 
     while True:
-        msg = await from_trio.get()
+        try:
+            msg = await from_trio.get()
+        except to_asyncio.TrioTaskExited:
+            print(
+                'breaking aio echo loop due to `trio` exit!'
+            )
+            break
 
         # echo the msg back
         to_trio.send_nowait(msg)
