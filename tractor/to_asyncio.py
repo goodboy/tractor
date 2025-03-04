@@ -348,7 +348,6 @@ def _run_asyncio_task(
     trio_task: trio.Task = trio.lowlevel.current_task()
     trio_cs = trio.CancelScope()
     aio_task_complete = trio.Event()
-    aio_err: BaseException|None = None
 
     chan = LinkedTaskChannel(
         _to_aio=aio_q,  # asyncio.Queue
@@ -392,7 +391,7 @@ def _run_asyncio_task(
             if (
                 result != orig
                 and
-                aio_err is None
+                chan._aio_err is None
                 and
 
                 # in the `open_channel_from()` case we don't
