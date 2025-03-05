@@ -1561,12 +1561,12 @@ class Context:
                     strict_pld_parity=strict_pld_parity,
                     hide_tb=hide_tb,
                 )
-            except BaseException as err:
+            except BaseException as _bexc:
+                err = _bexc
                 if not isinstance(err, MsgTypeError):
                     __tracebackhide__: bool = False
 
-                raise
-
+                raise err
 
         # TODO: maybe a flag to by-pass encode op if already done
         # here in caller?
