@@ -25,7 +25,7 @@ async def bp_then_error(
 
 ) -> None:
 
-    # sync with ``trio``-side (caller) task
+    # sync with `trio`-side (caller) task
     to_trio.send_nowait('start')
 
     # NOTE: what happens here inside the hook needs some refinement..
@@ -33,8 +33,7 @@ async def bp_then_error(
     #    we set `Lock.local_task_in_debug = 'sync'`, we probably want
     #    some further, at least, meta-data about the task/actor in debug
     #    in terms of making it clear it's `asyncio` mucking about.
-    breakpoint()
-
+    breakpoint()  # asyncio-side
 
     # short checkpoint / delay
     await asyncio.sleep(0.5)  # asyncio-side
@@ -58,7 +57,6 @@ async def trio_ctx(
     # this will block until the ``asyncio`` task sends a "first"
     # message, see first line in above func.
     async with (
-
         to_asyncio.open_channel_from(
             bp_then_error,
             # raise_after_bp=not bp_before_started,
@@ -69,7 +67,7 @@ async def trio_ctx(
         assert first == 'start'
 
         if bp_before_started:
-            await tractor.pause()
+            await tractor.pause()  # trio-side
 
         await ctx.started(first)  # trio-side
 
@@ -111,7 +109,7 @@ async def main(
 
             # pause in parent to ensure no cross-actor
             # locking problems exist!
-            await tractor.pause()
+            await tractor.pause()  # trio-root
 
             if cancel_from_root:
                 await ctx.cancel()
