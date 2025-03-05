@@ -99,6 +99,14 @@ def ctlc(
                 'https://github.com/goodboy/tractor/issues/320'
             )
 
+        if mark.name == 'ctlcs_bish':
+            pytest.skip(
+                f'Test {node} prolly uses something from the stdlib (namely `asyncio`..)\n'
+                f'The test and/or underlying example script can *sometimes* run fine '
+                f'locally but more then likely until the cpython peeps get their sh#$ together, '
+                f'this test will definitely not behave like `trio` under SIGINT..\n'
+            )
+
     if use_ctlc:
         # XXX: disable pygments highlighting for auto-tests
         # since some envs (like actions CI) will struggle
