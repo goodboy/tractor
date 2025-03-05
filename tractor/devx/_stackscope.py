@@ -35,6 +35,7 @@ from signal import (
     signal,
     getsignal,
     SIGUSR1,
+    SIGINT,
 )
 # import traceback
 from types import ModuleType
@@ -48,6 +49,7 @@ from tractor import (
     _state,
     log as logmod,
 )
+from tractor.devx import _debug
 
 log = logmod.get_logger(__name__)
 
@@ -76,22 +78,45 @@ def dump_task_tree() -> None:
     )
     actor: Actor = _state.current_actor()
     thr: Thread = current_thread()
+    current_sigint_handler: Callable = getsignal(SIGINT)
+    if (
+        current_sigint_handler
+        is not
+        _debug.DebugStatus._trio_handler
+    ):
+        sigint_handler_report: str = (
+            'The default `trio` SIGINT handler was replaced?!'
+        )
+    else:
+        sigint_handler_report: str = (
+            'The default `trio` SIGINT handler is in use?!'
+        )
+
+    # sclang symbology
+    # |_<object>
+    # |_(Task/Thread/Process/Actor
+    # |_{Supervisor/Scope
+    # |_[Storage/Memory/IPC-Stream/Data-Struct
+
     log.devx(
         f'Dumping `stackscope` tree for actor\n'
-        f'{actor.uid}:\n'
-        f'|_{mp.current_process()}\n'
-        f'  |_{thr}\n'
-        f'    |_{actor}\n\n'
-
-        # start-of-trace-tree delimiter (mostly for testing)
-        '------ - ------\n'
-        '\n'
-        +
-        f'{tree_str}\n'
-        +
-        # end-of-trace-tree delimiter (mostly for testing)
+        f'(>: {actor.uid!r}\n'
+        f' |_{mp.current_process()}\n'
+        f'   |_{thr}\n'
+        f'     |_{actor}\n'
         f'\n'
-        f'------ {actor.uid!r} ------\n'
+        f'{sigint_handler_report}\n'
+        f'signal.getsignal(SIGINT) -> {current_sigint_handler!r}\n'
+        # f'\n'
+        # start-of-trace-tree delimiter (mostly for testing)
+        # f'------ {actor.uid!r} ------\n'
+        f'\n'
+        f'------ start-of-{actor.uid!r} ------\n'
+        f'|\n'
+        f'{tree_str}'
+        # end-of-trace-tree delimiter (mostly for testing)
+        f'|\n'
+        f'|_____ end-of-{actor.uid!r} ______\n'
     )
     # TODO: can remove this right?
     # -[ ] was original code from author
@@ -123,11 +148,11 @@ def dump_tree_on_sig(
 ) -> None:
     global _tree_dumped, _handler_lock
     with _handler_lock:
-        if _tree_dumped:
-            log.warning(
-                'Already dumped for this actor...??'
-            )
-            return
+        # if _tree_dumped:
+        #     log.warning(
+        #         'Already dumped for this actor...??'
+        #     )
+        #     return
 
         _tree_dumped = True
 
@@ -161,9 +186,9 @@ def dump_tree_on_sig(
             )
             raise
 
-        log.devx(
-            'Supposedly we dumped just fine..?'
-        )
+        # log.devx(
+        #     'Supposedly we dumped just fine..?'
+        # )
 
     if not relay_to_subs:
         return
@@ -202,11 +227,11 @@ def enable_stack_on_sig(
     (https://www.gnu.org/software/bash/manual/bash.html#Command-Substitution)
     you could use:
 
-    >> kill -SIGUSR1 $(pgrep -f '<cmd>')
+    >> kill -SIGUSR1 $(pgrep -f <part-of-cmd: str>)
 
-    Or with with `xonsh` (which has diff capture-from-subproc syntax)
+    OR without a sub-shell,
 
-    >> kill -SIGUSR1 @$(pgrep -f '<cmd>')
+    >> pkill --signal SIGUSR1 -f <part-of-cmd: str>
 
     '''
     try:

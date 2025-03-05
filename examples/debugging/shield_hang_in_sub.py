@@ -39,7 +39,6 @@ async def main(
             loglevel='devx',
         ) as an,
     ):
-
         ptl: tractor.Portal  = await an.start_actor(
             'hanger',
             enable_modules=[__name__],
@@ -54,13 +53,16 @@ async def main(
 
             print(
                 'Yo my child hanging..?\n'
-                'Sending SIGUSR1 to see a tree-trace!\n'
+                # "i'm a user who wants to see a `stackscope` tree!\n"
             )
 
             # XXX simulate the wrapping test's "user actions"
             # (i.e. if a human didn't run this manually but wants to
             # know what they should do to reproduce test behaviour)
             if from_test:
+                print(
+                    f'Sending SIGUSR1 to {cpid!r}!\n'
+                )
                 os.kill(
                     cpid,
                     signal.SIGUSR1,
