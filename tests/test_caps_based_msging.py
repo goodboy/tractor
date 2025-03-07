@@ -5,7 +5,6 @@ Low-level functional audits for our
 B~)
 
 '''
-import typing
 from typing import (
     Any,
     Type,
@@ -32,6 +31,7 @@ from tractor import (
 from tractor.msg import (
     _codec,
     _ctxvar_MsgCodec,
+    _exts,
 
     NamespacePath,
     MsgCodec,
@@ -247,57 +247,6 @@ def iter_maybe_sends(
         )
 
 
-def dec_type_union(
-    type_names: list[str],
-) -> Type:
-    '''
-    Look up types by name, compile into a list and then create and
-    return a `typing.Union` from the full set.
-
-    '''
-    import importlib
-    types: list[Type] = []
-    for type_name in type_names:
-        for mod in [
-            typing,
-            importlib.import_module(__name__),
-        ]:
-            if type_ref := getattr(
-                mod,
-                type_name,
-                False,
-            ):
-                types.append(type_ref)
-
-    # special case handling only..
-    # ipc_pld_spec: Union[Type] = eval(
-    #     pld_spec_str,
-    #     {},  # globals
-    #     {'typing': typing},  # locals
-    # )
-
-    return Union[*types]
-
-
-def enc_type_union(
-    union_or_type: Union[Type]|Type,
-) -> list[str]:
-    '''
-    Encode a type-union or single type to a list of type-name-strings
-    ready for IPC interchange.
-
-    '''
-    type_strs: list[str] = []
-    for typ in getattr(
-        union_or_type,
-        '__args__',
-        {union_or_type,},
-    ):
-        type_strs.append(typ.__qualname__)
-
-    return type_strs
-
-
 @tractor.context
 async def send_back_values(
     ctx: Context,
@@ -324,7 +273,7 @@ async def send_back_values(
     )
 
     # load pld spec from input str
-    ipc_pld_spec = dec_type_union(
+    ipc_pld_spec = _exts.dec_type_union(
         pld_spec_type_strs,
     )
     pld_spec_str = str(ipc_pld_spec)
@@ -413,7 +362,6 @@ async def send_back_values(
 
             except tractor.MsgTypeError as _mte:
                 mte = _mte
-                # await tractor.pause()
 
                 if expect_send:
                     raise RuntimeError(
@@ -421,6 +369,10 @@ async def send_back_values(
                         f'ipc_pld_spec -> {ipc_pld_spec}\n'
                         f'value -> {send_value}: {type(send_value)}\n'
                     )
+
+                # await tractor.pause()
+                raise mte
+
 
         async with ctx.open_stream() as ipc:
             print(
@@ -591,8 +543,9 @@ def test_codec_hooks_mod(
                     )
                 ):
                     pld_types_str: str = '|'.join(subtypes)
-                    breakpoint()
+                    # breakpoint()
                 else:
+                    # TODO, use `.msg._exts` utils  instead of this!
                     pld_types_str: str = ipc_pld_spec.__name__
 
                 expected_started = Started(
@@ -611,7 +564,7 @@ def test_codec_hooks_mod(
                     if expect_send
                 ]
 
-                pld_spec_type_strs: list[str] = enc_type_union(ipc_pld_spec)
+                pld_spec_type_strs: list[str] = _exts.enc_type_union(ipc_pld_spec)
 
                 # XXX should raise an mte (`MsgTypeError`)
                 # when `add_codec_hooks == False` bc the input
@@ -848,11 +801,14 @@ def chk_pld_type(
     return roundtrip
 
 
+# ?TODO? remove since covered in the newer `test_pldrx_limiting`?
 def test_limit_msgspec(
     debug_mode: bool,
 ):
     '''
-    Verify that type-limiting the 
+    Internals unit testing to verify that type-limiting an IPC ctx's
+    msg spec with `Pldrx.limit_plds()` results in various
+    encapsulated `msgspec` object settings and state.
 
     '''
     async def main():
