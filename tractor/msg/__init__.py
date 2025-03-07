@@ -33,6 +33,7 @@ from ._codec import (
 
     apply_codec as apply_codec,
     mk_codec as mk_codec,
+    mk_dec as mk_dec,
     MsgCodec as MsgCodec,
     MsgDec as MsgDec,
     current_codec as current_codec,

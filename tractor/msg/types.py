@@ -599,15 +599,15 @@ def mk_msg_spec(
         Msg[payload_type_union],
         Generic[PayloadT],
     )
-    defstruct_bases: tuple = (
-        Msg, # [payload_type_union],
-        # Generic[PayloadT],
-        # ^-XXX-^: not allowed? lul..
-    )
+    # defstruct_bases: tuple = (
+    #     Msg, # [payload_type_union],
+    #     # Generic[PayloadT],
+    #     # ^-XXX-^: not allowed? lul..
+    # )
     ipc_msg_types: list[Msg] = []
 
     idx_msg_types: list[Msg] = []
-    defs_msg_types: list[Msg] = []
+    # defs_msg_types: list[Msg] = []
     nc_msg_types: list[Msg] = []
 
     for msgtype in __msg_types__:
@@ -625,7 +625,7 @@ def mk_msg_spec(
         # TODO: wait why do we need the dynamic version here?
         # XXX ANSWER XXX -> BC INHERITANCE.. don't work w generics..
         #
-        # NOTE previously bc msgtypes WERE NOT inheritting
+        # NOTE previously bc msgtypes WERE NOT inheriting
         # directly the `Generic[PayloadT]` type, the manual method
         # of generic-paraming with `.__class_getitem__()` wasn't
         # working..
@@ -662,38 +662,35 @@ def mk_msg_spec(
 
         # with `msgspec.structs.defstruct`
         # XXX ALSO DOESN'T WORK
-        defstruct_msgtype = defstruct(
-            name=msgtype.__name__,
-            fields=[
-                ('cid', str),
+        # defstruct_msgtype = defstruct(
+        #     name=msgtype.__name__,
+        #     fields=[
+        #         ('cid', str),
 
-                # XXX doesn't seem to work..
-                # ('pld', PayloadT),
+        #         # XXX doesn't seem to work..
+        #         # ('pld', PayloadT),
 
-                ('pld', payload_type_union),
-            ],
-            bases=defstruct_bases,
-        )
-        defs_msg_types.append(defstruct_msgtype)
-
+        #         ('pld', payload_type_union),
+        #     ],
+        #     bases=defstruct_bases,
+        # )
+        # defs_msg_types.append(defstruct_msgtype)
         # assert index_paramed_msg_type == manual_paramed_msg_subtype
-
         # paramed_msg_type = manual_paramed_msg_subtype
-
         # ipc_payload_msgs_type_union |= index_paramed_msg_type
 
     idx_spec: Union[Type[Msg]] = Union[*idx_msg_types]
-    def_spec: Union[Type[Msg]] = Union[*defs_msg_types]
+    # def_spec: Union[Type[Msg]] = Union[*defs_msg_types]
     nc_spec: Union[Type[Msg]] = Union[*nc_msg_types]
 
     specs: dict[str, Union[Type[Msg]]] = {
         'indexed_generics': idx_spec,
-        'defstruct': def_spec,
+        # 'defstruct': def_spec,
         'types_new_class': nc_spec,
     }
     msgtypes_table: dict[str, list[Msg]] = {
         'indexed_generics': idx_msg_types,
-        'defstruct': defs_msg_types,
+        # 'defstruct': defs_msg_types,
         'types_new_class': nc_msg_types,
     }
 

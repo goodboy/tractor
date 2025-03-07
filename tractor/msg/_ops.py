@@ -50,7 +50,9 @@ from tractor._exceptions import (
     _mk_recv_mte,
     pack_error,
 )
-from tractor._state import current_ipc_ctx
+from tractor._state import (
+    current_ipc_ctx,
+)
 from ._codec import (
     mk_dec,
     MsgDec,
@@ -78,7 +80,7 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-_def_any_pldec: MsgDec[Any] = mk_dec()
+_def_any_pldec: MsgDec[Any] = mk_dec(spec=Any)
 
 
 class PldRx(Struct):
@@ -148,6 +150,10 @@ class PldRx(Struct):
         exit.
 
         '''
+        # TODO, ensure we pull the current `MsgCodec`'s custom
+        # dec/enc_hook settings as well ?
+        # -[ ] see `._codec.mk_codec()` inputs
+        #
         orig_dec: MsgDec = self._pld_dec
         limit_dec: MsgDec = mk_dec(
             spec=spec,

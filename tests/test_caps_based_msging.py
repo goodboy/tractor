@@ -15,13 +15,16 @@ from typing import (
 from msgspec import (
     structs,
     msgpack,
+    Raw,
     Struct,
     ValidationError,
 )
 import pytest
+import trio
 
 import tractor
 from tractor import (
+    Actor,
     _state,
     MsgTypeError,
     Context,
@@ -32,7 +35,9 @@ from tractor.msg import (
 
     NamespacePath,
     MsgCodec,
+    MsgDec,
     mk_codec,
+    mk_dec,
     apply_codec,
     current_codec,
 )
@@ -43,101 +48,34 @@ from tractor.msg.types import (
     Started,
     mk_msg_spec,
 )
-import trio
+from tractor.msg._ops import (
+    limit_plds,
+)
 
 
 def mk_custom_codec(
-    pld_spec: Union[Type]|Any,
     add_hooks: bool,
 
-) -> MsgCodec:
+) -> tuple[
+    MsgCodec,  # encode to send
+    MsgDec,  # pld receive-n-decode
+]:
     '''
     Create custom `msgpack` enc/dec-hooks and set a `Decoder`
     which only loads `pld_spec` (like `NamespacePath`) types.
 
     '''
-    uid: tuple[str, str] = tractor.current_actor().uid
 
     # XXX NOTE XXX: despite defining `NamespacePath` as a type
     # field on our `PayloadMsg.pld`, we still need a enc/dec_hook() pair
     # to cast to/from that type on the wire. See the docs:
     # https://jcristharif.com/msgspec/extending.html#mapping-to-from-native-types
 
-    def enc_nsp(obj: Any) -> Any:
-        print(f'{uid} ENC HOOK')
-        match obj:
-            case NamespacePath():
-                print(
-                    f'{uid}: `NamespacePath`-Only ENCODE?\n'
-                    f'obj-> `{obj}`: {type(obj)}\n'
-                )
-                # if type(obj) != NamespacePath:
-                #     breakpoint()
-                return str(obj)
-
-        print(
-            f'{uid}\n'
-            'CUSTOM ENCODE\n'
-            f'obj-arg-> `{obj}`: {type(obj)}\n'
-        )
-        logmsg: str = (
-            f'{uid}\n'
-            'FAILED ENCODE\n'
-            f'obj-> `{obj}: {type(obj)}`\n'
-        )
-        raise NotImplementedError(logmsg)
-
-    def dec_nsp(
-        obj_type: Type,
-        obj: Any,
-
-    ) -> Any:
-        print(
-            f'{uid}\n'
-            'CUSTOM DECODE\n'
-            f'type-arg-> {obj_type}\n'
-            f'obj-arg-> `{obj}`: {type(obj)}\n'
-        )
-        nsp = None
-
-        if (
-            obj_type is NamespacePath
-            and isinstance(obj, str)
-            and ':' in obj
-        ):
-            nsp = NamespacePath(obj)
-            # TODO: we could built a generic handler using
-            # JUST matching the obj_type part?
-            # nsp = obj_type(obj)
-
-        if nsp:
-            print(f'Returning NSP instance: {nsp}')
-            return nsp
-
-        logmsg: str = (
-            f'{uid}\n'
-            'FAILED DECODE\n'
-            f'type-> {obj_type}\n'
-            f'obj-arg-> `{obj}`: {type(obj)}\n\n'
-            f'current codec:\n'
-            f'{current_codec()}\n'
-        )
-        # TODO: figure out the ignore subsys for this!
-        # -[ ] option whether to defense-relay backc the msg
-        #   inside an `Invalid`/`Ignore`
-        # -[ ] how to make this handling pluggable such that a
-        #   `Channel`/`MsgTransport` can intercept and process
-        #   back msgs either via exception handling or some other
-        #   signal?
-        log.warning(logmsg)
-        # NOTE: this delivers the invalid
-        # value up to `msgspec`'s decoding
-        # machinery for error raising.
-        return obj
-        # raise NotImplementedError(logmsg)
+    # if pld_spec is Any:
+    #     pld_spec = Raw
 
     nsp_codec: MsgCodec = mk_codec(
-        ipc_pld_spec=pld_spec,
+        # ipc_pld_spec=Raw,  # default!
 
         # NOTE XXX: the encode hook MUST be used no matter what since
         # our `NamespacePath` is not any of a `Any` native type nor
@@ -153,8 +91,9 @@ def mk_custom_codec(
         # XXX NOTE: pretty sure this is mutex with the `type=` to
         # `Decoder`? so it won't work in tandem with the
         # `ipc_pld_spec` passed above?
-        dec_hook=dec_nsp if add_hooks else None,
+        ext_types=[NamespacePath],
     )
+    # dec_hook=dec_nsp if add_hooks else None,
     return nsp_codec
 
 
@@ -365,7 +304,7 @@ async def send_back_values(
     expect_debug: bool,
     pld_spec_type_strs: list[str],
     add_hooks: bool,
-    started_msg_bytes: bytes,
+    # started_msg_bytes: bytes,
     expect_ipc_send: dict[str, tuple[Any, bool]],
 
 ) -> None:
@@ -392,24 +331,36 @@ async def send_back_values(
 
     # same as on parent side config.
     nsp_codec: MsgCodec = mk_custom_codec(
-        pld_spec=ipc_pld_spec,
         add_hooks=add_hooks,
     )
     with (
         apply_codec(nsp_codec) as codec,
+        limit_plds(ipc_pld_spec) as codec,
     ):
+        # we SHOULD NOT be swapping the global codec since it breaks
+        # `Context.starte()` roundtripping checks!
         chk_codec_applied(
             expect_codec=nsp_codec,
-            enter_value=codec,
         )
+        # XXX SO NOT THIS!
+        # chk_codec_applied(
+        #     expect_codec=nsp_codec,
+        #     enter_value=codec,
+        # )
 
         print(
             f'{uid}: attempting `Started`-bytes DECODE..\n'
         )
         try:
-            msg: Started = nsp_codec.decode(started_msg_bytes)
-            expected_pld_spec_str: str = msg.pld
-            assert pld_spec_str == expected_pld_spec_str
+            # msg: Started = nsp_codec.decode(started_msg_bytes)
+
+            ipc_spec: Type = ctx._pld_rx._pld_dec.spec
+            expected_pld_spec_str: str = str(ipc_spec)
+            assert (
+                pld_spec_str == expected_pld_spec_str
+                and
+                ipc_pld_spec == ipc_spec
+            )
 
         # TODO: maybe we should add our own wrapper error so as to
         # be interchange-lib agnostic?
@@ -427,12 +378,15 @@ async def send_back_values(
             else:
                 print(
                     f'{uid}: (correctly) unable to DECODE `Started`-bytes\n'
-                    f'{started_msg_bytes}\n'
+                    # f'{started_msg_bytes}\n'
                 )
 
         iter_send_val_items = iter(expect_ipc_send.values())
         sent: list[Any] = []
-        for send_value, expect_send in iter_send_val_items:
+        for (
+            send_value,
+            expect_send,
+        ) in iter_send_val_items:
             try:
                 print(
                     f'{uid}: attempting to `.started({send_value})`\n'
@@ -457,12 +411,13 @@ async def send_back_values(
 
                 break  # move on to streaming block..
 
-            except tractor.MsgTypeError:
-                await tractor.pause()
+            except tractor.MsgTypeError as _mte:
+                mte = _mte
+                # await tractor.pause()
 
                 if expect_send:
                     raise RuntimeError(
-                        f'EXPECTED to `.started()` value given spec:\n'
+                        f'EXPECTED to `.started()` value given spec ??\n\n'
                         f'ipc_pld_spec -> {ipc_pld_spec}\n'
                         f'value -> {send_value}: {type(send_value)}\n'
                     )
@@ -530,10 +485,6 @@ async def send_back_values(
         # )
 
 
-def ex_func(*args):
-    print(f'ex_func({args})')
-
-
 @pytest.mark.parametrize(
     'ipc_pld_spec',
     [
@@ -593,7 +544,6 @@ def test_codec_hooks_mod(
             # - codec modified with hooks -> decode nsp as
             #   `NamespacePath`
             nsp_codec: MsgCodec = mk_custom_codec(
-                pld_spec=ipc_pld_spec,
                 add_hooks=add_codec_hooks,
             )
             with apply_codec(nsp_codec) as codec:
@@ -609,7 +559,11 @@ def test_codec_hooks_mod(
                     f'ipc_pld_spec: {ipc_pld_spec}\n'
                     '       ------ - ------\n'
                 )
-                for val_type_str, val, expect_send in iter_maybe_sends(
+                for (
+                    val_type_str,
+                    val,
+                    expect_send,
+                )in iter_maybe_sends(
                     send_items,
                     ipc_pld_spec,
                     add_codec_hooks=add_codec_hooks,
@@ -618,7 +572,10 @@ def test_codec_hooks_mod(
                         f'send_value: {val}: {type(val)} '
                         f'=> expect_send: {expect_send}\n'
                     )
-                    expect_ipc_send[val_type_str] = (val, expect_send)
+                    expect_ipc_send[val_type_str] = (
+                        val,
+                        expect_send,
+                    )
 
                 print(
                     report +
@@ -627,9 +584,24 @@ def test_codec_hooks_mod(
                 assert len(expect_ipc_send) == len(send_items)
                 # now try over real IPC with a the subactor
                 # expect_ipc_rountrip: bool = True
+
+                if (
+                    subtypes := getattr(
+                        ipc_pld_spec, '__args__', False
+                    )
+                ):
+                    pld_types_str: str = '|'.join(subtypes)
+                    breakpoint()
+                else:
+                    pld_types_str: str = ipc_pld_spec.__name__
+
                 expected_started = Started(
                     cid='cid',
-                    pld=str(ipc_pld_spec),
+                    # pld=str(pld_types_str),
+                    pld=ipc_pld_spec,
+                )
+                started_msg_bytes: bytes = nsp_codec.encode(
+                    expected_started,
                 )
                 # build list of values we expect to receive from
                 # the subactor.
@@ -655,7 +627,7 @@ def test_codec_hooks_mod(
                             expect_debug=debug_mode,
                             pld_spec_type_strs=pld_spec_type_strs,
                             add_hooks=add_codec_hooks,
-                            started_msg_bytes=nsp_codec.encode(expected_started),
+                            started_msg_bytes=started_msg_bytes,
 
                             # XXX NOTE bc we send a `NamespacePath` in this kwarg
                             expect_ipc_send=expect_ipc_send,
@@ -673,6 +645,8 @@ def test_codec_hooks_mod(
                 # test with `limit_msg_spec()` above?
                 # await tractor.pause()
                 print('PARENT opening IPC ctx!\n')
+                ctx: tractor.Context
+                ipc: tractor.MsgStream
                 async with (
 
                     # XXX should raise an mte (`MsgTypeError`)
@@ -877,6 +851,10 @@ def chk_pld_type(
 def test_limit_msgspec(
     debug_mode: bool,
 ):
+    '''
+    Verify that type-limiting the 
+
+    '''
     async def main():
         async with tractor.open_root_actor(
             debug_mode=debug_mode,
@@ -915,3 +893,188 @@ def test_limit_msgspec(
             # breakpoint()
 
     trio.run(main)
+
+
+def enc_nsp(obj: Any) -> Any:
+    actor: Actor = tractor.current_actor(
+        err_on_no_runtime=False,
+    )
+    uid: tuple[str, str]|None = None if not actor else actor.uid
+    print(f'{uid} ENC HOOK')
+
+    match obj:
+        # case NamespacePath()|str():
+        case NamespacePath():
+            encoded: str = str(obj)
+            print(
+                f'----- ENCODING `NamespacePath` as `str` ------\n'
+                f'|_obj:{type(obj)!r} = {obj!r}\n'
+                f'|_encoded: str = {encoded!r}\n'
+            )
+            # if type(obj) != NamespacePath:
+            #     breakpoint()
+            return encoded
+        case _:
+            logmsg: str = (
+                f'{uid}\n'
+                'FAILED ENCODE\n'
+                f'obj-> `{obj}: {type(obj)}`\n'
+            )
+            raise NotImplementedError(logmsg)
+
+
+def dec_nsp(
+    obj_type: Type,
+    obj: Any,
+
+) -> Any:
+    # breakpoint()
+    actor: Actor = tractor.current_actor(
+        err_on_no_runtime=False,
+    )
+    uid: tuple[str, str]|None = None if not actor else actor.uid
+    print(
+        f'{uid}\n'
+        'CUSTOM DECODE\n'
+        f'type-arg-> {obj_type}\n'
+        f'obj-arg-> `{obj}`: {type(obj)}\n'
+    )
+    nsp = None
+    # XXX, never happens right?
+    if obj_type is Raw:
+        breakpoint()
+
+    if (
+        obj_type is NamespacePath
+        and isinstance(obj, str)
+        and ':' in obj
+    ):
+        nsp = NamespacePath(obj)
+        # TODO: we could built a generic handler using
+        # JUST matching the obj_type part?
+        # nsp = obj_type(obj)
+
+    if nsp:
+        print(f'Returning NSP instance: {nsp}')
+        return nsp
+
+    logmsg: str = (
+        f'{uid}\n'
+        'FAILED DECODE\n'
+        f'type-> {obj_type}\n'
+        f'obj-arg-> `{obj}`: {type(obj)}\n\n'
+        f'current codec:\n'
+        f'{current_codec()}\n'
+    )
+    # TODO: figure out the ignore subsys for this!
+    # -[ ] option whether to defense-relay backc the msg
+    #   inside an `Invalid`/`Ignore`
+    # -[ ] how to make this handling pluggable such that a
+    #   `Channel`/`MsgTransport` can intercept and process
+    #   back msgs either via exception handling or some other
+    #   signal?
+    log.warning(logmsg)
+    # NOTE: this delivers the invalid
+    # value up to `msgspec`'s decoding
+    # machinery for error raising.
+    return obj
+    # raise NotImplementedError(logmsg)
+
+
+def ex_func(*args):
+    '''
+    A mod level func we can ref and load via our `NamespacePath`
+    python-object pointer `str` subtype.
+
+    '''
+    print(f'ex_func({args})')
+
+
+@pytest.mark.parametrize(
+    'add_codec_hooks',
+    [
+        True,
+        False,
+    ],
+    ids=['use_codec_hooks', 'no_codec_hooks'],
+)
+def test_custom_extension_types(
+    debug_mode: bool,
+    add_codec_hooks: bool
+):
+    '''
+    Verify that a `MsgCodec` (used for encoding all outbound IPC msgs
+    and decoding all inbound `PayloadMsg`s) and a paired `MsgDec`
+    (used for decoding the `PayloadMsg.pld: Raw` received within a given
+    task's ipc `Context` scope) can both send and receive "extension types"
+    as supported via custom converter hooks passed to `msgspec`.
+
+    '''
+    nsp_pld_dec: MsgDec = mk_dec(
+        spec=None,  # ONLY support the ext type
+        dec_hook=dec_nsp if add_codec_hooks else None,
+        ext_types=[NamespacePath],
+    )
+    nsp_codec: MsgCodec = mk_codec(
+        # ipc_pld_spec=Raw,  # default!
+
+        # NOTE XXX: the encode hook MUST be used no matter what since
+        # our `NamespacePath` is not any of a `Any` native type nor
+        # a `msgspec.Struct` subtype - so `msgspec` has no way to know
+        # how to encode it unless we provide the custom hook.
+        #
+        # AGAIN that is, regardless of whether we spec an
+        # `Any`-decoded-pld the enc has no knowledge (by default)
+        # how to enc `NamespacePath` (nsp), so we add a custom
+        # hook to do that ALWAYS.
+        enc_hook=enc_nsp if add_codec_hooks else None,
+
+        # XXX NOTE: pretty sure this is mutex with the `type=` to
+        # `Decoder`? so it won't work in tandem with the
+        # `ipc_pld_spec` passed above?
+        ext_types=[NamespacePath],
+
+        # TODO? is it useful to have the `.pld` decoded *prior* to
+        # the `PldRx`?? like perf or mem related?
+        # ext_dec=nsp_pld_dec,
+    )
+    if add_codec_hooks:
+        assert nsp_codec.dec.dec_hook is None
+
+        # TODO? if we pass `ext_dec` above?
+        # assert nsp_codec.dec.dec_hook is dec_nsp
+
+        assert nsp_codec.enc.enc_hook is enc_nsp
+
+    nsp = NamespacePath.from_ref(ex_func)
+
+    try:
+        nsp_bytes: bytes = nsp_codec.encode(nsp)
+        nsp_rt_sin_msg = nsp_pld_dec.decode(nsp_bytes)
+        nsp_rt_sin_msg.load_ref() is ex_func
+    except TypeError:
+        if not add_codec_hooks:
+            pass
+
+    try:
+        msg_bytes: bytes = nsp_codec.encode(
+            Started(
+                cid='cid',
+                pld=nsp,
+            )
+        )
+        # since the ext-type obj should also be set as the msg.pld
+        assert nsp_bytes in msg_bytes
+        started_rt: Started = nsp_codec.decode(msg_bytes)
+        pld: Raw = started_rt.pld
+        assert isinstance(pld, Raw)
+        nsp_rt: NamespacePath = nsp_pld_dec.decode(pld)
+        assert isinstance(nsp_rt, NamespacePath)
+        # in obj comparison terms they should be the same
+        assert nsp_rt == nsp
+        # ensure we've decoded to ext type!
+        assert nsp_rt.load_ref() is ex_func
+
+    except TypeError:
+        if not add_codec_hooks:
+            pass
