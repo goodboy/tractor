@@ -461,11 +461,16 @@ def limit_plds(
 
     '''
     __tracebackhide__: bool = True
+    curr_ctx: Context|None = current_ipc_ctx()
+    if curr_ctx is None:
+        raise RuntimeError(
+            'No IPC `Context` is active !?\n'
+            'Did you open `limit_plds()` from outside '
+            'a `Portal.open_context()` scope-block?'
+        )
     try:
-        curr_ctx: Context = current_ipc_ctx()
         rx: PldRx = curr_ctx._pld_rx
         orig_pldec: MsgDec = rx.pld_dec
-
         with rx.limit_plds(
             spec=spec,
             **dec_kwargs,
@@ -475,6 +480,11 @@ def limit_plds(
                 f'{pldec}\n'
             )
             yield pldec
+
+    except BaseException:
+        __tracebackhide__: bool = False
+        raise
+
     finally:
         log.runtime(
             'Reverted to previous payload-decoder\n\n'
