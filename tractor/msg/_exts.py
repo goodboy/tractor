@@ -33,6 +33,9 @@ converters,
   |_ https://jcristharif.com/msgspec/changelog.html
 
 '''
+from types import (
+    ModuleType,
+)
 import typing
 from typing import (
     Type,
@@ -41,19 +44,20 @@ from typing import (
 
 def dec_type_union(
     type_names: list[str],
-) -> Type:
+    mods: list[ModuleType] = []
+) -> Type|Union[Type]:
     '''
     Look up types by name, compile into a list and then create and
     return a `typing.Union` from the full set.
 
     '''
-    import importlib
+    # import importlib
     types: list[Type] = []
     for type_name in type_names:
         for mod in [
             typing,
-            importlib.import_module(__name__),
-        ]:
+            # importlib.import_module(__name__),
+        ] + mods:
             if type_ref := getattr(
                 mod,
                 type_name,
