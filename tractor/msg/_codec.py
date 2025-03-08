@@ -211,24 +211,28 @@ def mk_dec(
         and
         ext_types is None
     ):
-        raise ValueError(
-            f'You must provide a type-spec for a msg decoder!\n'
-            f'The only time `spec=None` is permitted is if custom extension types '
-            f'are expected to be supported, in which case `ext_types` must be non-`None`'
-            f'and it is presumed that only the `ext_types` (supported by the paired `dec_hook()`) '
-            f'will be permitted within the type-`spec`!\n'
-
-            f'tpec = {spec!r}\n'
+        raise TypeError(
+            f'MIssing type-`spec` for msg decoder!\n'
+            f'\n'
+            f'`spec=None` is **only** permitted is if custom extension types '
+            f'are provided via `ext_types`, meaning it must be non-`None`.\n'
+            f'\n'
+            f'In this case it is presumed that only the `ext_types`, '
+            f'which much be handled by a paired `dec_hook()`, '
+            f'will be permitted within the payload type-`spec`!\n'
+            f'\n'
+            f'spec = {spec!r}\n'
             f'dec_hook = {dec_hook!r}\n'
             f'ext_types = {ext_types!r}\n'
         )
 
     if dec_hook:
         if ext_types is None:
-            raise ValueError(
-                f'If extending the serializable types with a custom decoder hook, '
-                f'you must also provide the expected type set `dec_hook()` will handle '
-                f'via the `ext_types: Union[Type]|None = None` argument!\n'
+            raise TypeError(
+                f'If extending the serializable types with a custom decode hook (`dec_hook()`), '
+                f'you must also provide the expected type set that the hook will handle '
+                f'via a `ext_types: Union[Type]|None = None` argument!\n'
+                f'\n'
                 f'dec_hook = {dec_hook!r}\n'
                 f'ext_types = {ext_types!r}\n'
             )
@@ -287,7 +291,7 @@ def unpack_spec_types(
     When `spec` is not a type-union returns `{spec,}`.
 
     '''
-    spec_subtypes: set[Union[Type]] = (
+    spec_subtypes: set[Union[Type]] = set(
          getattr(
              spec,
              '__args__',
@@ -449,6 +453,7 @@ class MsgCodec(Struct):
         # |_BufferError: Existing exports of data: object cannot be re-sized
 
         as_ext_type: bool = False,
+        hide_tb: bool = True,
 
     ) -> bytes:
         '''
@@ -459,11 +464,21 @@ class MsgCodec(Struct):
         https://jcristharif.com/msgspec/perf-tips.html#reusing-an-output-buffer
 
         '''
+        __tracebackhide__: bool = hide_tb
         if use_buf:
             self._enc.encode_into(py_obj, self._buf)
             return self._buf
 
         return self._enc.encode(py_obj)
+        # try:
+        #     return self._enc.encode(py_obj)
+        # except TypeError as typerr:
+        #     typerr.add_note(
+        #         '|_src error from `msgspec`'
+        #         # f'|_{self._enc.encode!r}'
+        #     )
+        #     raise typerr
+
         # TODO! REMOVE once i'm confident we won't ever need it!
         #
         # box: Struct = self._ext_types_box
@@ -572,10 +587,11 @@ def mk_codec(
     pld_spec = ipc_pld_spec
     if enc_hook:
         if not ext_types:
-            raise ValueError(
-                f'If extending the serializable types with a custom decoder hook, '
-                f'you must also provide the expected type set `enc_hook()` will handle '
-                f'via the `ext_types: Union[Type]|None = None` argument!\n'
+            raise TypeError(
+                f'If extending the serializable types with a custom encode hook (`enc_hook()`), '
+                f'you must also provide the expected type set that the hook will handle '
+                f'via a `ext_types: Union[Type]|None = None` argument!\n'
+                f'\n'
                 f'enc_hook = {enc_hook!r}\n'
                 f'ext_types = {ext_types!r}\n'
             )
