@@ -323,8 +323,8 @@ def test_pld_limiting_usage(
     limit_plds_args: tuple[dict, Exception|None],
 ):
     '''
-    Verify `dec_hook()` and `ext_types` need to either both be provided
-    or we raise a explanator type-error.
+    Verify `dec_hook()` and `ext_types` need to either both be
+    provided or we raise a explanator type-error.
 
     '''
     kwargs, maybe_err = limit_plds_args
@@ -406,117 +406,11 @@ def chk_codec_applied(
         assert enter_value is same_codec
 
 
-# def iter_maybe_sends(
-#     send_items: dict[Union[Type], Any] | list[tuple],
-#     ipc_pld_spec: Union[Type] | Any,
-#     add_codec_hooks: bool,
-
-#     codec: MsgCodec|None = None,
-
-# ) -> tuple[Any, bool]:
-
-#     if isinstance(send_items, dict):
-#         send_items = send_items.items()
-
-#     for (
-#         send_type_spec,
-#         send_value,
-#     ) in send_items:
-
-#         expect_roundtrip: bool = False
-
-#         # values-to-typespec santiy
-#         send_type = type(send_value)
-#         assert send_type == send_type_spec or (
-#             (subtypes := getattr(send_type_spec, '__args__', None))
-#             and send_type in subtypes
-#         )
-
-#         spec_subtypes: set[Union[Type]] = (
-#              getattr(
-#                  ipc_pld_spec,
-#                  '__args__',
-#                  {ipc_pld_spec,},
-#              )
-#         )
-#         send_in_spec: bool = (
-#             send_type == ipc_pld_spec
-#             or (
-#                 ipc_pld_spec != Any
-#                 and  # presume `Union` of types
-#                 send_type in spec_subtypes
-#             )
-#             or (
-#                 ipc_pld_spec == Any
-#                 and
-#                 send_type != NamespacePath
-#             )
-#         )
-#         expect_roundtrip = (
-#             send_in_spec
-#             # any spec should support all other
-#             # builtin py values that we send
-#             # except our custom nsp type which
-#             # we should be able to send as long
-#             # as we provide the custom codec hooks.
-#             or (
-#                 ipc_pld_spec == Any
-#                 and
-#                 send_type == NamespacePath
-#                 and
-#                 add_codec_hooks
-#             )
-#         )
-
-#         if codec is not None:
-#             # XXX FIRST XXX ensure roundtripping works
-#             # before touching any IPC primitives/APIs.
-#             wire_bytes: bytes = codec.encode(
-#                 Started(
-#                     cid='blahblah',
-#                     pld=send_value,
-#                 )
-#             )
-#             # NOTE: demonstrates the decoder loading
-#             # to via our native SCIPP msg-spec
-#             # (structurred-conc-inter-proc-protocol)
-#             # implemented as per,
-#             try:
-#                 msg: Started = codec.decode(wire_bytes)
-#                 if not expect_roundtrip:
-#                     pytest.fail(
-#                         f'NOT-EXPECTED able to roundtrip value given spec:\n'
-#                         f'ipc_pld_spec -> {ipc_pld_spec}\n'
-#                         f'value -> {send_value}: {send_type}\n'
-#                     )
-
-#                 pld = msg.pld
-#                 assert pld == send_value
-
-#             except ValidationError:
-#                 if expect_roundtrip:
-#                     pytest.fail(
-#                         f'EXPECTED to roundtrip value given spec:\n'
-#                         f'ipc_pld_spec -> {ipc_pld_spec}\n'
-#                         f'value -> {send_value}: {send_type}\n'
-#                     )
-
-#         yield (
-#             str(send_type),
-#             send_value,
-#             expect_roundtrip,
-#         )
-
-
 @tractor.context
 async def send_back_values(
     ctx: Context,
     rent_pld_spec_type_strs: list[str],
     add_hooks: bool,
-    # expect_ipc_send: dict[str, tuple[Any, bool]],
-
-    # expect_debug: bool,
-    # started_msg_bytes: bytes,
 
 ) -> None:
     '''
@@ -545,6 +439,8 @@ async def send_back_values(
     # ONLY add ext-hooks if the rent specified a non-std type!
     add_hooks: bool = (
         NamespacePath in rent_pld_spec_types
+        and
+        add_hooks
     )
 
     # same as on parent side config.
@@ -580,18 +476,10 @@ async def send_back_values(
             child_pld_spec,
         )
         assert (
-            # child_pld_spec == rent_pld_spec
             child_pld_spec_types.issuperset(
                 rent_pld_spec_types
             )
         )
-
-        # expected_pld_spec_str: str = str(ipc_spec)
-        # assert (
-        #     pld_spec_str == expected_pld_spec_str
-        #     and
-        #     ipc_pld_spec == ipc_spec
-        # )
 
         # ?TODO, try loop for each of the types in pld-superset?
         #
@@ -609,6 +497,7 @@ async def send_back_values(
                 f'child_pld_spec: {child_pld_spec}\n'
                 f'codec: {codec}\n'
             )
+            # await tractor.pause()
             await ctx.started(nsp)
 
         except tractor.MsgTypeError as _mte:
@@ -826,11 +715,13 @@ def test_ext_types_over_ipc(
                             assert nsp_rt.load_ref() is ex_func
 
                 # this test passes bc we can go no further!
-                except MsgTypeError:
-                    if not add_hooks:
-                        # teardown nursery
-                        await p.cancel_actor()
-                        return
+                except MsgTypeError as mte:
+                    # if not add_hooks:
+                    #     # teardown nursery
+                    #     await p.cancel_actor()
+                        # return
+
+                    raise mte
 
             await p.cancel_actor()
 
