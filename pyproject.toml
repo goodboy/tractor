@@ -44,7 +44,7 @@ dependencies = [
   # built-in multi-actor `pdb` REPL
   "pdbp>=1.6,<2", # windows only (from `pdbp`)
   # typed IPC msging
-  "msgspec",
+  "msgspec>=0.19.0",
 ]
 
 # ------ project ------
@@ -75,8 +75,6 @@ dev = [
 # ------ dependency-groups ------
 
 [tool.uv.sources]
-msgspec = { git = "https://github.com/jcrist/msgspec.git" }
-
 # XXX NOTE, only for @goodboy's hacking on `pprint(sort_dicts=False)`
 # for the `pp` alias..
 # pdbp = { path = "../pdbp", editable = true }
