@@ -432,9 +432,13 @@ class RemoteActorError(Exception):
         Error type boxed by last actor IPC hop.
 
         '''
-        if self._boxed_type is None:
+        if (
+            self._boxed_type is None
+            and
+            (ipc_msg := self._ipc_msg)
+        ):
             self._boxed_type = get_err_type(
-                self._ipc_msg.boxed_type_str
+                ipc_msg.boxed_type_str
             )
 
         return self._boxed_type
@@ -1143,6 +1147,8 @@ def unpack_error(
     which is the responsibilitiy of the caller.
 
     '''
+    # XXX, apparently we pass all sorts of msgs here?
+    # kinda odd but seems like maybe they shouldn't be?
     if not isinstance(msg, Error):
         return None
 
