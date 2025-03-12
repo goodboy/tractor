@@ -399,7 +399,8 @@ async def new_proc(
     *,
 
     infect_asyncio: bool = False,
-    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
+    proc_kwargs: dict[str, any] = {}
 
 ) -> None:
 
@@ -419,6 +420,7 @@ async def new_proc(
         _runtime_vars,  # run time vars
         infect_asyncio=infect_asyncio,
         task_status=task_status,
+        proc_kwargs=proc_kwargs
     )
 
 
@@ -434,7 +436,8 @@ async def trio_proc(
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
-    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
+    proc_kwargs: dict[str, any] = {}
 
 ) -> None:
     '''
@@ -475,7 +478,7 @@ async def trio_proc(
     proc: trio.Process|None = None
     try:
         try:
-            proc: trio.Process = await trio.lowlevel.open_process(spawn_cmd)
+            proc: trio.Process = await trio.lowlevel.open_process(spawn_cmd, **proc_kwargs)
             log.runtime(
                 'Started new child\n'
                 f'|_{proc}\n'
@@ -640,7 +643,8 @@ async def mp_proc(
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
-    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
+    proc_kwargs: dict[str, any] = {}
 
 ) -> None:
 

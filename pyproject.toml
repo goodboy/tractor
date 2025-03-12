@@ -45,6 +45,7 @@ dependencies = [
   "pdbp>=1.6,<2", # windows only (from `pdbp`)
   # typed IPC msging
   "msgspec>=0.19.0",
+  "cffi>=1.17.1",
 ]
 
 # ------ project ------

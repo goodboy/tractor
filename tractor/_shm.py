@@ -25,6 +25,7 @@ considered optional within the context of this runtime-library.
 from __future__ import annotations
 from sys import byteorder
 import time
+import platform
 from typing import Optional
 from multiprocessing import shared_memory as shm
 from multiprocessing.shared_memory import (
@@ -32,7 +33,7 @@ from multiprocessing.shared_memory import (
     ShareableList,
 )
 
-from msgspec import Struct
+from msgspec import Struct, to_builtins
 import tractor
 
 from .log import get_logger
@@ -142,7 +143,7 @@ class NDToken(Struct, frozen=True):
         ).descr
 
     def as_msg(self):
-        return self.to_dict()
+        return to_builtins(self)
 
     @classmethod
     def from_msg(cls, msg: dict) -> NDToken:
@@ -831,3 +832,297 @@ def attach_shm_list(
         name=key,
         readonly=readonly,
     )
+
+
+if platform.system() == 'Linux':
+    import os
+    import errno
+    import string
+    import random
+    from contextlib import asynccontextmanager as acm
+
+    import cffi
+    import trio
+
+    ffi = cffi.FFI()
+
+    # Declare the C functions and types we plan to use.
+    #    - eventfd: for creating the event file descriptor
+    #    - write:   for writing to the file descriptor
+    #    - read:    for reading from the file descriptor
+    #    - close:   for closing the file descriptor
+    ffi.cdef(
+        '''
+        int eventfd(unsigned int initval, int flags);
+
+        ssize_t write(int fd, const void *buf, size_t count);
+        ssize_t read(int fd, void *buf, size_t count);
+
+        int close(int fd);
+        '''
+    )
+
+    # Open the default dynamic library (essentially 'libc' in most cases)
+    C = ffi.dlopen(None)
+
+    # Constants from <sys/eventfd.h>, if needed.
+    EFD_SEMAPHORE = 1 << 0  # 0x1
+    EFD_CLOEXEC   = 1 << 1  # 0x2
+    EFD_NONBLOCK  = 1 << 2  # 0x4
+
+
+    def open_eventfd(initval: int = 0, flags: int = 0) -> int:
+        '''
+        Open an eventfd with the given initial value and flags.
+        Returns the file descriptor on success, otherwise raises OSError.
+        '''
+        fd = C.eventfd(initval, flags)
+        if fd < 0:
+            raise OSError(errno.errorcode[ffi.errno], 'eventfd failed')
+        return fd
+
+    def write_eventfd(fd: int, value: int) -> int:
+        '''
+        Write a 64-bit integer (uint64_t) to the eventfd's counter.
+        '''
+        # Create a uint64_t* in C, store `value`
+        data_ptr = ffi.new('uint64_t *', value)
+
+        # Call write(fd, data_ptr, 8)
+        # We expect to write exactly 8 bytes (sizeof(uint64_t))
+        ret = C.write(fd, data_ptr, 8)
+        if ret < 0:
+            raise OSError(errno.errorcode[ffi.errno], 'write to eventfd failed')
+        return ret
+
+    def read_eventfd(fd: int) -> int:
+        '''
+        Read a 64-bit integer (uint64_t) from the eventfd, returning the value.
+        Reading resets the counter to 0 (unless using EFD_SEMAPHORE).
+        '''
+        # Allocate an 8-byte buffer in C for reading
+        buf = ffi.new('char[]', 8)
+
+        ret = C.read(fd, buf, 8)
+        if ret < 0:
+            raise OSError(errno.errorcode[ffi.errno], 'read from eventfd failed')
+        # Convert the 8 bytes we read into a Python integer
+        data_bytes = ffi.unpack(buf, 8)  # returns a Python bytes object of length 8
+        value = int.from_bytes(data_bytes, byteorder='little', signed=False)
+        return value
+
+    def close_eventfd(fd: int) -> int:
+        '''
+        Close the eventfd.
+        '''
+        ret = C.close(fd)
+        if ret < 0:
+            raise OSError(errno.errorcode[ffi.errno], 'close failed')
+
+
+    class EventFD:
+
+        def __init__(
+            self,
+            initval: int = 0,
+            flags: int = 0,
+            fd: int | None = None,
+            omode: str = 'r'
+        ):
+            self._initval: int = initval
+            self._flags: int = flags
+            self._fd: int | None = fd
+            self._omode: str = omode
+            self._fobj = None
+
+        @property
+        def fd(self) -> int | None:
+            return self._fd
+
+        def write(self, value: int) -> int:
+            return write_eventfd(self._fd, value)
+
+        async def read(self) -> int:
+            return await trio.to_thread.run_sync(read_eventfd, self._fd)
+
+        def open(self):
+            if not self._fd:
+                self._fd = open_eventfd(
+                    initval=self._initval, flags=self._flags)
+
+            else:
+                self._fobj = os.fdopen(self._fd, self._omode)
+
+        def close(self):
+            if self._fobj:
+                self._fobj.close()
+                return
+
+            if self._fd:
+                close_eventfd(self._fd)
+
+        def __enter__(self):
+            self.open()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.close()
+
+
+    class RingBuffSender(trio.abc.SendStream):
+
+        def __init__(
+            self,
+            shm: SharedMemory,
+            write_event: EventFD,
+            wrap_event: EventFD,
+            start_ptr: int = 0
+        ):
+            self._shm: SharedMemory = shm
+            self._write_event = write_event
+            self._wrap_event = wrap_event
+            self._ptr = start_ptr
+
+        @property
+        def key(self) -> str:
+            return self._shm.name
+
+        @property
+        def size(self) -> int:
+            return self._shm.size
+
+        @property
+        def ptr(self) -> int:
+            return self._ptr
+
+        @property
+        def write_fd(self) -> int:
+            return self._write_event.fd
+
+        @property
+        def wrap_fd(self) -> int:
+            return self._wrap_event.fd
+
+        async def send_all(self, data: bytes | bytearray | memoryview):
+            target_ptr = self.ptr + len(data)
+            if target_ptr > self.size:
+                remaining = self.size - self.ptr
+                self._shm.buf[self.ptr:] = data[:remaining]
+                self._write_event.write(remaining)
+                await self._wrap_event.read()
+                self._ptr = 0
+                data = data[remaining:]
+                target_ptr = self._ptr + len(data)
+
+            self._shm.buf[self.ptr:target_ptr] = data
+            self._write_event.write(len(data))
+            self._ptr = target_ptr
+
+        async def wait_send_all_might_not_block(self):
+            ...
+
+        async def aclose(self):
+            ...
+
+        async def __aenter__(self):
+            self._write_event.open()
+            self._wrap_event.open()
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            await self.aclose()
+
+
+    class RingBuffReceiver(trio.abc.ReceiveStream):
+
+        def __init__(
+            self,
+            shm: SharedMemory,
+            write_event: EventFD,
+            wrap_event: EventFD,
+            start_ptr: int = 0
+        ):
+            self._shm: SharedMemory = shm
+            self._write_event = write_event
+            self._wrap_event = wrap_event
+            self._ptr = start_ptr
+
+        @property
+        def key(self) -> str:
+            return self._shm.name
+
+        @property
+        def size(self) -> int:
+            return self._shm.size
+
+        @property
+        def ptr(self) -> int:
+            return self._ptr
+
+        @property
+        def write_fd(self) -> int:
+            return self._write_event.fd
+
+        @property
+        def wrap_fd(self) -> int:
+            return self._wrap_event.fd
+
+        async def receive_some(self, max_bytes: int | None = None) -> bytes:
+            delta = await self._write_event.read()
+            next_ptr = self._ptr + delta
+            segment = bytes(self._shm.buf[self._ptr:next_ptr])
+            self._ptr = next_ptr
+            if self.ptr == self.size:
+                self._ptr = 0
+                self._wrap_event.write(1)
+            return segment
+
+        async def aclose(self):
+            ...
+
+        async def __aenter__(self):
+            self._write_event.open()
+            self._wrap_event.open()
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            await self.aclose()
+
+    @acm
+    async def open_ringbuffer_sender(
+        write_event_fd: int,
+        wrap_event_fd: int,
+        key: str | None = None,
+        max_bytes: int = 10 * 1024,
+        start_ptr: int = 0,
+    ) -> RingBuffSender:
+        if not key:
+            key: str = ''.join(random.choice(string.ascii_lowercase) for i in range(32))
+
+        shm = SharedMemory(
+            name=key,
+            size=max_bytes,
+            create=True
+        )
+        async with RingBuffSender(
+            shm, EventFD(fd=write_event_fd, omode='w'), EventFD(fd=wrap_event_fd), start_ptr=start_ptr
+        ) as s:
+            yield s
+
+    @acm
+    async def open_ringbuffer_receiver(
+        write_event_fd: int,
+        wrap_event_fd: int,
+        key: str,
+        max_bytes: int = 10 * 1024,
+        start_ptr: int = 0,
+    ) -> RingBuffSender:
+        shm = SharedMemory(
+            name=key,
+            size=max_bytes,
+            create=False
+        )
+        async with RingBuffReceiver(
+            shm, EventFD(fd=write_event_fd), EventFD(fd=wrap_event_fd, omode='w'), start_ptr=start_ptr
+        ) as r:
+            yield r
