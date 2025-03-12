@@ -14,7 +14,7 @@ import tractor
 from tractor._testing import (
     tractor_test,
 )
-from conftest import no_windows
+from .conftest import no_windows
 
 
 def is_win():
