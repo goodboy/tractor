@@ -184,7 +184,7 @@ class Portal:
                 (
                     self._final_result_msg,
                     self._final_result_pld,
-                ) = await self._expect_result_ctx._pld_rx.recv_msg_w_pld(
+                ) = await self._expect_result_ctx._pld_rx.recv_msg(
                     ipc=self._expect_result_ctx,
                     expect_msg=Return,
                 )
