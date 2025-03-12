@@ -141,6 +141,7 @@ class ActorNursery:
         # a `._ria_nursery` since the dependent APIs have been
         # removed!
         nursery: trio.Nursery|None = None,
+        proc_kwargs: dict[str, any] = {}
 
     ) -> Portal:
         '''
@@ -204,6 +205,7 @@ class ActorNursery:
                 parent_addr,
                 _rtv,  # run time vars
                 infect_asyncio=infect_asyncio,
+                proc_kwargs=proc_kwargs
             )
         )
 
@@ -227,6 +229,7 @@ class ActorNursery:
         enable_modules: list[str] | None = None,
         loglevel: str | None = None,  # set log level per subactor
         infect_asyncio: bool = False,
+        proc_kwargs: dict[str, any] = {},
 
         **kwargs,  # explicit args to ``fn``
 
@@ -257,6 +260,7 @@ class ActorNursery:
             # use the run_in_actor nursery
             nursery=self._ria_nursery,
             infect_asyncio=infect_asyncio,
+            proc_kwargs=proc_kwargs
         )
 
         # XXX: don't allow stream funcs
