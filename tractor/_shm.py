@@ -837,8 +837,6 @@ def attach_shm_list(
 if platform.system() == 'Linux':
     import os
     import errno
-    import string
-    import random
     from contextlib import asynccontextmanager as acm
 
     import cffi
@@ -862,19 +860,21 @@ if platform.system() == 'Linux':
         '''
     )
 
+
     # Open the default dynamic library (essentially 'libc' in most cases)
     C = ffi.dlopen(None)
 
     # Constants from <sys/eventfd.h>, if needed.
-    EFD_SEMAPHORE = 1 << 0  # 0x1
-    EFD_CLOEXEC   = 1 << 1  # 0x2
-    EFD_NONBLOCK  = 1 << 2  # 0x4
+    EFD_SEMAPHORE = 1
+    EFD_CLOEXEC = 0o2000000
+    EFD_NONBLOCK = 0o4000
 
 
     def open_eventfd(initval: int = 0, flags: int = 0) -> int:
         '''
         Open an eventfd with the given initial value and flags.
         Returns the file descriptor on success, otherwise raises OSError.
+
         '''
         fd = C.eventfd(initval, flags)
         if fd < 0:
@@ -884,6 +884,7 @@ if platform.system() == 'Linux':
     def write_eventfd(fd: int, value: int) -> int:
         '''
         Write a 64-bit integer (uint64_t) to the eventfd's counter.
+
         '''
         # Create a uint64_t* in C, store `value`
         data_ptr = ffi.new('uint64_t *', value)
@@ -899,6 +900,7 @@ if platform.system() == 'Linux':
         '''
         Read a 64-bit integer (uint64_t) from the eventfd, returning the value.
         Reading resets the counter to 0 (unless using EFD_SEMAPHORE).
+
         '''
         # Allocate an 8-byte buffer in C for reading
         buf = ffi.new('char[]', 8)
@@ -914,6 +916,7 @@ if platform.system() == 'Linux':
     def close_eventfd(fd: int) -> int:
         '''
         Close the eventfd.
+
         '''
         ret = C.close(fd)
         if ret < 0:
@@ -921,17 +924,19 @@ if platform.system() == 'Linux':
 
 
     class EventFD:
+        '''
+        Use a previously opened eventfd(2), meant to be used in
+        sub-actors after root actor opens the eventfds then passes
+        them through pass_fds
+
+        '''
 
         def __init__(
             self,
-            initval: int = 0,
-            flags: int = 0,
-            fd: int | None = None,
-            omode: str = 'r'
+            fd: int,
+            omode: str
         ):
-            self._initval: int = initval
-            self._flags: int = flags
-            self._fd: int | None = fd
+            self._fd: int = fd
             self._omode: str = omode
             self._fobj = None
 
@@ -943,23 +948,15 @@ if platform.system() == 'Linux':
             return write_eventfd(self._fd, value)
 
         async def read(self) -> int:
+            #TODO: how to handle signals?
             return await trio.to_thread.run_sync(read_eventfd, self._fd)
 
         def open(self):
-            if not self._fd:
-                self._fd = open_eventfd(
-                    initval=self._initval, flags=self._flags)
-
-            else:
-                self._fobj = os.fdopen(self._fd, self._omode)
+            self._fobj = os.fdopen(self._fd, self._omode)
 
         def close(self):
             if self._fobj:
                 self._fobj.close()
-                return
-
-            if self._fd:
-                close_eventfd(self._fd)
 
         def __enter__(self):
             self.open()
@@ -970,18 +967,34 @@ if platform.system() == 'Linux':
 
 
     class RingBuffSender(trio.abc.SendStream):
+        '''
+        IPC Reliable Ring Buffer sender side implementation
+
+        `eventfd(2)` is used for wrap around sync, and also to signal
+        writes to the reader.
+
+        TODO: if blocked on wrap around event wait it will not respond
+        to signals, fix soon TM
+        '''
 
         def __init__(
             self,
-            shm: SharedMemory,
-            write_event: EventFD,
-            wrap_event: EventFD,
-            start_ptr: int = 0
+            shm_key: str,
+            write_eventfd: int,
+            wrap_eventfd: int,
+            start_ptr: int = 0,
+            buf_size: int = 10 * 1024,
+            clean_shm_on_exit: bool = True
         ):
-            self._shm: SharedMemory = shm
-            self._write_event = write_event
-            self._wrap_event = wrap_event
+            self._shm = SharedMemory(
+                name=shm_key,
+                size=buf_size,
+                create=True
+            )
+            self._write_event = EventFD(write_eventfd, 'w')
+            self._wrap_event = EventFD(wrap_eventfd, 'r')
             self._ptr = start_ptr
+            self.clean_shm_on_exit = clean_shm_on_exit
 
         @property
         def key(self) -> str:
@@ -1004,25 +1017,37 @@ if platform.system() == 'Linux':
             return self._wrap_event.fd
 
         async def send_all(self, data: bytes | bytearray | memoryview):
+            # while data is larger than the remaining buf
             target_ptr = self.ptr + len(data)
-            if target_ptr > self.size:
+            while target_ptr > self.size:
+                # write all bytes that fit
                 remaining = self.size - self.ptr
                 self._shm.buf[self.ptr:] = data[:remaining]
+                # signal write and wait for reader wrap around
                 self._write_event.write(remaining)
                 await self._wrap_event.read()
+
+                # wrap around and trim already written bytes
                 self._ptr = 0
                 data = data[remaining:]
                 target_ptr = self._ptr + len(data)
 
+            # remaining data fits on buffer
             self._shm.buf[self.ptr:target_ptr] = data
             self._write_event.write(len(data))
             self._ptr = target_ptr
 
         async def wait_send_all_might_not_block(self):
-            ...
+            raise NotImplementedError
 
         async def aclose(self):
-            ...
+            self._write_event.close()
+            self._wrap_event.close()
+            if self.clean_shm_on_exit:
+                self._shm.unlink()
+
+            else:
+                self._shm.close()
 
         async def __aenter__(self):
             self._write_event.open()
@@ -1034,18 +1059,37 @@ if platform.system() == 'Linux':
 
 
     class RingBuffReceiver(trio.abc.ReceiveStream):
+        '''
+        IPC Reliable Ring Buffer receiver side implementation
+
+        `eventfd(2)` is used for wrap around sync, and also to signal
+        writes to the reader.
+
+        Unless eventfd(2) object is opened with EFD_NONBLOCK flag,
+        calls to `receive_some` will block the signal handling,
+        on the main thread, for now solution is using polling,
+        working on a way to unblock GIL during read(2) to allow
+        signal processing on the main thread.
+        '''
 
         def __init__(
             self,
-            shm: SharedMemory,
-            write_event: EventFD,
-            wrap_event: EventFD,
-            start_ptr: int = 0
+            shm_key: str,
+            write_eventfd: int,
+            wrap_eventfd: int,
+            start_ptr: int = 0,
+            buf_size: int = 10 * 1024,
+            flags: int = 0
         ):
-            self._shm: SharedMemory = shm
-            self._write_event = write_event
-            self._wrap_event = wrap_event
+            self._shm = SharedMemory(
+                name=shm_key,
+                size=buf_size,
+                create=False
+            )
+            self._write_event = EventFD(write_eventfd, 'w')
+            self._wrap_event = EventFD(wrap_eventfd, 'r')
             self._ptr = start_ptr
+            self._flags = flags
 
         @property
         def key(self) -> str:
@@ -1067,18 +1111,44 @@ if platform.system() == 'Linux':
         def wrap_fd(self) -> int:
             return self._wrap_event.fd
 
-        async def receive_some(self, max_bytes: int | None = None) -> bytes:
-            delta = await self._write_event.read()
+        async def receive_some(
+            self,
+            max_bytes: int | None = None,
+            nb_timeout: float = 0.1
+        ) -> memoryview:
+            # if non blocking eventfd enabled, do polling
+            # until next write, this allows signal handling
+            if self._flags | EFD_NONBLOCK:
+                delta = None
+                while delta is None:
+                    try:
+                        delta = await self._write_event.read()
+
+                    except OSError as e:
+                        if e.errno == 'EAGAIN':
+                            continue
+
+                        raise e
+
+            else:
+                delta = await self._write_event.read()
+
+            # fetch next segment and advance ptr
             next_ptr = self._ptr + delta
-            segment = bytes(self._shm.buf[self._ptr:next_ptr])
+            segment = self._shm.buf[self._ptr:next_ptr]
             self._ptr = next_ptr
+
             if self.ptr == self.size:
+                # reached the end, signal wrap around
                 self._ptr = 0
                 self._wrap_event.write(1)
+
             return segment
 
         async def aclose(self):
-            ...
+            self._write_event.close()
+            self._wrap_event.close()
+            self._shm.close()
 
         async def __aenter__(self):
             self._write_event.open()
@@ -1087,42 +1157,3 @@ if platform.system() == 'Linux':
 
         async def __aexit__(self, exc_type, exc_value, traceback):
             await self.aclose()
-
-    @acm
-    async def open_ringbuffer_sender(
-        write_event_fd: int,
-        wrap_event_fd: int,
-        key: str | None = None,
-        max_bytes: int = 10 * 1024,
-        start_ptr: int = 0,
-    ) -> RingBuffSender:
-        if not key:
-            key: str = ''.join(random.choice(string.ascii_lowercase) for i in range(32))
-
-        shm = SharedMemory(
-            name=key,
-            size=max_bytes,
-            create=True
-        )
-        async with RingBuffSender(
-            shm, EventFD(fd=write_event_fd, omode='w'), EventFD(fd=wrap_event_fd), start_ptr=start_ptr
-        ) as s:
-            yield s
-
-    @acm
-    async def open_ringbuffer_receiver(
-        write_event_fd: int,
-        wrap_event_fd: int,
-        key: str,
-        max_bytes: int = 10 * 1024,
-        start_ptr: int = 0,
-    ) -> RingBuffSender:
-        shm = SharedMemory(
-            name=key,
-            size=max_bytes,
-            create=False
-        )
-        async with RingBuffReceiver(
-            shm, EventFD(fd=write_event_fd), EventFD(fd=wrap_event_fd, omode='w'), start_ptr=start_ptr
-        ) as r:
-            yield r
