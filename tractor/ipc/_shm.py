@@ -36,7 +36,7 @@ from multiprocessing.shared_memory import (
 from msgspec import Struct, to_builtins
 import tractor
 
-from .log import get_logger
+from tractor.log import get_logger
 
 
 _USE_POSIX = getattr(shm, '_USE_POSIX', False)

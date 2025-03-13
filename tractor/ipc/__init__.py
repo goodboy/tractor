@@ -7,5 +7,5 @@ from ._chan import (
 __all__ = [
     '_connect_chan',
     'MsgTransport',
-    'Channel'
+    'Channel',
 ]

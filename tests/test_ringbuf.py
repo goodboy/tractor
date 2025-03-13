@@ -3,7 +3,7 @@ import time
 import trio
 import pytest
 import tractor
-from tractor._shm import (
+from tractor.ipc._shm import (
     EFD_NONBLOCK,
     open_eventfd,
     RingBuffSender,
