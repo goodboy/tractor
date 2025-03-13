@@ -91,7 +91,7 @@ from tractor._state import (
 if TYPE_CHECKING:
     from trio.lowlevel import Task
     from threading import Thread
-    from tractor._ipc import Channel
+    from tractor.ipc import Channel
     from tractor._runtime import (
         Actor,
     )

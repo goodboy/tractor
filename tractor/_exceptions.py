@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from ._context import Context
     from .log import StackLevelAdapter
     from ._stream import MsgStream
-    from ._ipc import Channel
+    from .ipc import Channel
 
 log = get_logger('tractor')
 

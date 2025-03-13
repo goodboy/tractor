@@ -56,7 +56,7 @@ from tractor.msg import (
 if TYPE_CHECKING:
     from ._runtime import Actor
     from ._context import Context
-    from ._ipc import Channel
+    from .ipc import Channel
 
 
 log = get_logger(__name__)

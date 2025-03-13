@@ -73,7 +73,7 @@ from tractor.msg import (
     pretty_struct,
     types as msgtypes,
 )
-from ._ipc import Channel
+from .ipc import Channel
 from ._context import (
     mk_context,
     Context,

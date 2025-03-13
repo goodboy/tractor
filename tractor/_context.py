@@ -89,7 +89,7 @@ from .msg import (
     pretty_struct,
     _ops as msgops,
 )
-from ._ipc import (
+from .ipc import (
     Channel,
 )
 from ._streaming import (
@@ -105,7 +105,7 @@ from ._state import (
 if TYPE_CHECKING:
     from ._portal import Portal
     from ._runtime import Actor
-    from ._ipc import MsgTransport
+    from .ipc import MsgTransport
     from .devx._frame_stack import (
         CallerInfo,
     )

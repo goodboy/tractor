@@ -43,7 +43,7 @@ from .devx import _debug
 from . import _spawn
 from . import _state
 from . import log
-from ._ipc import _connect_chan
+from .ipc import _connect_chan
 from ._exceptions import is_multi_cancelled
 
 

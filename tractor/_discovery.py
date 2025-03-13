@@ -29,7 +29,7 @@ from contextlib import asynccontextmanager as acm
 
 from tractor.log import get_logger
 from .trionics import gather_contexts
-from ._ipc import _connect_chan, Channel
+from .ipc import _connect_chan, Channel
 from ._portal import (
     Portal,
     open_portal,
