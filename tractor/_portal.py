@@ -43,7 +43,7 @@ from .trionics import maybe_open_nursery
 from ._state import (
     current_actor,
 )
-from ._ipc import Channel
+from .ipc import Channel
 from .log import get_logger
 from .msg import (
     # Error,
