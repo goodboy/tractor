@@ -16,6 +16,9 @@ if platform.system() == 'Linux':
         read_eventfd as read_eventfd,
         close_eventfd as close_eventfd,
         EventFD as EventFD,
+    )
+
+    from ._ringbuf import (
         RingBuffSender as RingBuffSender,
         RingBuffReceiver as RingBuffReceiver
     )
