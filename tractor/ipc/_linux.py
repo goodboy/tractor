@@ -1,4 +1,22 @@
+# tractor: structured concurrent "actors".
+# Copyright 2018-eternity Tyler Goodlet.
 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+'''
+Linux specifics, for now we are only exposing EventFD
+
+'''
 import os
 import errno
 
@@ -27,6 +45,7 @@ ffi.cdef(
 # Open the default dynamic library (essentially 'libc' in most cases)
 C = ffi.dlopen(None)
 
+
 # Constants from <sys/eventfd.h>, if needed.
 EFD_SEMAPHORE = 1
 EFD_CLOEXEC = 0o2000000
@@ -44,6 +63,7 @@ def open_eventfd(initval: int = 0, flags: int = 0) -> int:
         raise OSError(errno.errorcode[ffi.errno], 'eventfd failed')
     return fd
 
+
 def write_eventfd(fd: int, value: int) -> int:
     '''
     Write a 64-bit integer (uint64_t) to the eventfd's counter.
@@ -58,6 +78,7 @@ def write_eventfd(fd: int, value: int) -> int:
     if ret < 0:
         raise OSError(errno.errorcode[ffi.errno], 'write to eventfd failed')
     return ret
+
 
 def read_eventfd(fd: int) -> int:
     '''
@@ -75,6 +96,7 @@ def read_eventfd(fd: int) -> int:
     data_bytes = ffi.unpack(buf, 8)  # returns a Python bytes object of length 8
     value = int.from_bytes(data_bytes, byteorder='little', signed=False)
     return value
+
 
 def close_eventfd(fd: int) -> int:
     '''
