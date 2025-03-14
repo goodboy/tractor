@@ -32,7 +32,10 @@ from multiprocessing.shared_memory import (
     ShareableList,
 )
 
-from msgspec import Struct, to_builtins
+from msgspec import (
+    Struct,
+    to_builtins
+)
 import tractor
 
 from tractor.log import get_logger
