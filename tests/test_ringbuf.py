@@ -4,7 +4,6 @@ import trio
 import pytest
 import tractor
 from tractor.ipc import (
-    EFD_NONBLOCK,
     open_eventfd,
     RingBuffSender,
     RingBuffReceiver
@@ -95,7 +94,7 @@ async def child_write_shm(
         'large_payloads_large_buffer',
     ]
 )
-def test_ring_buff(
+def test_ringbuf(
     msg_amount: int,
     rand_min: int,
     rand_max: int,
@@ -171,8 +170,7 @@ async def child_blocked_receiver(
 
 
 def test_ring_reader_cancel():
-    flags = EFD_NONBLOCK
-    write_eventfd = open_eventfd(flags=flags)
+    write_eventfd = open_eventfd()
     wrap_eventfd = open_eventfd()
 
     proc_kwargs = {
@@ -201,7 +199,6 @@ def test_ring_reader_cancel():
                     write_eventfd=write_eventfd,
                     wrap_eventfd=wrap_eventfd,
                     shm_key=shm_key,
-                    flags=flags
                 ) as (sctx, _sent),
             ):
                 await trio.sleep(1)
