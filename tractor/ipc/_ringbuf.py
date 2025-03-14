@@ -32,6 +32,10 @@ from ._linux import (
     open_eventfd,
     EventFD
 )
+from ._mp_bs import disable_mantracker
+
+
+disable_mantracker()
 
 
 class RBToken(Struct, frozen=True):
@@ -43,6 +47,7 @@ class RBToken(Struct, frozen=True):
     shm_name: str
     write_eventfd: int
     wrap_eventfd: int
+    buf_size: int
 
     def as_msg(self):
         return to_builtins(self)
@@ -67,13 +72,17 @@ def open_ringbuf(
         size=buf_size,
         create=True
     )
-    token = RBToken(
-        shm_name=shm_name,
-        write_eventfd=open_eventfd(flags=write_efd_flags),
-        wrap_eventfd=open_eventfd(flags=wrap_efd_flags)
-    )
-    yield token
-    shm.close()
+    try:
+        token = RBToken(
+            shm_name=shm_name,
+            write_eventfd=open_eventfd(flags=write_efd_flags),
+            wrap_eventfd=open_eventfd(flags=wrap_efd_flags),
+            buf_size=buf_size
+        )
+        yield token
+
+    finally:
+        shm.unlink()
 
 
 class RingBuffSender(trio.abc.SendStream):
@@ -88,12 +97,11 @@ class RingBuffSender(trio.abc.SendStream):
         self,
         token: RBToken,
         start_ptr: int = 0,
-        buf_size: int = 10 * 1024,
     ):
         token = RBToken.from_msg(token)
         self._shm = SharedMemory(
             name=token.shm_name,
-            size=buf_size,
+            size=token.buf_size,
             create=False
         )
         self._write_event = EventFD(token.write_eventfd, 'w')
@@ -167,13 +175,12 @@ class RingBuffReceiver(trio.abc.ReceiveStream):
         self,
         token: RBToken,
         start_ptr: int = 0,
-        buf_size: int = 10 * 1024,
         flags: int = 0
     ):
         token = RBToken.from_msg(token)
         self._shm = SharedMemory(
             name=token.shm_name,
-            size=buf_size,
+            size=token.buf_size,
             create=False
         )
         self._write_event = EventFD(token.write_eventfd, 'w')

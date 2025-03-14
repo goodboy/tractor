@@ -38,6 +38,7 @@ from msgspec import (
 )
 import tractor
 
+from tractor.ipc._mp_bs import disable_mantracker
 from tractor.log import get_logger
 
 
@@ -55,34 +56,6 @@ except ImportError:
 
 
 log = get_logger(__name__)
-
-
-def disable_mantracker():
-    '''
-    Disable all ``multiprocessing``` "resource tracking" machinery since
-    it's an absolute multi-threaded mess of non-SC madness.
-
-    '''
-    from multiprocessing import resource_tracker as mantracker
-
-    # Tell the "resource tracker" thing to fuck off.
-    class ManTracker(mantracker.ResourceTracker):
-        def register(self, name, rtype):
-            pass
-
-        def unregister(self, name, rtype):
-            pass
-
-        def ensure_running(self):
-            pass
-
-    # "know your land and know your prey"
-    # https://www.dailymotion.com/video/x6ozzco
-    mantracker._resource_tracker = ManTracker()
-    mantracker.register = mantracker._resource_tracker.register
-    mantracker.ensure_running = mantracker._resource_tracker.ensure_running
-    mantracker.unregister = mantracker._resource_tracker.unregister
-    mantracker.getfd = mantracker._resource_tracker.getfd
 
 
 disable_mantracker()
