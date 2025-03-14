@@ -133,8 +133,10 @@ class EventFD:
         return write_eventfd(self._fd, value)
 
     async def read(self) -> int:
-        #TODO: how to handle signals?
-        return await trio.to_thread.run_sync(read_eventfd, self._fd)
+        return await trio.to_thread.run_sync(
+            read_eventfd, self._fd,
+            abandon_on_cancel=True
+        )
 
     def open(self):
         self._fobj = os.fdopen(self._fd, self._omode)

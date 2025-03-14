@@ -45,7 +45,7 @@ class RingBuffSender(trio.abc.SendStream):
         wrap_eventfd: int,
         start_ptr: int = 0,
         buf_size: int = 10 * 1024,
-        clean_shm_on_exit: bool = True
+        unlink_on_exit: bool = True
     ):
         self._shm = SharedMemory(
             name=shm_key,
@@ -55,7 +55,7 @@ class RingBuffSender(trio.abc.SendStream):
         self._write_event = EventFD(write_eventfd, 'w')
         self._wrap_event = EventFD(wrap_eventfd, 'r')
         self._ptr = start_ptr
-        self.clean_shm_on_exit = clean_shm_on_exit
+        self.unlink_on_exit = unlink_on_exit
 
     @property
     def key(self) -> str:
@@ -104,7 +104,7 @@ class RingBuffSender(trio.abc.SendStream):
     async def aclose(self):
         self._write_event.close()
         self._wrap_event.close()
-        if self.clean_shm_on_exit:
+        if self.unlink_on_exit:
             self._shm.unlink()
 
         else:
