@@ -36,6 +36,8 @@ if platform.system() == 'Linux':
     )
 
     from ._ringbuf import (
+        RBToken as RBToken,
         RingBuffSender as RingBuffSender,
-        RingBuffReceiver as RingBuffReceiver
+        RingBuffReceiver as RingBuffReceiver,
+        open_ringbuf
     )
