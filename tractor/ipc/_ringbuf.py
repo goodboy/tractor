@@ -17,14 +17,63 @@
 IPC Reliable RingBuffer implementation
 
 '''
+from __future__ import annotations
+from contextlib import contextmanager as cm
 from multiprocessing.shared_memory import SharedMemory
 
 import trio
+from msgspec import (
+    Struct,
+    to_builtins
+)
 
 from ._linux import (
     EFD_NONBLOCK,
+    open_eventfd,
     EventFD
 )
+
+
+class RBToken(Struct, frozen=True):
+    '''
+    RingBuffer token contains necesary info to open the two
+    eventfds and the shared memory
+
+    '''
+    shm_name: str
+    write_eventfd: int
+    wrap_eventfd: int
+
+    def as_msg(self):
+        return to_builtins(self)
+
+    @classmethod
+    def from_msg(cls, msg: dict) -> RBToken:
+        if isinstance(msg, RBToken):
+            return msg
+
+        return RBToken(**msg)
+
+
+@cm
+def open_ringbuf(
+    shm_name: str,
+    buf_size: int = 10 * 1024,
+    write_efd_flags: int = 0,
+    wrap_efd_flags: int = 0
+) -> RBToken:
+    shm = SharedMemory(
+        name=shm_name,
+        size=buf_size,
+        create=True
+    )
+    token = RBToken(
+        shm_name=shm_name,
+        write_eventfd=open_eventfd(flags=write_efd_flags),
+        wrap_eventfd=open_eventfd(flags=wrap_efd_flags)
+    )
+    yield token
+    shm.close()
 
 
 class RingBuffSender(trio.abc.SendStream):
@@ -34,28 +83,22 @@ class RingBuffSender(trio.abc.SendStream):
     `eventfd(2)` is used for wrap around sync, and also to signal
     writes to the reader.
 
-    TODO: if blocked on wrap around event wait it will not respond
-    to signals, fix soon TM
     '''
-
     def __init__(
         self,
-        shm_key: str,
-        write_eventfd: int,
-        wrap_eventfd: int,
+        token: RBToken,
         start_ptr: int = 0,
         buf_size: int = 10 * 1024,
-        unlink_on_exit: bool = True
     ):
+        token = RBToken.from_msg(token)
         self._shm = SharedMemory(
-            name=shm_key,
+            name=token.shm_name,
             size=buf_size,
-            create=True
+            create=False
         )
-        self._write_event = EventFD(write_eventfd, 'w')
-        self._wrap_event = EventFD(wrap_eventfd, 'r')
+        self._write_event = EventFD(token.write_eventfd, 'w')
+        self._wrap_event = EventFD(token.wrap_eventfd, 'r')
         self._ptr = start_ptr
-        self.unlink_on_exit = unlink_on_exit
 
     @property
     def key(self) -> str:
@@ -104,11 +147,7 @@ class RingBuffSender(trio.abc.SendStream):
     async def aclose(self):
         self._write_event.close()
         self._wrap_event.close()
-        if self.unlink_on_exit:
-            self._shm.unlink()
-
-        else:
-            self._shm.close()
+        self._shm.close()
 
     async def __aenter__(self):
         self._write_event.open()
@@ -123,29 +162,22 @@ class RingBuffReceiver(trio.abc.ReceiveStream):
     `eventfd(2)` is used for wrap around sync, and also to signal
     writes to the reader.
 
-    Unless eventfd(2) object is opened with EFD_NONBLOCK flag,
-    calls to `receive_some` will block the signal handling,
-    on the main thread, for now solution is using polling,
-    working on a way to unblock GIL during read(2) to allow
-    signal processing on the main thread.
     '''
-
     def __init__(
         self,
-        shm_key: str,
-        write_eventfd: int,
-        wrap_eventfd: int,
+        token: RBToken,
         start_ptr: int = 0,
         buf_size: int = 10 * 1024,
         flags: int = 0
     ):
+        token = RBToken.from_msg(token)
         self._shm = SharedMemory(
-            name=shm_key,
+            name=token.shm_name,
             size=buf_size,
             create=False
         )
-        self._write_event = EventFD(write_eventfd, 'w')
-        self._wrap_event = EventFD(wrap_eventfd, 'r')
+        self._write_event = EventFD(token.write_eventfd, 'w')
+        self._wrap_event = EventFD(token.wrap_eventfd, 'r')
         self._ptr = start_ptr
         self._flags = flags
 
