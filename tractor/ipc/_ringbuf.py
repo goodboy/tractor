@@ -115,9 +115,6 @@ class RingBuffSender(trio.abc.SendStream):
         self._wrap_event.open()
         return self
 
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self.aclose()
-
 
 class RingBuffReceiver(trio.abc.ReceiveStream):
     '''
@@ -215,6 +212,3 @@ class RingBuffReceiver(trio.abc.ReceiveStream):
         self._write_event.open()
         self._wrap_event.open()
         return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        await self.aclose()
