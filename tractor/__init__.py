@@ -67,4 +67,4 @@ from ._root import (
 from ._ipc import Channel as Channel
 from ._portal import Portal as Portal
 from ._runtime import Actor as Actor
-from . import hilevel as hilevel
+# from . import hilevel as hilevel
