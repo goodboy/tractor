@@ -64,6 +64,8 @@ async def child_write_shm(
         for msg in msgs:
             await sender.send_all(msg)
 
+    print('writer exit')
+
 
 @pytest.mark.parametrize(
     'msg_amount,rand_min,rand_max,buf_size',
@@ -89,6 +91,15 @@ def test_ringbuf(
     rand_max: int,
     buf_size: int
 ):
+    '''
+    - Open a new ring buf on root actor
+    - Create a sender subactor and generate {msg_amount} messages
+    optionally with a random amount of bytes at the end of each,
+    return total_bytes on `ctx.started`, then send all messages
+    - Create a receiver subactor and receive until total_bytes are
+    read, print simple perf stats.
+
+    '''
     async def main():
         with open_ringbuf(
             'test_ringbuf',
@@ -146,6 +157,11 @@ async def child_blocked_receiver(
 
 
 def test_ring_reader_cancel():
+    '''
+    Test that a receiver blocked on eventfd(2) read responds to
+    cancellation.
+
+    '''
     async def main():
         with open_ringbuf('test_ring_cancel_reader') as token:
             async with (
@@ -184,6 +200,11 @@ async def child_blocked_sender(
 
 
 def test_ring_sender_cancel():
+    '''
+    Test that a sender blocked on eventfd(2) read responds to
+    cancellation.
+
+    '''
     async def main():
         with open_ringbuf(
             'test_ring_cancel_sender',
@@ -209,3 +230,36 @@ def test_ring_sender_cancel():
 
     with pytest.raises(tractor._exceptions.ContextCancelled):
         trio.run(main)
+
+
+def test_ringbuf_max_bytes():
+    '''
+    Test that RingBuffReceiver.receive_some's max_bytes optional
+    argument works correctly, send a msg of size 100, then
+    force receive of messages with max_bytes == 1, wait until
+    100 of these messages are received, then compare join of
+    msgs with original message
+
+    '''
+    msg = b''.join(str(i % 10).encode() for i in range(100))
+    msgs = []
+
+    async def main():
+        with open_ringbuf(
+            'test_ringbuf_max_bytes',
+            buf_size=10
+        ) as token:
+            async with (
+                trio.open_nursery() as n,
+                RingBuffSender(token, is_ipc=False) as sender,
+                RingBuffReceiver(token, is_ipc=False) as receiver
+            ):
+                n.start_soon(sender.send_all, msg)
+                while len(msgs) < len(msg):
+                    msg_part = await receiver.receive_some(max_bytes=1)
+                    msg_part = bytes(msg_part)
+                    assert len(msg_part) == 1
+                    msgs.append(msg_part)
+
+    trio.run(main)
+    assert msg == b''.join(msgs)
