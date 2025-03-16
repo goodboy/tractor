@@ -17,9 +17,16 @@
 
 import platform
 
+from ._transport import MsgTransport as MsgTransport
+
+from ._tcp import (
+    get_stream_addrs as get_stream_addrs,
+    MsgpackTCPStream as MsgpackTCPStream
+)
+
 from ._chan import (
     _connect_chan as _connect_chan,
-    MsgTransport as MsgTransport,
+    get_msg_transport as get_msg_transport,
     Channel as Channel
 )
 
@@ -39,5 +46,5 @@ if platform.system() == 'Linux':
         RBToken as RBToken,
         RingBuffSender as RingBuffSender,
         RingBuffReceiver as RingBuffReceiver,
-        open_ringbuf
+        open_ringbuf as open_ringbuf
     )
