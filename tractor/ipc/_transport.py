@@ -78,7 +78,7 @@ class MsgTransport(Protocol):
 # eventual msg definition/types?
 # - https://docs.python.org/3/library/typing.html#typing.Protocol
 
-    stream: trio.SocketStream
+    stream: trio.abc.Stream
     drained: list[MsgType]
 
     address_type: ClassVar[Type[Address]]

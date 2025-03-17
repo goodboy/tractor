@@ -108,6 +108,10 @@ def close_eventfd(fd: int) -> int:
         raise OSError(errno.errorcode[ffi.errno], 'close failed')
 
 
+class EFDReadCancelled(Exception):
+    ...
+
+
 class EventFD:
     '''
     Use a previously opened eventfd(2), meant to be used in
@@ -124,6 +128,7 @@ class EventFD:
         self._fd: int = fd
         self._omode: str = omode
         self._fobj = None
+        self._cscope: trio.CancelScope | None = None
 
     @property
     def fd(self) -> int | None:
@@ -133,17 +138,38 @@ class EventFD:
         return write_eventfd(self._fd, value)
 
     async def read(self) -> int:
-        return await trio.to_thread.run_sync(
-            read_eventfd, self._fd,
-            abandon_on_cancel=True
-        )
+        '''
+        Async wrapper for `read_eventfd(self.fd)`
+
+        `trio.to_thread.run_sync` is used, need to use a `trio.CancelScope`
+        in order to make it cancellable when `self.close()` is called.
+
+        '''
+        self._cscope = trio.CancelScope()
+        with self._cscope:
+            return await trio.to_thread.run_sync(
+                read_eventfd, self._fd,
+                abandon_on_cancel=True
+            )
+
+        if self._cscope.cancelled_caught:
+            raise EFDReadCancelled
+
+        self._cscope = None
 
     def open(self):
         self._fobj = os.fdopen(self._fd, self._omode)
 
     def close(self):
         if self._fobj:
-            self._fobj.close()
+            try:
+                self._fobj.close()
+
+            except OSError:
+                ...
+
+        if self._cscope:
+            self._cscope.cancel()
 
     def __enter__(self):
         self.open()

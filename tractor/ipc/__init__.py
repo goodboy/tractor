@@ -18,7 +18,35 @@
 A modular IPC layer supporting the power of cross-process SC!
 
 '''
+import platform
+
 from ._chan import (
     _connect_chan as _connect_chan,
     Channel as Channel
 )
+
+if platform.system() == 'Linux':
+    from ._linux import (
+        EFD_SEMAPHORE as EFD_SEMAPHORE,
+        EFD_CLOEXEC as EFD_CLOEXEC,
+        EFD_NONBLOCK as EFD_NONBLOCK,
+        open_eventfd as open_eventfd,
+        write_eventfd as write_eventfd,
+        read_eventfd as read_eventfd,
+        close_eventfd as close_eventfd,
+        EFDReadCancelled as EFDReadCancelled,
+        EventFD as EventFD,
+    )
+
+    from ._ringbuf import (
+        RBToken as RBToken,
+        open_ringbuf as open_ringbuf,
+        RingBuffSender as RingBuffSender,
+        RingBuffReceiver as RingBuffReceiver,
+        open_ringbuf_pair as open_ringbuf_pair,
+        attach_to_ringbuf_receiver as attach_to_ringbuf_receiver,
+        attach_to_ringbuf_sender as attach_to_ringbuf_sender,
+        attach_to_ringbuf_pair as attach_to_ringbuf_pair,
+        attach_to_ringbuf_stream as attach_to_ringbuf_stream,
+        MsgpackRBStream as MsgpackRBStream
+    )

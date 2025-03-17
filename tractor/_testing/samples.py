@@ -2,6 +2,10 @@ import os
 import random
 
 
+def generate_single_byte_msgs(amount: int) -> bytes:
+    return b''.join(str(i % 10).encode() for i in range(amount))
+
+
 def generate_sample_messages(
     amount: int,
     rand_min: int = 0,
