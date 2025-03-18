@@ -50,5 +50,7 @@ if platform.system() == 'Linux':
         RingBuffBytesSender as RingBuffBytesSender,
         RingBuffBytesReceiver as RingBuffBytesReceiver,
         RingBuffChannel as RingBuffChannel,
-        attach_to_ringbuf_channel as attach_to_ringbuf_channel
+        attach_to_ringbuf_schannel as attach_to_ringbuf_schannel,
+        attach_to_ringbuf_rchannel as attach_to_ringbuf_rchannel,
+        attach_to_ringbuf_channel as attach_to_ringbuf_channel,
     )

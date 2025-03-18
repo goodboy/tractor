@@ -550,6 +550,36 @@ class RingBuffBytesReceiver(trio.abc.ReceiveChannel[bytes]):
         await self._receiver.aclose()
 
 
+@acm
+async def attach_to_ringbuf_rchannel(
+    token: RBToken,
+    cleanup: bool = True
+):
+    '''
+    Attach a RingBuffBytesReceiver from a previously opened
+    RBToken.
+    '''
+    async with attach_to_ringbuf_receiver(
+        token, cleanup=cleanup
+    ) as receiver:
+        yield RingBuffBytesReceiver(receiver)
+
+
+@acm
+async def attach_to_ringbuf_schannel(
+    token: RBToken,
+    cleanup: bool = True
+):
+    '''
+    Attach a RingBuffBytesSender from a previously opened
+    RBToken.
+    '''
+    async with attach_to_ringbuf_sender(
+        token, cleanup=cleanup
+    ) as sender:
+        yield RingBuffBytesSender(sender)
+
+
 class RingBuffChannel(trio.abc.Channel[bytes]):
     '''
     Combine `RingBuffBytesSender` and `RingBuffBytesReceiver`
@@ -588,16 +618,13 @@ async def attach_to_ringbuf_channel(
 
     '''
     async with (
-        attach_to_ringbuf_receiver(
+        attach_to_ringbuf_rchannel(
             token_in,
             cleanup=cleanup_in
         ) as receiver,
-        attach_to_ringbuf_sender(
+        attach_to_ringbuf_schannel(
             token_out,
             cleanup=cleanup_out
         ) as sender,
     ):
-        yield RingBuffChannel(
-            RingBuffBytesSender(sender),
-            RingBuffBytesReceiver(receiver)
-        )
+        yield RingBuffChannel(sender, receiver)
