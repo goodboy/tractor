@@ -46,7 +46,9 @@ if platform.system() == 'Linux':
         open_ringbuf_pair as open_ringbuf_pair,
         attach_to_ringbuf_receiver as attach_to_ringbuf_receiver,
         attach_to_ringbuf_sender as attach_to_ringbuf_sender,
-        attach_to_ringbuf_pair as attach_to_ringbuf_pair,
         attach_to_ringbuf_stream as attach_to_ringbuf_stream,
-        MsgpackRBStream as MsgpackRBStream
+        RingBuffBytesSender as RingBuffBytesSender,
+        RingBuffBytesReceiver as RingBuffBytesReceiver,
+        RingBuffChannel as RingBuffChannel,
+        attach_to_ringbuf_channel as attach_to_ringbuf_channel
     )

@@ -19,16 +19,9 @@ IPC Reliable RingBuffer implementation
 '''
 from __future__ import annotations
 import struct
-from collections.abc import (
-    AsyncGenerator,
-    AsyncIterator
-)
 from contextlib import (
     contextmanager as cm,
     asynccontextmanager as acm
-)
-from typing import (
-    Any
 )
 from multiprocessing.shared_memory import SharedMemory
 
@@ -48,10 +41,8 @@ from ._linux import (
 from ._mp_bs import disable_mantracker
 from tractor.log import get_logger
 from tractor._exceptions import (
-    TransportClosed,
     InternalError
 )
-from tractor.ipc import MsgTransport
 
 
 log = get_logger(__name__)
@@ -146,6 +137,7 @@ def open_ringbuf(
 
 
 Buffer = bytes | bytearray | memoryview
+
 
 '''
 IPC Reliable Ring Buffer
@@ -406,7 +398,7 @@ async def attach_to_ringbuf_receiver(
     cleanup: bool = True
 ):
     '''
-    Instantiate a RingBuffReceiver from a previously opened
+    Attach a RingBuffReceiver from a previously opened
     RBToken.
 
     Launches `receiver._eof_monitor_task` in a `trio.Nursery`.
@@ -421,13 +413,14 @@ async def attach_to_ringbuf_receiver(
         n.start_soon(receiver._eof_monitor_task)
         yield receiver
 
+
 @acm
 async def attach_to_ringbuf_sender(
     token: RBToken,
     cleanup: bool = True
 ):
     '''
-    Instantiate a RingBuffSender from a previously opened
+    Attach a RingBuffSender from a previously opened
     RBToken.
 
     '''
@@ -463,14 +456,14 @@ def open_ringbuf_pair(
 
 
 @acm
-async def attach_to_ringbuf_pair(
+async def attach_to_ringbuf_stream(
     token_in: RBToken,
     token_out: RBToken,
     cleanup_in: bool = True,
     cleanup_out: bool = True
 ):
     '''
-    Instantiate a trio.StapledStream from a previously opened
+    Attach a trio.StapledStream from a previously opened
     ringbuf pair.
 
     '''
@@ -487,180 +480,124 @@ async def attach_to_ringbuf_pair(
         yield trio.StapledStream(sender, receiver)
 
 
-class MsgpackRBStream(MsgTransport):
 
+class RingBuffBytesSender(trio.abc.SendChannel[bytes]):
+    '''
+    In order to guarantee full messages are received, all bytes
+    sent by `RingBuffBytesSender` are preceded with a 4 byte header
+    which decodes into a uint32 indicating the actual size of the
+    next payload.
+
+    '''
     def __init__(
         self,
-        stream: trio.StapledStream
+        sender: RingBuffSender
     ):
-        self.stream = stream
-
-        # create read loop intance
-        self._aiter_pkts = self._iter_packets()
+        self._sender = sender
         self._send_lock = trio.StrictFIFOLock()
 
-        self.drained: list[dict] = []
-
-        self.recv_stream = BufferedReceiveStream(
-            transport_stream=stream
-        )
-
-    async def _iter_packets(self) -> AsyncGenerator[dict, None]:
-        '''
-        Yield `bytes`-blob decoded packets from the underlying TCP
-        stream using the current task's `MsgCodec`.
-
-        This is a streaming routine implemented as an async generator
-        func (which was the original design, but could be changed?)
-        and is allocated by a `.__call__()` inside `.__init__()` where
-        it is assigned to the `._aiter_pkts` attr.
-
-        '''
-
-        while True:
-            try:
-                header: bytes = await self.recv_stream.receive_exactly(4)
-            except (
-                ValueError,
-                ConnectionResetError,
-
-                # not sure entirely why we need this but without it we
-                # seem to be getting racy failures here on
-                # arbiter/registry name subs..
-                trio.BrokenResourceError,
-
-            ) as trans_err:
-
-                loglevel = 'transport'
-                match trans_err:
-                    # case (
-                    #     ConnectionResetError()
-                    # ):
-                    #     loglevel = 'transport'
-
-                    # peer actor (graceful??) TCP EOF but `tricycle`
-                    # seems to raise a 0-bytes-read?
-                    case ValueError() if (
-                        'unclean EOF' in trans_err.args[0]
-                    ):
-                        pass
-
-                    # peer actor (task) prolly shutdown quickly due
-                    # to cancellation
-                    case trio.BrokenResourceError() if (
-                        'Connection reset by peer' in trans_err.args[0]
-                    ):
-                        pass
-
-                    # unless the disconnect condition falls under "a
-                    # normal operation breakage" we usualy console warn
-                    # about it.
-                    case _:
-                        loglevel: str = 'warning'
-
-
-                raise TransportClosed(
-                    message=(
-                        f'IPC transport already closed by peer\n'
-                        f'x)> {type(trans_err)}\n'
-                        f' |_{self}\n'
-                    ),
-                    loglevel=loglevel,
-                ) from trans_err
-
-            # XXX definitely can happen if transport is closed
-            # manually by another `trio.lowlevel.Task` in the
-            # same actor; we use this in some simulated fault
-            # testing for ex, but generally should never happen
-            # under normal operation!
-            #
-            # NOTE: as such we always re-raise this error from the
-            #       RPC msg loop!
-            except trio.ClosedResourceError as closure_err:
-                raise TransportClosed(
-                    message=(
-                        f'IPC transport already manually closed locally?\n'
-                        f'x)> {type(closure_err)} \n'
-                        f' |_{self}\n'
-                    ),
-                    loglevel='error',
-                    raise_on_report=(
-                        closure_err.args[0] == 'another task closed this fd'
-                        or
-                        closure_err.args[0] in ['another task closed this fd']
-                    ),
-                ) from closure_err
-
-            # graceful EOF disconnect
-            if header == b'':
-                raise TransportClosed(
-                    message=(
-                        f'IPC transport already gracefully closed\n'
-                        f')>\n'
-                        f'|_{self}\n'
-                    ),
-                    loglevel='transport',
-                    # cause=???  # handy or no?
-                )
-
-            size: int
-            size, = struct.unpack("<I", header)
-
-            log.transport(f'received header {size}')  # type: ignore
-            msg_bytes: bytes = await self.recv_stream.receive_exactly(size)
-
-            log.transport(f"received {msg_bytes}")  # type: ignore
-            yield msg_bytes
-
-    async def send(
-        self,
-        msg: bytes,
-
-    ) -> None:
-        '''
-        Send a msgpack encoded py-object-blob-as-msg.
-
-        '''
+    async def send(self, value: bytes) -> None:
         async with self._send_lock:
-            size: bytes = struct.pack("<I", len(msg))
-            return await self.stream.send_all(size + msg)
+            size: bytes = struct.pack("<I", len(value))
+            return await self._sender.send_all(size + value)
 
-    async def recv(self) -> Any:
-        return await self._aiter_pkts.asend(None)
+    async def aclose(self) -> None:
+        async with self._send_lock:
+            await self._sender.aclose()
 
-    async def drain(self) -> AsyncIterator[dict]:
+
+class RingBuffBytesReceiver(trio.abc.ReceiveChannel[bytes]):
+    '''
+    See `RingBuffBytesSender` docstring.
+
+    A `tricycle.BufferedReceiveStream` is used for the
+    `receive_exactly` API.
+    '''
+    def __init__(
+        self,
+        receiver: RingBuffReceiver
+    ):
+        self._receiver = receiver
+
+    async def _receive_exactly(self, num_bytes: int) -> bytes:
         '''
-        Drain the stream's remaining messages sent from
-        the far end until the connection is closed by
-        the peer.
+        Fetch bytes from receiver until we read exactly `num_bytes`
+        or end of stream is signaled.
 
         '''
-        try:
-            async for msg in self._iter_packets():
-                self.drained.append(msg)
-        except TransportClosed:
-            for msg in self.drained:
-                yield msg
+        payload = b''
+        while len(payload) < num_bytes:
+            remaining = num_bytes - len(payload)
 
-    def __aiter__(self):
-        return self._aiter_pkts
+            new_bytes = await self._receiver.receive_some(
+                max_bytes=remaining
+            )
+
+            if new_bytes == b'':
+                raise trio.EndOfChannel
+
+            payload += new_bytes
+
+        return payload
+
+    async def receive(self) -> bytes:
+        header: bytes = await self._receive_exactly(4)
+        size: int
+        size, = struct.unpack("<I", header)
+        return await self._receive_exactly(size)
+
+    async def aclose(self) -> None:
+        await self._receiver.aclose()
+
+
+class RingBuffChannel(trio.abc.Channel[bytes]):
+    '''
+    Combine `RingBuffBytesSender` and `RingBuffBytesReceiver`
+    in order to expose the bidirectional `trio.abc.Channel` API.
+
+    '''
+    def __init__(
+        self,
+        sender: RingBuffBytesSender,
+        receiver: RingBuffBytesReceiver
+    ):
+        self._sender = sender
+        self._receiver = receiver
+
+    async def send(self, value: bytes):
+        await self._sender.send(value)
+
+    async def receive(self) -> bytes:
+        return await self._receiver.receive()
+
+    async def aclose(self):
+        await self._receiver.aclose()
+        await self._sender.aclose()
 
 
 @acm
-async def attach_to_ringbuf_stream(
+async def attach_to_ringbuf_channel(
     token_in: RBToken,
     token_out: RBToken,
     cleanup_in: bool = True,
     cleanup_out: bool = True
 ):
     '''
-    Wrap a ringbuf trio.StapledStream in a MsgpackRBStream
+    Attach to an already opened ringbuf pair and return
+    a `RingBuffChannel`.
 
     '''
-    async with attach_to_ringbuf_pair(
-        token_in,
-        token_out,
-        cleanup_in=cleanup_in,
-        cleanup_out=cleanup_out
-    ) as stream:
-        yield MsgpackRBStream(stream)
+    async with (
+        attach_to_ringbuf_receiver(
+            token_in,
+            cleanup=cleanup_in
+        ) as receiver,
+        attach_to_ringbuf_sender(
+            token_out,
+            cleanup=cleanup_out
+        ) as sender,
+    ):
+        yield RingBuffChannel(
+            RingBuffBytesSender(sender),
+            RingBuffBytesReceiver(receiver)
+        )
