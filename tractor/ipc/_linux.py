@@ -157,6 +157,14 @@ class EventFD:
 
         self._cscope = None
 
+    def read_direct(self) -> int:
+        '''
+        Direct call to `read_eventfd(self.fd)`, unless `eventfd` was
+        opened with `EFD_NONBLOCK` its gonna block the thread.
+
+        '''
+        return read_eventfd(self._fd)
+
     def open(self):
         self._fobj = os.fdopen(self._fd, self._omode)
 

@@ -183,7 +183,7 @@ async def child_blocked_receiver(
         await receiver.receive_some()
 
 
-def test_ring_reader_cancel():
+def test_reader_cancel():
     '''
     Test that a receiver blocked on eventfd(2) read responds to
     cancellation.
@@ -226,7 +226,7 @@ async def child_blocked_sender(
         await sender.send_all(b'this will wrap')
 
 
-def test_ring_sender_cancel():
+def test_sender_cancel():
     '''
     Test that a sender blocked on eventfd(2) read responds to
     cancellation.
@@ -259,7 +259,7 @@ def test_ring_sender_cancel():
         trio.run(main)
 
 
-def test_ringbuf_max_bytes():
+def test_receiver_max_bytes():
     '''
     Test that RingBuffReceiver.receive_some's max_bytes optional
     argument works correctly, send a msg of size 100, then
@@ -388,7 +388,7 @@ async def child_channel_sender(
             await chan.send(msg)
 
 
-def test_ringbuf_channel():
+def test_channel():
 
     msg_amount_min = 100
     msg_amount_max = 1000
