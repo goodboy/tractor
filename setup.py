@@ -39,6 +39,7 @@ setup(
         'tractor.experimental',  # wacky ideas
         'tractor.trionics',  # trio extensions
         'tractor.msg',  # lowlevel data types
+        'tractor._testing',  # internal cross-subsys suite utils
     ],
     install_requires=[
 
