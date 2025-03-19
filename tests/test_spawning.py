@@ -16,14 +16,14 @@ data_to_pass_down = {'doggy': 10, 'kitty': 4}
 async def spawn(
     is_arbiter: bool,
     data: dict,
-    reg_addr: tuple[str, int],
+    arb_addr: tuple[str, int],
 ):
     namespaces = [__name__]
 
     await trio.sleep(0.1)
 
     async with tractor.open_root_actor(
-        arbiter_addr=reg_addr,
+        arbiter_addr=arb_addr,
     ):
 
         actor = tractor.current_actor()
@@ -41,7 +41,7 @@ async def spawn(
                     is_arbiter=False,
                     name='sub-actor',
                     data=data,
-                    reg_addr=reg_addr,
+                    arb_addr=arb_addr,
                     enable_modules=namespaces,
                 )
 
@@ -55,12 +55,12 @@ async def spawn(
             return 10
 
 
-def test_local_arbiter_subactor_global_state(reg_addr):
+def test_local_arbiter_subactor_global_state(arb_addr):
     result = trio.run(
         spawn,
         True,
         data_to_pass_down,
-        reg_addr,
+        arb_addr,
     )
     assert result == 10
 
@@ -140,7 +140,7 @@ async def check_loglevel(level):
 def test_loglevel_propagated_to_subactor(
     start_method,
     capfd,
-    reg_addr,
+    arb_addr,
 ):
     if start_method == 'mp_forkserver':
         pytest.skip(
@@ -152,7 +152,7 @@ def test_loglevel_propagated_to_subactor(
         async with tractor.open_nursery(
             name='arbiter',
             start_method=start_method,
-            arbiter_addr=reg_addr,
+            arbiter_addr=arb_addr,
 
         ) as tn:
             await tn.run_in_actor(

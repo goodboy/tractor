@@ -52,7 +52,7 @@ async def short_sleep():
         'fail_on_syntax',
     ],
 )
-def test_rpc_errors(reg_addr, to_call, testdir):
+def test_rpc_errors(arb_addr, to_call, testdir):
     """Test errors when making various RPC requests to an actor
     that either doesn't have the requested module exposed or doesn't define
     the named function.
@@ -84,7 +84,7 @@ def test_rpc_errors(reg_addr, to_call, testdir):
 
         # spawn a subactor which calls us back
         async with tractor.open_nursery(
-            arbiter_addr=reg_addr,
+            arbiter_addr=arb_addr,
             enable_modules=exposed_mods.copy(),
         ) as n:
 

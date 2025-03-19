@@ -78,7 +78,7 @@ has_nested_actors = pytest.mark.has_nested_actors
 def spawn(
     start_method,
     testdir,
-    reg_addr,
+    arb_addr,
 ) -> 'pexpect.spawn':
 
     if start_method != 'trio':

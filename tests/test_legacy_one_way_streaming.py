@@ -55,7 +55,7 @@ async def context_stream(
 
 
 async def stream_from_single_subactor(
-    reg_addr,
+    arb_addr,
     start_method,
     stream_func,
 ):
@@ -64,7 +64,7 @@ async def stream_from_single_subactor(
     # only one per host address, spawns an actor if None
 
     async with tractor.open_nursery(
-        registry_addrs=[reg_addr],
+        arbiter_addr=arb_addr,
         start_method=start_method,
     ) as nursery:
 
@@ -115,13 +115,13 @@ async def stream_from_single_subactor(
 @pytest.mark.parametrize(
     'stream_func', [async_gen_stream, context_stream]
 )
-def test_stream_from_single_subactor(reg_addr, start_method, stream_func):
+def test_stream_from_single_subactor(arb_addr, start_method, stream_func):
     """Verify streaming from a spawned async generator.
     """
     trio.run(
         partial(
             stream_from_single_subactor,
-            reg_addr,
+            arb_addr,
             start_method,
             stream_func=stream_func,
         ),
@@ -225,14 +225,14 @@ async def a_quadruple_example():
         return result_stream
 
 
-async def cancel_after(wait, reg_addr):
-    async with tractor.open_root_actor(registry_addrs=[reg_addr]):
+async def cancel_after(wait, arb_addr):
+    async with tractor.open_root_actor(arbiter_addr=arb_addr):
         with trio.move_on_after(wait):
             return await a_quadruple_example()
 
 
 @pytest.fixture(scope='module')
-def time_quad_ex(reg_addr, ci_env, spawn_backend):
+def time_quad_ex(arb_addr, ci_env, spawn_backend):
     if spawn_backend == 'mp':
         """no idea but the  mp *nix runs are flaking out here often...
         """
@@ -240,7 +240,7 @@ def time_quad_ex(reg_addr, ci_env, spawn_backend):
 
     timeout = 7 if platform.system() in ('Windows', 'Darwin') else 4
     start = time.time()
-    results = trio.run(cancel_after, timeout, reg_addr)
+    results = trio.run(cancel_after, timeout, arb_addr)
     diff = time.time() - start
     assert results
     return results, diff
@@ -260,14 +260,14 @@ def test_a_quadruple_example(time_quad_ex, ci_env, spawn_backend):
     list(map(lambda i: i/10, range(3, 9)))
 )
 def test_not_fast_enough_quad(
-    reg_addr, time_quad_ex, cancel_delay, ci_env, spawn_backend
+    arb_addr, time_quad_ex, cancel_delay, ci_env, spawn_backend
 ):
     """Verify we can cancel midway through the quad example and all actors
     cancel gracefully.
     """
     results, diff = time_quad_ex
     delay = max(diff - cancel_delay, 0)
-    results = trio.run(cancel_after, delay, reg_addr)
+    results = trio.run(cancel_after, delay, arb_addr)
     system = platform.system()
     if system in ('Windows', 'Darwin') and results is not None:
         # In CI envoirments it seems later runs are quicker then the first
@@ -280,7 +280,7 @@ def test_not_fast_enough_quad(
 
 @tractor_test
 async def test_respawn_consumer_task(
-    reg_addr,
+    arb_addr,
     spawn_backend,
     loglevel,
 ):

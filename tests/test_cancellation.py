@@ -14,7 +14,7 @@ import tractor
 from tractor._testing import (
     tractor_test,
 )
-from conftest import no_windows
+from .conftest import no_windows
 
 
 def is_win():
@@ -45,7 +45,7 @@ async def do_nuthin():
     ],
     ids=['no_args', 'unexpected_args'],
 )
-def test_remote_error(reg_addr, args_err):
+def test_remote_error(arb_addr, args_err):
     '''
     Verify an error raised in a subactor that is propagated
     to the parent nursery, contains the underlying boxed builtin
@@ -57,7 +57,7 @@ def test_remote_error(reg_addr, args_err):
 
     async def main():
         async with tractor.open_nursery(
-            registry_addrs=[reg_addr],
+            arbiter_addr=arb_addr,
         ) as nursery:
 
             # on a remote type error caused by bad input args
@@ -99,7 +99,7 @@ def test_remote_error(reg_addr, args_err):
             assert exc.type == errtype
 
 
-def test_multierror(reg_addr):
+def test_multierror(arb_addr):
     '''
     Verify we raise a ``BaseExceptionGroup`` out of a nursery where
     more then one actor errors.
@@ -107,7 +107,7 @@ def test_multierror(reg_addr):
     '''
     async def main():
         async with tractor.open_nursery(
-            registry_addrs=[reg_addr],
+            arbiter_addr=arb_addr,
         ) as nursery:
 
             await nursery.run_in_actor(assert_err, name='errorer1')
@@ -132,14 +132,14 @@ def test_multierror(reg_addr):
 @pytest.mark.parametrize(
     'num_subactors', range(25, 26),
 )
-def test_multierror_fast_nursery(reg_addr, start_method, num_subactors, delay):
+def test_multierror_fast_nursery(arb_addr, start_method, num_subactors, delay):
     """Verify we raise a ``BaseExceptionGroup`` out of a nursery where
     more then one actor errors and also with a delay before failure
     to test failure during an ongoing spawning.
     """
     async def main():
         async with tractor.open_nursery(
-            registry_addrs=[reg_addr],
+            arbiter_addr=arb_addr,
         ) as nursery:
 
             for i in range(num_subactors):
@@ -177,20 +177,15 @@ async def do_nothing():
 
 
 @pytest.mark.parametrize('mechanism', ['nursery_cancel', KeyboardInterrupt])
-def test_cancel_single_subactor(reg_addr, mechanism):
-    '''
-    Ensure a ``ActorNursery.start_actor()`` spawned subactor
+def test_cancel_single_subactor(arb_addr, mechanism):
+    """Ensure a ``ActorNursery.start_actor()`` spawned subactor
     cancels when the nursery is cancelled.
-
-    '''
+    """
     async def spawn_actor():
-        '''
-        Spawn an actor that blocks indefinitely then cancel via
-        either `ActorNursery.cancel()` or an exception raise.
-
-        '''
+        """Spawn an actor that blocks indefinitely.
+        """
         async with tractor.open_nursery(
-            registry_addrs=[reg_addr],
+            arbiter_addr=arb_addr,
         ) as nursery:
 
             portal = await nursery.start_actor(
