@@ -23,12 +23,10 @@ import asyncio
 from asyncio.exceptions import (
     CancelledError,
 )
-from asyncio import (
-    QueueShutDown,
-)
 from contextlib import asynccontextmanager as acm
 from dataclasses import dataclass
 import inspect
+import platform
 import traceback
 from typing import (
     Any,
@@ -78,6 +76,20 @@ __all__ = [
     'run_task',
     'run_as_asyncio_guest',
 ]
+
+if (_py_313 := (
+        ('3', '13')
+        ==
+        platform.python_version_tuple()[:-1]
+    )
+):
+    # 3.13+ only.. lel.
+    # https://docs.python.org/3.13/library/asyncio-queue.html#asyncio.QueueShutDown
+    from asyncio import (
+        QueueShutDown,
+    )
+else:
+    QueueShutDown = False
 
 
 # TODO, generally speaking we can generalize this abstraction, a "SC linked
@@ -575,7 +587,11 @@ def _run_asyncio_task(
             # normally suppressed unless the trio.Task also errors
             #
             # ?TODO, is this even needed (does it happen) now?
-            elif isinstance(aio_err, QueueShutDown):
+            elif (
+                _py_313
+                and
+                isinstance(aio_err, QueueShutDown)
+            ):
                 # import pdbp; pdbp.set_trace()
                 trio_err = AsyncioTaskExited(
                     'Task exited before `trio` side'
@@ -955,9 +971,10 @@ async def translate_aio_errors(
             # or an error, we ensure the aio-side gets signalled via
             # an explicit exception and its `Queue` is shutdown.
             if ya_trio_exited:
-                # raise `QueueShutDown` on next `Queue.get()` call on
-                # aio side.
-                chan._to_aio.shutdown()
+                # XXX py3.13+ ONLY..
+                # raise `QueueShutDown` on next `Queue.get/put()`
+                if _py_313:
+                    chan._to_aio.shutdown()
 
                 # pump this event-loop (well `Runner` but ya)
                 #
