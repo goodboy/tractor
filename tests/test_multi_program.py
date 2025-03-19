@@ -10,7 +10,7 @@ import tractor
 from tractor._testing import (
     tractor_test,
 )
-from conftest import (
+from .conftest import (
     sig_prog,
     _INT_SIGNAL,
     _INT_RETURN_CODE,

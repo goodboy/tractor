@@ -1319,7 +1319,6 @@ class Actor:
             self._server_n.cancel_scope.cancel()
 
     @property
-    @property
     def accept_addr(self) -> tuple[str, int]:
         '''
         Primary address to which the IPC transport server is

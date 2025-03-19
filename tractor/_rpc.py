@@ -55,14 +55,9 @@ from ._exceptions import (
     unpack_error,
     TransportClosed,
 )
-from .devx import (
-    # pause,
-    maybe_wait_for_debugger,
-    _debug,
-)
+from . import _debug
 from . import _state
 from .log import get_logger
-
 
 if TYPE_CHECKING:
     from ._runtime import Actor
@@ -651,7 +646,7 @@ async def _invoke(
 
             # don't pop the local context until we know the
             # associated child isn't in debug any more
-            await maybe_wait_for_debugger()
+            await _debug.maybe_wait_for_debugger()
             ctx: Context = actor._contexts.pop((
                 chan.uid,
                 cid,

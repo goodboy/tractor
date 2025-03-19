@@ -18,8 +18,6 @@
 tractor: structured concurrent ``trio``-"actors".
 
 """
-from exceptiongroup import BaseExceptionGroup
-
 from ._clustering import open_actor_cluster
 from ._ipc import Channel
 from ._context import (

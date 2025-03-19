@@ -26,7 +26,7 @@ from pexpect.exceptions import (
 from tractor._testing import (
     examples_dir,
 )
-from conftest import (
+from .conftest import (
     _ci_env,
 )
 
