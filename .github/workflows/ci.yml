@@ -20,7 +20,7 @@ jobs:
       - name: Setup python
         uses: actions/setup-python@v2
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install dependencies
         run: pip install -U . --upgrade-strategy eager -r requirements-test.txt
@@ -41,7 +41,7 @@ jobs:
       - name: Setup python
         uses: actions/setup-python@v2
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Build sdist
         run: python setup.py sdist --formats=zip
@@ -59,7 +59,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ['3.10']
+        python: ['3.11']
         spawn_backend: [
           'trio',
           'mp_spawn',
