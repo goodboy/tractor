@@ -54,7 +54,7 @@ dev = [
   # test suite
   # TODO: maybe some of these layout choices?
   # https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
-  "pytest>=8.2.0,<9",
+  "pytest>=8.3.5",
   "pexpect>=4.9.0,<5",
   # `tractor.devx` tooling
   "greenback>=1.2.1,<2",
