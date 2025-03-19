@@ -313,7 +313,7 @@ async def _drain_to_final_msg(
                 log.critical('SHOULD NEVER GET HERE!?')
                 assert msg is ctx._cancel_msg
                 assert error.msgdata == ctx._remote_error.msgdata
-                from ._debug import pause
+                from .devx._debug import pause
                 await pause()
                 ctx._maybe_cancel_and_set_remote_error(error)
                 ctx._maybe_raise_remote_err(error)
@@ -2202,7 +2202,7 @@ async def open_context_from_portal(
             #     pass
             # TODO: factor ^ into below for non-root cases?
             #
-            from ._debug import maybe_wait_for_debugger
+            from .devx._debug import maybe_wait_for_debugger
             was_acquired: bool = await maybe_wait_for_debugger(
                 # header_msg=(
                 #     'Delaying `ctx.cancel()` until debug lock '
@@ -2313,7 +2313,7 @@ async def open_context_from_portal(
         # where the root is waiting on the lock to clear but the
         # child has already cleared it and clobbered IPC.
         if debug_mode():
-            from ._debug import maybe_wait_for_debugger
+            from .devx._debug import maybe_wait_for_debugger
             await maybe_wait_for_debugger()
 
         # though it should be impossible for any tasks
