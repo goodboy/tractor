@@ -35,11 +35,11 @@ from ._debug import (
 from ._stackscope import (
     enable_stack_on_sig as enable_stack_on_sig,
 )
-from .pformat import (
-    add_div as add_div,
-    pformat_caller_frame as pformat_caller_frame,
-    pformat_boxed_tb as pformat_boxed_tb,
-)
+# from .pformat import (
+#     add_div as add_div,
+#     pformat_caller_frame as pformat_caller_frame,
+#     pformat_boxed_tb as pformat_boxed_tb,
+# )
 
 
 def _enable_readline_feats() -> str:
