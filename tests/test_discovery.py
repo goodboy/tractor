@@ -9,9 +9,8 @@ import itertools
 
 import pytest
 import tractor
+from tractor._testing import tractor_test
 import trio
-
-from conftest import tractor_test
 
 
 @tractor_test

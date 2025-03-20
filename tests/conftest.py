@@ -7,93 +7,18 @@ import os
 import random
 import signal
 import platform
-import pathlib
 import time
-import inspect
-from functools import partial, wraps
 
 import pytest
-import trio
 import tractor
+from tractor._testing import (
+    examples_dir as examples_dir,
+    tractor_test as tractor_test,
+    expect_ctxc as expect_ctxc,
+)
 
+# TODO: include wtv plugin(s) we build in `._testing.pytest`?
 pytest_plugins = ['pytester']
-
-
-def tractor_test(fn):
-    """
-    Use:
-
-    @tractor_test
-    async def test_whatever():
-        await ...
-
-    If fixtures:
-
-        - ``arb_addr`` (a socket addr tuple where arbiter is listening)
-        - ``loglevel`` (logging level passed to tractor internals)
-        - ``start_method`` (subprocess spawning backend)
-
-    are defined in the `pytest` fixture space they will be automatically
-    injected to tests declaring these funcargs.
-    """
-    @wraps(fn)
-    def wrapper(
-        *args,
-        loglevel=None,
-        arb_addr=None,
-        start_method=None,
-        **kwargs
-    ):
-        # __tracebackhide__ = True
-
-        if 'arb_addr' in inspect.signature(fn).parameters:
-            # injects test suite fixture value to test as well
-            # as `run()`
-            kwargs['arb_addr'] = arb_addr
-
-        if 'loglevel' in inspect.signature(fn).parameters:
-            # allows test suites to define a 'loglevel' fixture
-            # that activates the internal logging
-            kwargs['loglevel'] = loglevel
-
-        if start_method is None:
-            if platform.system() == "Windows":
-                start_method = 'trio'
-
-        if 'start_method' in inspect.signature(fn).parameters:
-            # set of subprocess spawning backends
-            kwargs['start_method'] = start_method
-
-        if kwargs:
-
-            # use explicit root actor start
-
-            async def _main():
-                async with tractor.open_root_actor(
-                    # **kwargs,
-                    arbiter_addr=arb_addr,
-                    loglevel=loglevel,
-                    start_method=start_method,
-
-                    # TODO: only enable when pytest is passed --pdb
-                    # debug_mode=True,
-
-                ):
-                    await fn(*args, **kwargs)
-
-            main = _main
-
-        else:
-            # use implicit root actor start
-            main = partial(fn, *args, **kwargs)
-
-        return trio.run(main)
-
-    return wrapper
-
-
-_arb_addr = '127.0.0.1', random.randint(1000, 9999)
-
 
 # Sending signal.SIGINT on subprocess fails on windows. Use CTRL_* alternatives
 if platform.system() == 'Windows':
@@ -114,39 +39,43 @@ no_windows = pytest.mark.skipif(
 )
 
 
-def repodir() -> pathlib.Path:
-    '''
-    Return the abspath to the repo directory.
-
-    '''
-    # 2 parents up to step up through tests/<repo_dir>
-    return pathlib.Path(__file__).parent.parent.absolute()
-
-
-def examples_dir() -> pathlib.Path:
-    '''
-    Return the abspath to the examples directory as `pathlib.Path`.
-
-    '''
-    return repodir() / 'examples'
-
-
 def pytest_addoption(parser):
     parser.addoption(
-        "--ll", action="store", dest='loglevel',
+        "--ll",
+        action="store",
+        dest='loglevel',
         default='ERROR', help="logging level to set when testing"
     )
 
     parser.addoption(
-        "--spawn-backend", action="store", dest='spawn_backend',
+        "--spawn-backend",
+        action="store",
+        dest='spawn_backend',
         default='trio',
         help="Processing spawning backend to use for test run",
+    )
+
+    parser.addoption(
+        "--tpdb", "--debug-mode",
+        action="store_true",
+        dest='tractor_debug_mode',
+        # default=False,
+        help=(
+            'Enable a flag that can be used by tests to to set the '
+            '`debug_mode: bool` for engaging the internal '
+            'multi-proc debugger sys.'
+        ),
     )
 
 
 def pytest_configure(config):
     backend = config.option.spawn_backend
     tractor._spawn.try_set_start_method(backend)
+
+
+@pytest.fixture(scope='session')
+def debug_mode(request):
+    return request.config.option.tractor_debug_mode
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -168,9 +97,24 @@ _ci_env: bool = os.environ.get('CI', False)
 
 @pytest.fixture(scope='session')
 def ci_env() -> bool:
-    """Detect CI envoirment.
-    """
+    '''
+    Detect CI envoirment.
+
+    '''
     return _ci_env
+
+
+# TODO: also move this to `._testing` for now?
+# -[ ] possibly generalize and re-use for multi-tree spawning
+#    along with the new stuff for multi-addrs in distribute_dis
+#    branch?
+#
+# choose randomly at import time
+_reg_addr: tuple[str, int] = (
+    '127.0.0.1',
+    random.randint(1000, 9999),
+)
+_arb_addr = _reg_addr
 
 
 @pytest.fixture(scope='session')
@@ -212,6 +156,7 @@ def sig_prog(proc, sig):
     assert ret
 
 
+# TODO: factor into @cm and move to `._testing`?
 @pytest.fixture
 def daemon(
     loglevel: str,

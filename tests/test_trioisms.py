@@ -5,7 +5,7 @@ want to see changed.
 '''
 import pytest
 import trio
-from trio_typing import TaskStatus
+from trio import TaskStatus
 
 
 @pytest.mark.parametrize(

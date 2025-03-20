@@ -14,52 +14,78 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""
-Actor primitives and helpers
+'''
+The fundamental core machinery implementing every "actor"
+including the process-local, or "python-interpreter (aka global)
+singleton) `Actor` primitive(s) and its internal `trio` machinery
+implementing the low level runtime system supporting the
+discovery, communication, spawning, supervision and cancellation
+of other actors in a hierarchincal process tree.
 
-"""
+The runtime's main entry point: `async_main()` opens the top level
+supervision and service `trio.Nursery`s which manage the tasks responsible
+for running all lower level spawning, supervision and msging layers:
+
+- lowlevel transport-protocol init and persistent connectivity on
+  top of `._ipc` primitives; the transport layer.
+- bootstrapping of connection/runtime config from the spawning
+  parent (actor).
+- starting and supervising IPC-channel msg processing loops around
+  tranport connections from parent/peer actors in order to deliver
+  SC-transitive RPC via scheduling of `trio` tasks.
+- registration of newly spawned actors with the discovery sys.
+
+'''
 from __future__ import annotations
+from contextlib import (
+    ExitStack,
+)
 from collections import defaultdict
 from functools import partial
 from itertools import chain
 import importlib
 import importlib.util
-import inspect
+from pprint import pformat
 import signal
 import sys
 from typing import (
-    Any, Optional,
-    Union, TYPE_CHECKING,
+    Any,
     Callable,
+    TYPE_CHECKING,
 )
 import uuid
 from types import ModuleType
 import os
-from contextlib import ExitStack
-import warnings
 
-from async_generator import aclosing
-from exceptiongroup import BaseExceptionGroup
-import trio  # type: ignore
-from trio_typing import TaskStatus
+import trio
+from trio import (
+    CancelScope,
+    Nursery,
+    TaskStatus,
+)
 
+from .msg import NamespacePath
 from ._ipc import Channel
-from ._streaming import Context
+from ._context import (
+    mk_context,
+    Context,
+)
 from .log import get_logger
 from ._exceptions import (
-    pack_error,
     unpack_error,
     ModuleNotExposed,
-    is_multi_cancelled,
     ContextCancelled,
     TransportClosed,
-    StreamOverrun,
 )
-from . import _debug
 from ._discovery import get_arbiter
+from . import _debug
 from ._portal import Portal
 from . import _state
 from . import _mp_fixup_main
+from ._rpc import (
+    process_messages,
+    try_ship_error_to_remote,
+)
 
 
 if TYPE_CHECKING:
@@ -69,305 +95,8 @@ if TYPE_CHECKING:
 log = get_logger('tractor')
 
 
-async def _invoke(
-
-    actor: 'Actor',
-    cid: str,
-    chan: Channel,
-    func: Callable,
-    kwargs: dict[str, Any],
-
-    is_rpc: bool = True,
-    task_status: TaskStatus[
-        Union[trio.CancelScope, BaseException]
-    ] = trio.TASK_STATUS_IGNORED,
-):
-    '''
-    Invoke local func and deliver result(s) over provided channel.
-
-    This is the core "RPC task" starting machinery.
-
-    '''
-    __tracebackhide__ = True
-    treat_as_gen: bool = False
-    failed_resp: bool = False
-
-    # possibly a traceback (not sure what typing is for this..)
-    tb = None
-
-    cancel_scope = trio.CancelScope()
-    # activated cancel scope ref
-    cs: Optional[trio.CancelScope] = None
-
-    ctx = actor.get_context(chan, cid)
-    context: bool = False
-
-    if getattr(func, '_tractor_stream_function', False):
-        # handle decorated ``@tractor.stream`` async functions
-        sig = inspect.signature(func)
-        params = sig.parameters
-
-        # compat with old api
-        kwargs['ctx'] = ctx
-
-        if 'ctx' in params:
-            warnings.warn(
-                "`@tractor.stream decorated funcs should now declare "
-                "a `stream`  arg, `ctx` is now designated for use with "
-                "@tractor.context",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        elif 'stream' in params:
-            assert 'stream' in params
-            kwargs['stream'] = ctx
-
-        treat_as_gen = True
-
-    elif getattr(func, '_tractor_context_function', False):
-        # handle decorated ``@tractor.context`` async function
-        kwargs['ctx'] = ctx
-        context = True
-
-    # errors raised inside this block are propgated back to caller
-    try:
-        if not (
-            inspect.isasyncgenfunction(func) or
-            inspect.iscoroutinefunction(func)
-        ):
-            raise TypeError(f'{func} must be an async function!')
-
-        coro = func(**kwargs)
-
-        if inspect.isasyncgen(coro):
-            await chan.send({'functype': 'asyncgen', 'cid': cid})
-            # XXX: massive gotcha! If the containing scope
-            # is cancelled and we execute the below line,
-            # any ``ActorNursery.__aexit__()`` WON'T be
-            # triggered in the underlying async gen! So we
-            # have to properly handle the closing (aclosing)
-            # of the async gen in order to be sure the cancel
-            # is propagated!
-            with cancel_scope as cs:
-                task_status.started(cs)
-                async with aclosing(coro) as agen:
-                    async for item in agen:
-                        # TODO: can we send values back in here?
-                        # it's gonna require a `while True:` and
-                        # some non-blocking way to retrieve new `asend()`
-                        # values from the channel:
-                        # to_send = await chan.recv_nowait()
-                        # if to_send is not None:
-                        #     to_yield = await coro.asend(to_send)
-                        await chan.send({'yield': item, 'cid': cid})
-
-            log.runtime(f"Finished iterating {coro}")
-            # TODO: we should really support a proper
-            # `StopAsyncIteration` system here for returning a final
-            # value if desired
-            await chan.send({'stop': True, 'cid': cid})
-
-        # one way @stream func that gets treated like an async gen
-        elif treat_as_gen:
-            await chan.send({'functype': 'asyncgen', 'cid': cid})
-            # XXX: the async-func may spawn further tasks which push
-            # back values like an async-generator would but must
-            # manualy construct the response dict-packet-responses as
-            # above
-            with cancel_scope as cs:
-                task_status.started(cs)
-                await coro
-
-            if not cs.cancelled_caught:
-                # task was not cancelled so we can instruct the
-                # far end async gen to tear down
-                await chan.send({'stop': True, 'cid': cid})
-
-        elif context:
-            # context func with support for bi-dir streaming
-            await chan.send({'functype': 'context', 'cid': cid})
-
-            try:
-                async with trio.open_nursery() as scope_nursery:
-                    ctx._scope_nursery = scope_nursery
-                    cs = scope_nursery.cancel_scope
-                    task_status.started(cs)
-                    res = await coro
-                    await chan.send({'return': res, 'cid': cid})
-
-            except BaseExceptionGroup:
-                # if a context error was set then likely
-                # thei multierror was raised due to that
-                if ctx._error is not None:
-                    raise ctx._error from None
-
-                raise
-
-            finally:
-                # XXX: only pop the context tracking if
-                # a ``@tractor.context`` entrypoint was called
-                assert chan.uid
-
-                # don't pop the local context until we know the
-                # associated child isn't in debug any more
-                await _debug.maybe_wait_for_debugger()
-                ctx = actor._contexts.pop((chan.uid, cid))
-
-                if ctx:
-                    log.runtime(
-                        f'Context entrypoint {func} was terminated:\n{ctx}'
-                    )
-
-            assert cs
-            if cs.cancelled_caught:
-
-                # TODO: pack in ``trio.Cancelled.__traceback__`` here
-                # so they can be unwrapped and displayed on the caller
-                # side!
-
-                fname = func.__name__
-                if ctx._cancel_called:
-                    msg = f'`{fname}()` cancelled itself'
-
-                elif cs.cancel_called:
-                    msg = (
-                        f'`{fname}()` was remotely cancelled by its caller '
-                        f'{ctx.chan.uid}'
-                    )
-
-                if ctx._cancel_msg:
-                    msg += f' with msg:\n{ctx._cancel_msg}'
-
-                # task-contex was cancelled so relay to the cancel to caller
-                raise ContextCancelled(
-                    msg,
-                    suberror_type=trio.Cancelled,
-                )
-
-        else:
-            # regular async function
-            try:
-                await chan.send({'functype': 'asyncfunc', 'cid': cid})
-            except trio.BrokenResourceError:
-                failed_resp = True
-                if is_rpc:
-                    raise
-                else:
-                    log.warning(
-                        f'Failed to respond to non-rpc request: {func}'
-                    )
-
-            with cancel_scope as cs:
-                task_status.started(cs)
-                result = await coro
-                log.cancel(f'result: {result}')
-                if not failed_resp:
-                    # only send result if we know IPC isn't down
-                    await chan.send({'return': result, 'cid': cid})
-
-    except (
-        Exception,
-        BaseExceptionGroup,
-    ) as err:
-
-        if not is_multi_cancelled(err):
-
-            # TODO: maybe we'll want different "levels" of debugging
-            # eventualy such as ('app', 'supervisory', 'runtime') ?
-
-            # if not isinstance(err, trio.ClosedResourceError) and (
-            # if not is_multi_cancelled(err) and (
-
-            entered_debug: bool = False
-            if (
-                not isinstance(err, ContextCancelled)
-                or (
-                    isinstance(err, ContextCancelled)
-                    and ctx._cancel_called
-
-                    # if the root blocks the debugger lock request from a child
-                    # we will get a remote-cancelled condition.
-                    and ctx._enter_debugger_on_cancel
-                )
-            ):
-                # XXX: is there any case where we'll want to debug IPC
-                # disconnects as a default?
-                #
-                # I can't think of a reason that inspecting
-                # this type of failure will be useful for respawns or
-                # recovery logic - the only case is some kind of strange bug
-                # in our transport layer itself? Going to keep this
-                # open ended for now.
-                entered_debug = await _debug._maybe_enter_pm(err)
-
-                if not entered_debug:
-                    log.exception("Actor crashed:")
-
-        # always ship errors back to caller
-        err_msg = pack_error(err, tb=tb)
-        err_msg['cid'] = cid
-        try:
-            await chan.send(err_msg)
-
-        # TODO: tests for this scenario:
-        # - RPC caller closes connection before getting a response
-        # should **not** crash this actor..
-        except (
-            trio.ClosedResourceError,
-            trio.BrokenResourceError,
-            BrokenPipeError,
-        ):
-            # if we can't propagate the error that's a big boo boo
-            log.exception(
-                f"Failed to ship error to caller @ {chan.uid} !?"
-            )
-
-        if cs is None:
-            # error is from above code not from rpc invocation
-            task_status.started(err)
-
-    finally:
-        # RPC task bookeeping
-        try:
-            scope, func, is_complete = actor._rpc_tasks.pop((chan, cid))
-            is_complete.set()
-
-        except KeyError:
-            if is_rpc:
-                # If we're cancelled before the task returns then the
-                # cancel scope will not have been inserted yet
-                log.warning(
-                    f"Task {func} likely errored or cancelled before start")
-        finally:
-            if not actor._rpc_tasks:
-                log.runtime("All RPC tasks have completed")
-                actor._ongoing_rpc_tasks.set()
-
-
 def _get_mod_abspath(module):
     return os.path.abspath(module.__file__)
-
-
-async def try_ship_error_to_parent(
-    channel: Channel,
-    err: Union[Exception, BaseExceptionGroup],
-
-) -> None:
-    with trio.CancelScope(shield=True):
-        try:
-            # internal error so ship to parent without cid
-            await channel.send(pack_error(err))
-        except (
-            trio.ClosedResourceError,
-            trio.BrokenResourceError,
-        ):
-            # in SC terms this is one of the worst things that can
-            # happen and creates the 2-general's dilemma.
-            log.critical(
-                f"Failed to ship error to parent "
-                f"{channel.uid}, channel was closed"
-            )
 
 
 class Actor:
@@ -381,17 +110,18 @@ class Actor:
     (swappable) network protocols.
 
 
-    Each "actor" is ``trio.run()`` scheduled "runtime" composed of many
-    concurrent tasks in a single thread. The "runtime" tasks conduct
-    a slew of low(er) level functions to make it possible for message
-    passing between actors as well as the ability to create new actors
-    (aka new "runtimes" in new processes which are supervised via
-    a nursery construct). Each task which sends messages to a task in
-    a "peer" (not necessarily a parent-child, depth hierarchy)) is able
-    to do so via an "address", which maps IPC connections across memory
-    boundaries, and task request id which allows for per-actor
-    tasks to send and receive messages to specific peer-actor tasks with
-    which there is an ongoing RPC/IPC dialog.
+    Each "actor" is ``trio.run()`` scheduled "runtime" composed of
+    many concurrent tasks in a single thread. The "runtime" tasks
+    conduct a slew of low(er) level functions to make it possible
+    for message passing between actors as well as the ability to
+    create new actors (aka new "runtimes" in new processes which
+    are supervised via a nursery construct). Each task which sends
+    messages to a task in a "peer" (not necessarily a parent-child,
+    depth hierarchy) is able to do so via an "address", which maps
+    IPC connections across memory boundaries, and a task request id
+    which allows for per-actor tasks to send and receive messages
+    to specific peer-actor tasks with which there is an ongoing
+    RPC/IPC dialog.
 
     '''
     # ugh, we need to get rid of this and replace with a "registry" sys
@@ -400,19 +130,28 @@ class Actor:
     msg_buffer_size: int = 2**6
 
     # nursery placeholders filled in by `async_main()` after fork
-    _root_n: Optional[trio.Nursery] = None
-    _service_n: Optional[trio.Nursery] = None
-    _server_n: Optional[trio.Nursery] = None
+    _root_n: Nursery | None = None
+    _service_n: Nursery | None = None
+    _server_n: Nursery | None = None
 
     # Information about `__main__` from parent
     _parent_main_data: dict[str, str]
-    _parent_chan_cs: Optional[trio.CancelScope] = None
+    _parent_chan_cs: CancelScope | None = None
 
     # syncs for setup/teardown sequences
-    _server_down: Optional[trio.Event] = None
+    _server_down: trio.Event | None = None
+
+    # user toggled crash handling (including monkey-patched in
+    # `trio.open_nursery()` via `.trionics._supervisor` B)
+    _debug_mode: bool = False
 
     # if started on ``asycio`` running ``trio`` in guest mode
     _infected_aio: bool = False
+
+    # _ans: dict[
+    #     tuple[str, str],
+    #     list[ActorNursery],
+    # ] = {}
 
     # Process-global stack closed at end on actor runtime teardown.
     # NOTE: this is currently an undocumented public api.
@@ -425,8 +164,8 @@ class Actor:
         enable_modules: list[str] = [],
         uid: str | None = None,
         loglevel: str | None = None,
-        arbiter_addr: Optional[tuple[str, int]] = None,
-        spawn_method: Optional[str] = None
+        arbiter_addr: tuple[str, int] | None = None,
+        spawn_method: str | None = None
     ) -> None:
         '''
         This constructor is called in the parent actor **before** the spawning
@@ -434,9 +173,13 @@ class Actor:
 
         '''
         self.name = name
-        self.uid = (name, uid or str(uuid.uuid4()))
+        self.uid = (
+            name,
+            uid or str(uuid.uuid4())
+        )
 
         self._cancel_complete = trio.Event()
+        self._cancel_called_by_remote: tuple[str, tuple] | None = None
         self._cancel_called: bool = False
 
         # retreive and store parent `__main__` data which
@@ -475,19 +218,22 @@ class Actor:
         # (chan, cid) -> (cancel_scope, func)
         self._rpc_tasks: dict[
             tuple[Channel, str],
-            tuple[trio.CancelScope, Callable, trio.Event]
+            tuple[Context, Callable, trio.Event]
         ] = {}
 
         # map {actor uids -> Context}
         self._contexts: dict[
-            tuple[tuple[str, str], str],
+            tuple[
+                tuple[str, str],  # .uid
+                str,  # .cid
+                str,  # .side
+            ],
             Context
         ] = {}
 
         self._listeners: list[trio.abc.Listener] = []
-        self._parent_chan: Optional[Channel] = None
-        self._forkserver_info: Optional[
-            tuple[Any, Any, Any, Any, Any]] = None
+        self._parent_chan: Channel | None = None
+        self._forkserver_info: tuple | None = None
         self._actoruid2nursery: dict[
             tuple[str, str],
             ActorNursery | None,
@@ -497,8 +243,8 @@ class Actor:
         self, uid: tuple[str, str]
     ) -> tuple[trio.Event, Channel]:
         '''
-        Wait for a connection back from a spawned actor with a given
-        ``uid``.
+        Wait for a connection back from a spawned actor with a `uid`
+        using a `trio.Event` for sync.
 
         '''
         log.runtime(f"Waiting for peer {uid} to connect")
@@ -507,13 +253,16 @@ class Actor:
         log.runtime(f"{uid} successfully connected back to us")
         return event, self._peers[uid][-1]
 
-    def load_modules(self) -> None:
+    def load_modules(
+        self,
+        debug_mode: bool = False,
+    ) -> None:
         '''
-        Load allowed RPC modules locally (after fork).
+        Load enabled RPC py-modules locally (after process fork/spawn).
 
         Since this actor may be spawned on a different machine from
         the original nursery we need to try and load the local module
-        code (if it exists).
+        code (presuming it exists).
 
         '''
         try:
@@ -539,10 +288,17 @@ class Actor:
         except ModuleNotFoundError:
             # it is expected the corresponding `ModuleNotExposed` error
             # will be raised later
-            log.error(f"Failed to import {modpath} in {self.name}")
+            log.error(
+                f"Failed to import {modpath} in {self.name}"
+            )
             raise
 
     def _get_rpc_func(self, ns, funcname):
+        '''
+        Try to lookup and return a target RPC func from the
+        post-fork enabled module set.
+
+        '''
         try:
             return getattr(self._mods[ns], funcname)
         except KeyError as err:
@@ -572,19 +328,34 @@ class Actor:
         stream: trio.SocketStream,
 
     ) -> None:
-        """Entry point for new inbound connections to the channel server.
+        '''
+        Entry point for new inbound IPC connections on a specific
+        transport server.
 
-        """
-        self._no_more_peers = trio.Event()  # unset
-
+        '''
+        self._no_more_peers = trio.Event()  # unset by making new
         chan = Channel.from_stream(stream)
-        uid: Optional[tuple[str, str]] = chan.uid
-        log.runtime(f"New connection to us {chan}")
+        their_uid: tuple[str, str]|None = chan.uid
 
+        con_msg: str = ''
+        if their_uid:
+            # NOTE: `.uid` is only set after first contact
+            con_msg = (
+                'IPC Re-connection from already known peer? '
+            )
+        else:
+            con_msg = (
+                'New IPC connection to us '
+            )
+
+        con_msg += (
+            f'<= @{chan.raddr}\n'
+            f'|_{chan}\n'
+            # f' |_@{chan.raddr}\n\n'
+        )
         # send/receive initial handshake response
         try:
-            uid = await self._do_handshake(chan)
-
+            uid: tuple|None = await self._do_handshake(chan)
         except (
             # we need this for ``msgspec`` for some reason?
             # for now, it's been put in the stream backend.
@@ -599,59 +370,84 @@ class Actor:
             # inside ``open_root_actor()`` where there is a check for
             # a bound listener on the "arbiter" addr.  the reset will be
             # because the handshake was never meant took place.
-            log.warning(f"Channel {chan} failed to handshake")
+            log.warning(
+                con_msg
+                +
+                ' -> But failed to handshake? Ignoring..\n'
+            )
             return
 
-        # channel tracking
-        event = self._peer_connected.pop(uid, None)
+        con_msg += (
+            f' -> Handshake with actor `{uid[0]}[{uid[1][-6:]}]` complete\n'
+        )
+        # IPC connection tracking for both peers and new children:
+        # - if this is a new channel to a locally spawned
+        #   sub-actor there will be a spawn wait even registered
+        #   by a call to `.wait_for_peer()`.
+        # - if a peer is connecting no such event will exit.
+        event: trio.Event|None = self._peer_connected.pop(
+            uid,
+            None,
+        )
         if event:
-            # Instructing connection: this is likely a new channel to
-            # a recently spawned actor which we'd like to control via
-            # async-rpc calls.
-            log.runtime(f"Waking channel waiters {event.statistics()}")
-            # Alert any task waiting on this connection to come up
+            con_msg += (
+                ' -> Waking subactor spawn waiters: '
+                f'{event.statistics().tasks_waiting}\n'
+                f' -> Registered IPC chan for child actor {uid}@{chan.raddr}\n'
+                # f'    {event}\n'
+                # f'    |{event.statistics()}\n'
+            )
+            # wake tasks waiting on this IPC-transport "connect-back"
             event.set()
 
-        chans = self._peers[uid]
+        else:
+            con_msg += (
+                f' -> Registered IPC chan for peer actor {uid}@{chan.raddr}\n'
+            )  # type: ignore
 
-        # TODO: re-use channels for new connections instead
-        # of always new ones; will require changing all the
-        # discovery funcs
-        if chans:
-            log.runtime(
-                f"already have channel(s) for {uid}:{chans}?"
-            )
+        chans: list[Channel] = self._peers[uid]
+        # if chans:
+        #     # TODO: re-use channels for new connections instead
+        #     # of always new ones?
+        #     # => will require changing all the discovery funcs..
 
-        log.runtime(f"Registered {chan} for {uid}")  # type: ignore
         # append new channel
-        self._peers[uid].append(chan)
+        # TODO: can we just use list-ref directly?
+        chans.append(chan)
 
-        local_nursery: Optional[ActorNursery] = None  # noqa
-        disconnected: bool = False
+        log.runtime(con_msg)
 
         # Begin channel management - respond to remote requests and
         # process received reponses.
+        disconnected: bool = False
         try:
-            disconnected = await process_messages(self, chan)
-
-        except (
-            trio.Cancelled,
-        ):
-            log.cancel(f"Msg loop was cancelled for {chan}")
+            disconnected: bool = await process_messages(
+                self,
+                chan,
+            )
+        except trio.Cancelled:
+            log.cancel(
+                'IPC transport msg loop was cancelled for \n'
+                f'|_{chan}\n'
+            )
             raise
 
         finally:
-            local_nursery = self._actoruid2nursery.get(uid, local_nursery)
+            local_nursery: (
+                ActorNursery|None
+            ) = self._actoruid2nursery.get(uid)
 
             # This is set in ``Portal.cancel_actor()``. So if
             # the peer was cancelled we try to wait for them
             # to tear down their side of the connection before
             # moving on with closing our own side.
-            if (
-                local_nursery
-            ):
+            if local_nursery:
+                if chan._cancel_called:
+                    log.cancel(
+                        'Waiting on cancel request to peer\n'
+                        f'`Portal.cancel_actor()` => {chan.uid}\n'
+                    )
 
-                log.cancel(f"Waiting on cancel request to peer {chan.uid}")
                 # XXX: this is a soft wait on the channel (and its
                 # underlying transport protocol) to close from the
                 # remote peer side since we presume that any channel
@@ -663,15 +459,13 @@ class Actor:
                 # loop processing.
                 with trio.move_on_after(0.5) as cs:
                     cs.shield = True
-                    # Attempt to wait for the far end to close the channel
-                    # and bail after timeout (2-generals on closure).
-                    assert chan.msgstream
 
-                    log.runtime(
-                        f'Draining lingering msgs from stream {chan.msgstream}'
-                    )
+                    # attempt to wait for the far end to close the
+                    # channel and bail after timeout (a 2-generals
+                    # problem on closure).
+                    assert chan.transport
+                    async for msg in chan.transport.drain():
 
-                    async for msg in chan.msgstream.drain():
                         # try to deliver any lingering msgs
                         # before we destroy the channel.
                         # This accomplishes deterministic
@@ -679,13 +473,47 @@ class Actor:
                         # making sure any RPC response to that call is
                         # delivered the local calling task.
                         # TODO: factor this into a helper?
-                        log.runtime(f'drained {msg} for {chan.uid}')
+                        log.warning(
+                            'Draining msg from disconnected peer\n'
+                            f'{chan.uid}\n'
+                            f'|_{chan}\n'
+                            f'  |_{chan.transport}\n\n'
+
+                            f'{pformat(msg)}\n'
+                        )
                         cid = msg.get('cid')
                         if cid:
                             # deliver response to local caller/waiter
-                            await self._push_result(chan, cid, msg)
+                            await self._push_result(
+                                chan,
+                                cid,
+                                msg,
+                            )
 
-                    await local_nursery.exited.wait()
+                    # NOTE: when no call to `open_root_actor()` was
+                    # made, we implicitly make that call inside
+                    # the first `.open_nursery()`, in this case we
+                    # can assume that we are the root actor and do
+                    # not have to wait for the nursery-enterer to
+                    # exit before shutting down the actor runtime.
+                    #
+                    # see matching  note inside `._supervise.open_nursery()`
+                    if not local_nursery._implicit_runtime_started:
+                        log.runtime(
+                            'Waiting on local actor nursery to exit..\n'
+                            f'|_{local_nursery}\n'
+                        )
+                        await local_nursery.exited.wait()
+
+                if (
+                    cs.cancelled_caught
+                    and not local_nursery._implicit_runtime_started
+                ):
+                    log.warning(
+                        'Failed to exit local actor nursery?\n'
+                        f'|_{local_nursery}\n'
+                    )
+                    # await _debug.pause()
 
                 if disconnected:
                     # if the transport died and this actor is still
@@ -694,26 +522,48 @@ class Actor:
                     # the cause of other downstream errors.
                     entry = local_nursery._children.get(uid)
                     if entry:
+                        proc: trio.Process
                         _, proc, _ = entry
 
                         poll = getattr(proc, 'poll', None)
                         if poll and poll() is None:
                             log.cancel(
-                                f'Actor {uid} IPC broke but proc is alive?'
+                                f'Peer IPC broke but subproc is alive?\n\n'
+
+                                f'<=x {chan.uid}@{chan.raddr}\n'
+                                f'   |_{proc}\n'
                             )
 
             # ``Channel`` teardown and closure sequence
-
-            # Drop ref to channel so it can be gc-ed and disconnected
-            log.runtime(f"Releasing channel {chan} from {chan.uid}")
-            chans = self._peers.get(chan.uid)
+            # drop ref to channel so it can be gc-ed and disconnected
+            log.runtime(
+                f'Disconnected IPC channel:\n'
+                f'uid: {chan.uid}\n'
+                f'|_{pformat(chan)}\n'
+            )
             chans.remove(chan)
 
+            # TODO: do we need to be this pedantic?
             if not chans:
-                log.runtime(f"No more channels for {chan.uid}")
+                log.runtime(
+                    f'No more channels with {chan.uid}'
+                )
                 self._peers.pop(uid, None)
 
-            log.runtime(f"Peers is {self._peers}")
+            peers_str: str = ''
+            for uid, chans in self._peers.items():
+                peers_str += (
+                    f'|_ uid: {uid}\n'
+                )
+                for i, chan in enumerate(chans):
+                    peers_str += (
+                        f' |_[{i}] {pformat(chan)}\n'
+                    )
+
+            log.runtime(
+                f'Remaining IPC {len(self._peers)} peers:\n'
+                + peers_str
+            )
 
             # No more channels to other actors (at all) registered
             # as connected.
@@ -729,15 +579,58 @@ class Actor:
                 if _state.is_root_process():
                     pdb_lock = _debug.Lock
                     pdb_lock._blocked.add(uid)
-                    log.runtime(f"{uid} blocked from pdb locking")
 
+                    # TODO: NEEEDS TO BE TESTED!
+                    # actually, no idea if this ever even enters.. XD
+                    pdb_user_uid: tuple = pdb_lock.global_actor_in_debug
+                    if (
+                        pdb_user_uid
+                        and local_nursery
+                    ):
+                        entry: tuple|None = local_nursery._children.get(pdb_user_uid)
+                        if entry:
+                            proc: trio.Process
+                            _, proc, _ = entry
+
+                        if (
+                            (poll := getattr(proc, 'poll', None))
+                            and poll() is None
+                        ):
+                            log.cancel(
+                                'Root actor reports no-more-peers, BUT '
+                                'a DISCONNECTED child still has the debug '
+                                'lock!\n'
+                                f'root uid: {self.uid}\n'
+                                f'last disconnected child uid: {uid}\n'
+                                f'locking child uid: {pdb_user_uid}\n'
+                            )
+                            await _debug.maybe_wait_for_debugger(
+                                child_in_debug=True
+                            )
+
+                    # TODO: just bc a child's transport dropped
+                    # doesn't mean it's not still using the pdb
+                    # REPL! so,
+                    # -[ ] ideally we can check out child proc
+                    #  tree to ensure that its alive (and
+                    #  actually using the REPL) before we cancel
+                    #  it's lock acquire by doing the below!
+                    # -[ ] create a way to read the tree of each actor's
+                    #  grandchildren such that when an
+                    #  intermediary parent is cancelled but their
+                    #  child has locked the tty, the grandparent
+                    #  will not allow the parent to cancel or
+                    #  zombie reap the child! see open issue:
+                    #  - https://github.com/goodboy/tractor/issues/320
+                    # ------ - ------
                     # if a now stale local task has the TTY lock still
                     # we cancel it to allow servicing other requests for
                     # the lock.
-                    db_cs = pdb_lock._root_local_task_cs_in_debug
+                    db_cs: trio.CancelScope|None = pdb_lock._root_local_task_cs_in_debug
                     if (
                         db_cs
                         and not db_cs.cancel_called
+                        and uid == pdb_user_uid
                     ):
                         log.warning(
                             f'STALE DEBUG LOCK DETECTED FOR {uid}'
@@ -746,128 +639,118 @@ class Actor:
                         db_cs.cancel()
 
             # XXX: is this necessary (GC should do it)?
-            if chan.connected():
-                # if the channel is still connected it may mean the far
-                # end has not closed and we may have gotten here due to
-                # an error and so we should at least try to terminate
-                # the channel from this end gracefully.
+            # XXX WARNING XXX
+            # Be AWARE OF THE INDENT LEVEL HERE
+            # -> ONLY ENTER THIS BLOCK WHEN ._peers IS
+            # EMPTY!!!!
+            if (
+                not self._peers
+                and chan.connected()
+            ):
+                    # if the channel is still connected it may mean the far
+                    # end has not closed and we may have gotten here due to
+                    # an error and so we should at least try to terminate
+                    # the channel from this end gracefully.
+                    log.runtime(
+                        'Terminating channel with `None` setinel msg\n'
+                        f'|_{chan}\n'
+                    )
+                    try:
+                        # send msg loop terminate sentinel which
+                        # triggers cancellation of all remotely
+                        # started tasks.
+                        await chan.send(None)
 
-                log.runtime(f"Disconnecting channel {chan}")
-                try:
-                    # send a msg loop terminate sentinel
-                    await chan.send(None)
+                        # XXX: do we want this? no right?
+                        # causes "[104] connection reset by peer" on other end
+                        # await chan.aclose()
 
-                    # XXX: do we want this?
-                    # causes "[104] connection reset by peer" on other end
-                    # await chan.aclose()
+                    except trio.BrokenResourceError:
+                        log.runtime(f"Channel {chan.uid} was already closed")
 
-                except trio.BrokenResourceError:
-                    log.runtime(f"Channel {chan.uid} was already closed")
-
+    # TODO: rename to `._deliver_payload()` since this handles
+    # more then just `result` msgs now obvi XD
     async def _push_result(
         self,
         chan: Channel,
         cid: str,
         msg: dict[str, Any],
-    ) -> None:
+
+    ) -> None|bool:
         '''
-        Push an RPC result to the local consumer's queue.
+        Push an RPC msg-payload to the local consumer peer-task's
+        queue.
 
         '''
-        uid = chan.uid
+        uid: tuple[str, str] = chan.uid
         assert uid, f"`chan.uid` can't be {uid}"
         try:
-            ctx = self._contexts[(uid, cid)]
+            ctx: Context = self._contexts[(
+                uid,
+                cid,
+
+                # TODO: how to determine this tho?
+                # side,
+            )]
         except KeyError:
             log.warning(
-                f'Ignoring msg from [no-longer/un]known context {uid}:'
-                f'\n{msg}')
+                'Ignoring invalid IPC ctx msg!\n\n'
+                f'<= sender: {uid}\n'
+                f'=> cid: {cid}\n\n'
+
+                f'{msg}\n'
+            )
             return
 
-        send_chan = ctx._send_chan
-
-        log.runtime(f"Delivering {msg} from {chan.uid} to caller {cid}")
-
-        # XXX: we do **not** maintain backpressure and instead
-        # opt to relay stream overrun errors to the sender.
-        try:
-            send_chan.send_nowait(msg)
-            # if an error is deteced we should always
-            # expect it to be raised by any context (stream)
-            # consumer task
-            await ctx._maybe_raise_from_remote_msg(msg)
-
-        except trio.BrokenResourceError:
-            # TODO: what is the right way to handle the case where the
-            # local task has already sent a 'stop' / StopAsyncInteration
-            # to the other side but and possibly has closed the local
-            # feeder mem chan? Do we wait for some kind of ack or just
-            # let this fail silently and bubble up (currently)?
-
-            # XXX: local consumer has closed their side
-            # so cancel the far end streaming task
-            log.warning(f"{send_chan} consumer is already closed")
-            return
-
-        except trio.WouldBlock:
-            # XXX: always push an error even if the local
-            # receiver is in overrun state.
-            await ctx._maybe_raise_from_remote_msg(msg)
-
-            uid = chan.uid
-            lines = [
-                'Task context stream was overrun',
-                f'local task: {cid} @ {self.uid}',
-                f'remote sender: {uid}',
-            ]
-            if not ctx._stream_opened:
-                lines.insert(
-                    1,
-                    f'\n*** No stream open on `{self.uid[0]}` side! ***\n'
-                )
-            text = '\n'.join(lines)
-
-            if ctx._backpressure:
-                log.warning(text)
-                try:
-                    await send_chan.send(msg)
-                except trio.BrokenResourceError:
-                    # XXX: local consumer has closed their side
-                    # so cancel the far end streaming task
-                    log.warning(f"{chan} is already closed")
-            else:
-                try:
-                    raise StreamOverrun(text) from None
-                except StreamOverrun as err:
-                    err_msg = pack_error(err)
-                    err_msg['cid'] = cid
-                    try:
-                        await chan.send(err_msg)
-                    except trio.BrokenResourceError:
-                        # XXX: local consumer has closed their side
-                        # so cancel the far end streaming task
-                        log.warning(f"{chan} is already closed")
+        return await ctx._deliver_msg(msg)
 
     def get_context(
         self,
         chan: Channel,
         cid: str,
-        msg_buffer_size: Optional[int] = None,
+        nsf: NamespacePath,
+
+        # TODO: support lookup by `Context.side: str` ?
+        # -> would allow making a self-context which might have
+        # certain special use cases where RPC isolation is wanted
+        # between 2 tasks running in the same process?
+        # => prolly needs some deeper though on the real use cases
+        # and whether or not such things should be better
+        # implemented using a `TaskManager` style nursery..
+        #
+        # side: str|None = None,
+
+        msg_buffer_size: int | None = None,
+        allow_overruns: bool = False,
 
     ) -> Context:
         '''
-        Look up or create a new inter-actor-task-IPC-linked task
-        "context" which encapsulates the local task's scheduling
-        enviroment including a ``trio`` cancel scope, a pair of IPC
-        messaging "feeder" channels, and an RPC id unique to the
-        task-as-function invocation.
+        Look-up (existing) or create a new
+        inter-actor-SC-linked task "context" (a `Context`) which
+        encapsulates the local RPC task's execution enviroment
+        around `Channel` relayed msg handling including,
+
+        - a dedicated `trio` cancel scope (`Context._scope`),
+        - a pair of IPC-msg-relay "feeder" mem-channels
+          (`Context._recv/send_chan`),
+        - and a "context id" (cid) unique to the task-pair
+          msging session's lifetime.
 
         '''
-        log.runtime(f"Getting result queue for {chan.uid} cid {cid}")
         actor_uid = chan.uid
         assert actor_uid
         try:
-            ctx = self._contexts[(actor_uid, cid)]
+            ctx = self._contexts[(
+                actor_uid,
+                cid,
+                # side,
+            )]
+            log.runtime(
+                f'Retreived cached IPC ctx for\n'
+                f'peer: {chan.uid}\n'
+                f'cid:{cid}\n'
+            )
+            ctx._allow_overruns = allow_overruns
 
             # adjust buffer size if specified
             state = ctx._send_chan._state  # type: ignore
@@ -875,53 +758,100 @@ class Actor:
                 state.max_buffer_size = msg_buffer_size
 
         except KeyError:
-            send_chan: trio.MemorySendChannel
-            recv_chan: trio.MemoryReceiveChannel
-            send_chan, recv_chan = trio.open_memory_channel(
-                msg_buffer_size or self.msg_buffer_size)
-            ctx = Context(
+            log.runtime(
+                f'Creating NEW IPC ctx for\n'
+                f'peer: {chan.uid}\n'
+                f'cid: {cid}\n'
+            )
+            ctx = mk_context(
                 chan,
                 cid,
-                _send_chan=send_chan,
-                _recv_chan=recv_chan,
+                nsf=nsf,
+                msg_buffer_size=msg_buffer_size or self.msg_buffer_size,
+                _allow_overruns=allow_overruns,
             )
-            self._contexts[(actor_uid, cid)] = ctx
+            self._contexts[(
+                actor_uid,
+                cid,
+                # side,
+            )] = ctx
 
         return ctx
 
     async def start_remote_task(
         self,
         chan: Channel,
-        ns: str,
-        func: str,
+        nsf: NamespacePath,
         kwargs: dict,
-        msg_buffer_size: Optional[int] = None,
+
+        # IPC channel config
+        msg_buffer_size: int | None = None,
+        allow_overruns: bool = False,
+        load_nsf: bool = False,
 
     ) -> Context:
         '''
-        Send a ``'cmd'`` message to a remote actor, which starts
-        a remote task-as-function entrypoint.
+        Send a `'cmd'` msg to a remote actor, which requests the
+        start and schedule of a remote task-as-function's
+        entrypoint.
 
-        Synchronously validates the endpoint type  and return a caller
-        side task ``Context`` that can be used to wait for responses
-        delivered by the local runtime's message processing loop.
+        Synchronously validates the endpoint type and returns
+        a (caller side) `Context` that can be used to accept
+        delivery of msg payloads from the local runtime's
+        processing loop: `._rpc.process_messages()`.
 
         '''
-        cid = str(uuid.uuid4())
+        cid: str = str(uuid.uuid4())
         assert chan.uid
-        ctx = self.get_context(chan, cid, msg_buffer_size=msg_buffer_size)
-        log.runtime(f"Sending cmd to {chan.uid}: {ns}.{func}({kwargs})")
-        await chan.send({'cmd': (ns, func, kwargs, self.uid, cid)})
+        ctx = self.get_context(
+            chan=chan,
+            cid=cid,
+            nsf=nsf,
+
+            # side='caller',
+            msg_buffer_size=msg_buffer_size,
+            allow_overruns=allow_overruns,
+        )
+
+        if (
+            'self' in nsf
+            or not load_nsf
+        ):
+            ns, _, func = nsf.partition(':')
+        else:
+            # TODO: pass nsf directly over wire!
+            # -[ ] but, how to do `self:<Actor.meth>`??
+            ns, func = nsf.to_tuple()
+
+        log.runtime(
+            'Sending cmd to\n'
+            f'peer: {chan.uid} => \n'
+            '\n'
+            f'=> {ns}.{func}({kwargs})\n'
+        )
+        await chan.send(
+            {'cmd': (
+                ns,
+                func,
+                kwargs,
+                self.uid,
+                cid,
+            )}
+        )
 
         # Wait on first response msg and validate; this should be
         # immediate.
-        first_msg = await ctx._recv_chan.receive()
-        functype = first_msg.get('functype')
+        first_msg: dict = await ctx._recv_chan.receive()
+        functype: str = first_msg.get('functype')
 
         if 'error' in first_msg:
             raise unpack_error(first_msg, chan)
 
-        elif functype not in ('asyncfunc', 'asyncgen', 'context'):
+        elif functype not in (
+            'asyncfunc',
+            'asyncgen',
+            'context',
+        ):
             raise ValueError(f"{first_msg} is an invalid response packet?")
 
         ctx._remote_func_type = functype
@@ -929,8 +859,18 @@ class Actor:
 
     async def _from_parent(
         self,
-        parent_addr: Optional[tuple[str, int]],
-    ) -> tuple[Channel, Optional[tuple[str, int]]]:
+        parent_addr: tuple[str, int] | None,
+
+    ) -> tuple[
+        Channel,
+        list[tuple[str, int]] | None,
+    ]:
+        '''
+        Bootstrap this local actor's runtime config from its parent by
+        connecting back via the IPC transport, handshaking and then 
+        `Channel.recv()`-ing seeded data.
+
+        '''
         try:
             # Connect back to the parent actor and conduct initial
             # handshake. From this point on if we error, we
@@ -943,21 +883,36 @@ class Actor:
             # Initial handshake: swap names.
             await self._do_handshake(chan)
 
-            accept_addr: Optional[tuple[str, int]] = None
+            accept_addr: tuple[str, int] | None = None
 
             if self._spawn_method == "trio":
                 # Receive runtime state from our parent
                 parent_data: dict[str, Any]
                 parent_data = await chan.recv()
                 log.runtime(
-                    "Received state from parent:\n"
-                    f"{parent_data}"
+                    'Received state from parent:\n\n'
+                    # TODO: eventually all these msgs as
+                    # `msgspec.Struct` with a special mode that
+                    # pformats them in multi-line mode, BUT only
+                    # if "trace"/"util" mode is enabled?
+                    f'{pformat(parent_data)}\n'
                 )
                 accept_addr = (
                     parent_data.pop('bind_host'),
                     parent_data.pop('bind_port'),
                 )
                 rvs = parent_data.pop('_runtime_vars')
+
+                if rvs['_debug_mode']:
+                    try:
+                        log.info('Enabling `stackscope` traces on SIGUSR1')
+                        from .devx import enable_stack_on_sig
+                        enable_stack_on_sig()
+                    except ImportError:
+                        log.warning(
+                            '`stackscope` not installed for use in debug mode!'
+                        )
+
                 log.runtime(f"Runtime vars are: {rvs}")
                 rvs['_is_root'] = False
                 _state._runtime_vars.update(rvs)
@@ -978,14 +933,17 @@ class Actor:
 
         except OSError:  # failed to connect
             log.warning(
-                f"Failed to connect to parent @ {parent_addr},"
-                " closing server")
-            await self.cancel()
+                f'Failed to connect to parent!?\n\n'
+                'Closing IPC [TCP] transport server to\n'
+                f'{parent_addr}\n'
+                f'|_{self}\n\n'
+            )
+            await self.cancel(chan=None)  # self cancel
             raise
 
     async def _serve_forever(
         self,
-        handler_nursery: trio.Nursery,
+        handler_nursery: Nursery,
         *,
         # (host, port) to bind for channel server
         accept_host: tuple[str, int] | None = None,
@@ -993,16 +951,17 @@ class Actor:
         task_status: TaskStatus[trio.Nursery] = trio.TASK_STATUS_IGNORED,
     ) -> None:
         '''
-        Start the channel server, begin listening for new connections.
+        Start the IPC transport server, begin listening for new connections.
 
-        This will cause an actor to continue living (blocking) until
-        ``cancel_server()`` is called.
+        This will cause an actor to continue living (and thus
+        blocking at the process/OS-thread level) until
+        `.cancel_server()` is called.
 
         '''
         self._server_down = trio.Event()
         try:
             async with trio.open_nursery() as server_n:
-                l: list[trio.abc.Listener] = await server_n.start(
+                listeners: list[trio.abc.Listener] = await server_n.start(
                     partial(
                         trio.serve_tcp,
                         self._stream_handler,
@@ -1013,10 +972,15 @@ class Actor:
                         host=accept_host,
                     )
                 )
+                sockets: list[trio.socket] = [
+                    getattr(listener, 'socket', 'unknown socket')
+                    for listener in listeners
+                ]
                 log.runtime(
-                    "Started tcp server(s) on"
-                    f" {[getattr(l, 'socket', 'unknown socket') for l in l]}")
-                self._listeners.extend(l)
+                    'Started TCP server(s)\n'
+                    f'|_{sockets}\n'
+                )
+                self._listeners.extend(listeners)
                 task_status.started(server_n)
         finally:
             # signal the server is down since nursery above terminated
@@ -1026,41 +990,89 @@ class Actor:
         '''
         Cancel this actor asap; can be called from a sync context.
 
-        Schedules `.cancel()` to be run immediately just like when
-        cancelled by the parent.
+        Schedules runtime cancellation via `Actor.cancel()` inside
+        the RPC service nursery.
 
         '''
         assert self._service_n
-        self._service_n.start_soon(self.cancel)
+        self._service_n.start_soon(
+            self.cancel,
+            None,  # self cancel all rpc tasks
+        )
 
-    async def cancel(self) -> bool:
+    async def cancel(
+        self,
+
+        # chan whose lifetime limits the lifetime of its remotely
+        # requested and locally spawned RPC tasks - similar to the
+        # supervision semantics of a nursery wherein the actual
+        # implementation does start all such tasks in
+        # a sub-nursery.
+        req_chan: Channel|None,
+
+    ) -> bool:
         '''
-        Cancel this actor's runtime.
+        Cancel this actor's runtime, eventually resulting in
+        termination of its containing OS process.
 
-        The "deterministic" teardown sequence in order is:
-            - cancel all ongoing rpc tasks by cancel scope
-            - cancel the channel server to prevent new inbound
-              connections
-            - cancel the "service" nursery reponsible for
-              spawning new rpc tasks
-            - return control the parent channel message loop
+        The ideal "deterministic" teardown sequence in order is:
+         - cancel all ongoing rpc tasks by cancel scope.
+         - cancel the channel server to prevent new inbound
+           connections.
+         - cancel the "service" nursery reponsible for
+           spawning new rpc tasks.
+         - return control the parent channel message loop.
 
         '''
-        log.cancel(f"{self.uid} is trying to cancel")
+        (
+            requesting_uid,
+            requester_type,
+            req_chan,
+            log_meth,
+
+        ) = (
+            req_chan.uid,
+            'peer',
+            req_chan,
+            log.cancel,
+
+        ) if req_chan else (
+
+            # a self cancel of ALL rpc tasks
+            self.uid,
+            'self',
+            self,
+            log.runtime,
+        )
+        # TODO: just use the new `Context.repr_rpc: str` (and
+        # other) repr fields instead of doing this all manual..
+        msg: str = (
+            f'Runtime cancel request from {requester_type}:\n\n'
+            f'<= .cancel(): {requesting_uid}\n'
+        )
+
+        # TODO: what happens here when we self-cancel tho?
+        self._cancel_called_by_remote: tuple = requesting_uid
         self._cancel_called = True
 
         # cancel all ongoing rpc tasks
-        with trio.CancelScope(shield=True):
+        with CancelScope(shield=True):
 
             # kill any debugger request task to avoid deadlock
             # with the root actor in this tree
             dbcs = _debug.Lock._debugger_request_cs
             if dbcs is not None:
-                log.cancel("Cancelling active debugger request")
+                msg += (
+                    '>> Cancelling active debugger request..\n'
+                    f'|_{_debug.Lock}\n'
+                )
                 dbcs.cancel()
 
-            # kill all ongoing tasks
-            await self.cancel_rpc_tasks()
+            # self-cancel **all** ongoing RPC tasks
+            await self.cancel_rpc_tasks(
+                req_uid=requesting_uid,
+                parent_chan=None,
+            )
 
             # stop channel server
             self.cancel_server()
@@ -1068,13 +1080,14 @@ class Actor:
                 await self._server_down.wait()
             else:
                 log.warning(
-                    f'{self.uid} was likely cancelled before it started')
+                    'Transport[TCP] server was cancelled start?'
+                )
 
             # cancel all rpc tasks permanently
             if self._service_n:
                 self._service_n.cancel_scope.cancel()
 
-        log.cancel(f"{self.uid} called `Actor.cancel()`")
+        log_meth(msg)
         self._cancel_complete.set()
         return True
 
@@ -1086,79 +1099,219 @@ class Actor:
     #         for n in root.child_nurseries:
     #             n.cancel_scope.cancel()
 
-    async def _cancel_task(self, cid, chan):
-        '''
-        Cancel a local task by call-id / channel.
+    async def _cancel_task(
+        self,
+        cid: str,
+        parent_chan: Channel,
+        requesting_uid: tuple[str, str]|None,
 
-        Note this method will be treated as a streaming function
-        by remote actor-callers due to the declaration of ``ctx``
-        in the signature (for now).
+        ipc_msg: dict|None|bool = False,
+
+    ) -> bool:
+        '''
+        Cancel a local (RPC) task by context-id/channel by calling
+        `trio.CancelScope.cancel()` on it's surrounding cancel
+        scope.
 
         '''
-        # right now this is only implicitly called by
-        # streaming IPC but it should be called
-        # to cancel any remotely spawned task
+
+        # this ctx based lookup ensures the requested task to be
+        # cancelled was indeed spawned by a request from its
+        # parent (or some grandparent's) channel
+        ctx: Context
+        func: Callable
+        is_complete: trio.Event
         try:
-            # this ctx based lookup ensures the requested task to
-            # be cancelled was indeed spawned by a request from this channel
-            scope, func, is_complete = self._rpc_tasks[(chan, cid)]
+            (
+                ctx,
+                func,
+                is_complete,
+            ) = self._rpc_tasks[(
+                parent_chan,
+                cid,
+            )]
+            scope: CancelScope = ctx._scope
+
         except KeyError:
-            log.cancel(f"{cid} has already completed/terminated?")
-            return
+            # NOTE: during msging race conditions this will often
+            # emit, some examples:
+            # - callee returns a result before cancel-msg/ctxc-raised
+            # - callee self raises ctxc before caller send request,
+            # - callee errors prior to cancel req.
+            log.cancel(
+                'Cancel request invalid, RPC task already completed?\n\n'
+                f'<= canceller: {requesting_uid}\n\n'
+                f'=> {cid}@{parent_chan.uid}\n'
+                f'  |_{parent_chan}\n'
+            )
+            return True
 
         log.cancel(
-            f"Cancelling task:\ncid: {cid}\nfunc: {func}\n"
-            f"peer: {chan.uid}\n")
+            'Cancel request for RPC task\n\n'
+            f'<= Actor._cancel_task(): {requesting_uid}\n\n'
+            f'=> {ctx._task}\n'
+            f'  |_ >> {ctx.repr_rpc}\n'
+            # f'  >> Actor._cancel_task() => {ctx._task}\n'
+            # f'  |_ {ctx._task}\n\n'
+
+            # TODO: better ascii repr for "supervisor" like
+            # a nursery or context scope?
+            # f'=> {parent_chan}\n'
+            # f'   |_{ctx._task}\n'
+            # TODO: simplified `Context.__repr__()` fields output
+            # shows only application state-related stuff like,
+            # - ._stream
+            # - .closed
+            # - .started_called
+            # - .. etc.
+            # f'     >> {ctx.repr_rpc}\n'
+            # f'  |_ctx: {cid}\n'
+            # f'    >> {ctx._nsf}()\n'
+        )
+        if (
+            ctx._canceller is None
+            and requesting_uid
+        ):
+            ctx._canceller: tuple = requesting_uid
+
+        # TODO: pack the RPC `{'cmd': <blah>}` msg into a ctxc and
+        # then raise and pack it here?
+        if (
+            ipc_msg
+            and ctx._cancel_msg is None
+        ):
+            # assign RPC msg directly from the loop which usually
+            # the case with `ctx.cancel()` on the other side.
+            ctx._cancel_msg = ipc_msg
 
         # don't allow cancelling this function mid-execution
         # (is this necessary?)
         if func is self._cancel_task:
-            return
+            log.error('Do not cancel a cancel!?')
+            return True
 
+        # TODO: shouldn't we eventually be calling ``Context.cancel()``
+        # directly here instead (since that method can handle both
+        # side's calls into it?
+        # await ctx.cancel()
         scope.cancel()
 
         # wait for _invoke to mark the task complete
+        flow_info: str = (
+            f'<= canceller: {requesting_uid}\n'
+            f'=> ipc-parent: {parent_chan}\n'
+            f'  |_{ctx}\n'
+        )
         log.runtime(
-            f"Waiting on task to cancel:\ncid: {cid}\nfunc: {func}\n"
-            f"peer: {chan.uid}\n")
+            'Waiting on RPC task to cancel\n'
+            f'{flow_info}'
+        )
         await is_complete.wait()
-
         log.runtime(
-            f"Sucessfully cancelled task:\ncid: {cid}\nfunc: {func}\n"
-            f"peer: {chan.uid}\n")
+            f'Sucessfully cancelled RPC task\n'
+            f'{flow_info}'
+        )
+        return True
 
     async def cancel_rpc_tasks(
         self,
-        only_chan: Optional[Channel] = None,
+        req_uid: tuple[str, str],
+
+        # NOTE: when None is passed we cancel **all** rpc
+        # tasks running in this actor!
+        parent_chan: Channel|None,
+
     ) -> None:
         '''
-        Cancel all existing RPC responder tasks using the cancel scope
-        registered for each.
+        Cancel all ongoing RPC tasks owned/spawned for a given
+        `parent_chan: Channel` or simply all tasks (inside
+        `._service_n`) when `parent_chan=None`.
 
         '''
-        tasks = self._rpc_tasks
+        tasks: dict = self._rpc_tasks
+        if not tasks:
+            log.runtime(
+                'Actor has no cancellable RPC tasks?\n'
+                f'<= canceller: {req_uid}\n'
+            )
+            return
+
+        # TODO: seriously factor this into some helper funcs XD
+        tasks_str: str = ''
+        for (ctx, func, _) in tasks.values():
+
+            # TODO: std repr of all primitives in
+            # a hierarchical tree format, since we can!!
+            # like => repr for funcs/addrs/msg-typing:
+            #
+            # -[ ] use a proper utf8 "arm" like
+            #     `stackscope` has!
+            # -[ ] for typed msging, show the
+            #      py-type-annot style?
+            #  - maybe auto-gen via `inspect` / `typing` type-sig:
+            #   https://stackoverflow.com/a/57110117
+            #   => see ex. code pasted into `.msg.types`
+            #
+            # -[ ] proper .maddr() for IPC primitives?
+            #   - `Channel.maddr() -> str:` obvi!
+            #   - `Context.maddr() -> str:`
+            tasks_str += (
+                f' |_@ /ipv4/tcp/cid="{ctx.cid[-16:]} .."\n'
+                f'   |>> {ctx._nsf}() -> dict:\n'
+            )
+
+        descr: str = (
+            'all' if not parent_chan
+            else
+            "IPC channel's "
+        )
+        rent_chan_repr: str = (
+            f'|_{parent_chan}'
+            if parent_chan
+            else ''
+        )
+        log.cancel(
+            f'Cancelling {descr} {len(tasks)} rpc tasks\n\n'
+            f'<= `Actor.cancel_rpc_tasks()`: {req_uid}\n'
+            f'    {rent_chan_repr}\n'
+            # f'{self}\n'
+            # f'{tasks_str}'
+        )
+        for (
+            (task_caller_chan, cid),
+            (ctx, func, is_complete),
+        ) in tasks.copy().items():
+
+            if (
+                # maybe filter to specific IPC channel?
+                (parent_chan
+                 and
+                 task_caller_chan != parent_chan)
+
+                # never "cancel-a-cancel" XD
+                or (func == self._cancel_task)
+            ):
+                continue
+
+            # TODO: this maybe block on the task cancellation
+            # and so should really done in a nursery batch?
+            await self._cancel_task(
+                cid,
+                task_caller_chan,
+                requesting_uid=req_uid,
+            )
+
         if tasks:
-            log.cancel(f"Cancelling all {len(tasks)} rpc tasks:\n{tasks} ")
-            for (
-                (chan, cid),
-                (scope, func, is_complete),
-            ) in tasks.copy().items():
-                if only_chan is not None:
-                    if only_chan != chan:
-                        continue
-
-                # TODO: this should really done in a nursery batch
-                if func != self._cancel_task:
-                    await self._cancel_task(cid, chan)
-
             log.cancel(
-                f"Waiting for remaining rpc tasks to complete {tasks}")
-            await self._ongoing_rpc_tasks.wait()
+                'Waiting for remaining rpc tasks to complete\n'
+                f'|_{tasks}'
+            )
+        await self._ongoing_rpc_tasks.wait()
 
     def cancel_server(self) -> None:
         '''
-        Cancel the internal channel server nursery thereby
-        preventing any new inbound connections from being established.
+        Cancel the internal IPC transport server nursery thereby
+        preventing any new inbound IPC connections establishing.
 
         '''
         if self._server_n:
@@ -1166,9 +1319,10 @@ class Actor:
             self._server_n.cancel_scope.cancel()
 
     @property
-    def accept_addr(self) -> Optional[tuple[str, int]]:
+    def accept_addr(self) -> tuple[str, int]:
         '''
-        Primary address to which the channel server is bound.
+        Primary address to which the IPC transport server is
+        bound.
 
         '''
         # throws OSError on failure
@@ -1176,7 +1330,7 @@ class Actor:
 
     def get_parent(self) -> Portal:
         '''
-        Return a portal to our parent actor.
+        Return a `Portal` to our parent.
 
         '''
         assert self._parent_chan, "No parent channel for this actor?"
@@ -1184,7 +1338,7 @@ class Actor:
 
     def get_chans(self, uid: tuple[str, str]) -> list[Channel]:
         '''
-        Return all channels to the actor with provided uid.
+        Return all IPC channels to the actor with provided `uid`.
 
         '''
         return self._peers[uid]
@@ -1195,30 +1349,37 @@ class Actor:
 
     ) -> tuple[str, str]:
         '''
-        Exchange (name, UUIDs) identifiers as the first communication step.
+        Exchange `(name, UUIDs)` identifiers as the first
+        communication step with any (peer) remote `Actor`.
 
-        These are essentially the "mailbox addresses" found in actor model
-        parlance.
+        These are essentially the "mailbox addresses" found in
+        "actor model" parlance.
 
         '''
         await chan.send(self.uid)
-        value = await chan.recv()
+        value: tuple = await chan.recv()
         uid: tuple[str, str] = (str(value[0]), str(value[1]))
 
         if not isinstance(uid, tuple):
             raise ValueError(f"{uid} is not a valid uid?!")
 
         chan.uid = str(uid[0]), str(uid[1])
-        log.runtime(f"Handshake with actor {uid}@{chan.raddr} complete")
         return uid
 
     def is_infected_aio(self) -> bool:
+        '''
+        If `True`, this actor is running `trio` in guest mode on
+        the `asyncio` event loop and thus can use the APIs in
+        `.to_asyncio` to coordinate tasks running in each
+        framework but within the same actor runtime.
+
+        '''
         return self._infected_aio
 
 
 async def async_main(
     actor: Actor,
-    accept_addr: Optional[tuple[str, int]] = None,
+    accept_addr: tuple[str, int] | None = None,
 
     # XXX: currently ``parent_addr`` is only needed for the
     # ``multiprocessing`` backend (which pickles state sent to
@@ -1227,16 +1388,19 @@ async def async_main(
     # change this to a simple ``is_subactor: bool`` which will
     # be False when running as root actor and True when as
     # a subactor.
-    parent_addr: Optional[tuple[str, int]] = None,
+    parent_addr: tuple[str, int] | None = None,
     task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
 
 ) -> None:
     '''
-    Actor runtime entrypoint; start the IPC channel server, maybe connect
-    back to the parent, and startup all core machinery tasks.
+    Main `Actor` runtime entrypoint; start the transport-specific
+    IPC channel server, (maybe) connect back to parent (to receive
+    additional config), startup all core `trio` machinery for
+    delivering RPCs, register with the discovery system.
 
-    A "root-most" (or "top-level") nursery for this actor is opened here
-    and when cancelled effectively cancels the actor.
+    The "root" (or "top-level") and "service" `trio.Nursery`s are
+    opened here and when cancelled/terminated effectively shutdown
+    the actor's "runtime" and all thus all ongoing RPC tasks.
 
     '''
     # attempt to retreive ``trio``'s sigint handler and stash it
@@ -1258,12 +1422,6 @@ async def async_main(
             if accept_addr_rent is not None:
                 accept_addr = accept_addr_rent
 
-        # load exposed/allowed RPC modules
-        # XXX: do this **after** establishing a channel to the parent
-        # but **before** starting the message loop for that channel
-        # such that import errors are properly propagated upwards
-        actor.load_modules()
-
         # The "root" nursery ensures the channel with the immediate
         # parent is kept alive as a resilient service until
         # cancellation steps have (mostly) occurred in
@@ -1280,7 +1438,25 @@ async def async_main(
                 actor._service_n = service_nursery
                 assert actor._service_n
 
-                # Startup up the channel server with,
+                # load exposed/allowed RPC modules
+                # XXX: do this **after** establishing a channel to the parent
+                # but **before** starting the message loop for that channel
+                # such that import errors are properly propagated upwards
+                actor.load_modules()
+
+                # XXX TODO XXX: figuring out debugging of this
+                # would somemwhat guarantee "self-hosted" runtime
+                # debugging (since it hits all the ede cases?)
+                #
+                # `tractor.pause()` right?
+                # try:
+                #     actor.load_modules()
+                # except ModuleNotFoundError as err:
+                #     _debug.pause_from_sync()
+                #     import pdbp; pdbp.set_trace()
+                #     raise
+
+                # Startup up the transport(-channel) server with,
                 # - subactor: the bind address is sent by our parent
                 #   over our established channel
                 # - root actor: the ``accept_addr`` passed to this method
@@ -1329,14 +1505,19 @@ async def async_main(
                             shield=True,
                         )
                     )
-                log.runtime("Waiting on service nursery to complete")
-            log.runtime("Service nursery complete")
-            log.runtime("Waiting on root nursery to complete")
+                log.runtime(
+                    'Actor runtime is up!'
+                    # 'Blocking on service nursery to exit..\n'
+                )
+            log.runtime(
+                "Service nursery complete\n"
+                "Waiting on root nursery to complete"
+            )
 
         # Blocks here as expected until the root nursery is
         # killed (i.e. this actor is cancelled or signalled by the parent)
     except Exception as err:
-        log.info("Closing all actor lifetime contexts")
+        log.runtime("Closing all actor lifetime contexts")
         actor.lifetime_stack.close()
 
         if not registered_with_arbiter:
@@ -1354,18 +1535,30 @@ async def async_main(
             )
 
         if actor._parent_chan:
-            await try_ship_error_to_parent(actor._parent_chan, err)
+            await try_ship_error_to_remote(
+                actor._parent_chan,
+                err,
+            )
 
         # always!
-        log.exception("Actor errored:")
+        match err:
+            case ContextCancelled():
+                log.cancel(
+                    f'Actor: {actor.uid} was task-context-cancelled with,\n'
+                    f'str(err)'
+                )
+            case _:
+                log.exception("Actor errored:")
         raise
 
     finally:
-        log.info("Runtime nursery complete")
-
+        log.runtime(
+            'Runtime nursery complete'
+            '-> Closing all actor lifetime contexts..'
+        )
         # tear down all lifetime contexts if not in guest mode
         # XXX: should this just be in the entrypoint?
-        log.info("Closing all actor lifetime contexts")
+        actor.lifetime_stack.close()
 
         # TODO: we can't actually do this bc the debugger
         # uses the _service_n to spawn the lock task, BUT,
@@ -1373,12 +1566,10 @@ async def async_main(
         # block it might be actually possible to debug THIS
         # machinery in the same way as user task code?
         # if actor.name == 'brokerd.ib':
-        #     with trio.CancelScope(shield=True):
+        #     with CancelScope(shield=True):
         #         await _debug.breakpoint()
 
-        actor.lifetime_stack.close()
-
-        # Unregister actor from the arbiter
+        # Unregister actor from the registry-sys / registrar.
         if (
             registered_with_arbiter
             and not actor.is_arbiter
@@ -1409,245 +1600,14 @@ async def async_main(
             ):
                 log.runtime(
                     f"Waiting for remaining peers {actor._peers} to clear")
-                with trio.CancelScope(shield=True):
+                with CancelScope(shield=True):
                     await actor._no_more_peers.wait()
         log.runtime("All peer channels are complete")
 
     log.runtime("Runtime completed")
 
 
-async def process_messages(
-    actor: Actor,
-    chan: Channel,
-    shield: bool = False,
-    task_status: TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED,
-
-) -> bool:
-    '''
-    Process messages for the IPC transport channel async-RPC style.
-
-    Receive multiplexed RPC requests, spawn handler tasks and deliver
-    responses over or boxed errors back to the "caller" task.
-
-    '''
-    # TODO: once https://github.com/python-trio/trio/issues/467 gets
-    # worked out we'll likely want to use that!
-    msg = None
-    nursery_cancelled_before_task: bool = False
-
-    log.runtime(f"Entering msg loop for {chan} from {chan.uid}")
-    try:
-        with trio.CancelScope(shield=shield) as loop_cs:
-            # this internal scope allows for keeping this message
-            # loop running despite the current task having been
-            # cancelled (eg. `open_portal()` may call this method from
-            # a locally spawned task) and recieve this scope using
-            # ``scope = Nursery.start()``
-            task_status.started(loop_cs)
-            async for msg in chan:
-
-                if msg is None:  # loop terminate sentinel
-
-                    log.cancel(
-                        f"Channel to {chan.uid} terminated?\n"
-                        "Cancelling all associated tasks..")
-
-                    for (channel, cid) in actor._rpc_tasks.copy():
-                        if channel is chan:
-                            await actor._cancel_task(cid, channel)
-
-                    log.runtime(
-                            f"Msg loop signalled to terminate for"
-                            f" {chan} from {chan.uid}")
-
-                    break
-
-                log.transport(   # type: ignore
-                    f"Received msg {msg} from {chan.uid}")
-
-                cid = msg.get('cid')
-                if cid:
-                    # deliver response to local caller/waiter
-                    await actor._push_result(chan, cid, msg)
-
-                    log.runtime(
-                        f"Waiting on next msg for {chan} from {chan.uid}")
-                    continue
-
-                # process command request
-                try:
-                    ns, funcname, kwargs, actorid, cid = msg['cmd']
-                except KeyError:
-                    # This is the non-rpc error case, that is, an
-                    # error **not** raised inside a call to ``_invoke()``
-                    # (i.e. no cid was provided in the msg - see above).
-                    # Push this error to all local channel consumers
-                    # (normally portals) by marking the channel as errored
-                    assert chan.uid
-                    exc = unpack_error(msg, chan=chan)
-                    chan._exc = exc
-                    raise exc
-
-                log.runtime(
-                    f"Processing request from {actorid}\n"
-                    f"{ns}.{funcname}({kwargs})")
-
-                if ns == 'self':
-                    func = getattr(actor, funcname)
-
-                    if funcname == 'cancel':
-
-                        # don't start entire actor runtime
-                        # cancellation if this actor is in debug
-                        # mode
-                        pdb_complete = _debug.Lock.local_pdb_complete
-                        if pdb_complete:
-                            await pdb_complete.wait()
-
-                        # we immediately start the runtime machinery
-                        # shutdown
-                        with trio.CancelScope(shield=True):
-                            # actor.cancel() was called so kill this
-                            # msg loop and break out into
-                            # ``async_main()``
-                            log.cancel(
-                                f"Actor {actor.uid} was remotely cancelled "
-                                f"by {chan.uid}"
-                            )
-                            await _invoke(
-                                actor, cid, chan, func, kwargs, is_rpc=False
-                            )
-
-                        loop_cs.cancel()
-                        break
-
-                    if funcname == '_cancel_task':
-
-                        # we immediately start the runtime machinery
-                        # shutdown
-                        with trio.CancelScope(shield=True):
-                            # actor.cancel() was called so kill this
-                            # msg loop and break out into
-                            # ``async_main()``
-                            kwargs['chan'] = chan
-                            log.cancel(
-                                f'Remote request to cancel task\n'
-                                f'remote actor: {chan.uid}\n'
-                                f'task: {cid}'
-                            )
-                            try:
-                                await _invoke(
-                                    actor,
-                                    cid,
-                                    chan,
-                                    func,
-                                    kwargs,
-                                    is_rpc=False,
-                                )
-                            except BaseException:
-                                log.exception("failed to cancel task?")
-
-                            continue
-                else:
-                    # complain to client about restricted modules
-                    try:
-                        func = actor._get_rpc_func(ns, funcname)
-                    except (ModuleNotExposed, AttributeError) as err:
-                        err_msg = pack_error(err)
-                        err_msg['cid'] = cid
-                        await chan.send(err_msg)
-                        continue
-
-                # spin up a task for the requested function
-                log.runtime(f"Spawning task for {func}")
-                assert actor._service_n
-                try:
-                    cs = await actor._service_n.start(
-                        partial(_invoke, actor, cid, chan, func, kwargs),
-                        name=funcname,
-                    )
-                except (
-                    RuntimeError,
-                    BaseExceptionGroup,
-                ):
-                    # avoid reporting a benign race condition
-                    # during actor runtime teardown.
-                    nursery_cancelled_before_task = True
-                    break
-
-                # never allow cancelling cancel requests (results in
-                # deadlock and other weird behaviour)
-                # if func != actor.cancel:
-                if isinstance(cs, Exception):
-                    log.warning(
-                        f"Task for RPC func {func} failed with"
-                        f"{cs}")
-                else:
-                    # mark that we have ongoing rpc tasks
-                    actor._ongoing_rpc_tasks = trio.Event()
-                    log.runtime(f"RPC func is {func}")
-                    # store cancel scope such that the rpc task can be
-                    # cancelled gracefully if requested
-                    actor._rpc_tasks[(chan, cid)] = (
-                        cs, func, trio.Event())
-
-                log.runtime(
-                    f"Waiting on next msg for {chan} from {chan.uid}")
-
-            # end of async for, channel disconnect vis
-            # ``trio.EndOfChannel``
-            log.runtime(
-                f"{chan} for {chan.uid} disconnected, cancelling tasks"
-            )
-            await actor.cancel_rpc_tasks(chan)
-
-    except (
-        TransportClosed,
-    ):
-        # channels "breaking" (for TCP streams by EOF or 104
-        # connection-reset) is ok since we don't have a teardown
-        # handshake for them (yet) and instead we simply bail out of
-        # the message loop and expect the teardown sequence to clean
-        # up.
-        log.runtime(
-            f'channel from {chan.uid} closed abruptly:\n'
-            f'-> {chan.raddr}\n'
-        )
-
-        # transport **was** disconnected
-        return True
-
-    except (
-        Exception,
-        BaseExceptionGroup,
-    ) as err:
-        if nursery_cancelled_before_task:
-            sn = actor._service_n
-            assert sn and sn.cancel_scope.cancel_called
-            log.cancel(
-                f'Service nursery cancelled before it handled {funcname}'
-            )
-        else:
-            # ship any "internal" exception (i.e. one from internal
-            # machinery not from an rpc task) to parent
-            log.exception("Actor errored:")
-            if actor._parent_chan:
-                await try_ship_error_to_parent(actor._parent_chan, err)
-
-        # if this is the `MainProcess` we expect the error broadcasting
-        # above to trigger an error at consuming portal "checkpoints"
-        raise
-
-    finally:
-        # msg debugging for when he machinery is brokey
-        log.runtime(
-            f"Exiting msg loop for {chan} from {chan.uid} "
-            f"with last msg:\n{msg}")
-
-    # transport **was not** disconnected
-    return False
-
-
+# TODO: rename to `Registry` and move to `._discovery`!
 class Arbiter(Actor):
     '''
     A special actor who knows all the other actors and always has
@@ -1721,6 +1681,11 @@ class Arbiter(Actor):
         sockaddr: tuple[str, int]
 
         for (aname, _), sockaddr in self._registry.items():
+            log.runtime(
+                f'Actor mailbox info:\n'
+                f'aname: {aname}\n'
+                f'sockaddr: {sockaddr}\n'
+            )
             if name == aname:
                 sockaddrs.append(sockaddr)
 

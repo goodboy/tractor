@@ -48,12 +48,15 @@ LOG_FORMAT = (
 
 DATE_FORMAT = '%b %d %H:%M:%S'
 
-LEVELS = {
+LEVELS: dict[str, int] = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
     'CANCEL': 16,
     'PDB': 500,
 }
+# _custom_levels: set[str] = {
+#     lvlname.lower for lvlname in LEVELS.keys()
+# }
 
 STD_PALETTE = {
     'CRITICAL': 'red',
@@ -82,6 +85,10 @@ class StackLevelAdapter(logging.LoggerAdapter):
         msg: str,
 
     ) -> None:
+        '''
+        IPC level msg-ing.
+
+        '''
         return self.log(5, msg)
 
     def runtime(
@@ -94,22 +101,57 @@ class StackLevelAdapter(logging.LoggerAdapter):
         self,
         msg: str,
     ) -> None:
-        return self.log(16, msg)
+        '''
+        Cancellation logging, mostly for runtime reporting.
+
+        '''
+        return self.log(
+            level=16,
+            msg=msg,
+            # stacklevel=4,
+        )
 
     def pdb(
         self,
         msg: str,
     ) -> None:
+        '''
+        Debugger logging.
+
+        '''
         return self.log(500, msg)
 
-    def log(self, level, msg, *args, **kwargs):
-        """
+    def log(
+        self,
+        level,
+        msg,
+        *args,
+        **kwargs,
+    ):
+        '''
         Delegate a log call to the underlying logger, after adding
         contextual information from this adapter instance.
-        """
+
+        '''
         if self.isEnabledFor(level):
+            stacklevel: int = 3
+            if (
+                level in LEVELS.values()
+                # or level in _custom_levels
+            ):
+                stacklevel: int = 4
+
             # msg, kwargs = self.process(msg, kwargs)
-            self._log(level, msg, args, **kwargs)
+            self._log(
+                level=level,
+                msg=msg,
+                args=args,
+                # NOTE: not sure how this worked before but, it
+                # seems with our custom level methods defined above
+                # we do indeed (now) require another stack level??
+                stacklevel=stacklevel,
+                **kwargs,
+            )
 
     # LOL, the stdlib doesn't allow passing through ``stacklevel``..
     def _log(
@@ -122,12 +164,15 @@ class StackLevelAdapter(logging.LoggerAdapter):
         stack_info=False,
 
         # XXX: bit we added to show fileinfo from actual caller.
-        # this level then ``.log()`` then finally the caller's level..
-        stacklevel=3,
+        # - this level
+        # - then ``.log()``
+        # - then finally the caller's level..
+        stacklevel=4,
     ):
-        """
+        '''
         Low-level log implementation, proxied to allow nested logger adapters.
-        """
+
+        '''
         return self.logger._log(
             level,
             msg,
@@ -181,15 +226,39 @@ def get_logger(
     '''
     log = rlog = logging.getLogger(_root_name)
 
-    if name and name != _proj_name:
+    if (
+        name
+        and name != _proj_name
+    ):
 
-        # handling for modules that use ``get_logger(__name__)`` to
-        # avoid duplicate project-package token in msg output
-        rname, _, tail = name.partition('.')
-        if rname == _root_name:
-            name = tail
+        # NOTE: for handling for modules that use ``get_logger(__name__)``
+        # we make the following stylistic choice:
+        # - always avoid duplicate project-package token
+        #   in msg output: i.e. tractor.tractor _ipc.py in header
+        #   looks ridiculous XD
+        # - never show the leaf module name in the {name} part
+        #   since in python the {filename} is always this same
+        #   module-file.
 
-        log = rlog.getChild(name)
+        sub_name: None | str = None
+        rname, _, sub_name = name.partition('.')
+        pkgpath, _, modfilename = sub_name.rpartition('.')
+
+        # NOTE: for tractor itself never include the last level
+        # module key in the name such that something like: eg.
+        # 'tractor.trionics._broadcast` only includes the first
+        # 2 tokens in the (coloured) name part.
+        if rname == 'tractor':
+            sub_name = pkgpath
+
+        if _root_name in sub_name:
+            duplicate, _, sub_name = sub_name.partition('.')
+
+        if not sub_name:
+            log = rlog
+        else:
+            log = rlog.getChild(sub_name)
+
         log.level = rlog.level
 
     # add our actor-task aware adapter which will dynamically look up
@@ -220,11 +289,19 @@ def get_console_log(
     if not level:
         return log
 
-    log.setLevel(level.upper() if not isinstance(level, int) else level)
+    log.setLevel(
+        level.upper()
+        if not isinstance(level, int)
+        else level
+    )
 
     if not any(
         handler.stream == sys.stderr  # type: ignore
-        for handler in logger.handlers if getattr(handler, 'stream', None)
+        for handler in logger.handlers if getattr(
+            handler,
+            'stream',
+            None,
+        )
     ):
         handler = logging.StreamHandler()
         formatter = colorlog.ColoredFormatter(
@@ -242,3 +319,7 @@ def get_console_log(
 
 def get_loglevel() -> str:
     return _default_loglevel
+
+
+# global module logger for tractor itself
+log = get_logger('tractor')

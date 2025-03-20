@@ -19,6 +19,7 @@ Machinery for actor process spawning using multiple backends.
 
 """
 from __future__ import annotations
+import multiprocessing as mp
 import sys
 import platform
 from typing import (
@@ -30,30 +31,28 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from exceptiongroup import BaseExceptionGroup
 import trio
-from trio_typing import TaskStatus
+from trio import TaskStatus
 
 from ._debug import (
     maybe_wait_for_debugger,
     acquire_debug_lock,
 )
-from ._state import (
+from tractor._state import (
     current_actor,
     is_main_process,
     is_root_process,
     debug_mode,
 )
-from .log import get_logger
-from ._portal import Portal
-from ._runtime import Actor
-from ._entry import _mp_main
-from ._exceptions import ActorFailure
+from tractor.log import get_logger
+from tractor._portal import Portal
+from tractor._runtime import Actor
+from tractor._entry import _mp_main
+from tractor._exceptions import ActorFailure
 
 
 if TYPE_CHECKING:
     from ._supervise import ActorNursery
-    import multiprocessing as mp
     ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
 
 log = get_logger('tractor')
@@ -70,7 +69,6 @@ _spawn_method: SpawnMethodKey = 'trio'
 
 if platform.system() == 'Windows':
 
-    import multiprocessing as mp
     _ctx = mp.get_context("spawn")
 
     async def proc_waiter(proc: mp.Process) -> None:
@@ -145,7 +143,7 @@ async def exhaust_portal(
 
         # XXX: streams should never be reaped here since they should
         # always be established and shutdown using a context manager api
-        final = await portal.result()
+        final: Any = await portal.result()
 
     except (
         Exception,
@@ -153,13 +151,23 @@ async def exhaust_portal(
     ) as err:
         # we reraise in the parent task via a ``BaseExceptionGroup``
         return err
+
     except trio.Cancelled as err:
         # lol, of course we need this too ;P
         # TODO: merge with above?
-        log.warning(f"Cancelled result waiter for {portal.actor.uid}")
+        log.warning(
+            'Cancelled portal result waiter task:\n'
+            f'uid: {portal.channel.uid}\n'
+            f'error: {err}\n'
+        )
         return err
+
     else:
-        log.debug(f"Returning final result: {final}")
+        log.debug(
+            f'Returning final result from portal:\n'
+            f'uid: {portal.channel.uid}\n'
+            f'result: {final}\n'
+        )
         return final
 
 
@@ -171,41 +179,71 @@ async def cancel_on_completion(
 
 ) -> None:
     '''
-    Cancel actor gracefully once it's "main" portal's
+    Cancel actor gracefully once its "main" portal's
     result arrives.
 
-    Should only be called for actors spawned with `run_in_actor()`.
+    Should only be called for actors spawned via the
+    `Portal.run_in_actor()` API.
+
+    => and really this API will be deprecated and should be
+    re-implemented as a `.hilevel.one_shot_task_nursery()`..)
 
     '''
     # if this call errors we store the exception for later
     # in ``errors`` which will be reraised inside
     # an exception group and we still send out a cancel request
-    result = await exhaust_portal(portal, actor)
+    result: Any|Exception = await exhaust_portal(portal, actor)
     if isinstance(result, Exception):
-        errors[actor.uid] = result
-        log.warning(
-            f"Cancelling {portal.channel.uid} after error {result}"
+        errors[actor.uid]: Exception = result
+        log.cancel(
+            'Cancelling subactor runtime due to error:\n\n'
+            f'Portal.cancel_actor() => {portal.channel.uid}\n\n'
+            f'error: {result}\n'
         )
 
     else:
         log.runtime(
-            f"Cancelling {portal.channel.uid} gracefully "
-            f"after result {result}")
+            'Cancelling subactor gracefully:\n\n'
+            f'Portal.cancel_actor() => {portal.channel.uid}\n\n'
+            f'result: {result}\n'
+        )
 
     # cancel the process now that we have a final result
     await portal.cancel_actor()
 
 
-async def do_hard_kill(
+async def hard_kill(
     proc: trio.Process,
-    terminate_after: int = 3,
+    terminate_after: int = 1.6,
+
+    # NOTE: for mucking with `.pause()`-ing inside the runtime
+    # whilst also hacking on it XD
+    # terminate_after: int = 99999,
 
 ) -> None:
+    '''
+    Un-gracefully terminate an OS level `trio.Process` after timeout.
+
+    Used in 2 main cases:
+
+    - "unknown remote runtime state": a hanging/stalled actor that
+      isn't responding after sending a (graceful) runtime cancel
+      request via an IPC msg.
+    - "cancelled during spawn": a process who's actor runtime was
+      cancelled before full startup completed (such that
+      cancel-request-handling machinery was never fully
+      initialized) and thus a "cancel request msg" is never going
+      to be handled.
+
+    '''
+    log.cancel(
+        'Terminating sub-proc:\n'
+        f'|_{proc}\n'
+    )
     # NOTE: this timeout used to do nothing since we were shielding
     # the ``.wait()`` inside ``new_proc()`` which will pretty much
     # never release until the process exits, now it acts as
     # a hard-kill time ultimatum.
-    log.debug(f"Terminating {proc}")
     with trio.move_on_after(terminate_after) as cs:
 
         # NOTE: code below was copied verbatim from the now deprecated
@@ -216,6 +254,9 @@ async def do_hard_kill(
         # and wait for it to exit. If cancelled, kills the process and
         # waits for it to finish exiting before propagating the
         # cancellation.
+        #
+        # This code was originally triggred by ``proc.__aexit__()``
+        # but now must be called manually.
         with trio.CancelScope(shield=True):
             if proc.stdin is not None:
                 await proc.stdin.aclose()
@@ -231,15 +272,25 @@ async def do_hard_kill(
                 with trio.CancelScope(shield=True):
                     await proc.wait()
 
+    # XXX NOTE XXX: zombie squad dispatch:
+    # (should ideally never, but) If we do get here it means
+    # graceful termination of a process failed and we need to
+    # resort to OS level signalling to interrupt and cancel the
+    # (presumably stalled or hung) actor. Since we never allow
+    # zombies (as a feature) we ask the OS to do send in the
+    # removal swad as the last resort.
     if cs.cancelled_caught:
-        # XXX: should pretty much never get here unless we have
-        # to move the bits from ``proc.__aexit__()`` out and
-        # into here.
-        log.critical(f"#ZOMBIE_LORD_IS_HERE: {proc}")
+        # TODO: toss in the skynet-logo face as ascii art?
+        log.critical(
+            # 'Well, the #ZOMBIE_LORD_IS_HERE# to collect\n'
+            '#T-800 deployed to collect zombie B0\n'
+            f'|\n'
+            f'|_{proc}\n'
+        )
         proc.kill()
 
 
-async def soft_wait(
+async def soft_kill(
 
     proc: ProcessType,
     wait_func: Callable[
@@ -249,14 +300,26 @@ async def soft_wait(
     portal: Portal,
 
 ) -> None:
-    # Wait for proc termination but **dont' yet** call
-    # ``trio.Process.__aexit__()`` (it tears down stdio
-    # which will kill any waiting remote pdb trace).
-    # This is a "soft" (cancellable) join/reap.
-    uid = portal.channel.uid
+    '''
+    Wait for proc termination but **don't yet** teardown
+    std-streams since it will clobber any ongoing pdb REPL
+    session.
+
+    This is our "soft"/graceful, and thus itself also cancellable,
+    join/reap on an actor-runtime-in-process shutdown; it is
+    **not** the same as a "hard kill" via an OS signal (for that
+    see `.hard_kill()`).
+
+    '''
+    uid: tuple[str, str] = portal.channel.uid
     try:
-        log.cancel(f'Soft waiting on actor:\n{uid}')
+        log.cancel(
+            'Soft killing sub-actor via `Portal.cancel_actor()`\n'
+            f'|_{proc}\n'
+        )
+        # wait on sub-proc to signal termination
         await wait_func(proc)
+
     except trio.Cancelled:
         # if cancelled during a soft wait, cancel the child
         # actor before entering the hard reap sequence
@@ -268,22 +331,29 @@ async def soft_wait(
 
             async def cancel_on_proc_deth():
                 '''
-                Cancel the actor cancel request if we detect that
-                that the process terminated.
+                "Cancel-the-cancel" request: if we detect that the
+                underlying sub-process exited prior to
+                a `Portal.cancel_actor()` call completing .
 
                 '''
                 await wait_func(proc)
                 n.cancel_scope.cancel()
 
+            # start a task to wait on the termination of the
+            # process by itself waiting on a (caller provided) wait
+            # function which should unblock when the target process
+            # has terminated.
             n.start_soon(cancel_on_proc_deth)
+
+            # send the actor-runtime a cancel request.
             await portal.cancel_actor()
 
             if proc.poll() is None:  # type: ignore
                 log.warning(
-                    'Actor still alive after cancel request:\n'
-                    f'{uid}'
+                    'Subactor still alive after cancel request?\n\n'
+                    f'uid: {uid}\n'
+                    f'|_{proc}\n'
                 )
-
                 n.cancel_scope.cancel()
         raise
 
@@ -307,7 +377,7 @@ async def new_proc(
 ) -> None:
 
     # lookup backend spawning target
-    target = _methods[_spawn_method]
+    target: Callable = _methods[_spawn_method]
 
     # mark the new actor with the global spawn method
     subactor._spawn_method = _spawn_method
@@ -375,19 +445,22 @@ async def trio_proc(
         spawn_cmd.append("--asyncio")
 
     cancelled_during_spawn: bool = False
-    proc: trio.Process | None = None
+    proc: trio.Process|None = None
     try:
         try:
             # TODO: needs ``trio_typing`` patch?
             proc = await trio.lowlevel.open_process(spawn_cmd)
-
-            log.runtime(f"Started {proc}")
+            log.runtime(
+                'Started new sub-proc\n'
+                f'|_{proc}\n'
+            )
 
             # wait for actor to spawn and connect back to us
             # channel should have handshake completed by the
             # local actor by the time we get a ref to it
             event, chan = await actor_nursery._actor.wait_for_peer(
-                subactor.uid)
+                subactor.uid
+            )
 
         except trio.Cancelled:
             cancelled_during_spawn = True
@@ -449,7 +522,7 @@ async def trio_proc(
             # This is a "soft" (cancellable) join/reap which
             # will remote cancel the actor on a ``trio.Cancelled``
             # condition.
-            await soft_wait(
+            await soft_kill(
                 proc,
                 trio.Process.wait,
                 portal
@@ -457,9 +530,10 @@ async def trio_proc(
 
             # cancel result waiter that may have been spawned in
             # tandem if not done already
-            log.warning(
-                "Cancelling existing result waiter task for "
-                f"{subactor.uid}")
+            log.cancel(
+                'Cancelling existing result waiter task for '
+                f'{subactor.uid}'
+            )
             nursery.cancel_scope.cancel()
 
     finally:
@@ -477,22 +551,39 @@ async def trio_proc(
                         with trio.move_on_after(0.5):
                             await proc.wait()
 
-                if is_root_process():
-                    # TODO: solve the following issue where we need
-                    # to do a similar wait like this but in an
-                    # "intermediary" parent actor that itself isn't
-                    # in debug but has a child that is, and we need
-                    # to hold off on relaying SIGINT until that child
-                    # is complete.
-                    # https://github.com/goodboy/tractor/issues/320
-                    await maybe_wait_for_debugger(
-                        child_in_debug=_runtime_vars.get(
-                            '_debug_mode', False),
-                    )
+                log.pdb(
+                    'Delaying subproc reaper while debugger locked..'
+                )
+                await maybe_wait_for_debugger(
+                    child_in_debug=_runtime_vars.get(
+                        '_debug_mode', False
+                    ),
+                    # TODO: need a diff value then default?
+                    # poll_steps=9999999,
+                )
+                # TODO: solve the following issue where we need
+                # to do a similar wait like this but in an
+                # "intermediary" parent actor that itself isn't
+                # in debug but has a child that is, and we need
+                # to hold off on relaying SIGINT until that child
+                # is complete.
+                # https://github.com/goodboy/tractor/issues/320
+                # -[ ] we need to handle non-root parent-actors specially
+                # by somehow determining if a child is in debug and then
+                # avoiding cancel/kill of said child by this
+                # (intermediary) parent until such a time as the root says
+                # the pdb lock is released and we are good to tear down
+                # (our children)..
+                #
+                # -[ ] so maybe something like this where we try to
+                #     acquire the lock and get notified of who has it,
+                #     check that uid against our known children?
+                # this_uid: tuple[str, str] = current_actor().uid
+                # await acquire_debug_lock(this_uid)
 
                 if proc.poll() is None:
                     log.cancel(f"Attempting to hard kill {proc}")
-                    await do_hard_kill(proc)
+                    await hard_kill(proc)
 
                 log.debug(f"Joined {proc}")
         else:
@@ -636,7 +727,7 @@ async def mp_proc(
             # This is a "soft" (cancellable) join/reap which
             # will remote cancel the actor on a ``trio.Cancelled``
             # condition.
-            await soft_wait(
+            await soft_kill(
                 proc,
                 proc_waiter,
                 portal

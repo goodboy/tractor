@@ -15,38 +15,46 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Memory boundary "Portals": an API for structured
-concurrency linked tasks running in disparate memory domains.
+Memory "portal" contruct.
+
+"Memory portals" are both an API and set of IPC wrapping primitives
+for managing structured concurrency "cancel-scope linked" tasks
+running in disparate virtual memory domains - at least in different
+OS processes, possibly on different (hardware) hosts.
 
 '''
 from __future__ import annotations
+from contextlib import asynccontextmanager as acm
 import importlib
 import inspect
 from typing import (
-    Any, Optional,
-    Callable, AsyncGenerator,
-    Type,
+    Any,
+    Callable,
+    AsyncGenerator,
+    # Type,
 )
 from functools import partial
 from dataclasses import dataclass
-from pprint import pformat
 import warnings
 
 import trio
-from async_generator import asynccontextmanager
 
 from .trionics import maybe_open_nursery
-from ._state import current_actor
+from ._state import (
+    current_actor,
+)
 from ._ipc import Channel
 from .log import get_logger
 from .msg import NamespacePath
 from ._exceptions import (
     unpack_error,
     NoResult,
-    ContextCancelled,
+)
+from ._context import (
+    Context,
+    open_context_from_portal,
 )
 from ._streaming import (
-    Context,
     MsgStream,
 )
 
@@ -54,34 +62,47 @@ from ._streaming import (
 log = get_logger(__name__)
 
 
+# TODO: rename to `unwrap_result()` and use
+# `._raise_from_no_key_in_msg()` (after tweak to
+# accept a `chan: Channel` arg) in key block!
 def _unwrap_msg(
     msg: dict[str, Any],
-    channel: Channel
+    channel: Channel,
+
+    hide_tb: bool = True,
 
 ) -> Any:
-    __tracebackhide__ = True
+    '''
+    Unwrap a final result from a `{return: <Any>}` IPC msg.
+
+    '''
+    __tracebackhide__: bool = hide_tb
+
     try:
         return msg['return']
-    except KeyError:
+    except KeyError as ke:
+
         # internal error should never get here
-        assert msg.get('cid'), "Received internal error at portal?"
-        raise unpack_error(msg, channel) from None
+        assert msg.get('cid'), (
+            "Received internal error at portal?"
+        )
 
-
-class MessagingError(Exception):
-    'Some kind of unexpected SC messaging dialog issue'
+        raise unpack_error(
+            msg,
+            channel
+        ) from ke
 
 
 class Portal:
     '''
-    A 'portal' to a(n) (remote) ``Actor``.
+    A 'portal' to a memory-domain-separated `Actor`.
 
     A portal is "opened" (and eventually closed) by one side of an
     inter-actor communication context. The side which opens the portal
     is equivalent to a "caller" in function parlance and usually is
     either the called actor's parent (in process tree hierarchy terms)
     or a client interested in scheduling work to be done remotely in a
-    far process.
+    process which has a separate (virtual) memory domain.
 
     The portal api allows the "caller" actor to invoke remote routines
     and receive results through an underlying ``tractor.Channel`` as
@@ -91,21 +112,33 @@ class Portal:
     like having a "portal" between the seperate actor memory spaces.
 
     '''
-    # the timeout for a remote cancel request sent to
-    # a(n) (peer) actor.
-    cancel_timeout = 0.5
+    # global timeout for remote cancel requests sent to
+    # connected (peer) actors.
+    cancel_timeout: float = 0.5
 
     def __init__(self, channel: Channel) -> None:
-        self.channel = channel
+        self.chan = channel
         # during the portal's lifetime
-        self._result_msg: Optional[dict] = None
+        self._result_msg: dict|None = None
 
         # When set to a ``Context`` (when _submit_for_result is called)
         # it is expected that ``result()`` will be awaited at some
         # point.
-        self._expect_result: Optional[Context] = None
+        self._expect_result: Context | None = None
         self._streams: set[MsgStream] = set()
         self.actor = current_actor()
+
+    @property
+    def channel(self) -> Channel:
+        '''
+        Proxy to legacy attr name..
+
+        Consider the shorter `Portal.chan` instead of `.channel` ;)
+        '''
+        log.debug(
+            'Consider the shorter `Portal.chan` instead of `.channel` ;)'
+        )
+        return self.chan
 
     async def _submit_for_result(
         self,
@@ -114,14 +147,14 @@ class Portal:
         **kwargs
     ) -> None:
 
-        assert self._expect_result is None, \
-                "A pending main result has already been submitted"
+        assert self._expect_result is None, (
+            "A pending main result has already been submitted"
+        )
 
         self._expect_result = await self.actor.start_remote_task(
             self.channel,
-            ns,
-            func,
-            kwargs
+            nsf=NamespacePath(f'{ns}:{func}'),
+            kwargs=kwargs
         )
 
     async def _return_once(
@@ -131,7 +164,7 @@ class Portal:
     ) -> dict[str, Any]:
 
         assert ctx._remote_func_type == 'asyncfunc'  # single response
-        msg = await ctx._recv_chan.receive()
+        msg: dict = await ctx._recv_chan.receive()
         return msg
 
     async def result(self) -> Any:
@@ -162,7 +195,10 @@ class Portal:
                 self._expect_result
             )
 
-        return _unwrap_msg(self._result_msg, self.channel)
+        return _unwrap_msg(
+            self._result_msg,
+            self.channel,
+        )
 
     async def _cancel_streams(self):
         # terminate all locally running async generator
@@ -193,30 +229,57 @@ class Portal:
 
     ) -> bool:
         '''
-        Cancel the actor on the other end of this portal.
+        Cancel the actor runtime (and thus process) on the far
+        end of this portal.
+
+        **NOTE** THIS CANCELS THE ENTIRE RUNTIME AND THE
+        SUBPROCESS, it DOES NOT just cancel the remote task. If you
+        want to have a handle to cancel a remote ``tri.Task`` look
+        at `.open_context()` and the definition of
+        `._context.Context.cancel()` which CAN be used for this
+        purpose.
 
         '''
-        if not self.channel.connected():
-            log.cancel("This channel is already closed can't cancel")
+        chan: Channel = self.channel
+        if not chan.connected():
+            log.runtime(
+                'This channel is already closed, skipping cancel request..'
+            )
             return False
 
+        reminfo: str = (
+            f'`Portal.cancel_actor()` => {self.channel.uid}\n'
+            f' |_{chan}\n'
+        )
         log.cancel(
-            f"Sending actor cancel request to {self.channel.uid} on "
-            f"{self.channel}")
+            f'Sending runtime `.cancel()` request to peer\n\n'
+            f'{reminfo}'
+        )
 
-        self.channel._cancel_called = True
-
+        self.channel._cancel_called: bool = True
         try:
             # send cancel cmd - might not get response
-            # XXX: sure would be nice to make this work with a proper shield
-            with trio.move_on_after(timeout or self.cancel_timeout) as cs:
-                cs.shield = True
-
-                await self.run_from_ns('self', 'cancel')
+            # XXX: sure would be nice to make this work with
+            # a proper shield
+            with trio.move_on_after(
+                timeout
+                or
+                self.cancel_timeout
+            ) as cs:
+                cs.shield: bool = True
+                await self.run_from_ns(
+                    'self',
+                    'cancel',
+                )
                 return True
 
             if cs.cancelled_caught:
-                log.cancel(f"May have failed to cancel {self.channel.uid}")
+                # may timeout and we never get an ack (obvi racy)
+                # but that doesn't mean it wasn't cancelled.
+                log.debug(
+                    'May have failed to cancel peer?\n'
+                    f'{reminfo}'
+                )
 
             # if we get here some weird cancellation case happened
             return False
@@ -225,9 +288,11 @@ class Portal:
             trio.ClosedResourceError,
             trio.BrokenResourceError,
         ):
-            log.cancel(
-                f"{self.channel} for {self.channel.uid} was already "
-                "closed or broken?")
+            log.debug(
+                'IPC chan for actor already closed or broken?\n\n'
+                f'{self.channel.uid}\n'
+                f' |_{self.channel}\n'
+            )
             return False
 
     async def run_from_ns(
@@ -246,27 +311,33 @@ class Portal:
 
         Note::
 
-            A special namespace `self` can be used to invoke `Actor`
-            instance methods in the remote runtime. Currently this
-            should only be used solely for ``tractor`` runtime
-            internals.
+          A special namespace `self` can be used to invoke `Actor`
+          instance methods in the remote runtime. Currently this
+          should only ever be used for `Actor` (method) runtime
+          internals!
 
         '''
+        nsf = NamespacePath(
+            f'{namespace_path}:{function_name}'
+        )
         ctx = await self.actor.start_remote_task(
-            self.channel,
-            namespace_path,
-            function_name,
-            kwargs,
+            chan=self.channel,
+            nsf=nsf,
+            kwargs=kwargs,
         )
         ctx._portal = self
         msg = await self._return_once(ctx)
-        return _unwrap_msg(msg, self.channel)
+        return _unwrap_msg(
+            msg,
+            self.channel,
+        )
 
     async def run(
         self,
         func: str,
-        fn_name: Optional[str] = None,
+        fn_name: str|None = None,
         **kwargs
+
     ) -> Any:
         '''
         Submit a remote function to be scheduled and run by actor, in
@@ -285,8 +356,9 @@ class Portal:
                 DeprecationWarning,
                 stacklevel=2,
             )
-            fn_mod_path = func
+            fn_mod_path: str = func
             assert isinstance(fn_name, str)
+            nsf = NamespacePath(f'{fn_mod_path}:{fn_name}')
 
         else:  # function reference was passed directly
             if (
@@ -299,13 +371,12 @@ class Portal:
                 raise TypeError(
                     f'{func} must be a non-streaming async function!')
 
-            fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
+            nsf = NamespacePath.from_ref(func)
 
         ctx = await self.actor.start_remote_task(
             self.channel,
-            fn_mod_path,
-            fn_name,
-            kwargs,
+            nsf=nsf,
+            kwargs=kwargs,
         )
         ctx._portal = self
         return _unwrap_msg(
@@ -313,7 +384,7 @@ class Portal:
             self.channel,
         )
 
-    @asynccontextmanager
+    @acm
     async def open_stream_from(
         self,
         async_gen_func: Callable,  # typing: ignore
@@ -329,13 +400,10 @@ class Portal:
                 raise TypeError(
                     f'{async_gen_func} must be an async generator function!')
 
-        fn_mod_path, fn_name = NamespacePath.from_ref(
-            async_gen_func).to_tuple()
-        ctx = await self.actor.start_remote_task(
+        ctx: Context = await self.actor.start_remote_task(
             self.channel,
-            fn_mod_path,
-            fn_name,
-            kwargs
+            nsf=NamespacePath.from_ref(async_gen_func),
+            kwargs=kwargs,
         )
         ctx._portal = self
 
@@ -345,7 +413,8 @@ class Portal:
         try:
             # deliver receive only stream
             async with MsgStream(
-                ctx, ctx._recv_chan,
+                ctx=ctx,
+                rx_chan=ctx._recv_chan,
             ) as rchan:
                 self._streams.add(rchan)
                 yield rchan
@@ -372,175 +441,12 @@ class Portal:
             # await recv_chan.aclose()
             self._streams.remove(rchan)
 
-    @asynccontextmanager
-    async def open_context(
-
-        self,
-        func: Callable,
-        **kwargs,
-
-    ) -> AsyncGenerator[tuple[Context, Any], None]:
-        '''
-        Open an inter-actor task context.
-
-        This is a synchronous API which allows for deterministic
-        setup/teardown of a remote task. The yielded ``Context`` further
-        allows for opening bidirectional streams, explicit cancellation
-        and synchronized final result collection. See ``tractor.Context``.
-
-        '''
-        # conduct target func method structural checks
-        if not inspect.iscoroutinefunction(func) and (
-            getattr(func, '_tractor_contex_function', False)
-        ):
-            raise TypeError(
-                f'{func} must be an async generator function!')
-
-        fn_mod_path, fn_name = NamespacePath.from_ref(func).to_tuple()
-
-        ctx = await self.actor.start_remote_task(
-            self.channel,
-            fn_mod_path,
-            fn_name,
-            kwargs
-        )
-
-        assert ctx._remote_func_type == 'context'
-        msg = await ctx._recv_chan.receive()
-
-        try:
-            # the "first" value here is delivered by the callee's
-            # ``Context.started()`` call.
-            first = msg['started']
-            ctx._started_called = True
-
-        except KeyError:
-            assert msg.get('cid'), ("Received internal error at context?")
-
-            if msg.get('error'):
-                # raise kerr from unpack_error(msg, self.channel)
-                raise unpack_error(msg, self.channel) from None
-            else:
-                raise MessagingError(
-                    f'Context for {ctx.cid} was expecting a `started` message'
-                    f' but received a non-error msg:\n{pformat(msg)}'
-                )
-
-        _err: Optional[BaseException] = None
-        ctx._portal = self
-
-        uid = self.channel.uid
-        cid = ctx.cid
-        etype: Optional[Type[BaseException]] = None
-
-        # deliver context instance and .started() msg value in open tuple.
-        try:
-            async with trio.open_nursery() as scope_nursery:
-                ctx._scope_nursery = scope_nursery
-
-                # do we need this?
-                # await trio.lowlevel.checkpoint()
-
-                yield ctx, first
-
-        except ContextCancelled as err:
-            _err = err
-            if not ctx._cancel_called:
-                # context was cancelled at the far end but was
-                # not part of this end requesting that cancel
-                # so raise for the local task to respond and handle.
-                raise
-
-            # if the context was cancelled by client code
-            # then we don't need to raise since user code
-            # is expecting this and the block should exit.
-            else:
-                log.debug(f'Context {ctx} cancelled gracefully')
-
-        except (
-            BaseException,
-
-            # more specifically, we need to handle these but not
-            # sure it's worth being pedantic:
-            # Exception,
-            # trio.Cancelled,
-            # KeyboardInterrupt,
-
-        ) as err:
-            etype = type(err)
-            # the context cancels itself on any cancel
-            # causing error.
-
-            if ctx.chan.connected():
-                log.cancel(
-                    'Context cancelled for task, sending cancel request..\n'
-                    f'task:{cid}\n'
-                    f'actor:{uid}'
-                )
-                await ctx.cancel()
-            else:
-                log.warning(
-                    'IPC connection for context is broken?\n'
-                    f'task:{cid}\n'
-                    f'actor:{uid}'
-                )
-
-            raise
-
-        finally:
-            # in the case where a runtime nursery (due to internal bug)
-            # or a remote actor transmits an error we want to be
-            # sure we get the error the underlying feeder mem chan.
-            # if it's not raised here it *should* be raised from the
-            # msg loop nursery right?
-            if ctx.chan.connected():
-                log.info(
-                    'Waiting on final context-task result for\n'
-                    f'task: {cid}\n'
-                    f'actor: {uid}'
-                )
-                result = await ctx.result()
-                log.runtime(
-                    f'Context {fn_name} returned '
-                    f'value from callee `{result}`'
-                )
-
-            # though it should be impossible for any tasks
-            # operating *in* this scope to have survived
-            # we tear down the runtime feeder chan last
-            # to avoid premature stream clobbers.
-            if ctx._recv_chan is not None:
-                # should we encapsulate this in the context api?
-                await ctx._recv_chan.aclose()
-
-            if etype:
-                if ctx._cancel_called:
-                    log.cancel(
-                        f'Context {fn_name} cancelled by caller with\n{etype}'
-                    )
-                elif _err is not None:
-                    log.cancel(
-                        f'Context for task cancelled by callee with {etype}\n'
-                        f'target: `{fn_name}`\n'
-                        f'task:{cid}\n'
-                        f'actor:{uid}'
-                    )
-            # XXX: (MEGA IMPORTANT) if this is a root opened process we
-            # wait for any immediate child in debug before popping the
-            # context from the runtime msg loop otherwise inside
-            # ``Actor._push_result()`` the msg will be discarded and in
-            # the case where that msg is global debugger unlock (via
-            # a "stop" msg for a stream), this can result in a deadlock
-            # where the root is waiting on the lock to clear but the
-            # child has already cleared it and clobbered IPC.
-            from ._debug import maybe_wait_for_debugger
-            await maybe_wait_for_debugger()
-
-            # remove the context from runtime tracking
-            self.actor._contexts.pop(
-                (self.channel.uid, ctx.cid),
-                None,
-            )
+    # NOTE: impl is found in `._context`` mod to make
+    # reading/groking the details simpler code-org-wise. This
+    # method does not have to be used over that `@acm` module func
+    # directly, it is for conventience and from the original API
+    # design.
+    open_context = open_context_from_portal
 
 
 @dataclass
@@ -566,11 +472,11 @@ class LocalPortal:
         return await func(**kwargs)
 
 
-@asynccontextmanager
+@acm
 async def open_portal(
 
     channel: Channel,
-    nursery: Optional[trio.Nursery] = None,
+    nursery: trio.Nursery|None = None,
     start_msg_loop: bool = True,
     shield: bool = False,
 
@@ -595,7 +501,7 @@ async def open_portal(
         if channel.uid is None:
             await actor._do_handshake(channel)
 
-        msg_loop_cs: Optional[trio.CancelScope] = None
+        msg_loop_cs: trio.CancelScope|None = None
         if start_msg_loop:
             from ._runtime import process_messages
             msg_loop_cs = await nursery.start(

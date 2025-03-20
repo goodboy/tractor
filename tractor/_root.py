@@ -29,12 +29,13 @@ import typing
 import warnings
 
 
-from exceptiongroup import BaseExceptionGroup
 import trio
 
 from ._runtime import (
     Actor,
     Arbiter,
+    # TODO: rename and make a non-actor subtype?
+    # Arbiter as Registry,
     async_main,
 )
 from . import _debug
@@ -237,8 +238,11 @@ async def open_root_actor(
 
                 entered = await _debug._maybe_enter_pm(err)
 
-                if not entered and not is_multi_cancelled(err):
-                    logger.exception("Root actor crashed:")
+                if (
+                    not entered
+                    and not is_multi_cancelled(err)
+                ):
+                    logger.exception('Root actor crashed:\n')
 
                 # always re-raise
                 raise
@@ -253,10 +257,13 @@ async def open_root_actor(
                 #     for an in nurseries:
                 #         tempn.start_soon(an.exited.wait)
 
-                logger.cancel("Shutting down root actor")
-                await actor.cancel()
+                logger.info(
+                    'Closing down root actor'
+                )
+                await actor.cancel(None)  # self cancel
     finally:
         _state._current_actor = None
+        _state._last_actor_terminated = actor
 
         # restore breakpoint hook state
         sys.breakpointhook = builtin_bp_handler

@@ -5,9 +5,7 @@ import trio
 import tractor
 from tractor import open_actor_cluster
 from tractor.trionics import gather_contexts
-
-from conftest import tractor_test
-
+from tractor._testing import tractor_test
 
 MESSAGE = 'tractoring at full speed'
 
@@ -49,7 +47,7 @@ async def worker(
     await ctx.started()
 
     async with ctx.open_stream(
-        backpressure=True,
+        allow_overruns=True,
     ) as stream:
 
         # TODO: this with the below assert causes a hang bug?

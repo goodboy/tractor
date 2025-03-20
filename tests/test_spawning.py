@@ -8,7 +8,7 @@ import pytest
 import trio
 import tractor
 
-from conftest import tractor_test
+from tractor._testing import tractor_test
 
 data_to_pass_down = {'doggy': 10, 'kitty': 4}
 

@@ -18,17 +18,18 @@
 Per process state
 
 """
+from __future__ import annotations
 from typing import (
-    Optional,
     Any,
+    TYPE_CHECKING,
 )
 
-import trio
+if TYPE_CHECKING:
+    from ._runtime import Actor
 
-from ._exceptions import NoRuntime
 
-
-_current_actor: Optional['Actor'] = None  # type: ignore # noqa
+_current_actor: Actor|None = None  # type: ignore # noqa
+_last_actor_terminated: Actor|None = None
 _runtime_vars: dict[str, Any] = {
     '_debug_mode': False,
     '_is_root': False,
@@ -36,26 +37,68 @@ _runtime_vars: dict[str, Any] = {
 }
 
 
-def current_actor(err_on_no_runtime: bool = True) -> 'Actor':  # type: ignore # noqa
-    """Get the process-local actor instance.
-    """
-    if _current_actor is None and err_on_no_runtime:
-        raise NoRuntime("No local actor has been initialized yet")
+def last_actor() -> Actor|None:
+    '''
+    Try to return last active `Actor` singleton
+    for this process.
+
+    For case where runtime already exited but someone is asking
+    about the "last" actor probably to get its `.uid: tuple`.
+
+    '''
+    return _last_actor_terminated
+
+
+def current_actor(
+    err_on_no_runtime: bool = True,
+) -> Actor:
+    '''
+    Get the process-local actor instance.
+
+    '''
+    if (
+        err_on_no_runtime
+        and _current_actor is None
+    ):
+        msg: str = 'No local actor has been initialized yet'
+        from ._exceptions import NoRuntime
+
+        if last := last_actor():
+            msg += (
+                f'Apparently the lact active actor was\n'
+                f'|_{last}\n'
+                f'|_{last.uid}\n'
+            )
+        # no actor runtime has (as of yet) ever been started for
+        # this process.
+        else:
+            msg += (
+                'No last actor found?\n'
+                'Did you forget to open one of:\n\n'
+                '- `tractor.open_root_actor()`\n'
+                '- `tractor.open_nursery()`\n'
+            )
+
+        raise NoRuntime(msg)
 
     return _current_actor
 
 
 def is_main_process() -> bool:
-    """Bool determining if this actor is running in the top-most process.
-    """
+    '''
+    Bool determining if this actor is running in the top-most process.
+
+    '''
     import multiprocessing as mp
     return mp.current_process().name == 'MainProcess'
 
 
 def debug_mode() -> bool:
-    """Bool determining if "debug mode" is on which enables
+    '''
+    Bool determining if "debug mode" is on which enables
     remote subactor pdb entry on crashes.
-    """
+
+    '''
     return bool(_runtime_vars['_debug_mode'])
 
 

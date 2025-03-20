@@ -8,7 +8,10 @@ This uses no extra threads, fancy semaphores or futures; all we need
 is ``tractor``'s channels.
 
 """
-from contextlib import asynccontextmanager
+from contextlib import (
+    asynccontextmanager as acm,
+    aclosing,
+)
 from typing import Callable
 import itertools
 import math
@@ -16,7 +19,6 @@ import time
 
 import tractor
 import trio
-from async_generator import aclosing
 
 
 PRIMES = [
@@ -44,7 +46,7 @@ async def is_prime(n):
     return True
 
 
-@asynccontextmanager
+@acm
 async def worker_pool(workers=4):
     """Though it's a trivial special case for ``tractor``, the well
     known "worker pool" seems to be the defacto "but, I want this

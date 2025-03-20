@@ -15,18 +15,18 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-tractor: structured concurrent "actors".
+tractor: structured concurrent ``trio``-"actors".
 
 """
-from exceptiongroup import BaseExceptionGroup
-
 from ._clustering import open_actor_cluster
 from ._ipc import Channel
+from ._context import (
+    Context,  # the type
+    context,  # a func-decorator
+)
 from ._streaming import (
-    Context,
     MsgStream,
     stream,
-    context,
 )
 from ._discovery import (
     get_arbiter,

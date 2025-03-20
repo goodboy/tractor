@@ -8,7 +8,7 @@ import pytest
 import trio
 import tractor
 
-from conftest import tractor_test
+from tractor._testing import tractor_test
 
 
 _file_path: str = ''
@@ -64,7 +64,8 @@ async def test_lifetime_stack_wipes_tmpfile(
 
     except (
         tractor.RemoteActorError,
-        tractor.BaseExceptionGroup,
+        # tractor.BaseExceptionGroup,
+        BaseExceptionGroup,
     ):
         pass
 

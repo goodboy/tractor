@@ -36,18 +36,21 @@ setup(
     platforms=['linux', 'windows'],
     packages=[
         'tractor',
-        'tractor.experimental',
-        'tractor.trionics',
+        'tractor.experimental',  # wacky ideas
+        'tractor.trionics',  # trio extensions
+        'tractor.msg',  # lowlevel data types
+        'tractor._testing',  # internal cross-subsys suite utils
     ],
     install_requires=[
 
         # trio related
         # proper range spec:
         # https://packaging.python.org/en/latest/discussions/install-requires-vs-requirements/#id5
-        'trio >= 0.22',
-        'async_generator',
-        'trio_typing',
-        'exceptiongroup',
+        'trio == 0.24',
+
+        # 'async_generator',  # in stdlib mostly!
+        # 'trio_typing',  # trio==0.23.0 has type hints!
+        # 'exceptiongroup',  # in stdlib as of 3.11!
 
         # tooling
         'tricycle',
@@ -73,7 +76,7 @@ setup(
 
     ],
     tests_require=['pytest'],
-    python_requires=">=3.10",
+    python_requires=">=3.11",
     keywords=[
         'trio',
         'async',

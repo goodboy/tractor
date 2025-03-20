@@ -15,17 +15,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Sugary patterns for trio + tractor designs.
+Built-in messaging patterns, types, APIs and helpers.
 
 '''
-from ._mngrs import (
-    gather_contexts as gather_contexts,
-    maybe_open_context as maybe_open_context,
-    maybe_open_nursery as maybe_open_nursery,
+from .ptr import (
+    NamespacePath as NamespacePath,
 )
-from ._broadcast import (
-    AsyncReceiver as AsyncReceiver,
-    broadcast_receiver as broadcast_receiver,
-    BroadcastReceiver as BroadcastReceiver,
-    Lagged as Lagged,
+from .types import (
+    Struct as Struct,
 )

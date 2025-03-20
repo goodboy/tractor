@@ -8,15 +8,16 @@ import builtins
 import itertools
 import importlib
 
-from exceptiongroup import BaseExceptionGroup
 import pytest
 import trio
 import tractor
 from tractor import (
     to_asyncio,
     RemoteActorError,
+    ContextCancelled,
 )
 from tractor.trionics import BroadcastReceiver
+from tractor._testing import expect_ctxc
 
 
 async def sleep_and_err(
@@ -67,7 +68,7 @@ def test_trio_cancels_aio_on_actor_side(arb_addr):
 async def asyncio_actor(
 
     target: str,
-    expect_err: Optional[Exception] = None
+    expect_err: Exception|None = None
 
 ) -> None:
 
@@ -111,10 +112,21 @@ def test_aio_simple_error(arb_addr):
                 infect_asyncio=True,
             )
 
-    with pytest.raises(RemoteActorError) as excinfo:
+    with pytest.raises(
+        expected_exception=(RemoteActorError, ExceptionGroup),
+    ) as excinfo:
         trio.run(main)
 
     err = excinfo.value
+
+    # might get multiple `trio.Cancelled`s as well inside an inception
+    if isinstance(err, ExceptionGroup):
+        err = next(itertools.dropwhile(
+            lambda exc: not isinstance(exc, tractor.RemoteActorError),
+            err.exceptions
+        ))
+        assert err
+
     assert isinstance(err, RemoteActorError)
     assert err.type == AssertionError
 
@@ -189,7 +201,8 @@ async def trio_ctx(
 
 
 @pytest.mark.parametrize(
-    'parent_cancels', [False, True],
+    'parent_cancels',
+    ['context', 'actor', False],
     ids='parent_actor_cancels_child={}'.format
 )
 def test_context_spawns_aio_task_that_errors(
@@ -213,25 +226,52 @@ def test_context_spawns_aio_task_that_errors(
                     # debug_mode=True,
                     loglevel='cancel',
                 )
-                async with p.open_context(
-                    trio_ctx,
-                ) as (ctx, first):
+                async with (
+                    expect_ctxc(
+                        yay=parent_cancels == 'actor',
+                    ),
+                    p.open_context(
+                        trio_ctx,
+                    ) as (ctx, first),
+                ):
 
                     assert first == 'start'
 
-                    if parent_cancels:
+                    if parent_cancels == 'actor':
                         await p.cancel_actor()
 
-                    await trio.sleep_forever()
+                    elif parent_cancels == 'context':
+                        await ctx.cancel()
 
-    with pytest.raises(RemoteActorError) as excinfo:
-        trio.run(main)
+                    else:
+                        await trio.sleep_forever()
 
-    err = excinfo.value
-    assert isinstance(err, RemoteActorError)
+                async with expect_ctxc(
+                    yay=parent_cancels == 'actor',
+                ):
+                    await ctx.result()
+
+                if parent_cancels == 'context':
+                    # to tear down sub-acor
+                    await p.cancel_actor()
+
+        return ctx.outcome
+
     if parent_cancels:
-        assert err.type == trio.Cancelled
+        # bc the parent made the cancel request,
+        # the error is not raised locally but instead
+        # the context is exited silently
+        res = trio.run(main)
+        assert isinstance(res, ContextCancelled)
+        assert 'root' in res.canceller[0]
+
     else:
+        expect = RemoteActorError
+        with pytest.raises(expect) as excinfo:
+            trio.run(main)
+
+        err = excinfo.value
+        assert isinstance(err, expect)
         assert err.type == AssertionError
 
 
@@ -259,11 +299,22 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(arb_addr):
                 infect_asyncio=True,
             )
 
-    with pytest.raises(RemoteActorError) as excinfo:
+    with pytest.raises(
+        expected_exception=(RemoteActorError, ExceptionGroup),
+    ) as excinfo:
         trio.run(main)
 
+    # might get multiple `trio.Cancelled`s as well inside an inception
+    err = excinfo.value
+    if isinstance(err, ExceptionGroup):
+        err = next(itertools.dropwhile(
+            lambda exc: not isinstance(exc, tractor.RemoteActorError),
+            err.exceptions
+        ))
+        assert err
+
     # ensure boxed error is correct
-    assert excinfo.value.type == to_asyncio.AsyncioCancelled
+    assert err.type == to_asyncio.AsyncioCancelled
 
 
 # TODO: verify open_channel_from will fail on this..

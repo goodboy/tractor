@@ -217,7 +217,14 @@ def _run_asyncio_task(
         try:
             result = await coro
         except BaseException as aio_err:
-            log.exception('asyncio task errored')
+            if isinstance(aio_err, CancelledError):
+                log.runtime(
+                    '`asyncio` task was cancelled..\n'
+                )
+            else:
+                log.exception(
+                    '`asyncio` task errored\n'
+                )
             chan._aio_err = aio_err
             raise
 
@@ -272,12 +279,22 @@ def _run_asyncio_task(
         except BaseException as terr:
             task_err = terr
 
+            msg: str = (
+                'Infected `asyncio` task {etype_str}\n'
+                f'|_{task}\n'
+            )
             if isinstance(terr, CancelledError):
-                log.cancel(f'`asyncio` task cancelled: {task.get_name()}')
+                log.cancel(
+                    msg.format(etype_str='cancelled')
+                )
             else:
-                log.exception(f'`asyncio` task: {task.get_name()} errored')
+                log.exception(
+                    msg.format(etype_str='cancelled')
+                )
 
-            assert type(terr) is type(aio_err), 'Asyncio task error mismatch?'
+            assert type(terr) is type(aio_err), (
+                '`asyncio` task error mismatch?!?'
+            )
 
         if aio_err is not None:
             # XXX: uhh is this true?
@@ -290,18 +307,22 @@ def _run_asyncio_task(
             # We might want to change this in the future though.
             from_aio.close()
 
-            if type(aio_err) is CancelledError:
-                log.cancel("infected task was cancelled")
-
-                # TODO: show that the cancellation originated
-                # from the ``trio`` side? right?
-                # if cancel_scope.cancelled:
-                #     raise aio_err from err
-
-            elif task_err is None:
+            if task_err is None:
                 assert aio_err
                 aio_err.with_traceback(aio_err.__traceback__)
-                log.error('infected task errorred')
+                # log.error(
+                #     'infected task errorred'
+                # )
+
+            # TODO: show that the cancellation originated
+            # from the ``trio`` side? right?
+            # elif type(aio_err) is CancelledError:
+            #     log.cancel(
+            #         'infected task was cancelled'
+            #     )
+
+                # if cancel_scope.cancelled:
+                #     raise aio_err from err
 
             # XXX: alway cancel the scope on error
             # in case the trio task is blocking

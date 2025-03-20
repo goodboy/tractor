@@ -1,6 +1,8 @@
-"""
-RPC related
-"""
+'''
+RPC (or maybe better labelled as "RTS: remote task scheduling"?)
+related API and error checks.
+
+'''
 import itertools
 
 import pytest
@@ -42,8 +44,13 @@ async def short_sleep():
         (['tmp_mod'], 'import doggy', ModuleNotFoundError),
         (['tmp_mod'], '4doggy', SyntaxError),
     ],
-    ids=['no_mods', 'this_mod', 'this_mod_bad_func', 'fail_to_import',
-         'fail_on_syntax'],
+    ids=[
+        'no_mods',
+        'this_mod',
+        'this_mod_bad_func',
+        'fail_to_import',
+        'fail_on_syntax',
+    ],
 )
 def test_rpc_errors(arb_addr, to_call, testdir):
     """Test errors when making various RPC requests to an actor
@@ -105,14 +112,16 @@ def test_rpc_errors(arb_addr, to_call, testdir):
         run()
     else:
         # underlying errors aren't propagated upwards (yet)
-        with pytest.raises(remote_err) as err:
+        with pytest.raises(
+            expected_exception=(remote_err, ExceptionGroup),
+        ) as err:
             run()
 
         # get raw instance from pytest wrapper
         value = err.value
 
         # might get multiple `trio.Cancelled`s as well inside an inception
-        if isinstance(value, trio.MultiError):
+        if isinstance(value, ExceptionGroup):
             value = next(itertools.dropwhile(
                 lambda exc: not isinstance(exc, tractor.RemoteActorError),
                 value.exceptions

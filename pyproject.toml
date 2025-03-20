@@ -26,3 +26,23 @@ all_bullets = true
   directory = "trivial"
   name = "Trivial/Internal Changes"
   showcontent = true
+
+
+[tool.pytest.ini_options]
+minversion = '6.0'
+testpaths = [
+  'tests'
+]
+addopts = [
+  # TODO: figure out why this isn't working..
+  '--rootdir=./tests',
+
+  '--import-mode=importlib',
+  # don't show frickin captured logs AGAIN in the report..
+  '--show-capture=no',
+]
+log_cli = false
+
+# TODO: maybe some of these layout choices?
+# https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
+# pythonpath = "src"

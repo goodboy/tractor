@@ -25,8 +25,15 @@ from collections import deque
 from contextlib import asynccontextmanager
 from functools import partial
 from operator import ne
-from typing import Optional, Callable, Awaitable, Any, AsyncIterator, Protocol
-from typing import Generic, TypeVar
+from typing import (
+    Callable,
+    Awaitable,
+    Any,
+    AsyncIterator,
+    Protocol,
+    Generic,
+    TypeVar,
+)
 
 import trio
 from trio._core._run import Task
@@ -37,6 +44,11 @@ from tractor.log import get_logger
 
 log = get_logger(__name__)
 
+# TODO: use new type-vars syntax from 3.12
+# https://realpython.com/python312-new-features/#dedicated-type-variable-syntax
+# https://docs.python.org/3/whatsnew/3.12.html#whatsnew312-pep695
+# https://docs.python.org/3/reference/simple_stmts.html#type
+#
 # A regular invariant generic type
 T = TypeVar("T")
 
@@ -102,7 +114,7 @@ class BroadcastState(Struct):
 
     # broadcast event to wake up all sleeping consumer tasks
     # on a newly produced value from the sender.
-    recv_ready: Optional[tuple[int, trio.Event]] = None
+    recv_ready: tuple[int, trio.Event]|None = None
 
     # if a ``trio.EndOfChannel`` is received on any
     # consumer all consumers should be placed in this state
@@ -156,7 +168,7 @@ class BroadcastReceiver(ReceiveChannel):
 
         rx_chan: AsyncReceiver,
         state: BroadcastState,
-        receive_afunc: Optional[Callable[[], Awaitable[Any]]] = None,
+        receive_afunc: Callable[[], Awaitable[Any]]|None = None,
         raise_on_lag: bool = True,
 
     ) -> None:
@@ -444,7 +456,7 @@ def broadcast_receiver(
 
     recv_chan: AsyncReceiver,
     max_buffer_size: int,
-    receive_afunc: Optional[Callable[[], Awaitable[Any]]] = None,
+    receive_afunc: Callable[[], Awaitable[Any]]|None = None,
     raise_on_lag: bool = True,
 
 ) -> BroadcastReceiver:

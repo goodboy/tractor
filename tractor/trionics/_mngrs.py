@@ -33,10 +33,9 @@ from typing import (
 )
 
 import trio
-from trio_typing import TaskStatus
 
-from .._state import current_actor
-from ..log import get_logger
+from tractor._state import current_actor
+from tractor.log import get_logger
 
 
 log = get_logger(__name__)
@@ -70,6 +69,7 @@ async def _enter_and_wait(
     unwrapped: dict[int, T],
     all_entered: trio.Event,
     parent_exit: trio.Event,
+    seed: int,
 
 ) -> None:
     '''
@@ -80,7 +80,10 @@ async def _enter_and_wait(
     async with mngr as value:
         unwrapped[id(mngr)] = value
 
-        if all(unwrapped.values()):
+        if all(
+            val != seed
+            for val in unwrapped.values()
+        ):
             all_entered.set()
 
         await parent_exit.wait()
@@ -91,7 +94,13 @@ async def gather_contexts(
 
     mngrs: Sequence[AsyncContextManager[T]],
 
-) -> AsyncGenerator[tuple[Optional[T], ...], None]:
+) -> AsyncGenerator[
+    tuple[
+        T | None,
+        ...
+    ],
+    None,
+]:
     '''
     Concurrently enter a sequence of async context managers, each in
     a separate ``trio`` task and deliver the unwrapped values in the
@@ -104,7 +113,11 @@ async def gather_contexts(
     entered and exited, and cancellation just works.
 
     '''
-    unwrapped: dict[int, Optional[T]] = {}.fromkeys(id(mngr) for mngr in mngrs)
+    seed: int = id(mngrs)
+    unwrapped: dict[int, T | None] = {}.fromkeys(
+        (id(mngr) for mngr in mngrs),
+        seed,
+    )
 
     all_entered = trio.Event()
     parent_exit = trio.Event()
@@ -116,8 +129,9 @@ async def gather_contexts(
 
     if not mngrs:
         raise ValueError(
-            'input mngrs is empty?\n'
-            'Did try to use inline generator syntax?'
+            '`.trionics.gather_contexts()` input mngrs is empty?\n'
+            'Did try to use inline generator syntax?\n'
+            'Use a non-lazy iterator or sequence type intead!'
         )
 
     async with trio.open_nursery() as n:
@@ -128,6 +142,7 @@ async def gather_contexts(
                 unwrapped,
                 all_entered,
                 parent_exit,
+                seed,
             )
 
         # deliver control once all managers have started up
@@ -168,7 +183,7 @@ class _Cache:
         cls,
         mng,
         ctx_key: tuple,
-        task_status: TaskStatus[T] = trio.TASK_STATUS_IGNORED,
+        task_status: trio.TaskStatus[T] = trio.TASK_STATUS_IGNORED,
 
     ) -> None:
         async with mng as value:
@@ -209,6 +224,7 @@ async def maybe_open_context(
 
     # yielded output
     yielded: Any = None
+    lock_registered: bool = False
 
     # Lock resource acquisition around task racing  / ``trio``'s
     # scheduler protocol.
@@ -216,6 +232,7 @@ async def maybe_open_context(
     # to allow re-entrant use cases where one `maybe_open_context()`
     # wrapped factor may want to call into another.
     lock = _Cache.locks.setdefault(fid, trio.Lock())
+    lock_registered: bool = True
     await lock.acquire()
 
     # XXX: one singleton nursery per actor and we want to
@@ -237,7 +254,7 @@ async def maybe_open_context(
         yielded = _Cache.values[ctx_key]
 
     except KeyError:
-        log.info(f'Allocating new {acm_func} for {ctx_key}')
+        log.debug(f'Allocating new {acm_func} for {ctx_key}')
         mngr = acm_func(**kwargs)
         resources = _Cache.resources
         assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
@@ -265,7 +282,7 @@ async def maybe_open_context(
         if yielded is not None:
             # if no more consumers, teardown the client
             if _Cache.users <= 0:
-                log.info(f'De-allocating resource for {ctx_key}')
+                log.debug(f'De-allocating resource for {ctx_key}')
 
                 # XXX: if we're cancelled we the entry may have never
                 # been entered since the nursery task was killed.
@@ -275,4 +292,9 @@ async def maybe_open_context(
                     _, no_more_users = entry
                     no_more_users.set()
 
-                _Cache.locks.pop(fid)
+                if lock_registered:
+                    maybe_lock = _Cache.locks.pop(fid, None)
+                    if maybe_lock is None:
+                        log.error(
+                            f'Resource lock for {fid} ALREADY POPPED?'
+                        )

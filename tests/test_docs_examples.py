@@ -11,8 +11,7 @@ import platform
 import shutil
 
 import pytest
-
-from conftest import (
+from tractor._testing import (
     examples_dir,
 )
 
@@ -89,6 +88,7 @@ def run_example_in_subproc(
         and 'debugging' not in p[0]
         and 'integration' not in p[0]
         and 'advanced_faults' not in p[0]
+        and 'multihost' not in p[0]
     ],
 
     ids=lambda t: t[1],

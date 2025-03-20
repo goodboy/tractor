@@ -21,6 +21,7 @@
 from contextlib import asynccontextmanager as acm
 from functools import partial
 import inspect
+from pprint import pformat
 from typing import (
     Optional,
     TYPE_CHECKING,
@@ -28,7 +29,6 @@ from typing import (
 import typing
 import warnings
 
-from exceptiongroup import BaseExceptionGroup
 import trio
 
 from ._debug import maybe_wait_for_debugger
@@ -36,7 +36,10 @@ from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
 from ._runtime import Actor
 from ._portal import Portal
-from ._exceptions import is_multi_cancelled
+from ._exceptions import (
+    is_multi_cancelled,
+    ContextCancelled,
+)
 from ._root import open_root_actor
 from . import _state
 from . import _spawn
@@ -106,6 +109,14 @@ class ActorNursery:
         self.errors = errors
         self.exited = trio.Event()
 
+        # NOTE: when no explicit call is made to
+        # `.open_root_actor()` by application code,
+        # `.open_nursery()` will implicitly call it to start the
+        # actor-tree runtime. In this case we mark ourselves as
+        # such so that runtime components can be aware for logging
+        # and syncing purposes to any actor opened nurseries.
+        self._implicit_runtime_started: bool = False
+
     async def start_actor(
         self,
         name: str,
@@ -157,7 +168,7 @@ class ActorNursery:
 
         # start a task to spawn a process
         # blocks until process has been started and a portal setup
-        nursery = nursery or self._da_nursery
+        nursery: trio.Nursery = nursery or self._da_nursery
 
         # XXX: the type ignore is actually due to a `mypy` bug
         return await nursery.start(  # type: ignore
@@ -190,14 +201,16 @@ class ActorNursery:
         **kwargs,  # explicit args to ``fn``
 
     ) -> Portal:
-        """Spawn a new actor, run a lone task, then terminate the actor and
+        '''
+        Spawn a new actor, run a lone task, then terminate the actor and
         return its result.
 
         Actors spawned using this method are kept alive at nursery teardown
         until the task spawned by executing ``fn`` completes at which point
         the actor is terminated.
-        """
-        mod_path = fn.__module__
+
+        '''
+        mod_path: str = fn.__module__
 
         if name is None:
             # use the explicit function name if not provided
@@ -232,21 +245,37 @@ class ActorNursery:
         )
         return portal
 
-    async def cancel(self, hard_kill: bool = False) -> None:
-        """Cancel this nursery by instructing each subactor to cancel
+    async def cancel(
+        self,
+        hard_kill: bool = False,
+
+    ) -> None:
+        '''
+        Cancel this nursery by instructing each subactor to cancel
         itself and wait for all subactors to terminate.
 
         If ``hard_killl`` is set to ``True`` then kill the processes
         directly without any far end graceful ``trio`` cancellation.
-        """
+
+        '''
         self.cancelled = True
 
-        log.cancel(f"Cancelling nursery in {self._actor.uid}")
+        # TODO: impl a repr for spawn more compact
+        # then `._children`..
+        children: dict = self._children
+        child_count: int = len(children)
+        msg: str = f'Cancelling actor nursery with {child_count} children\n'
         with trio.move_on_after(3) as cs:
+            async with trio.open_nursery() as tn:
 
-            async with trio.open_nursery() as nursery:
-
-                for subactor, proc, portal in self._children.values():
+                subactor: Actor
+                proc: trio.Process
+                portal: Portal
+                for (
+                    subactor,
+                    proc,
+                    portal,
+                ) in children.values():
 
                     # TODO: are we ever even going to use this or
                     # is the spawning backend responsible for such
@@ -258,12 +287,13 @@ class ActorNursery:
                         if portal is None:  # actor hasn't fully spawned yet
                             event = self._actor._peer_connected[subactor.uid]
                             log.warning(
-                                f"{subactor.uid} wasn't finished spawning?")
+                                f"{subactor.uid} never 't finished spawning?"
+                            )
 
                             await event.wait()
 
                             # channel/portal should now be up
-                            _, _, portal = self._children[subactor.uid]
+                            _, _, portal = children[subactor.uid]
 
                             # XXX should be impossible to get here
                             # unless method was called from within
@@ -280,14 +310,24 @@ class ActorNursery:
                         # spawn cancel tasks for each sub-actor
                         assert portal
                         if portal.channel.connected():
-                            nursery.start_soon(portal.cancel_actor)
+                            tn.start_soon(portal.cancel_actor)
 
+                log.cancel(msg)
         # if we cancelled the cancel (we hung cancelling remote actors)
         # then hard kill all sub-processes
         if cs.cancelled_caught:
             log.error(
-                f"Failed to cancel {self}\nHard killing process tree!")
-            for subactor, proc, portal in self._children.values():
+                f'Failed to cancel {self}?\n'
+                'Hard killing underlying subprocess tree!\n'
+            )
+            subactor: Actor
+            proc: trio.Process
+            portal: Portal
+            for (
+                subactor,
+                proc,
+                portal,
+            ) in children.values():
                 log.warning(f"Hard killing process {proc}")
                 proc.terminate()
 
@@ -327,7 +367,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
             # the above "daemon actor" nursery will be notified.
             async with trio.open_nursery() as ria_nursery:
 
-                anursery = ActorNursery(
+                an = ActorNursery(
                     actor,
                     ria_nursery,
                     da_nursery,
@@ -336,16 +376,16 @@ async def _open_and_supervise_one_cancels_all_nursery(
                 try:
                     # spawning of actors happens in the caller's scope
                     # after we yield upwards
-                    yield anursery
+                    yield an
 
                     # When we didn't error in the caller's scope,
                     # signal all process-monitor-tasks to conduct
                     # the "hard join phase".
                     log.runtime(
-                        f"Waiting on subactors {anursery._children} "
-                        "to complete"
+                        'Waiting on subactors to complete:\n'
+                        f'{pformat(an._children)}\n'
                     )
-                    anursery._join_procs.set()
+                    an._join_procs.set()
 
                 except BaseException as inner_err:
                     errors[actor.uid] = inner_err
@@ -357,37 +397,60 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # Instead try to wait for pdb to be released before
                     # tearing down.
                     await maybe_wait_for_debugger(
-                        child_in_debug=anursery._at_least_one_child_in_debug
+                        child_in_debug=an._at_least_one_child_in_debug
                     )
 
                     # if the caller's scope errored then we activate our
                     # one-cancels-all supervisor strategy (don't
                     # worry more are coming).
-                    anursery._join_procs.set()
+                    an._join_procs.set()
 
-                    # XXX: hypothetically an error could be
-                    # raised and then a cancel signal shows up
+                    # XXX NOTE XXX: hypothetically an error could
+                    # be raised and then a cancel signal shows up
                     # slightly after in which case the `else:`
                     # block here might not complete?  For now,
                     # shield both.
                     with trio.CancelScope(shield=True):
-                        etype = type(inner_err)
+                        etype: type = type(inner_err)
                         if etype in (
                             trio.Cancelled,
-                            KeyboardInterrupt
+                            KeyboardInterrupt,
                         ) or (
                             is_multi_cancelled(inner_err)
                         ):
                             log.cancel(
-                                f"Nursery for {current_actor().uid} "
-                                f"was cancelled with {etype}")
+                                f'Actor-nursery cancelled by {etype}\n\n'
+
+                                f'{current_actor().uid}\n'
+                                f' |_{an}\n\n'
+
+                                # TODO: show tb str?
+                                # f'{tb_str}'
+                            )
+                        elif etype in {
+                            ContextCancelled,
+                        }:
+                            log.cancel(
+                                'Actor-nursery caught remote cancellation\n\n'
+
+                                f'{inner_err.tb_str}'
+                            )
                         else:
                             log.exception(
-                                f"Nursery for {current_actor().uid} "
-                                f"errored with")
+                                'Nursery errored with:\n'
+
+                                # TODO: same thing as in
+                                # `._invoke()` to compute how to
+                                # place this div-line in the
+                                # middle of the above msg
+                                # content..
+                                # -[ ] prolly helper-func it too
+                                #   in our `.log` module..
+                                # '------ - ------'
+                            )
 
                         # cancel all subactors
-                        await anursery.cancel()
+                        await an.cancel()
 
             # ria_nursery scope end
 
@@ -408,18 +471,22 @@ async def _open_and_supervise_one_cancels_all_nursery(
             # XXX: yet another guard before allowing the cancel
             # sequence in case a (single) child is in debug.
             await maybe_wait_for_debugger(
-                child_in_debug=anursery._at_least_one_child_in_debug
+                child_in_debug=an._at_least_one_child_in_debug
             )
 
             # If actor-local error was raised while waiting on
             # ".run_in_actor()" actors then we also want to cancel all
             # remaining sub-actors (due to our lone strategy:
             # one-cancels-all).
-            log.cancel(f"Nursery cancelling due to {err}")
-            if anursery._children:
+            if an._children:
+                log.cancel(
+                    'Actor-nursery cancelling due error type:\n'
+                    f'{err}\n'
+                )
                 with trio.CancelScope(shield=True):
-                    await anursery.cancel()
+                    await an.cancel()
             raise
+
         finally:
             # No errors were raised while awaiting ".run_in_actor()"
             # actors but those actors may have returned remote errors as
@@ -428,9 +495,9 @@ async def _open_and_supervise_one_cancels_all_nursery(
             # collected in ``errors`` so cancel all actors, summarize
             # all errors and re-raise.
             if errors:
-                if anursery._children:
+                if an._children:
                     with trio.CancelScope(shield=True):
-                        await anursery.cancel()
+                        await an.cancel()
 
                 # use `BaseExceptionGroup` as needed
                 if len(errors) > 1:
@@ -465,19 +532,20 @@ async def open_nursery(
     which cancellation scopes correspond to each spawned subactor set.
 
     '''
-    implicit_runtime = False
-
-    actor = current_actor(err_on_no_runtime=False)
-
+    implicit_runtime: bool = False
+    actor: Actor = current_actor(err_on_no_runtime=False)
+    an: ActorNursery|None = None
     try:
-        if actor is None and is_main_process():
-
+        if (
+            actor is None
+            and is_main_process()
+        ):
             # if we are the parent process start the
             # actor runtime implicitly
             log.info("Starting actor runtime!")
 
             # mark us for teardown on exit
-            implicit_runtime = True
+            implicit_runtime: bool = True
 
             async with open_root_actor(**kwargs) as actor:
                 assert actor is current_actor()
@@ -485,24 +553,42 @@ async def open_nursery(
                 try:
                     async with _open_and_supervise_one_cancels_all_nursery(
                         actor
-                    ) as anursery:
-                        yield anursery
+                    ) as an:
+
+                        # NOTE: mark this nursery as having
+                        # implicitly started the root actor so
+                        # that `._runtime` machinery can avoid
+                        # certain teardown synchronization
+                        # blocking/waits and any associated (warn)
+                        # logging when it's known that this
+                        # nursery shouldn't be exited before the
+                        # root actor is.
+                        an._implicit_runtime_started = True
+                        yield an
                 finally:
-                    anursery.exited.set()
+                    # XXX: this event will be set after the root actor
+                    # runtime is already torn down, so we want to
+                    # avoid any blocking on it.
+                    an.exited.set()
 
         else:  # sub-nursery case
 
             try:
                 async with _open_and_supervise_one_cancels_all_nursery(
                     actor
-                ) as anursery:
-                    yield anursery
+                ) as an:
+                    yield an
             finally:
-                anursery.exited.set()
+                an.exited.set()
 
     finally:
-        log.debug("Nursery teardown complete")
+        msg: str = (
+            'Actor-nursery exited\n'
+            f'|_{an}\n\n'
+        )
 
         # shutdown runtime if it was started
         if implicit_runtime:
-            log.info("Shutting down actor tree")
+            msg += '=> Shutting down actor runtime <=\n'
+
+        log.info(msg)
