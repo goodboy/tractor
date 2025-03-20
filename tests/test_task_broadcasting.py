@@ -66,13 +66,13 @@ async def ensure_sequence(
 async def open_sequence_streamer(
 
     sequence: list[int],
-    arb_addr: tuple[str, int],
+    reg_addr: tuple[str, int],
     start_method: str,
 
 ) -> tractor.MsgStream:
 
     async with tractor.open_nursery(
-        arbiter_addr=arb_addr,
+        arbiter_addr=reg_addr,
         start_method=start_method,
     ) as tn:
 
@@ -93,7 +93,7 @@ async def open_sequence_streamer(
 
 
 def test_stream_fan_out_to_local_subscriptions(
-    arb_addr,
+    reg_addr,
     start_method,
 ):
 
@@ -103,7 +103,7 @@ def test_stream_fan_out_to_local_subscriptions(
 
         async with open_sequence_streamer(
             sequence,
-            arb_addr,
+            reg_addr,
             start_method,
         ) as stream:
 
@@ -138,7 +138,7 @@ def test_stream_fan_out_to_local_subscriptions(
     ]
 )
 def test_consumer_and_parent_maybe_lag(
-    arb_addr,
+    reg_addr,
     start_method,
     task_delays,
 ):
@@ -150,7 +150,7 @@ def test_consumer_and_parent_maybe_lag(
 
         async with open_sequence_streamer(
             sequence,
-            arb_addr,
+            reg_addr,
             start_method,
         ) as stream:
 
@@ -211,7 +211,7 @@ def test_consumer_and_parent_maybe_lag(
 
 
 def test_faster_task_to_recv_is_cancelled_by_slower(
-    arb_addr,
+    reg_addr,
     start_method,
 ):
     '''
@@ -225,7 +225,7 @@ def test_faster_task_to_recv_is_cancelled_by_slower(
 
         async with open_sequence_streamer(
             sequence,
-            arb_addr,
+            reg_addr,
             start_method,
 
         ) as stream:
@@ -302,7 +302,7 @@ def test_subscribe_errors_after_close():
 
 
 def test_ensure_slow_consumers_lag_out(
-    arb_addr,
+    reg_addr,
     start_method,
 ):
     '''This is a pure local task test; no tractor
