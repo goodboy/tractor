@@ -34,7 +34,7 @@ from typing import (
 import trio
 from trio import TaskStatus
 
-from ._debug import (
+from .devx._debug import (
     maybe_wait_for_debugger,
     acquire_debug_lock,
 )
@@ -551,13 +551,14 @@ async def trio_proc(
                         with trio.move_on_after(0.5):
                             await proc.wait()
 
-                log.pdb(
-                    'Delaying subproc reaper while debugger locked..'
-                )
                 await maybe_wait_for_debugger(
                     child_in_debug=_runtime_vars.get(
                         '_debug_mode', False
                     ),
+                    header_msg=(
+                        'Delaying subproc reaper while debugger locked..\n'
+                    ),
+
                     # TODO: need a diff value then default?
                     # poll_steps=9999999,
                 )

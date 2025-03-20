@@ -26,7 +26,7 @@ with open('docs/README.rst', encoding='utf-8') as f:
 setup(
     name="tractor",
     version='0.1.0a6dev0',  # alpha zone
-    description='structured concurrrent `trio`-"actors"',
+    description='structured concurrent `trio`-"actors"',
     long_description=readme,
     license='AGPLv3',
     author='Tyler Goodlet',
@@ -40,6 +40,7 @@ setup(
         'tractor.trionics',  # trio extensions
         'tractor.msg',  # lowlevel data types
         'tractor._testing',  # internal cross-subsys suite utils
+        'tractor.devx',  # "dev-experience"
     ],
     install_requires=[
 
@@ -53,6 +54,7 @@ setup(
         # 'exceptiongroup',  # in stdlib as of 3.11!
 
         # tooling
+        'stackscope',
         'tricycle',
         'trio_typing',
         'colorlog',
@@ -64,15 +66,14 @@ setup(
         # debug mode REPL
         'pdbp',
 
+        # TODO: distributed transport using
+        # linux kernel networking
+        # 'pyroute2',
+
         # pip ref docs on these specs:
         # https://pip.pypa.io/en/stable/reference/requirement-specifiers/#examples
         # and pep:
         # https://peps.python.org/pep-0440/#version-specifiers
-
-        # windows deps workaround for ``pdbpp``
-        # https://github.com/pdbpp/pdbpp/issues/498
-        # https://github.com/pdbpp/fancycompleter/issues/37
-        'pyreadline3 ; platform_system == "Windows"',
 
     ],
     tests_require=['pytest'],

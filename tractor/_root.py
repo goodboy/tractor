@@ -38,7 +38,7 @@ from ._runtime import (
     # Arbiter as Registry,
     async_main,
 )
-from . import _debug
+from .devx import _debug
 from . import _spawn
 from . import _state
 from . import log
@@ -90,7 +90,7 @@ async def open_root_actor(
     # https://github.com/python-trio/trio/issues/1155#issuecomment-742964018
     builtin_bp_handler = sys.breakpointhook
     orig_bp_path: str | None = os.environ.get('PYTHONBREAKPOINT', None)
-    os.environ['PYTHONBREAKPOINT'] = 'tractor._debug._set_trace'
+    os.environ['PYTHONBREAKPOINT'] = 'tractor.devx._debug.pause_from_sync'
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
@@ -131,14 +131,20 @@ async def open_root_actor(
         )
     )
 
-    loglevel = (loglevel or log._default_loglevel).upper()
+    loglevel = (
+        loglevel
+        or log._default_loglevel
+    ).upper()
 
-    if debug_mode and _spawn._spawn_method == 'trio':
+    if (
+        debug_mode
+        and _spawn._spawn_method == 'trio'
+    ):
         _state._runtime_vars['_debug_mode'] = True
 
-        # expose internal debug module to every actor allowing
-        # for use of ``await tractor.breakpoint()``
-        enable_modules.append('tractor._debug')
+        # expose internal debug module to every actor allowing for
+        # use of ``await tractor.pause()``
+        enable_modules.append('tractor.devx._debug')
 
         # if debug mode get's enabled *at least* use that level of
         # logging for some informative console prompts.
@@ -156,7 +162,20 @@ async def open_root_actor(
             "Debug mode is only supported for the `trio` backend!"
         )
 
-    log.get_console_log(loglevel)
+    assert loglevel
+    _log = log.get_console_log(loglevel)
+    assert _log
+
+    # TODO: factor this into `.devx._stackscope`!!
+    if debug_mode:
+        try:
+            logger.info('Enabling `stackscope` traces on SIGUSR1')
+            from .devx import enable_stack_on_sig
+            enable_stack_on_sig()
+        except ImportError:
+            logger.warning(
+                '`stackscope` not installed for use in debug mode!'
+            )
 
     try:
         # make a temporary connection to see if an arbiter exists,
@@ -237,10 +256,10 @@ async def open_root_actor(
             ) as err:
 
                 entered = await _debug._maybe_enter_pm(err)
-
                 if (
                     not entered
-                    and not is_multi_cancelled(err)
+                    and
+                    not is_multi_cancelled(err)
                 ):
                     logger.exception('Root actor crashed:\n')
 

@@ -55,7 +55,7 @@ from ._exceptions import (
     unpack_error,
     TransportClosed,
 )
-from . import _debug
+from .devx import _debug
 from . import _state
 from .log import get_logger
 

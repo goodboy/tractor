@@ -78,7 +78,7 @@ from ._exceptions import (
     TransportClosed,
 )
 from ._discovery import get_arbiter
-from . import _debug
+from .devx import _debug
 from ._portal import Portal
 from . import _state
 from . import _mp_fixup_main
@@ -187,7 +187,7 @@ class Actor:
         self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
 
         # always include debugging tools module
-        enable_modules.append('tractor._debug')
+        enable_modules.append('tractor.devx._debug')
 
         mods = {}
         for name in enable_modules:
@@ -632,7 +632,7 @@ class Actor:
                         and not db_cs.cancel_called
                         and uid == pdb_user_uid
                     ):
-                        log.warning(
+                        log.critical(
                             f'STALE DEBUG LOCK DETECTED FOR {uid}'
                         )
                         # TODO: figure out why this breaks tests..
@@ -1722,4 +1722,6 @@ class Arbiter(Actor):
 
     ) -> None:
         uid = (str(uid[0]), str(uid[1]))
-        self._registry.pop(uid)
+        entry: tuple = self._registry.pop(uid, None)
+        if entry is None:
+            log.warning(f'Request to de-register {uid} failed?')
