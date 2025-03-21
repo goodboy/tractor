@@ -220,6 +220,10 @@ async def hard_kill(
     # whilst also hacking on it XD
     # terminate_after: int = 99999,
 
+    # NOTE: for mucking with `.pause()`-ing inside the runtime
+    # whilst also hacking on it XD
+    # terminate_after: int = 99999,
+
 ) -> None:
     '''
     Un-gracefully terminate an OS level `trio.Process` after timeout.
@@ -365,7 +369,7 @@ async def new_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addr: tuple[str, int],
+    bind_addrs: list[tuple[str, int]],
     parent_addr: tuple[str, int],
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
 
@@ -387,7 +391,7 @@ async def new_proc(
         actor_nursery,
         subactor,
         errors,
-        bind_addr,
+        bind_addrs,
         parent_addr,
         _runtime_vars,  # run time vars
         infect_asyncio=infect_asyncio,
@@ -402,7 +406,7 @@ async def trio_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addr: tuple[str, int],
+    bind_addrs: list[tuple[str, int]],
     parent_addr: tuple[str, int],
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
@@ -491,12 +495,11 @@ async def trio_proc(
 
         # send additional init params
         await chan.send({
-            "_parent_main_data": subactor._parent_main_data,
-            "enable_modules": subactor.enable_modules,
-            "_arb_addr": subactor._arb_addr,
-            "bind_host": bind_addr[0],
-            "bind_port": bind_addr[1],
-            "_runtime_vars": _runtime_vars,
+            '_parent_main_data': subactor._parent_main_data,
+            'enable_modules': subactor.enable_modules,
+            'reg_addrs': subactor.reg_addrs,
+            'bind_addrs': bind_addrs,
+            '_runtime_vars': _runtime_vars,
         })
 
         # track subactor in current nursery
@@ -602,7 +605,7 @@ async def mp_proc(
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
     # passed through to actor main
-    bind_addr: tuple[str, int],
+    bind_addrs: list[tuple[str, int]],
     parent_addr: tuple[str, int],
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
@@ -660,7 +663,7 @@ async def mp_proc(
         target=_mp_main,
         args=(
             subactor,
-            bind_addr,
+            bind_addrs,
             fs_info,
             _spawn_method,
             parent_addr,

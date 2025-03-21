@@ -15,32 +15,45 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Actor discovery API.
+Discovery (protocols) API for automatic addressing and location
+management of (service) actors.
 
 """
+from __future__ import annotations
 from typing import (
-    Optional,
-    Union,
     AsyncGenerator,
+    AsyncContextManager,
+    TYPE_CHECKING,
 )
 from contextlib import asynccontextmanager as acm
+import warnings
 
+from .trionics import gather_contexts
 from ._ipc import _connect_chan, Channel
 from ._portal import (
     Portal,
     open_portal,
     LocalPortal,
 )
-from ._state import current_actor, _runtime_vars
+from ._state import (
+    current_actor,
+    _runtime_vars,
+)
+
+
+if TYPE_CHECKING:
+    from ._runtime import Actor
 
 
 @acm
-async def get_arbiter(
-
+async def get_registry(
     host: str,
     port: int,
 
-) -> AsyncGenerator[Union[Portal, LocalPortal], None]:
+) -> AsyncGenerator[
+    Portal | LocalPortal | None,
+    None,
+]:
     '''
     Return a portal instance connected to a local or remote
     arbiter.
@@ -51,16 +64,33 @@ async def get_arbiter(
     if not actor:
         raise RuntimeError("No actor instance has been defined yet?")
 
-    if actor.is_arbiter:
+    if actor.is_registrar:
         # we're already the arbiter
         # (likely a re-entrant call from the arbiter actor)
-        yield LocalPortal(actor, Channel((host, port)))
+        yield LocalPortal(
+            actor,
+            Channel((host, port))
+        )
     else:
-        async with _connect_chan(host, port) as chan:
+        async with (
+            _connect_chan(host, port) as chan,
+            open_portal(chan) as regstr_ptl,
+        ):
+            yield regstr_ptl
 
-            async with open_portal(chan) as arb_portal:
 
-                yield arb_portal
+
+# TODO: deprecate and this remove _arbiter form!
+@acm
+async def get_arbiter(*args, **kwargs):
+    warnings.warn(
+        '`tractor.get_arbiter()` is now deprecated!\n'
+        'Use `.get_registry()` instead!',
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    async with get_registry(*args, **kwargs) as to_yield:
+        yield to_yield
 
 
 @acm
@@ -68,51 +98,80 @@ async def get_root(
     **kwargs,
 ) -> AsyncGenerator[Portal, None]:
 
+    # TODO: rename mailbox to `_root_maddr` when we finally
+    # add and impl libp2p multi-addrs?
     host, port = _runtime_vars['_root_mailbox']
     assert host is not None
 
-    async with _connect_chan(host, port) as chan:
-        async with open_portal(chan, **kwargs) as portal:
-            yield portal
+    async with (
+        _connect_chan(host, port) as chan,
+        open_portal(chan, **kwargs) as portal,
+    ):
+        yield portal
 
 
 @acm
 async def query_actor(
     name: str,
-    arbiter_sockaddr: Optional[tuple[str, int]] = None,
+    arbiter_sockaddr: tuple[str, int] | None = None,
+    regaddr: tuple[str, int] | None = None,
 
-) -> AsyncGenerator[tuple[str, int], None]:
+) -> AsyncGenerator[
+    tuple[str, int] | None,
+    None,
+]:
     '''
-    Simple address lookup for a given actor name.
+    Make a transport address lookup for an actor name to a specific
+    registrar.
 
-    Returns the (socket) address or ``None``.
+    Returns the (socket) address or ``None`` if no entry under that
+    name exists for the given registrar listening @ `regaddr`.
 
     '''
-    actor = current_actor()
-    async with get_arbiter(
-        *arbiter_sockaddr or actor._arb_addr
-    ) as arb_portal:
+    actor: Actor = current_actor()
+    if (
+        name == 'registrar'
+        and actor.is_registrar
+    ):
+        raise RuntimeError(
+            'The current actor IS the registry!?'
+        )
 
-        sockaddr = await arb_portal.run_from_ns(
+    if arbiter_sockaddr is not None:
+        warnings.warn(
+            '`tractor.query_actor(regaddr=<blah>)` is deprecated.\n'
+            'Use `registry_addrs: list[tuple]` instead!',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        regaddr: list[tuple[str, int]] = arbiter_sockaddr
+
+    reg_portal: Portal
+    regaddr: tuple[str, int] = regaddr or actor.reg_addrs[0]
+    async with get_registry(*regaddr) as reg_portal:
+        # TODO: return portals to all available actors - for now
+        # just the last one that registered
+        sockaddr: tuple[str, int] = await reg_portal.run_from_ns(
             'self',
             'find_actor',
             name=name,
         )
-
-        # TODO: return portals to all available actors - for now just
-        # the last one that registered
-        if name == 'arbiter' and actor.is_arbiter:
-            raise RuntimeError("The current actor is the arbiter")
-
-        yield sockaddr if sockaddr else None
+        yield sockaddr
 
 
 @acm
 async def find_actor(
     name: str,
-    arbiter_sockaddr: tuple[str, int] | None = None
+    arbiter_sockaddr: tuple[str, int]|None = None,
+    registry_addrs: list[tuple[str, int]]|None = None,
 
-) -> AsyncGenerator[Optional[Portal], None]:
+    only_first: bool = True,
+    raise_on_none: bool = False,
+
+) -> AsyncGenerator[
+    Portal | list[Portal] | None,
+    None,
+]:
     '''
     Ask the arbiter to find actor(s) by name.
 
@@ -120,24 +179,83 @@ async def find_actor(
     known to the arbiter.
 
     '''
-    async with query_actor(
-        name=name,
-        arbiter_sockaddr=arbiter_sockaddr,
-    ) as sockaddr:
+    if arbiter_sockaddr is not None:
+        warnings.warn(
+            '`tractor.find_actor(arbiter_sockaddr=<blah>)` is deprecated.\n'
+            'Use `registry_addrs: list[tuple]` instead!',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        registry_addrs: list[tuple[str, int]] = [arbiter_sockaddr]
 
-        if sockaddr:
-            async with _connect_chan(*sockaddr) as chan:
-                async with open_portal(chan) as portal:
-                    yield portal
-        else:
+    @acm
+    async def maybe_open_portal_from_reg_addr(
+        addr: tuple[str, int],
+    ):
+        async with query_actor(
+            name=name,
+            regaddr=addr,
+        ) as sockaddr:
+            if sockaddr:
+                async with _connect_chan(*sockaddr) as chan:
+                    async with open_portal(chan) as portal:
+                        yield portal
+            else:
+                yield None
+
+    if not registry_addrs:
+        # XXX NOTE: make sure to dynamically read the value on
+        # every call since something may change it globally (eg.
+        # like in our discovery test suite)!
+        from . import _root
+        registry_addrs = (
+            _runtime_vars['_registry_addrs']
+            or
+            _root._default_lo_addrs
+        )
+
+    maybe_portals: list[
+        AsyncContextManager[tuple[str, int]]
+    ] = list(
+        maybe_open_portal_from_reg_addr(addr)
+        for addr in registry_addrs
+    )
+
+    async with gather_contexts(
+        mngrs=maybe_portals,
+    ) as portals:
+        # log.runtime(
+        #     'Gathered portals:\n'
+        #     f'{portals}'
+        # )
+        # NOTE: `gather_contexts()` will return a
+        # `tuple[None, None, ..., None]` if no contact
+        # can be made with any regstrar at any of the
+        # N provided addrs!
+        if not any(portals):
+            if raise_on_none:
+                raise RuntimeError(
+                    f'No actor "{name}" found registered @ {registry_addrs}'
+                )
             yield None
+            return
+
+        portals: list[Portal] = list(portals)
+        if only_first:
+            yield portals[0]
+
+        else:
+            # TODO: currently this may return multiple portals
+            # given there are multi-homed or multiple registrars..
+            # SO, we probably need de-duplication logic?
+            yield portals
 
 
 @acm
 async def wait_for_actor(
     name: str,
     arbiter_sockaddr: tuple[str, int] | None = None,
-    # registry_addr: tuple[str, int] | None = None,
+    registry_addr: tuple[str, int] | None = None,
 
 ) -> AsyncGenerator[Portal, None]:
     '''
@@ -146,17 +264,31 @@ async def wait_for_actor(
     A portal to the first registered actor is returned.
 
     '''
-    actor = current_actor()
+    actor: Actor = current_actor()
 
-    async with get_arbiter(
-        *arbiter_sockaddr or actor._arb_addr,
-    ) as arb_portal:
-        sockaddrs = await arb_portal.run_from_ns(
+    if arbiter_sockaddr is not None:
+        warnings.warn(
+            '`tractor.wait_for_actor(arbiter_sockaddr=<foo>)` is deprecated.\n'
+            'Use `registry_addr: tuple` instead!',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        registry_addr: tuple[str, int] = arbiter_sockaddr
+
+    # TODO: use `.trionics.gather_contexts()` like
+    # above in `find_actor()` as well?
+    reg_portal: Portal
+    regaddr: tuple[str, int] = registry_addr or actor.reg_addrs[0]
+    async with get_registry(*regaddr) as reg_portal:
+        sockaddrs = await reg_portal.run_from_ns(
             'self',
             'wait_for_actor',
             name=name,
         )
-        sockaddr = sockaddrs[-1]
+
+        # get latest registered addr by default?
+        # TODO: offer multi-portal yields in multi-homed case?
+        sockaddr: tuple[str, int] = sockaddrs[-1]
 
         async with _connect_chan(*sockaddr) as chan:
             async with open_portal(chan) as portal:

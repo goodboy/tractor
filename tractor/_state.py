@@ -33,7 +33,8 @@ _last_actor_terminated: Actor|None = None
 _runtime_vars: dict[str, Any] = {
     '_debug_mode': False,
     '_is_root': False,
-    '_root_mailbox': (None, None)
+    '_root_mailbox': (None, None),
+    '_registry_addrs': [],
 }
 
 
