@@ -119,11 +119,11 @@ class ActorNursery:
         name: str,
         *,
         bind_addrs: list[tuple[str, int]] = [_default_bind_addr],
-        rpc_module_paths: list[str] | None = None,
-        enable_modules: list[str] | None = None,
-        loglevel: str | None = None,  # set log level per subactor
-        nursery: trio.Nursery | None = None,
-        debug_mode: bool | None = None,
+        rpc_module_paths: list[str]|None = None,
+        enable_modules: list[str]|None = None,
+        loglevel: str|None = None,  # set log level per subactor
+        nursery: trio.Nursery|None = None,
+        debug_mode: bool|None = None,
         infect_asyncio: bool = False,
     ) -> Portal:
         '''
@@ -583,7 +583,7 @@ async def open_nursery(
     finally:
         msg: str = (
             'Actor-nursery exited\n'
-            f'|_{an}\n\n'
+            f'|_{an}\n'
         )
 
         # shutdown runtime if it was started

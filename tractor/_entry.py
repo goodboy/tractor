@@ -106,6 +106,7 @@ def _trio_main(
     Entry point for a `trio_run_in_process` subactor.
 
     '''
+    __tracebackhide__: bool = True
     _state._current_actor = actor
     trio_main = partial(
         async_main,

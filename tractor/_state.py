@@ -30,11 +30,16 @@ if TYPE_CHECKING:
 
 _current_actor: Actor|None = None  # type: ignore # noqa
 _last_actor_terminated: Actor|None = None
+
+# TODO: mk this a `msgspec.Struct`!
 _runtime_vars: dict[str, Any] = {
     '_debug_mode': False,
     '_is_root': False,
     '_root_mailbox': (None, None),
     '_registry_addrs': [],
+
+    # for `breakpoint()` support
+    'use_greenback': False,
 }
 
 

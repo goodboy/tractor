@@ -503,7 +503,7 @@ async def trio_proc(
         })
 
         # track subactor in current nursery
-        curr_actor = current_actor()
+        curr_actor: Actor = current_actor()
         curr_actor._actoruid2nursery[subactor.uid] = actor_nursery
 
         # resume caller at next checkpoint now that child is up

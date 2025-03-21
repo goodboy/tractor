@@ -26,7 +26,6 @@ from contextlib import (
 from functools import partial
 import inspect
 from pprint import pformat
-from types import ModuleType
 from typing import (
     Any,
     Callable,
@@ -332,27 +331,6 @@ async def _errors_relayed_via_ipc(
                 actor._ongoing_rpc_tasks.set()
 
 
-_gb_mod: ModuleType|None|False = None
-
-
-async def maybe_import_gb():
-    global _gb_mod
-    if _gb_mod is False:
-        return
-
-    try:
-        import greenback
-        _gb_mod = greenback
-        await greenback.ensure_portal()
-
-    except ModuleNotFoundError:
-        log.debug(
-            '`greenback` is not installed.\n'
-            'No sync debug support!\n'
-        )
-        _gb_mod = False
-
-
 async def _invoke(
 
     actor: Actor,
@@ -380,7 +358,9 @@ async def _invoke(
     treat_as_gen: bool = False
 
     if _state.debug_mode():
-        await maybe_import_gb()
+        # XXX for .pause_from_sync()` usage we need to make sure
+        # `greenback` is boostrapped in the subactor!
+        await _debug.maybe_init_greenback()
 
     # TODO: possibly a specially formatted traceback
     # (not sure what typing is for this..)?

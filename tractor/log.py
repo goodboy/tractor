@@ -21,6 +21,11 @@ Log like a forester!
 from collections.abc import Mapping
 import sys
 import logging
+from logging import (
+    LoggerAdapter,
+    Logger,
+    StreamHandler,
+)
 import colorlog  # type: ignore
 
 import trio
@@ -48,20 +53,19 @@ LOG_FORMAT = (
 
 DATE_FORMAT = '%b %d %H:%M:%S'
 
-LEVELS: dict[str, int] = {
+# FYI, ERROR is 40
+CUSTOM_LEVELS: dict[str, int] = {
     'TRANSPORT': 5,
     'RUNTIME': 15,
-    'CANCEL': 16,
+    'DEVX': 17,
+    'CANCEL': 18,
     'PDB': 500,
 }
-# _custom_levels: set[str] = {
-#     lvlname.lower for lvlname in LEVELS.keys()
-# }
-
 STD_PALETTE = {
     'CRITICAL': 'red',
     'ERROR': 'red',
     'PDB': 'white',
+    'DEVX': 'cyan',
     'WARNING': 'yellow',
     'INFO': 'green',
     'CANCEL': 'yellow',
@@ -78,7 +82,7 @@ BOLD_PALETTE = {
 
 # TODO: this isn't showing the correct '{filename}'
 # as it did before..
-class StackLevelAdapter(logging.LoggerAdapter):
+class StackLevelAdapter(LoggerAdapter):
 
     def transport(
         self,
@@ -86,7 +90,8 @@ class StackLevelAdapter(logging.LoggerAdapter):
 
     ) -> None:
         '''
-        IPC level msg-ing.
+        IPC transport level msg IO; generally anything below
+        `._ipc.Channel` and friends.
 
         '''
         return self.log(5, msg)
@@ -102,11 +107,11 @@ class StackLevelAdapter(logging.LoggerAdapter):
         msg: str,
     ) -> None:
         '''
-        Cancellation logging, mostly for runtime reporting.
+        Cancellation sequencing, mostly for runtime reporting.
 
         '''
         return self.log(
-            level=16,
+            level=22,
             msg=msg,
             # stacklevel=4,
         )
@@ -116,10 +121,20 @@ class StackLevelAdapter(logging.LoggerAdapter):
         msg: str,
     ) -> None:
         '''
-        Debugger logging.
+        `pdb`-REPL (debugger) related statuses.
 
         '''
         return self.log(500, msg)
+
+    def devx(
+        self,
+        msg: str,
+    ) -> None:
+        '''
+        "Developer experience" sub-sys statuses.
+
+        '''
+        return self.log(17, msg)
 
     def log(
         self,
@@ -136,8 +151,7 @@ class StackLevelAdapter(logging.LoggerAdapter):
         if self.isEnabledFor(level):
             stacklevel: int = 3
             if (
-                level in LEVELS.values()
-                # or level in _custom_levels
+                level in CUSTOM_LEVELS.values()
             ):
                 stacklevel: int = 4
 
@@ -184,8 +198,30 @@ class StackLevelAdapter(logging.LoggerAdapter):
         )
 
 
+# TODO IDEAs:
+# -[ ] move to `.devx.pformat`?
+# -[ ] do per task-name and actor-name color coding
+# -[ ] unique color per task-id and actor-uuid
+def pformat_task_uid(
+    id_part: str = 'tail'
+):
+    '''
+    Return `str`-ified unique for a `trio.Task` via a combo of its
+    `.name: str` and `id()` truncated output.
+
+    '''
+    task: trio.Task = trio.lowlevel.current_task()
+    tid: str = str(id(task))
+    if id_part == 'tail':
+        tid_part: str = tid[-6:]
+    else:
+        tid_part: str = tid[:6]
+
+    return f'{task.name}[{tid_part}]'
+
+
 _conc_name_getters = {
-    'task': lambda: trio.lowlevel.current_task().name,
+    'task': pformat_task_uid,
     'actor': lambda: current_actor(),
     'actor_name': lambda: current_actor().name,
     'actor_uid': lambda: current_actor().uid[1][:6],
@@ -193,7 +229,10 @@ _conc_name_getters = {
 
 
 class ActorContextInfo(Mapping):
-    "Dyanmic lookup for local actor and task names"
+    '''
+    Dyanmic lookup for local actor and task names.
+
+    '''
     _context_keys = (
         'task',
         'actor',
@@ -224,6 +263,7 @@ def get_logger(
     '''Return the package log or a sub-logger for ``name`` if provided.
 
     '''
+    log: Logger
     log = rlog = logging.getLogger(_root_name)
 
     if (
@@ -266,7 +306,7 @@ def get_logger(
     logger = StackLevelAdapter(log, ActorContextInfo())
 
     # additional levels
-    for name, val in LEVELS.items():
+    for name, val in CUSTOM_LEVELS.items():
         logging.addLevelName(val, name)
 
         # ensure customs levels exist as methods
@@ -278,7 +318,7 @@ def get_logger(
 def get_console_log(
     level: str | None = None,
     **kwargs,
-) -> logging.LoggerAdapter:
+) -> LoggerAdapter:
     '''Get the package logger and enable a handler which writes to stderr.
 
     Yeah yeah, i know we can use ``DictConfig``. You do it.
@@ -303,7 +343,7 @@ def get_console_log(
             None,
         )
     ):
-        handler = logging.StreamHandler()
+        handler = StreamHandler()
         formatter = colorlog.ColoredFormatter(
             LOG_FORMAT,
             datefmt=DATE_FORMAT,
@@ -323,3 +363,19 @@ def get_loglevel() -> str:
 
 # global module logger for tractor itself
 log = get_logger('tractor')
+
+
+def at_least_level(
+    log: Logger|LoggerAdapter,
+    level: int|str,
+) -> bool:
+    '''
+    Predicate to test if a given level is active.
+
+    '''
+    if isinstance(level, str):
+        level: int = CUSTOM_LEVELS[level.upper()]
+
+    if log.getEffectiveLevel() <= level:
+        return True
+    return False

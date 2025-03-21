@@ -23,12 +23,31 @@ into each ``trio.Nursery`` except it links the lifetimes of memory space
 disjoint, parallel executing tasks in separate actors.
 
 '''
+from __future__ import annotations
+import multiprocessing as mp
 from signal import (
     signal,
     SIGUSR1,
 )
+import traceback
+from typing import TYPE_CHECKING
 
 import trio
+from tractor import (
+    _state,
+    log as logmod,
+)
+
+log = logmod.get_logger(__name__)
+
+
+if TYPE_CHECKING:
+    from tractor._spawn import ProcessType
+    from tractor import (
+        Actor,
+        ActorNursery,
+    )
+
 
 @trio.lowlevel.disable_ki_protection
 def dump_task_tree() -> None:
@@ -41,9 +60,15 @@ def dump_task_tree() -> None:
             recurse_child_tasks=True
         )
     )
-    log = get_console_log('cancel')
-    log.pdb(
-        f'Dumping `stackscope` tree:\n\n'
+    log = get_console_log(
+        name=__name__,
+        level='cancel',
+    )
+    actor: Actor = _state.current_actor()
+    log.devx(
+        f'Dumping `stackscope` tree for actor\n'
+        f'{actor.name}: {actor}\n'
+        f' |_{mp.current_process()}\n\n'
         f'{tree_str}\n'
     )
     # import logging
@@ -56,8 +81,13 @@ def dump_task_tree() -> None:
     #     ).exception("Error printing task tree")
 
 
-def signal_handler(sig: int, frame: object) -> None:
-    import traceback
+def signal_handler(
+    sig: int,
+    frame: object,
+
+    relay_to_subs: bool = True,
+
+) -> None:
     try:
         trio.lowlevel.current_trio_token(
         ).run_sync_soon(dump_task_tree)
@@ -65,6 +95,26 @@ def signal_handler(sig: int, frame: object) -> None:
         # not in async context -- print a normal traceback
         traceback.print_stack()
 
+    if not relay_to_subs:
+        return
+
+    an: ActorNursery
+    for an in _state.current_actor()._actoruid2nursery.values():
+
+        subproc: ProcessType
+        subactor: Actor
+        for subactor, subproc, _ in an._children.values():
+            log.devx(
+                f'Relaying `SIGUSR1`[{sig}] to sub-actor\n'
+                f'{subactor}\n'
+                f' |_{subproc}\n'
+            )
+
+            if isinstance(subproc, trio.Process):
+                subproc.send_signal(sig)
+
+            elif isinstance(subproc, mp.Process):
+                subproc._send_signal(sig)
 
 
 def enable_stack_on_sig(
@@ -82,3 +132,6 @@ def enable_stack_on_sig(
     # NOTE: not the above can be triggered from
     # a (xonsh) shell using:
     # kill -SIGUSR1 @$(pgrep -f '<cmd>')
+    #
+    # for example if you were looking to trace a `pytest` run
+    # kill -SIGUSR1 @$(pgrep -f 'pytest')

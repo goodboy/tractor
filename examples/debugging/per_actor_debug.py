@@ -23,5 +23,6 @@ async def main():
             n.start_soon(debug_actor.run, die)
             n.start_soon(crash_boi.run, die)
 
+
 if __name__ == '__main__':
     trio.run(main)
