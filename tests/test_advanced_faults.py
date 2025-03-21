@@ -95,6 +95,7 @@ def test_ipc_channel_break_during_stream(
     mod: ModuleType = import_path(
         examples_dir() / 'advanced_faults' / 'ipc_failure_during_stream.py',
         root=examples_dir(),
+        consider_namespace_packages=False,
     )
 
     # by def we expect KBI from user after a simulated "hang

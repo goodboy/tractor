@@ -32,7 +32,7 @@ async def main():
             try:
                 await p1.run(name_error)
             except tractor.RemoteActorError as rae:
-                assert rae.type is NameError
+                assert rae.boxed_type is NameError
 
             async for i in stream:
 

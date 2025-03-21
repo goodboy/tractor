@@ -58,15 +58,43 @@ class InternalError(RuntimeError):
     '''
 
 _body_fields: list[str] = [
-    'src_actor_uid',
+    'boxed_type',
+    'src_type',
+    # TODO: format this better if we're going to include it.
+    # 'relay_path',
+    'src_uid',
+
+    # only in sub-types
     'canceller',
     'sender',
 ]
 
 _msgdata_keys: list[str] = [
-    'type_str',
+    'boxed_type_str',
 ] + _body_fields
 
+
+def get_err_type(type_name: str) -> BaseException|None:
+    '''
+    Look up an exception type by name from the set of locally
+    known namespaces:
+
+    - `builtins`
+    - `tractor._exceptions`
+    - `trio`
+
+    '''
+    for ns in [
+        builtins,
+        _this_mod,
+        trio,
+    ]:
+        if type_ref := getattr(
+            ns,
+            type_name,
+            False,
+        ):
+            return type_ref
 
 
 # TODO: rename to just `RemoteError`?
@@ -81,13 +109,14 @@ class RemoteActorError(Exception):
 
     '''
     reprol_fields: list[str] = [
-        'src_actor_uid',
+        'src_uid',
+        'relay_path',
     ]
 
     def __init__(
         self,
         message: str,
-        suberror_type: Type[BaseException] | None = None,
+        boxed_type: Type[BaseException]|None = None,
         **msgdata
 
     ) -> None:
@@ -101,20 +130,112 @@ class RemoteActorError(Exception):
         # - .remote_type
         # also pertains to our long long oustanding issue XD
         # https://github.com/goodboy/tractor/issues/5
-        self.boxed_type: str = suberror_type
+        #
+        # TODO: always set ._boxed_type` as `None` by default
+        # and instead render if from `.boxed_type_str`?
+        self._boxed_type: BaseException = boxed_type
+        self._src_type: BaseException|None = None
         self.msgdata: dict[str, Any] = msgdata
 
-    @property
-    def type(self) -> str:
-        return self.boxed_type
+        # TODO: mask out eventually or place in `pack_error()`
+        # pre-`return` lines?
+        # sanity on inceptions
+        if boxed_type is RemoteActorError:
+            assert self.src_type_str != 'RemoteActorError'
+            assert self.src_uid not in self.relay_path
+
+        # ensure type-str matches and round-tripping from that
+        # str results in same error type.
+        #
+        # TODO NOTE: this is currently exclusively for the
+        # `ContextCancelled(boxed_type=trio.Cancelled)` case as is
+        # used inside `._rpc._invoke()` atm though probably we
+        # should better emphasize that special (one off?) case
+        # either by customizing `ContextCancelled.__init__()` or
+        # through a special factor func?
+        elif boxed_type:
+            if not self.msgdata.get('boxed_type_str'):
+                self.msgdata['boxed_type_str'] = str(
+                    type(boxed_type).__name__
+                )
+
+            assert self.boxed_type_str == self.msgdata['boxed_type_str']
+            assert self.boxed_type is boxed_type
 
     @property
-    def type_str(self) -> str:
-        return str(type(self.boxed_type).__name__)
+    def src_type_str(self) -> str:
+        '''
+        String-name of the source error's type.
+
+        This should be the same as `.boxed_type_str` when unpacked
+        at the first relay/hop's receiving actor.
+
+        '''
+        return self.msgdata['src_type_str']
 
     @property
-    def src_actor_uid(self) -> tuple[str, str]|None:
-        return self.msgdata.get('src_actor_uid')
+    def src_type(self) -> str:
+        '''
+        Error type raised by original remote faulting actor.
+
+        '''
+        if self._src_type is None:
+            self._src_type = get_err_type(
+                self.msgdata['src_type_str']
+            )
+
+        return self._src_type
+
+    @property
+    def boxed_type_str(self) -> str:
+        '''
+        String-name of the (last hop's) boxed error type.
+
+        '''
+        return self.msgdata['boxed_type_str']
+
+    @property
+    def boxed_type(self) -> str:
+        '''
+        Error type boxed by last actor IPC hop.
+
+        '''
+        if self._boxed_type is None:
+            self._boxed_type = get_err_type(
+                self.msgdata['boxed_type_str']
+            )
+
+        return self._boxed_type
+
+    @property
+    def relay_path(self) -> list[tuple]:
+        '''
+        Return the list of actors which consecutively relayed
+        a boxed `RemoteActorError` the src error up until THIS
+        actor's hop.
+
+        NOTE: a `list` field with the same name is expected to be
+        passed/updated in `.msgdata`.
+
+        '''
+        return self.msgdata['relay_path']
+
+    @property
+    def relay_uid(self) -> tuple[str, str]|None:
+        return tuple(
+            self.msgdata['relay_path'][-1]
+        )
+
+    @property
+    def src_uid(self) -> tuple[str, str]|None:
+        if src_uid := (
+            self.msgdata.get('src_uid')
+        ):
+            return tuple(src_uid)
+        # TODO: use path lookup instead?
+        # return tuple(
+        #     self.msgdata['relay_path'][0]
+        # )
 
     @property
     def tb_str(
@@ -129,28 +250,56 @@ class RemoteActorError(Exception):
 
         return ''
 
+    def _mk_fields_str(
+        self,
+        fields: list[str],
+        end_char: str = '\n',
+    ) -> str:
+        _repr: str = ''
+        for key in fields:
+            val: Any|None = (
+                getattr(self, key, None)
+                or
+                self.msgdata.get(key)
+            )
+            # TODO: for `.relay_path` on multiline?
+            # if not isinstance(val, str):
+            #     val_str = pformat(val)
+            # else:
+            val_str: str = repr(val)
+
+            if val:
+                _repr += f'{key}={val_str}{end_char}'
+
+        return _repr
+
     def reprol(self) -> str:
         '''
         Represent this error for "one line" display, like in
         a field of our `Context.__repr__()` output.
 
         '''
-        _repr: str = f'{type(self).__name__}('
-        for key in self.reprol_fields:
-            val: Any|None = self.msgdata.get(key)
-            if val:
-                _repr += f'{key}={repr(val)} '
-
-        return _repr
+        # TODO: use this matryoshka emjoi XD
+        # => 🪆
+        reprol_str: str = f'{type(self).__name__}('
+        _repr: str = self._mk_fields_str(
+            self.reprol_fields,
+            end_char=' ',
+        )
+        return (
+            reprol_str
+            +
+            _repr
+        )
 
     def __repr__(self) -> str:
+        '''
+        Nicely formatted boxed error meta data + traceback.
 
-        fields: str = ''
-        for key in _body_fields:
-            val: str|None = self.msgdata.get(key)
-            if val:
-                fields += f'{key}={val}\n'
-
+        '''
+        fields: str = self._mk_fields_str(
+            _body_fields,
+        )
         fields: str = textwrap.indent(
             fields,
             # prefix=' '*2,
@@ -165,8 +314,6 @@ class RemoteActorError(Exception):
             f'   ------ - ------\n'
             f' _|\n'
         )
-            # f'|\n'
-            # f'         |\n'
         if indent:
             body: str = textwrap.indent(
                 body,
@@ -178,9 +325,47 @@ class RemoteActorError(Exception):
             ')>'
         )
 
-    # TODO: local recontruction of remote exception deats
+    def unwrap(
+        self,
+    ) -> BaseException:
+        '''
+        Unpack the inner-most source error from it's original IPC msg data.
+
+        We attempt to reconstruct (as best as we can) the original
+        `Exception` from as it would have been raised in the
+        failing actor's remote env.
+
+        '''
+        src_type_ref: Type[BaseException] = self.src_type
+        if not src_type_ref:
+            raise TypeError(
+                'Failed to lookup src error type:\n'
+                f'{self.src_type_str}'
+            )
+
+        # TODO: better tb insertion and all the fancier dunder
+        # metadata stuff as per `.__context__` etc. and friends:
+        # https://github.com/python-trio/trio/issues/611
+        return src_type_ref(self.tb_str)
+
+    # TODO: local recontruction of nested inception for a given
+    # "hop" / relay-node in this error's relay_path?
+    # => so would render a `RAE[RAE[RAE[Exception]]]` instance
+    #   with all inner errors unpacked?
+    # -[ ] if this is useful shouldn't be too hard to impl right?
     # def unbox(self) -> BaseException:
-    #     ...
+    #     '''
+    #     Unbox to the prior relays (aka last boxing actor's)
+    #     inner error.
+
+    #     '''
+    #     if not self.relay_path:
+    #         return self.unwrap()
+
+    #     # TODO..
+    #     # return self.boxed_type(
+    #     #     boxed_type=get_type_ref(..
+    #     raise NotImplementedError
 
 
 class InternalActorError(RemoteActorError):
@@ -232,7 +417,7 @@ class ContextCancelled(RemoteActorError):
             f'{self}'
         )
 
-    # to make `.__repr__()` work uniformly
+    # TODO: to make `.__repr__()` work uniformly?
     # src_actor_uid = canceller
 
 
@@ -283,7 +468,8 @@ class MessagingError(Exception):
 
 
 def pack_error(
-    exc: BaseException,
+    exc: BaseException|RemoteActorError,
+
     tb: str|None = None,
     cid: str|None = None,
 
@@ -300,26 +486,55 @@ def pack_error(
     else:
         tb_str = traceback.format_exc()
 
-    error_msg: dict[
+    error_msg: dict[  # for IPC
         str,
         str | tuple[str, str]
-    ] = {
-        'tb_str': tb_str,
-        'type_str': type(exc).__name__,
-        'boxed_type': type(exc).__name__,
-        'src_actor_uid': current_actor().uid,
-    }
+    ] = {}
+    our_uid: tuple = current_actor().uid
 
-    # TODO: ?just wholesale proxy `.msgdata: dict`?
-    # XXX WARNING, when i swapped these ctx-semantics
-    # tests started hanging..???!!!???
-    # if msgdata := exc.getattr('msgdata', {}):
-    #     error_msg.update(msgdata)
     if (
-        isinstance(exc, ContextCancelled)
-        or isinstance(exc, StreamOverrun)
+        isinstance(exc, RemoteActorError)
     ):
         error_msg.update(exc.msgdata)
+
+    # an onion/inception we need to pack
+    if (
+        type(exc) is RemoteActorError
+        and (boxed := exc.boxed_type)
+        and boxed != RemoteActorError
+    ):
+        # sanity on source error (if needed when tweaking this)
+        assert (src_type := exc.src_type) != RemoteActorError
+        assert error_msg['src_type_str'] != 'RemoteActorError'
+        assert error_msg['src_type_str'] == src_type.__name__
+        assert error_msg['src_uid'] != our_uid
+
+        # set the boxed type to be another boxed type thus
+        # creating an "inception" when unpacked by
+        # `unpack_error()` in another actor who gets "relayed"
+        # this error Bo
+        #
+        # NOTE on WHY: since we are re-boxing and already
+        # boxed src error, we want to overwrite the original
+        # `boxed_type_str` and instead set it to the type of
+        # the input `exc` type.
+        error_msg['boxed_type_str'] = 'RemoteActorError'
+
+    else:
+        error_msg['src_uid'] = our_uid
+        error_msg['src_type_str'] =  type(exc).__name__
+        error_msg['boxed_type_str'] = type(exc).__name__
+
+    # XXX alawys append us the last relay in error propagation path
+    error_msg.setdefault(
+        'relay_path',
+        [],
+    ).append(our_uid)
+
+    # XXX NOTE: always ensure the traceback-str is from the
+    # locally raised error (**not** the prior relay's boxed
+    # content's `.msgdata`).
+    error_msg['tb_str'] = tb_str
 
     pkt: dict = {'error': error_msg}
     if cid:
@@ -329,7 +544,6 @@ def pack_error(
 
 
 def unpack_error(
-
     msg: dict[str, Any],
 
     chan: Channel|None = None,
@@ -357,35 +571,32 @@ def unpack_error(
 
     # retrieve the remote error's msg encoded details
     tb_str: str = error_dict.get('tb_str', '')
-    message: str = f'{chan.uid}\n' + tb_str
-    type_name: str = (
-        error_dict.get('type_str')
-        or error_dict['boxed_type']
+    message: str = (
+        f'{chan.uid}\n'
+        +
+        tb_str
     )
-    suberror_type: Type[BaseException] = Exception
 
-    if type_name == 'ContextCancelled':
+    # try to lookup a suitable error type from the local runtime
+    # env then use it to construct a local instance.
+    boxed_type_str: str = error_dict['boxed_type_str']
+    boxed_type: Type[BaseException] = get_err_type(boxed_type_str)
+
+    if boxed_type_str == 'ContextCancelled':
         box_type = ContextCancelled
-        suberror_type = box_type
+        assert boxed_type is box_type
 
-    else:  # try to lookup a suitable local error type
-        for ns in [
-            builtins,
-            _this_mod,
-            trio,
-        ]:
-            if suberror_type := getattr(
-                ns,
-                type_name,
-                False,
-            ):
-                break
+    # TODO: already included by `_this_mod` in else loop right?
+    #
+    # we have an inception/onion-error so ensure
+    # we include the relay_path info and the
+    # original source error.
+    elif boxed_type_str == 'RemoteActorError':
+        assert boxed_type is RemoteActorError
+        assert len(error_dict['relay_path']) >= 1
 
     exc = box_type(
         message,
-        suberror_type=suberror_type,
-
-        # unpack other fields into error type init
         **error_dict,
     )
 
@@ -500,6 +711,11 @@ def _raise_from_no_key_in_msg(
         # value out of the underlying feed mem chan which is
         # destined for the `Context.result()` call during ctx-exit!
         stream._eoc: Exception = eoc
+
+        # in case there already is some underlying remote error
+        # that arrived which is probably the source of this stream
+        # closure
+        ctx.maybe_raise()
 
         raise eoc from src_err
 
