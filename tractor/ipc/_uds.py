@@ -18,6 +18,8 @@ Unix Domain Socket implementation of tractor.ipc._transport.MsgTransport protoco
 
 '''
 from __future__ import annotations
+import tempfile
+from uuid import uuid4
 
 import trio
 
@@ -82,3 +84,11 @@ class MsgpackUDSStream(MsgpackTransport):
             stream.socket.getsockname(),
             stream.socket.getpeername(),
         )
+
+    @classmethod
+    def get_random_addr(self) -> str:
+        return f'{tempfile.gettempdir()}/{uuid4()}.sock'
+
+    @classmethod
+    def get_root_addr(self) -> str:
+        return 'tractor.sock'

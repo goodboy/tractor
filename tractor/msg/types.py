@@ -46,6 +46,7 @@ from msgspec import (
 from tractor.msg import (
     pretty_struct,
 )
+from tractor.ipc import AddressTypes
 from tractor.log import get_logger
 
 
@@ -167,8 +168,8 @@ class SpawnSpec(
 
     # TODO: not just sockaddr pairs?
     # -[ ] abstract into a `TransportAddr` type?
-    reg_addrs: list[tuple[str, int]]
-    bind_addrs: list[tuple[str, int]]
+    reg_addrs: list[AddressTypes]
+    bind_addrs: list[AddressTypes]
 
 
 # TODO: caps based RPC support in the payload?

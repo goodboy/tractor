@@ -18,15 +18,24 @@ from typing import Type, Union
 import trio
 import socket
 
-from ._transport import MsgTransport
+from ._transport import (
+    MsgTransportKey,
+    MsgTransport
+)
 from ._tcp import MsgpackTCPStream
 from ._uds import MsgpackUDSStream
 
 
+_msg_transports = [
+    MsgpackTCPStream,
+    MsgpackUDSStream
+]
+
+
 # manually updated list of all supported codec+transport types
-_msg_transports = {
-    ('msgpack', 'tcp'): MsgpackTCPStream,
-    ('msgpack', 'uds'): MsgpackUDSStream
+key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
+    cls.key(): cls
+    for cls in _msg_transports
 }
 
 
@@ -34,9 +43,15 @@ _msg_transports = {
 AddressTypes = Union[
     tuple([
         cls.address_type
-        for key, cls in _msg_transports.items()
+        for cls in _msg_transports
     ])
 ]
+
+
+default_lo_addrs: dict[MsgTransportKey, AddressTypes] = {
+    cls.key(): cls.get_root_addr()
+    for cls in _msg_transports
+}
 
 
 def transport_from_destaddr(
