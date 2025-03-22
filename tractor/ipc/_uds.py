@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 '''
-TCP implementation of tractor.ipc._transport.MsgTransport protocol 
+Unix Domain Socket implementation of tractor.ipc._transport.MsgTransport protocol 
 
 '''
 from __future__ import annotations
@@ -29,18 +29,15 @@ from tractor.ipc._transport import MsgpackTransport
 log = get_logger(__name__)
 
 
-# TODO: typing oddity.. not sure why we have to inherit here, but it
-# seems to be an issue with `get_msg_transport()` returning
-# a `Type[Protocol]`; probably should make a `mypy` issue?
-class MsgpackTCPStream(MsgpackTransport):
+class MsgpackUDSStream(MsgpackTransport):
     '''
     A ``trio.SocketStream`` delivering ``msgpack`` formatted data
     using the ``msgspec`` codec lib.
 
     '''
-    address_type = tuple[str, int]
-    layer_key: int = 4
-    name_key: str = 'tcp'
+    address_type = str
+    layer_key: int = 7
+    name_key: str = 'uds'
 
     # def __init__(
     #     self,
@@ -61,16 +58,16 @@ class MsgpackTCPStream(MsgpackTransport):
     @classmethod
     async def connect_to(
         cls,
-        destaddr: tuple[str, int],
+        filename: str,
         prefix_size: int = 4,
         codec: MsgCodec|None = None,
         **kwargs
-    ) -> MsgpackTCPStream:
-        stream = await trio.open_tcp_stream(
-            *destaddr,
+    ) -> MsgpackUDSStream:
+        stream = await trio.open_unix_socket(
+            filename,
             **kwargs
         )
-        return MsgpackTCPStream(
+        return MsgpackUDSStream(
             stream,
             prefix_size=prefix_size,
             codec=codec
@@ -80,13 +77,8 @@ class MsgpackTCPStream(MsgpackTransport):
     def get_stream_addrs(
         cls,
         stream: trio.SocketStream
-    ) -> tuple[
-        tuple[str, int],
-        tuple[str, int]
-    ]:
-        lsockname = stream.socket.getsockname()
-        rsockname = stream.socket.getpeername()
+    ) -> tuple[str, str]:
         return (
-            tuple(lsockname[:2]),
-            tuple(rsockname[:2]),
+            stream.socket.getsockname(),
+            stream.socket.getpeername(),
         )

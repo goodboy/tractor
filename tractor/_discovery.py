@@ -75,7 +75,7 @@ async def get_registry(
         # TODO: try to look pre-existing connection from
         # `Actor._peers` and use it instead?
         async with (
-            _connect_chan(host, port) as chan,
+            _connect_chan((host, port)) as chan,
             open_portal(chan) as regstr_ptl,
         ):
             yield regstr_ptl
@@ -93,7 +93,7 @@ async def get_root(
     assert host is not None
 
     async with (
-        _connect_chan(host, port) as chan,
+        _connect_chan((host, port)) as chan,
         open_portal(chan, **kwargs) as portal,
     ):
         yield portal
@@ -193,7 +193,7 @@ async def maybe_open_portal(
         pass
 
     if sockaddr:
-        async with _connect_chan(*sockaddr) as chan:
+        async with _connect_chan(sockaddr) as chan:
             async with open_portal(chan) as portal:
                 yield portal
     else:
@@ -316,6 +316,6 @@ async def wait_for_actor(
         # TODO: offer multi-portal yields in multi-homed case?
         sockaddr: tuple[str, int] = sockaddrs[-1]
 
-        async with _connect_chan(*sockaddr) as chan:
+        async with _connect_chan(sockaddr) as chan:
             async with open_portal(chan) as portal:
                 yield portal

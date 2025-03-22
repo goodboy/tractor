@@ -13,20 +13,26 @@
 
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-
 import platform
 
-from ._transport import MsgTransport as MsgTransport
+from ._transport import (
+    AddressType as AddressType,
+    MsgType as MsgType,
+    MsgTransport as MsgTransport,
+    MsgpackTransport as MsgpackTransport
+)
 
-from ._tcp import (
-    get_stream_addrs as get_stream_addrs,
-    MsgpackTCPStream as MsgpackTCPStream
+from ._tcp import MsgpackTCPStream as MsgpackTCPStream
+from ._uds import MsgpackUDSStream as MsgpackUDSStream
+
+from ._types import (
+    transport_from_destaddr as transport_from_destaddr,
+    transport_from_stream as transport_from_stream,
+    AddressTypes as AddressTypes
 )
 
 from ._chan import (
     _connect_chan as _connect_chan,
-    get_msg_transport as get_msg_transport,
     Channel as Channel
 )
 
