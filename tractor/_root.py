@@ -271,7 +271,7 @@ async def open_root_actor(
             # be better to eventually have a "discovery" protocol
             # with basic handshake instead?
             with trio.move_on_after(timeout):
-                async with _connect_chan(*addr):
+                async with _connect_chan(addr):
                     ponged_addrs.append(addr)
 
         except OSError:

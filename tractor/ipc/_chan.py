@@ -29,15 +29,15 @@ from pprint import pformat
 import typing
 from typing import (
     Any,
-    Type
 )
 
 import trio
 
 from tractor.ipc._transport import MsgTransport
-from tractor.ipc._tcp import (
-    MsgpackTCPStream,
-    get_stream_addrs
+from tractor.ipc._types import (
+    transport_from_destaddr,
+    transport_from_stream,
+    AddressTypes
 )
 from tractor.log import get_logger
 from tractor._exceptions import (
@@ -50,17 +50,6 @@ from tractor.msg import MsgCodec
 log = get_logger(__name__)
 
 _is_windows = platform.system() == 'Windows'
-
-
-def get_msg_transport(
-
-    key: tuple[str, str],
-
-) -> Type[MsgTransport]:
-
-    return {
-        ('msgpack', 'tcp'): MsgpackTCPStream,
-    }[key]
 
 
 class Channel:
@@ -77,10 +66,8 @@ class Channel:
     def __init__(
 
         self,
-        destaddr: tuple[str, int]|None,
-
-        msg_transport_type_key: tuple[str, str] = ('msgpack', 'tcp'),
-
+        destaddr: AddressTypes|None = None,
+        transport: MsgTransport|None = None,
         # TODO: optional reconnection support?
         # auto_reconnect: bool = False,
         # on_reconnect: typing.Callable[..., typing.Awaitable] = None,
@@ -90,13 +77,11 @@ class Channel:
         # self._recon_seq = on_reconnect
         # self._autorecon = auto_reconnect
 
-        self._destaddr = destaddr
-        self._transport_key = msg_transport_type_key
-
         # Either created in ``.connect()`` or passed in by
         # user in ``.from_stream()``.
-        self._stream: trio.SocketStream|None = None
-        self._transport: MsgTransport|None = None
+        self._transport: MsgTransport|None = transport
+
+        self._destaddr = destaddr if destaddr else self._transport.raddr
 
         # set after handshake - always uid of far end
         self.uid: tuple[str, str]|None = None
@@ -109,6 +94,10 @@ class Channel:
         # (possibly peer) cancellation of the far end actor
         # runtime.
         self._cancel_called: bool = False
+
+    @property
+    def stream(self) -> trio.abc.Stream | None:
+        return self._transport.stream if self._transport else None
 
     @property
     def msgstream(self) -> MsgTransport:
@@ -124,52 +113,31 @@ class Channel:
     @classmethod
     def from_stream(
         cls,
-        stream: trio.SocketStream,
-        **kwargs,
-
+        stream: trio.abc.Stream,
     ) -> Channel:
-
-        src, dst = get_stream_addrs(stream)
-        chan = Channel(
-            destaddr=dst,
-            **kwargs,
+        transport_cls = transport_from_stream(stream)
+        return Channel(
+            transport=transport_cls(stream)
         )
 
-        # set immediately here from provided instance
-        chan._stream: trio.SocketStream = stream
-        chan.set_msg_transport(stream)
-        return chan
+    @classmethod
+    async def from_destaddr(
+        cls,
+        destaddr: AddressTypes,
+        **kwargs
+    ) -> Channel:
+        transport_cls = transport_from_destaddr(destaddr)
+        transport = await transport_cls.connect_to(destaddr, **kwargs)
 
-    def set_msg_transport(
-        self,
-        stream: trio.SocketStream,
-        type_key: tuple[str, str]|None = None,
-
-        # XXX optionally provided codec pair for `msgspec`:
-        # https://jcristharif.com/msgspec/extending.html#mapping-to-from-native-types
-        codec: MsgCodec|None = None,
-
-    ) -> MsgTransport:
-        type_key = (
-            type_key
-            or
-            self._transport_key
+        log.transport(
+            f'Opened channel[{type(transport)}]: {transport.laddr} -> {transport.raddr}'
         )
-        # get transport type, then
-        self._transport = get_msg_transport(
-            type_key
-        # instantiate an instance of the msg-transport
-        )(
-            stream,
-            codec=codec,
-        )
-        return self._transport
+        return Channel(transport=transport)
 
     @cm
     def apply_codec(
         self,
         codec: MsgCodec,
-
     ) -> None:
         '''
         Temporarily override the underlying IPC msg codec for
@@ -189,7 +157,7 @@ class Channel:
             return '<Channel with inactive transport?>'
 
         return repr(
-            self._transport.stream.socket._sock
+            self._transport
         ).replace(  # type: ignore
             "socket.socket",
             "Channel",
@@ -202,30 +170,6 @@ class Channel:
     @property
     def raddr(self) -> tuple[str, int]|None:
         return self._transport.raddr if self._transport else None
-
-    async def connect(
-        self,
-        destaddr: tuple[Any, ...] | None = None,
-        **kwargs
-
-    ) -> MsgTransport:
-
-        if self.connected():
-            raise RuntimeError("channel is already connected?")
-
-        destaddr = destaddr or self._destaddr
-        assert isinstance(destaddr, tuple)
-
-        stream = await trio.open_tcp_stream(
-            *destaddr,
-            **kwargs
-        )
-        transport = self.set_msg_transport(stream)
-
-        log.transport(
-            f'Opened channel[{type(transport)}]: {self.laddr} -> {self.raddr}'
-        )
-        return transport
 
     # TODO: something like,
     # `pdbp.hideframe_on(errors=[MsgTypeError])`
@@ -388,17 +332,14 @@ class Channel:
 
 @acm
 async def _connect_chan(
-    host: str,
-    port: int
-
+    destaddr: AddressTypes
 ) -> typing.AsyncGenerator[Channel, None]:
     '''
     Create and connect a channel with disconnect on context manager
     teardown.
 
     '''
-    chan = Channel((host, port))
-    await chan.connect()
+    chan = await Channel.from_destaddr(destaddr)
     yield chan
     with trio.CancelScope(shield=True):
         await chan.aclose()

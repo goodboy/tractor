@@ -1040,10 +1040,7 @@ class Actor:
             # Connect back to the parent actor and conduct initial
             # handshake. From this point on if we error, we
             # attempt to ship the exception back to the parent.
-            chan = Channel(
-                destaddr=parent_addr,
-            )
-            await chan.connect()
+            chan = await Channel.from_destaddr(parent_addr)
 
             # TODO: move this into a `Channel.handshake()`?
             # Initial handshake: swap names.
