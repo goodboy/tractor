@@ -512,6 +512,7 @@ class RingBuffBytesSender(trio.abc.SendChannel[bytes]):
         msg: bytes = struct.pack("<I", len(value)) + value
         if self.batch_size == 1:
             await self._sender.send_all(msg)
+            return
 
         self._batch += msg
         self._batch_msg_len += 1
