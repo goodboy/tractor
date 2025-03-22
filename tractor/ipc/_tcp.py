@@ -90,3 +90,11 @@ class MsgpackTCPStream(MsgpackTransport):
             tuple(lsockname[:2]),
             tuple(rsockname[:2]),
         )
+
+    @classmethod
+    def get_random_addr(self) -> tuple[str, int]:
+        return (None, 0)
+
+    @classmethod
+    def get_root_addr(self) -> tuple[str, int]:
+        return ('127.0.0.1', 1616)

@@ -31,10 +31,6 @@ from collections.abc import (
     AsyncIterator,
 )
 import struct
-from typing import (
-    Any,
-    Callable,
-)
 
 import trio
 import msgspec
@@ -58,6 +54,10 @@ from tractor.msg import (
 log = get_logger(__name__)
 
 
+# (codec, transport)
+MsgTransportKey = tuple[str, str]
+
+
 # from tractor.msg.types import MsgType
 # ?TODO? this should be our `Union[*msgtypes.__spec__]` alias now right..?
 # => BLEH, except can't bc prots must inherit typevar or param-spec
@@ -77,6 +77,9 @@ class MsgTransport(Protocol[AddressType, MsgType]):
     drained: list[MsgType]
     address_type: ClassVar[Type[AddressType]]
 
+    codec_key: ClassVar[str]
+    name_key: ClassVar[str]
+
     # XXX: should this instead be called `.sendall()`?
     async def send(self, msg: MsgType) -> None:
         ...
@@ -94,6 +97,10 @@ class MsgTransport(Protocol[AddressType, MsgType]):
     # can't figure out it's a generator i guess?..?
     def drain(self) -> AsyncIterator[dict]:
         ...
+
+    @classmethod
+    def key(cls) -> MsgTransportKey:
+        return cls.codec_key, cls.name_key
 
     @property
     def laddr(self) -> AddressType:
@@ -124,6 +131,14 @@ class MsgTransport(Protocol[AddressType, MsgType]):
         the local and remote sides as a pair.
 
         '''
+        ...
+
+    @classmethod
+    def get_random_addr(self) -> AddressType:
+        ...
+
+    @classmethod
+    def get_root_addr(self) -> AddressType:
         ...
 
 
@@ -411,7 +426,7 @@ class MsgpackTransport(MsgTransport):
         #         __tracebackhide__: bool = False
         #     raise
 
-    async def recv(self) -> Any:
+    async def recv(self) -> msgtypes.MsgType:
         return await self._aiter_pkts.asend(None)
 
     async def drain(self) -> AsyncIterator[dict]:
