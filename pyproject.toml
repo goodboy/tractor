@@ -32,7 +32,7 @@ classifiers = [
   "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
-# trio runtime and friends
+  # trio runtime and friends
   # (poetry) proper range specs,
   # https://packaging.python.org/en/latest/discussions/install-requires-vs-requirements/#id5
   # TODO, for 3.13 we must go go `0.27` which means we have to
@@ -40,16 +40,12 @@ dependencies = [
   # trio='^0.27'
   "trio>=0.24,<0.25",
   "tricycle>=0.4.1,<0.5",
-  "trio-typing>=0.10.0,<0.11",
-
   "wrapt>=1.16.0,<2",
   "colorlog>=6.8.2,<7",
-
-# built-in multi-actor `pdb` REPL
+  # built-in multi-actor `pdb` REPL
   "pdbp>=1.5.0,<2",
-
-# typed IPC msging
-# TODO, get back on release once 3.13 support is out!
+  # typed IPC msging
+  # TODO, get back on release once 3.13 support is out!
   "msgspec",
 ]
 
