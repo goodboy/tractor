@@ -29,7 +29,6 @@ from .conftest import (
     _repl_fail_msg,
 )
 from .conftest import (
-    _ci_env,
     expect,
     in_prompt_msg,
     assert_before,

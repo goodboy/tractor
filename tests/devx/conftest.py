@@ -22,7 +22,7 @@ from tractor.devx._debug import (
     _repl_fail_msg as _repl_fail_msg,
     _ctlc_ignore_header as _ctlc_ignore_header,
 )
-from conftest import (
+from ..conftest import (
     _ci_env,
 )
 

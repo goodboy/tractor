@@ -19,7 +19,13 @@ import signal
 from .conftest import (
     expect,
     assert_before,
-    # in_prompt_msg,
+    in_prompt_msg,
+    PROMPT,
+    _pause_msg,
+)
+from pexpect.exceptions import (
+    # TIMEOUT,
+    EOF,
 )
 
 
@@ -118,3 +124,50 @@ def test_shield_pause(
             "'--uid', \"('hanger',",
         ]
     )
+
+
+def test_breakpoint_hook_restored(
+    spawn,
+):
+    '''
+    Ensures our actor runtime sets a custom `breakpoint()` hook
+    on open then restores the stdlib's default on close.
+
+    The hook state validation is done via `assert`s inside the
+    invoked script with only `breakpoint()` (not `tractor.pause()`)
+    calls used.
+
+    '''
+    child = spawn('restore_builtin_breakpoint')
+
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _pause_msg,
+            "<Task '__main__.main'",
+            "('root'",
+            "first bp, tractor hook set",
+        ]
+    )
+    child.sendline('c')
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            "last bp, stdlib hook restored",
+        ]
+    )
+
+    # since the stdlib hook was already restored there should be NO
+    # `tractor` `log.pdb()` content from console!
+    assert not in_prompt_msg(
+        child,
+        [
+            _pause_msg,
+            "<Task '__main__.main'",
+            "('root'",
+        ],
+    )
+    child.sendline('c')
+    child.expect(EOF)
