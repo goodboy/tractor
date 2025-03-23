@@ -77,8 +77,9 @@ from .ipc import Channel
 from ._addr import (
     AddressTypes,
     Address,
-    TCPAddress,
     wrap_address,
+    preferred_transport,
+    default_lo_addrs
 )
 from ._context import (
     mk_context,
@@ -1181,7 +1182,7 @@ class Actor:
 
         '''
         if listen_addrs is None:
-            listen_addrs = [TCPAddress.get_random()]
+            listen_addrs = default_lo_addrs([preferred_transport])
 
         else:
             listen_addrs: list[Address] = [
@@ -1217,6 +1218,8 @@ class Actor:
                 task_status.started(server_n)
 
         finally:
+            for addr in listen_addrs:
+                await addr.close_listener()
             # signal the server is down since nursery above terminated
             self._server_down.set()
 

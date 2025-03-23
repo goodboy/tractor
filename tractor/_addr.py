@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from __future__ import annotations
+import os
 import tempfile
 from uuid import uuid4
 from typing import (
@@ -77,6 +78,9 @@ class Address(Protocol[
         ...
 
     async def open_listener(self, **kwargs) -> ListenerType:
+        ...
+
+    async def close_listener(self):
         ...
 
 
@@ -162,6 +166,9 @@ class TCPAddress(Address[
         self._host, self._port = listener.socket.getsockname()[:2]
         return listener
 
+    async def close_listener(self):
+        ...
+
 
 class UDSAddress(Address[
     None,
@@ -195,8 +202,8 @@ class UDSAddress(Address[
         return self._filepath
 
     @classmethod
-    def get_random(cls, _ns: None = None) -> UDSAddress:
-        return UDSAddress(f'{tempfile.gettempdir()}/{uuid4().sock}')
+    def get_random(cls, namespace: None = None) -> UDSAddress:
+        return UDSAddress(f'{tempfile.gettempdir()}/{uuid4()}.sock')
 
     @classmethod
     def get_root(cls) -> Address:
@@ -214,22 +221,24 @@ class UDSAddress(Address[
         return self._filepath == other._filepath
 
     async def open_stream(self, **kwargs) -> trio.SocketStream:
-        stream = await trio.open_tcp_stream(
+        stream = await trio.open_unix_socket(
             self._filepath,
             **kwargs
         )
-        self._binded = True
         return stream
 
     async def open_listener(self, **kwargs) -> trio.SocketListener:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(self._filepath)
-        sock.listen()
-        self._binded = True
-        return trio.SocketListener(sock)
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        await self._sock.bind(self._filepath)
+        self._sock.listen(1)
+        return trio.SocketListener(self._sock)
+
+    async def close_listener(self):
+        self._sock.close()
+        os.unlink(self._filepath)
 
 
-preferred_transport = 'tcp'
+preferred_transport = 'uds'
 
 
 _address_types = (

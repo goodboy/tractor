@@ -54,7 +54,7 @@ log = get_logger(__name__)
 
 
 @acm
-async def get_registry(addr: AddressTypes) -> AsyncGenerator[
+async def get_registry(addr: AddressTypes | None = None) -> AsyncGenerator[
     Portal | LocalPortal | None,
     None,
 ]:
