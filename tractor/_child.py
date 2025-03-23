@@ -31,7 +31,12 @@ def parse_uid(arg):
     return str(name), str(uuid)  # ensures str encoding
 
 def parse_ipaddr(arg):
-    return literal_eval(arg)
+    try:
+        return literal_eval(arg)
+
+    except (ValueError, SyntaxError):
+        # UDS: try to interpret as a straight up str
+        return arg
 
 
 if __name__ == "__main__":
