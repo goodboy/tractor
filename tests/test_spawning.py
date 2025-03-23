@@ -77,7 +77,7 @@ async def movie_theatre_question():
 async def test_movie_theatre_convo(start_method):
     """The main ``tractor`` routine.
     """
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery(debug_mode=True) as n:
 
         portal = await n.start_actor(
             'frank',

@@ -9,7 +9,7 @@ async def main(service_name):
     async with tractor.open_nursery() as an:
         await an.start_actor(service_name)
 
-        async with tractor.get_registry('127.0.0.1', 1616) as portal:
+        async with tractor.get_registry(('127.0.0.1', 1616)) as portal:
             print(f"Arbiter is listening on {portal.channel}")
 
         async with tractor.wait_for_actor(service_name) as sockaddr:

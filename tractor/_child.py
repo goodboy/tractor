@@ -31,8 +31,7 @@ def parse_uid(arg):
     return str(name), str(uuid)  # ensures str encoding
 
 def parse_ipaddr(arg):
-    host, port = literal_eval(arg)
-    return (str(host), int(port))
+    return literal_eval(arg)
 
 
 if __name__ == "__main__":

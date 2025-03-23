@@ -35,8 +35,12 @@ import trio
 
 from tractor.ipc._transport import MsgTransport
 from tractor.ipc._types import (
-    transport_from_destaddr,
+    transport_from_addr,
     transport_from_stream,
+)
+from tractor._addr import (
+    wrap_address,
+    Address,
     AddressTypes
 )
 from tractor.log import get_logger
@@ -66,7 +70,6 @@ class Channel:
     def __init__(
 
         self,
-        destaddr: AddressTypes|None = None,
         transport: MsgTransport|None = None,
         # TODO: optional reconnection support?
         # auto_reconnect: bool = False,
@@ -80,8 +83,6 @@ class Channel:
         # Either created in ``.connect()`` or passed in by
         # user in ``.from_stream()``.
         self._transport: MsgTransport|None = transport
-
-        self._destaddr = destaddr if destaddr else self._transport.raddr
 
         # set after handshake - always uid of far end
         self.uid: tuple[str, str]|None = None
@@ -121,13 +122,14 @@ class Channel:
         )
 
     @classmethod
-    async def from_destaddr(
+    async def from_addr(
         cls,
-        destaddr: AddressTypes,
+        addr: AddressTypes,
         **kwargs
     ) -> Channel:
-        transport_cls = transport_from_destaddr(destaddr)
-        transport = await transport_cls.connect_to(destaddr, **kwargs)
+        addr: Address = wrap_address(addr)
+        transport_cls = transport_from_addr(addr)
+        transport = await transport_cls.connect_to(addr, **kwargs)
 
         log.transport(
             f'Opened channel[{type(transport)}]: {transport.laddr} -> {transport.raddr}'
@@ -164,11 +166,11 @@ class Channel:
         )
 
     @property
-    def laddr(self) -> tuple[str, int]|None:
+    def laddr(self) -> Address|None:
         return self._transport.laddr if self._transport else None
 
     @property
-    def raddr(self) -> tuple[str, int]|None:
+    def raddr(self) -> Address|None:
         return self._transport.raddr if self._transport else None
 
     # TODO: something like,
@@ -205,7 +207,11 @@ class Channel:
                 # assert err
                 __tracebackhide__: bool = False
             else:
-                assert err.cid
+                try:
+                    assert err.cid
+
+                except KeyError:
+                    raise err
 
             raise
 
@@ -332,14 +338,14 @@ class Channel:
 
 @acm
 async def _connect_chan(
-    destaddr: AddressTypes
+    addr: AddressTypes
 ) -> typing.AsyncGenerator[Channel, None]:
     '''
     Create and connect a channel with disconnect on context manager
     teardown.
 
     '''
-    chan = await Channel.from_destaddr(destaddr)
+    chan = await Channel.from_addr(addr)
     yield chan
     with trio.CancelScope(shield=True):
         await chan.aclose()

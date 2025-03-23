@@ -37,6 +37,7 @@ from .log import (
 from . import _state
 from .devx import _debug
 from .to_asyncio import run_as_asyncio_guest
+from ._addr import AddressTypes
 from ._runtime import (
     async_main,
     Actor,
@@ -52,10 +53,10 @@ log = get_logger(__name__)
 def _mp_main(
 
     actor: Actor,
-    accept_addrs: list[tuple[str, int]],
+    accept_addrs: list[AddressTypes],
     forkserver_info: tuple[Any, Any, Any, Any, Any],
     start_method: SpawnMethodKey,
-    parent_addr: tuple[str, int] | None = None,
+    parent_addr: AddressTypes | None = None,
     infect_asyncio: bool = False,
 
 ) -> None:
@@ -206,7 +207,7 @@ def nest_from_op(
 def _trio_main(
     actor: Actor,
     *,
-    parent_addr: tuple[str, int] | None = None,
+    parent_addr: AddressTypes | None = None,
     infect_asyncio: bool = False,
 
 ) -> None:

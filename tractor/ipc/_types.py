@@ -13,49 +13,42 @@
 
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Type, Union
+from typing import Type
 
 import trio
 import socket
 
-from ._transport import (
+from tractor._addr import Address
+from tractor.ipc._transport import (
     MsgTransportKey,
     MsgTransport
 )
-from ._tcp import MsgpackTCPStream
-from ._uds import MsgpackUDSStream
+from tractor.ipc._tcp import MsgpackTCPStream
+from tractor.ipc._uds import MsgpackUDSStream
 
 
+# manually updated list of all supported msg transport types
 _msg_transports = [
     MsgpackTCPStream,
     MsgpackUDSStream
 ]
 
 
-# manually updated list of all supported codec+transport types
-key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
+# convert a MsgTransportKey to the corresponding transport type
+_key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
     cls.key(): cls
     for cls in _msg_transports
 }
 
-
-# all different address py types we use
-AddressTypes = Union[
-    tuple([
-        cls.address_type
-        for cls in _msg_transports
-    ])
-]
-
-
-default_lo_addrs: dict[MsgTransportKey, AddressTypes] = {
-    cls.key(): cls.get_root_addr()
+# convert an Address wrapper to its corresponding transport type
+_addr_to_transport: dict[Type[Address], Type[MsgTransport]] = {
+    cls.address_type: cls
     for cls in _msg_transports
 }
 
 
-def transport_from_destaddr(
-    destaddr: AddressTypes,
+def transport_from_addr(
+    addr: Address,
     codec_key: str = 'msgpack',
 ) -> Type[MsgTransport]:
     '''
@@ -63,23 +56,13 @@ def transport_from_destaddr(
     corresponding `MsgTransport` type.
 
     '''
-    match destaddr:
-        case str():
-            return MsgpackUDSStream
+    try:
+        return _addr_to_transport[type(addr)]
 
-        case tuple():
-            if (
-                len(destaddr) == 2
-                and
-                isinstance(destaddr[0], str)
-                and
-                isinstance(destaddr[1], int)
-            ):
-                return MsgpackTCPStream
-
-    raise NotImplementedError(
-        f'No known transport for address {destaddr}'
-    )
+    except KeyError:
+        raise NotImplementedError(
+            f'No known transport for address {repr(addr)}'
+        )
 
 
 def transport_from_stream(
@@ -113,4 +96,4 @@ def transport_from_stream(
 
     key = (codec_key, transport)
 
-    return _msg_transports[key]
+    return _key_to_transport[key]

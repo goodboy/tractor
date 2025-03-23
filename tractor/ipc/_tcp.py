@@ -23,6 +23,7 @@ import trio
 
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
+from tractor._addr import TCPAddress
 from tractor.ipc._transport import MsgpackTransport
 
 
@@ -38,9 +39,8 @@ class MsgpackTCPStream(MsgpackTransport):
     using the ``msgspec`` codec lib.
 
     '''
-    address_type = tuple[str, int]
+    address_type = TCPAddress
     layer_key: int = 4
-    name_key: str = 'tcp'
 
     # def __init__(
     #     self,
@@ -55,19 +55,32 @@ class MsgpackTCPStream(MsgpackTransport):
     #         codec=codec
     #     )
 
+    @property
+    def maddr(self) -> str:
+        host, port = self.raddr.unwrap()
+        return (
+            f'/ipv4/{host}'
+            f'/{self.address_type.name_key}/{port}'
+            # f'/{self.chan.uid[0]}'
+            # f'/{self.cid}'
+
+            # f'/cid={cid_head}..{cid_tail}'
+            # TODO: ? not use this ^ right ?
+        )
+
     def connected(self) -> bool:
         return self.stream.socket.fileno() != -1
 
     @classmethod
     async def connect_to(
         cls,
-        destaddr: tuple[str, int],
+        destaddr: TCPAddress,
         prefix_size: int = 4,
         codec: MsgCodec|None = None,
         **kwargs
     ) -> MsgpackTCPStream:
         stream = await trio.open_tcp_stream(
-            *destaddr,
+            *destaddr.unwrap(),
             **kwargs
         )
         return MsgpackTCPStream(
@@ -87,14 +100,6 @@ class MsgpackTCPStream(MsgpackTransport):
         lsockname = stream.socket.getsockname()
         rsockname = stream.socket.getpeername()
         return (
-            tuple(lsockname[:2]),
-            tuple(rsockname[:2]),
+            TCPAddress.from_addr(tuple(lsockname[:2])),
+            TCPAddress.from_addr(tuple(rsockname[:2])),
         )
-
-    @classmethod
-    def get_random_addr(self) -> tuple[str, int]:
-        return (None, 0)
-
-    @classmethod
-    def get_root_addr(self) -> tuple[str, int]:
-        return ('127.0.0.1', 1616)

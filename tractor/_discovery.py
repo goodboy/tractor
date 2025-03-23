@@ -30,6 +30,12 @@ from contextlib import asynccontextmanager as acm
 from tractor.log import get_logger
 from .trionics import gather_contexts
 from .ipc import _connect_chan, Channel
+from ._addr import (
+    AddressTypes,
+    Address,
+    preferred_transport,
+    wrap_address
+)
 from ._portal import (
     Portal,
     open_portal,
@@ -48,11 +54,7 @@ log = get_logger(__name__)
 
 
 @acm
-async def get_registry(
-    host: str,
-    port: int,
-
-) -> AsyncGenerator[
+async def get_registry(addr: AddressTypes) -> AsyncGenerator[
     Portal | LocalPortal | None,
     None,
 ]:
@@ -69,13 +71,13 @@ async def get_registry(
         # (likely a re-entrant call from the arbiter actor)
         yield LocalPortal(
             actor,
-            Channel((host, port))
+            await Channel.from_addr(addr)
         )
     else:
         # TODO: try to look pre-existing connection from
         # `Actor._peers` and use it instead?
         async with (
-            _connect_chan((host, port)) as chan,
+            _connect_chan(addr) as chan,
             open_portal(chan) as regstr_ptl,
         ):
             yield regstr_ptl
@@ -89,11 +91,10 @@ async def get_root(
 
     # TODO: rename mailbox to `_root_maddr` when we finally
     # add and impl libp2p multi-addrs?
-    host, port = _runtime_vars['_root_mailbox']
-    assert host is not None
+    addr = _runtime_vars['_root_mailbox']
 
     async with (
-        _connect_chan((host, port)) as chan,
+        _connect_chan(addr) as chan,
         open_portal(chan, **kwargs) as portal,
     ):
         yield portal
@@ -140,10 +141,10 @@ def get_peer_by_name(
 @acm
 async def query_actor(
     name: str,
-    regaddr: tuple[str, int]|None = None,
+    regaddr: AddressTypes|None = None,
 
 ) -> AsyncGenerator[
-    tuple[str, int]|None,
+    AddressTypes|None,
     None,
 ]:
     '''
@@ -169,31 +170,31 @@ async def query_actor(
         return
 
     reg_portal: Portal
-    regaddr: tuple[str, int] = regaddr or actor.reg_addrs[0]
-    async with get_registry(*regaddr) as reg_portal:
+    regaddr: Address = wrap_address(regaddr) or actor.reg_addrs[0]
+    async with get_registry(regaddr) as reg_portal:
         # TODO: return portals to all available actors - for now
         # just the last one that registered
-        sockaddr: tuple[str, int] = await reg_portal.run_from_ns(
+        addr: AddressTypes = await reg_portal.run_from_ns(
             'self',
             'find_actor',
             name=name,
         )
-        yield sockaddr
+        yield addr
 
 
 @acm
 async def maybe_open_portal(
-    addr: tuple[str, int],
+    addr: AddressTypes,
     name: str,
 ):
     async with query_actor(
         name=name,
         regaddr=addr,
-    ) as sockaddr:
+    ) as addr:
         pass
 
-    if sockaddr:
-        async with _connect_chan(sockaddr) as chan:
+    if addr:
+        async with _connect_chan(addr) as chan:
             async with open_portal(chan) as portal:
                 yield portal
     else:
@@ -203,7 +204,8 @@ async def maybe_open_portal(
 @acm
 async def find_actor(
     name: str,
-    registry_addrs: list[tuple[str, int]]|None = None,
+    registry_addrs: list[AddressTypes]|None = None,
+    enable_transports: list[str] = [preferred_transport],
 
     only_first: bool = True,
     raise_on_none: bool = False,
@@ -230,15 +232,15 @@ async def find_actor(
         # XXX NOTE: make sure to dynamically read the value on
         # every call since something may change it globally (eg.
         # like in our discovery test suite)!
-        from . import _root
+        from ._addr import default_lo_addrs
         registry_addrs = (
             _runtime_vars['_registry_addrs']
             or
-            _root._default_lo_addrs
+            default_lo_addrs(enable_transports)
         )
 
     maybe_portals: list[
-        AsyncContextManager[tuple[str, int]]
+        AsyncContextManager[AddressTypes]
     ] = list(
         maybe_open_portal(
             addr=addr,
@@ -280,7 +282,7 @@ async def find_actor(
 @acm
 async def wait_for_actor(
     name: str,
-    registry_addr: tuple[str, int] | None = None,
+    registry_addr: AddressTypes | None = None,
 
 ) -> AsyncGenerator[Portal, None]:
     '''
@@ -297,7 +299,7 @@ async def wait_for_actor(
             yield peer_portal
             return
 
-    regaddr: tuple[str, int] = (
+    regaddr: AddressTypes = (
         registry_addr
         or
         actor.reg_addrs[0]
@@ -305,8 +307,8 @@ async def wait_for_actor(
     # TODO: use `.trionics.gather_contexts()` like
     # above in `find_actor()` as well?
     reg_portal: Portal
-    async with get_registry(*regaddr) as reg_portal:
-        sockaddrs = await reg_portal.run_from_ns(
+    async with get_registry(regaddr) as reg_portal:
+        addrs = await reg_portal.run_from_ns(
             'self',
             'wait_for_actor',
             name=name,
@@ -314,8 +316,8 @@ async def wait_for_actor(
 
         # get latest registered addr by default?
         # TODO: offer multi-portal yields in multi-homed case?
-        sockaddr: tuple[str, int] = sockaddrs[-1]
+        addr: AddressTypes = addrs[-1]
 
-        async with _connect_chan(sockaddr) as chan:
+        async with _connect_chan(addr) as chan:
             async with open_portal(chan) as portal:
                 yield portal
