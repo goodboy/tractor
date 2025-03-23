@@ -50,6 +50,7 @@ from tractor.msg import (
     types as msgtypes,
     pretty_struct,
 )
+from tractor._addr import Address
 
 log = get_logger(__name__)
 
@@ -62,12 +63,11 @@ MsgTransportKey = tuple[str, str]
 # ?TODO? this should be our `Union[*msgtypes.__spec__]` alias now right..?
 # => BLEH, except can't bc prots must inherit typevar or param-spec
 #   vars..
-AddressType = TypeVar('AddressType')
 MsgType = TypeVar('MsgType')
 
 
 @runtime_checkable
-class MsgTransport(Protocol[AddressType, MsgType]):
+class MsgTransport(Protocol[MsgType]):
 #
 # ^-TODO-^ consider using a generic def and indexing with our
 # eventual msg definition/types?
@@ -75,10 +75,9 @@ class MsgTransport(Protocol[AddressType, MsgType]):
 
     stream: trio.SocketStream
     drained: list[MsgType]
-    address_type: ClassVar[Type[AddressType]]
 
+    address_type: ClassVar[Type[Address]]
     codec_key: ClassVar[str]
-    name_key: ClassVar[str]
 
     # XXX: should this instead be called `.sendall()`?
     async def send(self, msg: MsgType) -> None:
@@ -100,20 +99,24 @@ class MsgTransport(Protocol[AddressType, MsgType]):
 
     @classmethod
     def key(cls) -> MsgTransportKey:
-        return cls.codec_key, cls.name_key
+        return cls.codec_key, cls.address_type.name_key
 
     @property
-    def laddr(self) -> AddressType:
+    def laddr(self) -> Address:
         ...
 
     @property
-    def raddr(self) -> AddressType:
+    def raddr(self) -> Address:
+        ...
+
+    @property
+    def maddr(self) -> str:
         ...
 
     @classmethod
     async def connect_to(
         cls,
-        destaddr: AddressType,
+        addr: Address,
         **kwargs
     ) -> MsgTransport:
         ...
@@ -123,22 +126,14 @@ class MsgTransport(Protocol[AddressType, MsgType]):
         cls,
         stream: trio.abc.Stream
     ) -> tuple[
-        AddressType,  # local
-        AddressType   # remote
+        Address,  # local
+        Address   # remote
     ]:
         '''
         Return the `trio` streaming transport prot's addrs for both
         the local and remote sides as a pair.
 
         '''
-        ...
-
-    @classmethod
-    def get_random_addr(self) -> AddressType:
-        ...
-
-    @classmethod
-    def get_root_addr(self) -> AddressType:
         ...
 
 
@@ -447,9 +442,9 @@ class MsgpackTransport(MsgTransport):
         return self._aiter_pkts
 
     @property
-    def laddr(self) -> AddressType:
+    def laddr(self) -> Address:
         return self._laddr
 
     @property
-    def raddr(self) -> AddressType:
+    def raddr(self) -> Address:
         return self._raddr

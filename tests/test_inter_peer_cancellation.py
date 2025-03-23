@@ -871,7 +871,7 @@ async def serve_subactors(
                 )
                 await ipc.send((
                     peer.chan.uid,
-                    peer.chan.raddr,
+                    peer.chan.raddr.unwrap(),
                 ))
 
         print('Spawner exiting spawn serve loop!')

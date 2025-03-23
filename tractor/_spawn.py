@@ -46,6 +46,7 @@ from tractor._state import (
     _runtime_vars,
 )
 from tractor.log import get_logger
+from tractor._addr import AddressTypes
 from tractor._portal import Portal
 from tractor._runtime import Actor
 from tractor._entry import _mp_main
@@ -392,8 +393,8 @@ async def new_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addrs: list[tuple[str, int]],
-    parent_addr: tuple[str, int],
+    bind_addrs: list[AddressTypes],
+    parent_addr: AddressTypes,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
 
     *,
@@ -431,8 +432,8 @@ async def trio_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addrs: list[tuple[str, int]],
-    parent_addr: tuple[str, int],
+    bind_addrs: list[AddressTypes],
+    parent_addr: AddressTypes,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
@@ -520,15 +521,15 @@ async def trio_proc(
 
         # send a "spawning specification" which configures the
         # initial runtime state of the child.
-        await chan.send(
-            SpawnSpec(
-                _parent_main_data=subactor._parent_main_data,
-                enable_modules=subactor.enable_modules,
-                reg_addrs=subactor.reg_addrs,
-                bind_addrs=bind_addrs,
-                _runtime_vars=_runtime_vars,
-            )
+        sspec = SpawnSpec(
+            _parent_main_data=subactor._parent_main_data,
+            enable_modules=subactor.enable_modules,
+            reg_addrs=subactor.reg_addrs,
+            bind_addrs=bind_addrs,
+            _runtime_vars=_runtime_vars,
         )
+        log.runtime(f'Sending spawn spec: {str(sspec)}')
+        await chan.send(sspec)
 
         # track subactor in current nursery
         curr_actor: Actor = current_actor()
@@ -638,8 +639,8 @@ async def mp_proc(
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
     # passed through to actor main
-    bind_addrs: list[tuple[str, int]],
-    parent_addr: tuple[str, int],
+    bind_addrs: list[AddressTypes],
+    parent_addr: AddressTypes,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,

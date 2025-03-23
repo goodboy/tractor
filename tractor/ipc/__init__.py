@@ -17,7 +17,6 @@ import platform
 
 from ._transport import (
     MsgTransportKey as MsgTransportKey,
-    AddressType as AddressType,
     MsgType as MsgType,
     MsgTransport as MsgTransport,
     MsgpackTransport as MsgpackTransport
@@ -27,10 +26,8 @@ from ._tcp import MsgpackTCPStream as MsgpackTCPStream
 from ._uds import MsgpackUDSStream as MsgpackUDSStream
 
 from ._types import (
-    default_lo_addrs as default_lo_addrs,
-    transport_from_destaddr as transport_from_destaddr,
+    transport_from_addr as transport_from_addr,
     transport_from_stream as transport_from_stream,
-    AddressTypes as AddressTypes
 )
 
 from ._chan import (

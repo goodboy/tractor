@@ -18,13 +18,12 @@ Unix Domain Socket implementation of tractor.ipc._transport.MsgTransport protoco
 
 '''
 from __future__ import annotations
-import tempfile
-from uuid import uuid4
 
 import trio
 
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
+from tractor._addr import UDSAddress
 from tractor.ipc._transport import MsgpackTransport
 
 
@@ -37,9 +36,8 @@ class MsgpackUDSStream(MsgpackTransport):
     using the ``msgspec`` codec lib.
 
     '''
-    address_type = str
+    address_type = UDSAddress
     layer_key: int = 7
-    name_key: str = 'uds'
 
     # def __init__(
     #     self,
@@ -54,19 +52,32 @@ class MsgpackUDSStream(MsgpackTransport):
     #         codec=codec
     #     )
 
+    @property
+    def maddr(self) -> str:
+        filepath = self.raddr.unwrap()
+        return (
+            f'/ipv4/localhost'
+            f'/{self.address_type.name_key}/{filepath}'
+            # f'/{self.chan.uid[0]}'
+            # f'/{self.cid}'
+
+            # f'/cid={cid_head}..{cid_tail}'
+            # TODO: ? not use this ^ right ?
+        )
+
     def connected(self) -> bool:
         return self.stream.socket.fileno() != -1
 
     @classmethod
     async def connect_to(
         cls,
-        filename: str,
+        addr: UDSAddress,
         prefix_size: int = 4,
         codec: MsgCodec|None = None,
         **kwargs
     ) -> MsgpackUDSStream:
         stream = await trio.open_unix_socket(
-            filename,
+            addr.unwrap(),
             **kwargs
         )
         return MsgpackUDSStream(
@@ -79,16 +90,8 @@ class MsgpackUDSStream(MsgpackTransport):
     def get_stream_addrs(
         cls,
         stream: trio.SocketStream
-    ) -> tuple[str, str]:
+    ) -> tuple[UDSAddress, UDSAddress]:
         return (
-            stream.socket.getsockname(),
-            stream.socket.getpeername(),
+            UDSAddress.from_addr(stream.socket.getsockname()),
+            UDSAddress.from_addr(stream.socket.getsockname()),
         )
-
-    @classmethod
-    def get_random_addr(self) -> str:
-        return f'{tempfile.gettempdir()}/{uuid4()}.sock'
-
-    @classmethod
-    def get_root_addr(self) -> str:
-        return 'tractor.sock'

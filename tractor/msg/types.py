@@ -46,8 +46,8 @@ from msgspec import (
 from tractor.msg import (
     pretty_struct,
 )
-from tractor.ipc import AddressTypes
 from tractor.log import get_logger
+from tractor._addr import AddressTypes
 
 
 log = get_logger('tractor.msgspec')

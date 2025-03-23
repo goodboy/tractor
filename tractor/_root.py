@@ -43,19 +43,16 @@ from .devx import _debug
 from . import _spawn
 from . import _state
 from . import log
-from .ipc import _connect_chan
+from .ipc import (
+    _connect_chan,
+)
+from ._addr import (
+    AddressTypes,
+    wrap_address,
+    preferred_transport,
+    default_lo_addrs
+)
 from ._exceptions import is_multi_cancelled
-
-
-# set at startup and after forks
-_default_host: str = '127.0.0.1'
-_default_port: int = 1616
-
-# default registry always on localhost
-_default_lo_addrs: list[tuple[str, int]] = [(
-    _default_host,
-    _default_port,
-)]
 
 
 logger = log.get_logger('tractor')
@@ -66,10 +63,12 @@ async def open_root_actor(
 
     *,
     # defaults are above
-    registry_addrs: list[tuple[str, int]]|None = None,
+    registry_addrs: list[AddressTypes]|None = None,
 
     # defaults are above
-    arbiter_addr: tuple[str, int]|None = None,
+    arbiter_addr: tuple[AddressTypes]|None = None,
+
+    enable_transports: list[str] = [preferred_transport],
 
     name: str|None = 'root',
 
@@ -195,11 +194,9 @@ async def open_root_actor(
         )
         registry_addrs = [arbiter_addr]
 
-    registry_addrs: list[tuple[str, int]] = (
-        registry_addrs
-        or
-        _default_lo_addrs
-    )
+    if not registry_addrs:
+        registry_addrs: list[AddressTypes] = default_lo_addrs(enable_transports)
+
     assert registry_addrs
 
     loglevel = (
@@ -248,10 +245,10 @@ async def open_root_actor(
         enable_stack_on_sig()
 
     # closed into below ping task-func
-    ponged_addrs: list[tuple[str, int]] = []
+    ponged_addrs: list[AddressTypes] = []
 
     async def ping_tpt_socket(
-        addr: tuple[str, int],
+        addr: AddressTypes,
         timeout: float = 1,
     ) -> None:
         '''
@@ -284,10 +281,10 @@ async def open_root_actor(
         for addr in registry_addrs:
             tn.start_soon(
                 ping_tpt_socket,
-                tuple(addr),  # TODO: just drop this requirement?
+                addr,
             )
 
-    trans_bind_addrs: list[tuple[str, int]] = []
+    trans_bind_addrs: list[AddressTypes] = []
 
     # Create a new local root-actor instance which IS NOT THE
     # REGISTRAR
@@ -311,9 +308,12 @@ async def open_root_actor(
         )
         # DO NOT use the registry_addrs as the transport server
         # addrs for this new non-registar, root-actor.
-        for host, port in ponged_addrs:
-            # NOTE: zero triggers dynamic OS port allocation
-            trans_bind_addrs.append((host, 0))
+        for addr in ponged_addrs:
+            waddr = wrap_address(addr)
+            print(waddr)
+            trans_bind_addrs.append(
+                waddr.get_random(namespace=waddr.namespace)
+            )
 
     # Start this local actor as the "registrar", aka a regular
     # actor who manages the local registry of "mailboxes" of
@@ -322,7 +322,7 @@ async def open_root_actor(
 
         # NOTE that if the current actor IS THE REGISTAR, the
         # following init steps are taken:
-        # - the tranport layer server is bound to each (host, port)
+        # - the tranport layer server is bound to each addr
         #   pair defined in provided registry_addrs, or the default.
         trans_bind_addrs = registry_addrs
 
@@ -462,7 +462,7 @@ def run_daemon(
 
     # runtime kwargs
     name: str | None = 'root',
-    registry_addrs: list[tuple[str, int]] = _default_lo_addrs,
+    registry_addrs: list[AddressTypes]|None = None,
 
     start_method: str | None = None,
     debug_mode: bool = False,

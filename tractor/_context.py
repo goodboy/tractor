@@ -859,19 +859,10 @@ class Context:
     @property
     def dst_maddr(self) -> str:
         chan: Channel = self.chan
-        dst_addr, dst_port = chan.raddr
         trans: MsgTransport = chan.transport
         # cid: str = self.cid
         # cid_head, cid_tail = cid[:6], cid[-6:]
-        return (
-            f'/ipv4/{dst_addr}'
-            f'/{trans.name_key}/{dst_port}'
-            # f'/{self.chan.uid[0]}'
-            # f'/{self.cid}'
-
-            # f'/cid={cid_head}..{cid_tail}'
-            # TODO: ? not use this ^ right ?
-        )
+        return trans.maddr
 
     dmaddr = dst_maddr
 

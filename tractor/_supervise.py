@@ -28,7 +28,13 @@ import warnings
 
 import trio
 
+
 from .devx._debug import maybe_wait_for_debugger
+from ._addr import (
+    AddressTypes,
+    preferred_transport,
+    get_address_cls
+)
 from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
 from ._runtime import Actor
@@ -46,8 +52,6 @@ if TYPE_CHECKING:
     import multiprocessing as mp
 
 log = get_logger(__name__)
-
-_default_bind_addr: tuple[str, int] = ('127.0.0.1', 0)
 
 
 class ActorNursery:
@@ -130,8 +134,9 @@ class ActorNursery:
 
         *,
 
-        bind_addrs: list[tuple[str, int]] = [_default_bind_addr],
+        bind_addrs: list[AddressTypes]|None = None,
         rpc_module_paths: list[str]|None = None,
+        enable_transports: list[str] = [preferred_transport],
         enable_modules: list[str]|None = None,
         loglevel: str|None = None,  # set log level per subactor
         debug_mode: bool|None = None,
@@ -155,6 +160,12 @@ class ActorNursery:
             or self._actor.loglevel
             or get_loglevel()
         )
+
+        if not bind_addrs:
+            bind_addrs: list[AddressTypes] = [
+                get_address_cls(transport).get_random().unwrap()
+                for transport in enable_transports
+            ]
 
         # configure and pass runtime state
         _rtv = _state._runtime_vars.copy()
@@ -224,7 +235,7 @@ class ActorNursery:
         *,
 
         name: str | None = None,
-        bind_addrs: tuple[str, int] = [_default_bind_addr],
+        bind_addrs: AddressTypes|None = None,
         rpc_module_paths: list[str] | None = None,
         enable_modules: list[str] | None = None,
         loglevel: str | None = None,  # set log level per subactor
