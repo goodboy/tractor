@@ -1,8 +1,0 @@
-pytest
-pytest-trio
-pytest-timeout
-pdbp
-mypy
-trio_typing
-pexpect
-towncrier
