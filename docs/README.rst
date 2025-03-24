@@ -1,10 +1,9 @@
-|logo| ``tractor``: next-gen Python parallelism
+|logo| ``tractor``: distributed structurred concurrency
 
 |gh_actions|
 |docs|
 
-``tractor`` is a `structured concurrency`_ (SC), (optionally
-distributed_) multi-processing_ runtime built on trio_.
+``tractor`` is a `structured concurrency`_ (SC), multi-processing_ runtime built on trio_.
 
 Fundamentally, ``tractor`` provides parallelism via
 ``trio``-"*actors*": independent Python *processes* (currently
@@ -46,14 +45,25 @@ Features
 - A modular transport stack, allowing for custom interchange formats (eg.
   as offered from `msgspec`_), varied transport protocols (TCP, RUDP), and
   OS-env specific higher perf IPC primitives (like shared-mem buffers).
-- Builtin streaming API with task fan-out `broadcasting`_.
-- A "native" and multi-core-safe debugger REPL using `pdbp`_ (a fork
-  & fix of `pdb++`_ thanks to @mdmintz!)
+- optionally distributed_; all IPC and RPC works over multi-host
+  transports the same as for localhost.
+- A high-level builtin streaming API that enables your app to easily
+  leverage the benefits of a "`cheap or nasty`_" `(un)protocol`_.
+- "native UX" for a multicore-safe debugger REPL using `pdbp`_ (a
+  fork & fix of `pdb++`_)
 - "infected ``asyncio``" mode: support for starting each
   ``tractor.Actor`` to run as a guest on the ``asyncio`` loop
   allowing us to provide stringent SC-style ``trio.Task``-supervision
   around any ``asyncio.Task`` spawned via our ``tractor.to_asyncio``
   APIs.
+- various ``trio`` extension APIs via ``tractor.trionics`` such as,
+  - task fan-out `broadcasting`_,
+  - multi-task-single-resource-caching and fan-out-to-multi ``__aenter__()``
+    APIs for ``@acm`` functions (``contextlib.asynccontextmanager``),
+  - (WIP) a ``TaskMngr``: one-cancels-one style nursery supervisor.
+- a **very naive** and still very much work-in-progress inter-actor
+  `discovery`_ sys with plans to support multiple `modern protocol`_
+  approaches.
 
 
 Install
@@ -658,8 +668,12 @@ channel`_!
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
 .. _broadcasting: https://github.com/goodboy/tractor/pull/229
+.. _modern procotol: https://en.wikipedia.org/wiki/Rendezvous_protocol
 .. _pdbp: https://github.com/mdmintz/pdbp
 .. _pdb++: https://github.com/pdbpp/pdbpp
+.. _cheap or nasty: https://zguide.zeromq.org/docs/chapter7/#The-Cheap-or-Nasty-Pattern
+.. _(un)protocol: https://zguide.zeromq.org/docs/chapter7/#Unprotocols
+.. _discovery: https://zguide.zeromq.org/docs/chapter8/#Discovery
 .. _guest mode: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
 .. _messages: https://en.wikipedia.org/wiki/Message_passing
 .. _trio docs: https://trio.readthedocs.io/en/latest/
