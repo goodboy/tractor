@@ -6,18 +6,18 @@
 ``tractor`` is a `structured concurrency`_ (SC), multi-processing_ runtime built on trio_.
 
 Fundamentally, ``tractor`` provides parallelism via
-``trio``-"*actors*": independent Python *processes* (currently
-*non-shared-memory threads*) which schedule ``trio`` tasks that
-maintain SC *end-to-end* inside a *distributed supervision tree*.
+``trio``-"*actors*": independent Python **processes** (i.e.
+*non-shared-memory threads*) which can schedule ``trio`` tasks whilst
+maintaining *end-to-end SC* inside a *distributed supervision tree*.
 
 Cross-process (and thus cross-host) SC is accomplished through the
 combined use of our,
 
 - "actor nurseries_" which provide for spawning multiple, and
-  possibly nested, Python process trees each running a ``trio``
-  scheduled runtime - a call to ``trio.run()``,
-- an "SC-transitive supervision protocol" implemented as an
-  IPC-message-spec enforced around each RPC-dialog.
+  possibly nested, Python processes each running a ``trio`` scheduled
+  runtime - a call to ``trio.run()``,
+- an "SC-transitive supervision protocol" enforced as an
+  IPC-message-spec encapsulating all RPC-dialogs.
 
 We believe the system adheres to the `3 axioms`_ of an "`actor model`_"
 but likely **does not** look like what **you** probably *think* an "actor
@@ -30,6 +30,7 @@ The first step to grok ``tractor`` is to get an intermediate
 knowledge of ``trio`` and **structured concurrency** B)
 
 Some great places to start are,
+
 - the seminal `blog post`_
 - obviously the `trio docs`_
 - wikipedia's nascent SC_ page
@@ -39,7 +40,7 @@ Some great places to start are,
 Features
 --------
 - **It's just** a ``trio`` API!
-- *Infinitely nesteable* process running embedded ``trio.Task`` trees.
+- *Infinitely nesteable* process trees running embedded ``trio`` tasks.
 - Support for a swappable, OS-specific, process spawning via
   multiple backends.
 - A modular transport stack, allowing for custom interchange formats (eg.
