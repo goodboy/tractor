@@ -3,18 +3,22 @@
 |gh_actions|
 |docs|
 
-``tractor`` is a `structured concurrent`_, (optionally
+``tractor`` is a `structured concurrency`_ (SC), (optionally
 distributed_) multi-processing_ runtime built on trio_.
 
-Fundamentally, ``tractor`` gives you parallelism via
-``trio``-"*actors*": independent Python processes (aka
-non-shared-memory threads) which maintain structured
-concurrency (SC) *end-to-end* inside a *supervision tree*.
+Fundamentally, ``tractor`` provides parallelism via
+``trio``-"*actors*": independent Python *processes* (currently
+*non-shared-memory threads*) which schedule ``trio`` tasks that
+maintain SC *end-to-end* inside a *distributed supervision tree*.
 
 Cross-process (and thus cross-host) SC is accomplished through the
-combined use of our "actor nurseries_" and an "SC-transitive IPC
-protocol" constructed on top of multiple Pythons each running a ``trio``
-scheduled runtime - a call to ``trio.run()``.
+combined use of our,
+
+- "actor nurseries_" which provide for spawning multiple, and
+  possibly nested, Python process trees each running a ``trio``
+  scheduled runtime - a call to ``trio.run()``,
+- an "SC-transitive supervision protocol" implemented as an
+  IPC-message-spec enforced around each RPC-dialog.
 
 We believe the system adheres to the `3 axioms`_ of an "`actor model`_"
 but likely **does not** look like what **you** probably *think* an "actor
@@ -35,22 +39,73 @@ Some great places to start are,
 
 Features
 --------
-- **It's just** a ``trio`` API
-- *Infinitely nesteable* process trees
-- Builtin IPC streaming APIs with task fan-out broadcasting
-- A "native" multi-core debugger REPL using `pdbp`_ (a fork & fix of
-  `pdb++`_ thanks to @mdmintz!)
-- Support for a swappable, OS specific, process spawning layer
-- A modular transport stack, allowing for custom serialization (eg. with
-  `msgspec`_), communications protocols, and environment specific IPC
-  primitives
-- Support for spawning process-level-SC, inter-loop one-to-one-task oriented
-  ``asyncio`` actors via "infected ``asyncio``" mode
-- `structured chadcurrency`_ from the ground up
+- **It's just** a ``trio`` API!
+- *Infinitely nesteable* process running embedded ``trio.Task`` trees.
+- Support for a swappable, OS-specific, process spawning via
+  multiple backends.
+- A modular transport stack, allowing for custom interchange formats (eg.
+  as offered from `msgspec`_), varied transport protocols (TCP, RUDP), and
+  OS-env specific higher perf IPC primitives (like shared-mem buffers).
+- Builtin streaming API with task fan-out `broadcasting`_.
+- A "native" and multi-core-safe debugger REPL using `pdbp`_ (a fork
+  & fix of `pdb++`_ thanks to @mdmintz!)
+- "infected ``asyncio``" mode: support for starting each
+  ``tractor.Actor`` to run as a guest on the ``asyncio`` loop
+  allowing us to provide stringent SC-style ``trio.Task``-supervision
+  around any ``asyncio.Task`` spawned via our ``tractor.to_asyncio``
+  APIs.
+
+
+Install
+-------
+``tractor`` is still in a *alpha-near-beta-stage* for many
+of its subsystems, however we are very close to having a stable
+lowlevel runtime and API.
+
+As such, it's currently recommended that you clone and install the
+repo from source::
+
+    pip install git+git://github.com/goodboy/tractor.git
+
+
+We use the very hip `uv`_ for ::
+
+    git clone https://github.com/goodboy/tractor.git
+    cd tractor
+    uv sync --dev
+    uv run python examples/rpc_bidir_streaming.py
+
+Consider activating a virtual/project-env before starting to hack on
+the code base::
+
+    # you could use plain ol' venvs
+    # https://docs.astral.sh/uv/pip/environments/
+    uv venv tractor_py313 --python 3.13
+
+    # but @goodboy prefers the more explicit (and shell agnostic)
+    # https://docs.astral.sh/uv/configuration/environment/#uv_project_environment
+    UV_PROJECT_ENVIRONMENT="tractor_py313
+
+    uv run --dev xonsh  # HINT, @goodboy's fave shell B)
+
+Alongside all this we ofc offer "releases" on PyPi::
+
+    pip install tractor
+
+Just note that YMMV since the main git branch is often much further
+ahead then any latest release.
+
+
+Example codez
+-------------
+In ``tractor``'s (very lacking) documention we prefer to point to
+example scripts in the repo over duplicating their in docs, with that
+in mind here are some definitive snippets to help hook you into
+looking deeper.
 
 
 Run a func in a process
------------------------
+***********************
 Use ``trio``'s style of focussing on *tasks as functions*:
 
 .. code:: python
@@ -108,7 +163,7 @@ might want to check out `trio-parallel`_.
 
 
 Zombie safe: self-destruct a process tree
------------------------------------------
+*****************************************
 ``tractor`` tries to protect you from zombies, no matter what.
 
 .. code:: python
@@ -164,7 +219,7 @@ it **is a bug**.
 
 
 "Native" multi-process debugging
---------------------------------
+********************************
 Using the magic of `pdbp`_ and our internal IPC, we've
 been able to create a native feeling debugging experience for
 any (sub-)process in your ``tractor`` tree.
@@ -219,7 +274,7 @@ We're hoping to add a respawn-from-repl system soon!
 
 
 SC compatible bi-directional streaming
---------------------------------------
+**************************************
 Yes, you saw it here first; we provide 2-way streams
 with reliable, transitive setup/teardown semantics.
 
@@ -311,7 +366,7 @@ hear your thoughts on!
 
 
 Worker poolz are easy peasy
----------------------------
+***************************
 The initial ask from most new users is *"how do I make a worker
 pool thing?"*.
 
@@ -333,7 +388,7 @@ This uses no extra threads, fancy semaphores or futures; all we need
 is ``tractor``'s IPC!
 
 "Infected ``asyncio``" mode
----------------------------
+***************************
 Have a bunch of ``asyncio`` code you want to force to be SC at the process level?
 
 Check out our experimental system for `guest-mode`_ controlled
@@ -442,7 +497,7 @@ We need help refining the `asyncio`-side channel API to be more
 
 
 Higher level "cluster" APIs
----------------------------
+***************************
 To be extra terse the ``tractor`` devs have started hacking some "higher
 level" APIs for managing actor trees/clusters. These interfaces should
 generally be condsidered provisional for now but we encourage you to try
@@ -497,18 +552,6 @@ spawn a flat cluster:
 
 
 .. _full worker pool re-implementation: https://github.com/goodboy/tractor/blob/master/examples/parallelism/concurrent_actors_primes.py
-
-
-Install
--------
-From PyPi::
-
-    pip install tractor
-
-
-From git::
-
-    pip install git+git://github.com/goodboy/tractor.git
 
 
 Under the hood
@@ -614,6 +657,7 @@ channel`_!
 .. _adherance to: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=1821s
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
+.. _broadcasting: https://github.com/goodboy/tractor/pull/229
 .. _pdbp: https://github.com/mdmintz/pdbp
 .. _pdb++: https://github.com/pdbpp/pdbpp
 .. _guest mode: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
@@ -623,10 +667,10 @@ channel`_!
 .. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _SC: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _libdill-docs: https://sustrik.github.io/libdill/structured-concurrency.html
-.. _structured chadcurrency: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
 .. _async generators: https://www.python.org/dev/peps/pep-0525/
 .. _trio-parallel: https://github.com/richardsheridan/trio-parallel
+.. _uv: https://docs.astral.sh/uv/
 .. _msgspec: https://jcristharif.com/msgspec/
 .. _guest-mode: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
 
