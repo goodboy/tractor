@@ -41,30 +41,29 @@ Features
 --------
 - **It's just** a ``trio`` API!
 - *Infinitely nesteable* process trees running embedded ``trio`` tasks.
-- Support for a swappable, OS-specific, process spawning via
-  multiple backends.
-- A modular transport stack, allowing for custom interchange formats (eg.
-  as offered from `msgspec`_), varied transport protocols (TCP, RUDP), and
-  OS-env specific higher perf IPC primitives (like shared-mem buffers).
-- optionally distributed_; all IPC and RPC works over multi-host
-  transports the same as for localhost.
-- A high-level builtin streaming API that enables your app to easily
+- Swappable, OS-specific, process spawning via multiple backends.
+- Modular IPC stack, allowing for custom interchange formats (eg.
+  as offered from `msgspec`_), varied transport protocols (TCP, RUDP,
+  QUIC, wireguard), and OS-env specific higher-perf primitives (UDS,
+  shm-ring-buffers).
+- Optionally distributed_: all IPC and RPC APIs work over multi-host
+  transports the same as local.
+- Builtin high-level streaming API that enables your app to easily
   leverage the benefits of a "`cheap or nasty`_" `(un)protocol`_.
-- "native UX" for a multicore-safe debugger REPL using `pdbp`_ (a
-  fork & fix of `pdb++`_)
-- "infected ``asyncio``" mode: support for starting each
-  ``tractor.Actor`` to run as a guest on the ``asyncio`` loop
-  allowing us to provide stringent SC-style ``trio.Task``-supervision
-  around any ``asyncio.Task`` spawned via our ``tractor.to_asyncio``
-  APIs.
-- various ``trio`` extension APIs via ``tractor.trionics`` such as,
-  - task fan-out `broadcasting`_,
-  - multi-task-single-resource-caching and fan-out-to-multi ``__aenter__()``
-    APIs for ``@acm`` functions (``contextlib.asynccontextmanager``),
-  - (WIP) a ``TaskMngr``: one-cancels-one style nursery supervisor.
-- a **very naive** and still very much work-in-progress inter-actor
+- A "native UX" around a multi-process safe debugger REPL using
+  `pdbp`_ (a fork & fix of `pdb++`_)
+- "Infected ``asyncio``" mode: support for starting an actor's
+  runtime as a `guest`_ on the ``asyncio`` loop allowing us to
+  provide stringent SC-style ``trio.Task``-supervision around any
+  ``asyncio.Task`` spawned via our ``tractor.to_asyncio`` APIs.
+- A **very naive** and still very much work-in-progress inter-actor
   `discovery`_ sys with plans to support multiple `modern protocol`_
   approaches.
+- Various ``trio`` extension APIs via ``tractor.trionics`` such as,
+  - task fan-out `broadcasting`_,
+  - multi-task-single-resource-caching and fan-out-to-multi
+    ``__aenter__()`` APIs for ``@acm`` functions,
+  - (WIP) a ``TaskMngr``: one-cancels-one style nursery supervisor.
 
 
 Install
@@ -79,7 +78,7 @@ repo from source::
     pip install git+git://github.com/goodboy/tractor.git
 
 
-We use the very hip `uv`_ for ::
+We use the very hip `uv`_ for project mgmt::
 
     git clone https://github.com/goodboy/tractor.git
     cd tractor
@@ -97,7 +96,8 @@ the code base::
     # https://docs.astral.sh/uv/configuration/environment/#uv_project_environment
     UV_PROJECT_ENVIRONMENT="tractor_py313
 
-    uv run --dev xonsh  # HINT, @goodboy's fave shell B)
+    # hint hint, enter @goodboy's fave shell B)
+    uv run --dev xonsh
 
 Alongside all this we ofc offer "releases" on PyPi::
 
@@ -110,9 +110,9 @@ ahead then any latest release.
 Example codez
 -------------
 In ``tractor``'s (very lacking) documention we prefer to point to
-example scripts in the repo over duplicating their in docs, with that
-in mind here are some definitive snippets to help hook you into
-looking deeper.
+example scripts in the repo over duplicating them in docs, but with
+that in mind here are some definitive snippets to try and hook you
+into digging deeper.
 
 
 Run a func in a process
@@ -402,7 +402,7 @@ is ``tractor``'s IPC!
 ***************************
 Have a bunch of ``asyncio`` code you want to force to be SC at the process level?
 
-Check out our experimental system for `guest-mode`_ controlled
+Check out our experimental system for `guest`_-mode controlled
 ``asyncio`` actors:
 
 .. code:: python
@@ -675,7 +675,6 @@ channel`_!
 .. _cheap or nasty: https://zguide.zeromq.org/docs/chapter7/#The-Cheap-or-Nasty-Pattern
 .. _(un)protocol: https://zguide.zeromq.org/docs/chapter7/#Unprotocols
 .. _discovery: https://zguide.zeromq.org/docs/chapter8/#Discovery
-.. _guest mode: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
 .. _messages: https://en.wikipedia.org/wiki/Message_passing
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
@@ -687,7 +686,7 @@ channel`_!
 .. _trio-parallel: https://github.com/richardsheridan/trio-parallel
 .. _uv: https://docs.astral.sh/uv/
 .. _msgspec: https://jcristharif.com/msgspec/
-.. _guest-mode: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
+.. _guest: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
 
 
 .. |gh_actions| image:: https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fgoodboy%2Ftractor%2Fbadge&style=popout-square
