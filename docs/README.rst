@@ -675,6 +675,7 @@ channel`_!
 .. _cheap or nasty: https://zguide.zeromq.org/docs/chapter7/#The-Cheap-or-Nasty-Pattern
 .. _(un)protocol: https://zguide.zeromq.org/docs/chapter7/#Unprotocols
 .. _discovery: https://zguide.zeromq.org/docs/chapter8/#Discovery
+.. _modern protocol: https://en.wikipedia.org/wiki/Rendezvous_protocol
 .. _messages: https://en.wikipedia.org/wiki/Message_passing
 .. _trio docs: https://trio.readthedocs.io/en/latest/
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
