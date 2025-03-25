@@ -32,8 +32,7 @@ async def main() -> None:
             f'$PYTHONOBREAKPOINT: {pybp_var!r}\n'
             f'`sys.breakpointhook`: {pybp_hook!r}\n'
         )
-        breakpoint()
-        pass  # first bp, tractor hook set.
+        breakpoint()  # first bp, tractor hook set.
 
     # XXX AFTER EXIT (of actor-runtime) verify the hook is unset..
     #
@@ -43,8 +42,7 @@ async def main() -> None:
     assert sys.breakpointhook
 
     # now ensure a regular builtin pause still works
-    breakpoint()
-    pass  # last bp, stdlib hook restored
+    breakpoint()  # last bp, stdlib hook restored
 
 
 if __name__ == '__main__':
