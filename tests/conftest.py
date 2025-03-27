@@ -150,6 +150,18 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("start_method", [spawn_backend], scope='module')
 
 
+# TODO: a way to let test scripts (like from `examples/`)
+# guarantee they won't registry addr collide!
+# @pytest.fixture
+# def open_test_runtime(
+#     reg_addr: tuple,
+# ) -> AsyncContextManager:
+#     return partial(
+#         tractor.open_nursery,
+#         registry_addrs=[reg_addr],
+#     )
+
+
 def sig_prog(proc, sig):
     "Kill the actor-process with ``sig``."
     proc.send_signal(sig)

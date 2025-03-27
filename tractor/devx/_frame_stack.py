@@ -234,7 +234,7 @@ def find_caller_info(
 _frame2callerinfo_cache: dict[FrameType, CallerInfo] = {}
 
 
-# TODO: -[x] move all this into new `.devx._code`!
+# TODO: -[x] move all this into new `.devx._frame_stack`!
 # -[ ] consider rename to _callstack?
 # -[ ] prolly create a `@runtime_api` dec?
 #   |_ @api_frame seems better?
@@ -286,3 +286,18 @@ def api_frame(
     wrapped._call_infos: dict[FrameType, CallerInfo] = _frame2callerinfo_cache
     wrapped.__api_func__: bool = True
     return wrapper(wrapped)
+
+
+# TODO: something like this instead of the adhoc frame-unhiding
+# blocks all over the runtime!! XD
+# -[ ] ideally we can expect a certain error (set) and if something
+#     else is raised then all frames below the wrapped one will be
+#     un-hidden via `__tracebackhide__: bool = False`.
+# |_ might need to dynamically mutate the code objs like
+#    `pdbp.hideframe()` does?
+# -[ ] use this as a `@acm` decorator as introed in 3.10?
+# @acm
+# async def unhide_frame_when_not(
+#     error_set: set[BaseException],
+# ) -> TracebackType:
+#     ...

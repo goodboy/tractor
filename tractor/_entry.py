@@ -20,6 +20,7 @@ Sub-process entry points.
 """
 from __future__ import annotations
 from functools import partial
+import multiprocessing as mp
 import os
 import textwrap
 from typing import (
@@ -64,20 +65,22 @@ def _mp_main(
     '''
     actor._forkserver_info = forkserver_info
     from ._spawn import try_set_start_method
-    spawn_ctx = try_set_start_method(start_method)
+    spawn_ctx: mp.context.BaseContext = try_set_start_method(start_method)
+    assert spawn_ctx
 
     if actor.loglevel is not None:
         log.info(
-            f"Setting loglevel for {actor.uid} to {actor.loglevel}")
+            f'Setting loglevel for {actor.uid} to {actor.loglevel}'
+        )
         get_console_log(actor.loglevel)
 
-    assert spawn_ctx
+    # TODO: use scops headers like for `trio` below!
+    # (well after we libify it maybe..)
     log.info(
-        f"Started new {spawn_ctx.current_process()} for {actor.uid}")
-
-    _state._current_actor = actor
-
-    log.debug(f"parent_addr is {parent_addr}")
+        f'Started new {spawn_ctx.current_process()} for {actor.uid}'
+    #     f"parent_addr is {parent_addr}"
+    )
+    _state._current_actor: Actor = actor
     trio_main = partial(
         async_main,
         actor=actor,
@@ -94,7 +97,9 @@ def _mp_main(
         pass  # handle it the same way trio does?
 
     finally:
-        log.info(f"Subactor {actor.uid} terminated")
+        log.info(
+            f'`mp`-subactor {actor.uid} exited'
+        )
 
 
 # TODO: move this func to some kinda `.devx._conc_lang.py` eventually

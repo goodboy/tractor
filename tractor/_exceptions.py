@@ -82,6 +82,48 @@ class InternalError(RuntimeError):
 
     '''
 
+class AsyncioCancelled(Exception):
+    '''
+    Asyncio cancelled translation (non-base) error
+    for use with the ``to_asyncio`` module
+    to be raised in the ``trio`` side task
+
+    NOTE: this should NOT inherit from `asyncio.CancelledError` or
+    tests should break!
+
+    '''
+
+
+class AsyncioTaskExited(Exception):
+    '''
+    asyncio.Task "exited" translation error for use with the
+    `to_asyncio` APIs to be raised in the `trio` side task indicating
+    on `.run_task()`/`.open_channel_from()` exit that the aio side
+    exited early/silently.
+
+    '''
+
+class TrioCancelled(Exception):
+    '''
+    Trio cancelled translation (non-base) error
+    for use with the `to_asyncio` module
+    to be raised in the `asyncio.Task` to indicate
+    that the `trio` side raised `Cancelled` or an error.
+
+    '''
+
+class TrioTaskExited(Exception):
+    '''
+    The `trio`-side task exited without explicitly cancelling the
+    `asyncio.Task` peer.
+
+    This is very similar to how `trio.ClosedResource` acts as
+    a "clean shutdown" signal to the consumer side of a mem-chan,
+
+    https://trio.readthedocs.io/en/stable/reference-core.html#clean-shutdown-with-channels
+
+    '''
+
 
 # NOTE: more or less should be close to these:
 # 'boxed_type',
@@ -127,8 +169,8 @@ _body_fields: list[str] = list(
 
 def get_err_type(type_name: str) -> BaseException|None:
     '''
-    Look up an exception type by name from the set of locally
-    known namespaces:
+    Look up an exception type by name from the set of locally known
+    namespaces:
 
     - `builtins`
     - `tractor._exceptions`
@@ -358,6 +400,13 @@ class RemoteActorError(Exception):
                 self._ipc_msg.src_type_str
             )
 
+            if not self._src_type:
+                raise TypeError(
+                    f'Failed to lookup src error type with '
+                    f'`tractor._exceptions.get_err_type()` :\n'
+                    f'{self.src_type_str}'
+                )
+
         return self._src_type
 
     @property
@@ -366,6 +415,9 @@ class RemoteActorError(Exception):
         String-name of the (last hop's) boxed error type.
 
         '''
+        # TODO, maybe support also serializing the
+        # `ExceptionGroup.exeptions: list[BaseException]` set under
+        # certain conditions?
         bt: Type[BaseException] = self.boxed_type
         if bt:
             return str(bt.__name__)
@@ -609,6 +661,7 @@ class RemoteActorError(Exception):
                 # just after <Type(
                 #             |___ ..
                 tb_body_indent=1,
+                boxer_header=self.relay_uid,
             )
 
         tail = ''
@@ -651,16 +704,10 @@ class RemoteActorError(Exception):
         failing actor's remote env.
 
         '''
-        src_type_ref: Type[BaseException] = self.src_type
-        if not src_type_ref:
-            raise TypeError(
-                'Failed to lookup src error type:\n'
-                f'{self.src_type_str}'
-            )
-
         # TODO: better tb insertion and all the fancier dunder
         # metadata stuff as per `.__context__` etc. and friends:
         # https://github.com/python-trio/trio/issues/611
+        src_type_ref: Type[BaseException] = self.src_type
         return src_type_ref(self.tb_str)
 
     # TODO: local recontruction of nested inception for a given
@@ -786,8 +833,11 @@ class MsgTypeError(
         '''
         if (
             (_bad_msg := self.msgdata.get('_bad_msg'))
-            and
-            isinstance(_bad_msg, PayloadMsg)
+            and (
+                isinstance(_bad_msg, PayloadMsg)
+                or
+                isinstance(_bad_msg, msgtypes.Start)
+            )
         ):
             return _bad_msg
 
@@ -973,22 +1023,12 @@ class NoRuntime(RuntimeError):
     "The root actor has not been initialized yet"
 
 
-
-class AsyncioCancelled(Exception):
-    '''
-    Asyncio cancelled translation (non-base) error
-    for use with the ``to_asyncio`` module
-    to be raised in the ``trio`` side task
-
-    '''
-
 class MessagingError(Exception):
     '''
     IPC related msg (typing), transaction (ordering) or dialog
     handling error.
 
     '''
-
 
 def pack_error(
     exc: BaseException|RemoteActorError,
@@ -1143,19 +1183,51 @@ def unpack_error(
 
 
 def is_multi_cancelled(
-    exc: BaseException|BaseExceptionGroup
-) -> bool:
+    exc: BaseException|BaseExceptionGroup,
+
+    ignore_nested: set[BaseException] = set(),
+
+) -> bool|BaseExceptionGroup:
     '''
-    Predicate to determine if a possible ``BaseExceptionGroup`` contains
-    only ``trio.Cancelled`` sub-exceptions (and is likely the result of
-    cancelling a collection of subtasks.
+    Predicate to determine if an `BaseExceptionGroup` only contains
+    some (maybe nested) set of sub-grouped exceptions (like only
+    `trio.Cancelled`s which get swallowed silently by default) and is
+    thus the result of "gracefully cancelling" a collection of
+    sub-tasks (or other conc primitives) and receiving a "cancelled
+    ACK" from each after termination.
+
+    Docs:
+    ----
+    - https://docs.python.org/3/library/exceptions.html#exception-groups
+    - https://docs.python.org/3/library/exceptions.html#BaseExceptionGroup.subgroup
 
     '''
+
+    if (
+        not ignore_nested
+        or
+        trio.Cancelled in ignore_nested
+        # XXX always count-in `trio`'s native signal
+    ):
+        ignore_nested.update({trio.Cancelled})
+
     if isinstance(exc, BaseExceptionGroup):
-        return exc.subgroup(
-            lambda exc: isinstance(exc, trio.Cancelled)
-        ) is not None
+        matched_exc: BaseExceptionGroup|None = exc.subgroup(
+            tuple(ignore_nested),
 
+            # TODO, complain about why not allowed XD
+            # condition=tuple(ignore_nested),
+        )
+        if matched_exc is not None:
+            return matched_exc
+
+    # NOTE, IFF no excs types match (throughout the error-tree)
+    # -> return `False`, OW return the matched sub-eg.
+    #
+    # IOW, for the inverse of ^ for the purpose of
+    # maybe-enter-REPL--logic: "only debug when the err-tree contains
+    # at least one exc-type NOT in `ignore_nested`" ; i.e. the case where
+    # we fallthrough and return `False` here.
     return False
 
 
@@ -1375,7 +1447,9 @@ def _mk_recv_mte(
         any_pld: Any = msgpack.decode(msg.pld)
         message: str = (
             f'invalid `{msg_type.__qualname__}` msg payload\n\n'
-            f'value: `{any_pld!r}` does not match type-spec: '
+            f'{any_pld!r}\n\n'
+            f'has type {type(any_pld)!r}\n\n'
+            f'and does not match type-spec '
             f'`{type(msg).__qualname__}.pld: {codec.pld_spec_str}`'
         )
         bad_msg = msg

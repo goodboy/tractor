@@ -20,6 +20,7 @@ Multi-core debugging for da peeps!
 
 """
 from __future__ import annotations
+import asyncio
 import bdb
 from contextlib import (
     asynccontextmanager as acm,
@@ -67,9 +68,15 @@ from trio import (
     TaskStatus,
 )
 import tractor
+from tractor.to_asyncio import run_trio_task_in_future
 from tractor.log import get_logger
 from tractor._context import Context
 from tractor import _state
+from tractor._exceptions import (
+    InternalError,
+    NoRuntime,
+    is_multi_cancelled,
+)
 from tractor._state import (
     current_actor,
     is_root_process,
@@ -296,10 +303,9 @@ class Lock:
         )
 
     @classmethod
-    @pdbp.hideframe
+    # @pdbp.hideframe
     def release(
         cls,
-        force: bool = False,
         raise_on_thread: bool = True,
 
     ) -> bool:
@@ -311,48 +317,47 @@ class Lock:
         we_released: bool = False
         ctx_in_debug: Context|None = cls.ctx_in_debug
         repl_task: Task|Thread|None = DebugStatus.repl_task
-        if not DebugStatus.is_main_trio_thread():
-            thread: threading.Thread = threading.current_thread()
-            message: str = (
-                '`Lock.release()` can not be called from a non-main-`trio` thread!\n'
-                f'{thread}\n'
-            )
-            if raise_on_thread:
-                raise RuntimeError(message)
-
-            log.devx(message)
-            return False
-
-        task: Task = current_task()
-
-        # sanity check that if we're the root actor
-        # the lock is marked as such.
-        # note the pre-release value may be diff the the
-        # post-release task.
-        if repl_task is task:
-            assert cls._owned_by_root
-            message: str = (
-                'TTY lock held by root-actor on behalf of local task\n'
-                f'|_{repl_task}\n'
-            )
-        else:
-            assert DebugStatus.repl_task is not task
-
-        message: str = (
-            'TTY lock was NOT released on behalf of caller\n'
-            f'|_{task}\n'
-        )
+        message: str = ''
 
         try:
+            if not DebugStatus.is_main_trio_thread():
+                thread: threading.Thread = threading.current_thread()
+                message: str = (
+                    '`Lock.release()` can not be called from a non-main-`trio` thread!\n'
+                    f'{thread}\n'
+                )
+                if raise_on_thread:
+                    raise RuntimeError(message)
+
+                log.devx(message)
+                return False
+
+            task: Task = current_task()
+
+            # sanity check that if we're the root actor
+            # the lock is marked as such.
+            # note the pre-release value may be diff the the
+            # post-release task.
+            if repl_task is task:
+                assert cls._owned_by_root
+                message: str = (
+                    'TTY lock held by root-actor on behalf of local task\n'
+                    f'|_{repl_task}\n'
+                )
+            else:
+                assert DebugStatus.repl_task is not task
+
+            message: str = (
+                'TTY lock was NOT released on behalf of caller\n'
+                f'|_{task}\n'
+            )
+
             lock: trio.StrictFIFOLock = cls._debug_lock
             owner: Task = lock.statistics().owner
             if (
-                (lock.locked() or force)
-                # ^-TODO-NOTE-^ should we just remove this, since the
-                # RTE case above will always happen when you force
-                # from the wrong task?
-
-                and (owner is task)
+                lock.locked()
+                and
+                (owner is task)
                 # ^-NOTE-^ if we do NOT ensure this, `trio` will
                 # raise a RTE when a non-owner tries to releasee the
                 # lock.
@@ -413,9 +418,9 @@ class Lock:
                     repl_task
                 )
                 message += (
-                    f'\nA non-caller task still owns this lock on behalf of '
-                    f'{behalf_of_task}\n'
-                    f'|_{lock_stats.owner}\n'
+                    f'A non-caller task still owns this lock on behalf of '
+                    f'`{behalf_of_task}`\n'
+                    f'lock owner task: {lock_stats.owner}\n'
                 )
 
             if (
@@ -440,7 +445,10 @@ class Lock:
                         f'|_{repl_task}\n'
                     )
 
-            log.devx(message)
+            if message:
+                log.devx(message)
+            else:
+                import pdbp; pdbp.set_trace()
 
         return we_released
 
@@ -527,6 +535,10 @@ class Lock:
             )
 
 
+def get_lock() -> Lock:
+    return Lock
+
+
 @tractor.context(
     # enable the locking msgspec
     pld_spec=__pld_spec__,
@@ -553,6 +565,7 @@ async def lock_stdio_for_peer(
     # can try to avoid clobbering any connection from a child
     # that's currently relying on it.
     we_finished = Lock.req_handler_finished = trio.Event()
+    lock_blocked: bool = False
     try:
         if ctx.cid in Lock._blocked:
             raise RuntimeError(
@@ -565,7 +578,8 @@ async def lock_stdio_for_peer(
                 'Consider that an internal bug exists given the TTY '
                 '`Lock`ing IPC dialog..\n'
             )
-
+        Lock._blocked.add(ctx.cid)
+        lock_blocked = True
         root_task_name: str = current_task().name
         if tuple(subactor_uid) in Lock._blocked:
             log.warning(
@@ -575,7 +589,11 @@ async def lock_stdio_for_peer(
             )
             ctx._enter_debugger_on_cancel: bool = False
             message: str = (
-                f'Debug lock blocked for {subactor_uid}\n'
+                f'Debug lock blocked for subactor\n\n'
+                f'x)<= {subactor_uid}\n\n'
+
+                f'Likely because the root actor already started shutdown and is '
+                'closing IPC connections for this child!\n\n'
                 'Cancelling debug request!\n'
             )
             log.cancel(message)
@@ -589,7 +607,6 @@ async def lock_stdio_for_peer(
             f'remote task: {subactor_task_uid}\n'
         )
         DebugStatus.shield_sigint()
-        Lock._blocked.add(ctx.cid)
 
         # NOTE: we use the IPC ctx's cancel scope directly in order to
         # ensure that on any transport failure, or cancellation request
@@ -648,36 +665,47 @@ async def lock_stdio_for_peer(
         )
 
     except BaseException as req_err:
-        message: str = (
-            f'On behalf of remote peer {subactor_task_uid!r}@{ctx.chan.uid!r}\n\n'
-            'Forcing `Lock.release()` for req-ctx since likely an '
-            'internal error!\n\n'
-            f'{ctx}'
+        fail_reason: str = (
+            f'on behalf of peer\n\n'
+            f'x)<=\n'
+            f'  |_{subactor_task_uid!r}@{ctx.chan.uid!r}\n\n'
+
+            'Forcing `Lock.release()` due to acquire failure!\n\n'
+            f'x)=> {ctx}\n'
         )
         if isinstance(req_err, trio.Cancelled):
-            message = (
-                'Cancelled during root TTY-lock dialog\n'
+            fail_reason = (
+                'Cancelled during stdio-mutex request '
                 +
-                message
+                fail_reason
             )
         else:
-            message = (
-                'Errored during root TTY-lock dialog\n'
+            fail_reason = (
+                'Failed to deliver stdio-mutex request '
                 +
-                message
+                fail_reason
             )
 
-        log.exception(message)
-        Lock.release() #force=True)
+        log.exception(fail_reason)
+        Lock.release()
         raise
 
     finally:
-        Lock._blocked.remove(ctx.cid)
+        if lock_blocked:
+            Lock._blocked.remove(ctx.cid)
 
         # wakeup any waiters since the lock was (presumably)
         # released, possibly only temporarily.
         we_finished.set()
         DebugStatus.unshield_sigint()
+
+
+class DebugStateError(InternalError):
+    '''
+    Something inconsistent or unexpected happend with a sub-actor's
+    debug mutex request to the root actor.
+
+    '''
 
 
 # TODO: rename to ReplState or somethin?
@@ -707,6 +735,9 @@ class DebugStatus:
     # -[ ] see if we can get our proto oco task-mngr to work for
     #   this?
     repl_task: Task|None = None
+    # repl_thread: Thread|None = None
+    # ^TODO?
+
     repl_release: trio.Event|None = None
 
     req_task: Task|None = None
@@ -780,17 +811,24 @@ class DebugStatus:
         # in which case schedule the SIGINT shielding override
         # to in the main thread.
         # https://docs.python.org/3/library/signal.html#signals-and-threads
-        if not cls.is_main_trio_thread():
+        if (
+            not cls.is_main_trio_thread()
+            and
+            not _state._runtime_vars.get(
+                '_is_infected_aio',
+                False,
+            )
+        ):
             cls._orig_sigint_handler: Callable = trio.from_thread.run_sync(
                 signal.signal,
                 signal.SIGINT,
-                shield_sigint_handler,
+                sigint_shield,
             )
 
         else:
             cls._orig_sigint_handler = signal.signal(
                 signal.SIGINT,
-                shield_sigint_handler,
+                sigint_shield,
             )
 
     @classmethod
@@ -805,7 +843,17 @@ class DebugStatus:
         # always restore ``trio``'s sigint handler. see notes below in
         # the pdb factory about the nightmare that is that code swapping
         # out the handler when the repl activates...
-        if not cls.is_main_trio_thread():
+        # if not cls.is_main_trio_thread():
+        if (
+            not cls.is_main_trio_thread()
+            and
+            not _state._runtime_vars.get(
+                '_is_infected_aio',
+                False,
+            )
+            # not current_actor().is_infected_aio()
+            # ^XXX, since for bg-thr case will always raise..
+        ):
             trio.from_thread.run_sync(
                 signal.signal,
                 signal.SIGINT,
@@ -833,20 +881,37 @@ class DebugStatus:
         `trio.to_thread.run_sync()`.
 
         '''
+        try:
+            async_lib: str = sniffio.current_async_library()
+        except sniffio.AsyncLibraryNotFoundError:
+            async_lib = None
+
+        is_main_thread: bool = trio._util.is_main_thread()
+        # ^TODO, since this is private, @oremanj says
+        # we should just copy the impl for now..?
+        if is_main_thread:
+            thread_name: str = 'main'
+        else:
+            thread_name: str = threading.current_thread().name
+
         is_trio_main = (
-            # TODO: since this is private, @oremanj says
-            # we should just copy the impl for now..
-            (is_main_thread := trio._util.is_main_thread())
+            is_main_thread
             and
-            (async_lib := sniffio.current_async_library()) == 'trio'
+            (async_lib == 'trio')
         )
-        if (
-            not is_trio_main
-            and is_main_thread
-        ):
-            log.warning(
+
+        report: str = f'Running thread: {thread_name!r}\n'
+        if async_lib:
+            report += (
                 f'Current async-lib detected by `sniffio`: {async_lib}\n'
             )
+        else:
+            report += (
+                'No async-lib detected (by `sniffio`) ??\n'
+            )
+        if not is_trio_main:
+            log.warning(report)
+
         return is_trio_main
         # XXX apparently unreliable..see ^
         # (
@@ -863,7 +928,7 @@ class DebugStatus:
         return False
 
     @classmethod
-    @pdbp.hideframe
+    # @pdbp.hideframe
     def release(
         cls,
         cancel_req_task: bool = False,
@@ -872,17 +937,51 @@ class DebugStatus:
         try:
             # sometimes the task might already be terminated in
             # which case this call will raise an RTE?
+            # See below for reporting on that..
             if (
                 repl_release is not None
+                and
+                not repl_release.is_set()
             ):
                 if cls.is_main_trio_thread():
                     repl_release.set()
+
+                elif (
+                    _state._runtime_vars.get(
+                        '_is_infected_aio',
+                        False,
+                    )
+                    # ^XXX, again bc we need to not except
+                    # but for bg-thread case it will always raise..
+                    #
+                    # TODO, is there a better api then using
+                    # `err_on_no_runtime=False` in the below?
+                    # current_actor().is_infected_aio()
+                ):
+                    async def _set_repl_release():
+                        repl_release.set()
+
+                    fute: asyncio.Future = run_trio_task_in_future(
+                        _set_repl_release
+                    )
+                    if not fute.done():
+                        log.warning('REPL release state unknown..?')
+
                 else:
                     # XXX NOTE ONLY used for bg root-actor sync
                     # threads, see `.pause_from_sync()`.
                     trio.from_thread.run_sync(
                         repl_release.set
                     )
+
+        except RuntimeError as rte:
+            log.exception(
+                f'Failed to release debug-request ??\n\n'
+                f'{cls.repr()}\n'
+            )
+            # pdbp.set_trace()
+            raise rte
+
         finally:
             # if req_ctx := cls.req_ctx:
             #     req_ctx._scope.cancel()
@@ -896,10 +995,29 @@ class DebugStatus:
 
             # actor-local state, irrelevant for non-root.
             cls.repl_task = None
+
+            # XXX WARNING needs very special caughtion, and we should
+            # prolly make a more explicit `@property` API?
+            #
+            # - if unset in root multi-threaded case can cause
+            #   issues with detecting that some root thread is
+            #   using a REPL,
+            #
+            # - what benefit is there to unsetting, it's always
+            #   set again for the next task in some actor..
+            #   only thing would be to avoid in the sigint-handler
+            #   logging when we don't need to?
             cls.repl = None
 
-            # restore original sigint handler
-            cls.unshield_sigint()
+            # maybe restore original sigint handler
+            # XXX requires runtime check to avoid crash!
+            if current_actor(err_on_no_runtime=False):
+                cls.unshield_sigint()
+
+
+# TODO: use the new `@lowlevel.singleton` for this!
+def get_debug_req() -> DebugStatus|None:
+    return DebugStatus
 
 
 class TractorConfig(pdbp.DefaultConfig):
@@ -982,7 +1100,7 @@ class PdbREPL(pdbp.Pdb):
                 # Lock.release(raise_on_thread=False)
                 Lock.release()
 
-            # XXX after `Lock.release()` for root local repl usage
+            # XXX AFTER `Lock.release()` for root local repl usage
             DebugStatus.release()
 
     def set_quit(self):
@@ -1167,7 +1285,7 @@ async def request_root_stdio_lock(
             ):
                 log.cancel(
                     'Debug lock request was CANCELLED?\n\n'
-                    f'{req_ctx}\n'
+                    f'<=c) {req_ctx}\n'
                     # f'{pformat_cs(req_cs, var_name="req_cs")}\n\n'
                     # f'{pformat_cs(req_ctx._scope, var_name="req_ctx._scope")}\n\n'
                 )
@@ -1179,21 +1297,25 @@ async def request_root_stdio_lock(
                 message: str = (
                     'Failed during debug request dialog with root actor?\n\n'
                 )
-
-                if req_ctx:
+                if (req_ctx := DebugStatus.req_ctx):
                     message += (
-                        f'{req_ctx}\n'
+                        f'<=x) {req_ctx}\n\n'
                         f'Cancelling IPC ctx!\n'
                     )
-                    await req_ctx.cancel()
+                    try:
+                        await req_ctx.cancel()
+                    except trio.ClosedResourceError  as terr:
+                        ctx_err.add_note(
+                            # f'Failed with {type(terr)!r} x)> `req_ctx.cancel()` '
+                            f'Failed with `req_ctx.cancel()` <x) {type(terr)!r} '
+                        )
 
                 else:
-                    message += 'Failed during `Portal.open_context()` ?\n'
+                    message += 'Failed in `Portal.open_context()` call ??\n'
 
                 log.exception(message)
                 ctx_err.add_note(message)
                 raise ctx_err
-
 
     except (
         tractor.ContextCancelled,
@@ -1218,9 +1340,10 @@ async def request_root_stdio_lock(
         # -[ ]FURTHER, after we 'continue', we should be able to
         #   ctl-c out of the currently hanging task! 
         raise DebugRequestError(
-            'Failed to lock stdio from subactor IPC ctx!\n\n'
+            'Failed during stdio-locking dialog from root actor\n\n'
 
-            f'req_ctx: {DebugStatus.req_ctx}\n'
+            f'<=x)\n'
+            f'|_{DebugStatus.req_ctx}\n'
         ) from req_err
 
     finally:
@@ -1302,7 +1425,11 @@ def any_connected_locker_child() -> bool:
     return False
 
 
-def shield_sigint_handler(
+_ctlc_ignore_header: str = (
+    'Ignoring SIGINT while debug REPL in use'
+)
+
+def sigint_shield(
     signum: int,
     frame: 'frame',  # type: ignore # noqa
     *args,
@@ -1342,13 +1469,17 @@ def shield_sigint_handler(
     # root actor branch that reports whether or not a child
     # has locked debugger.
     if is_root_process():
+        # log.warning(
+        log.devx(
+            'Handling SIGINT in root actor\n'
+            f'{Lock.repr()}'
+            f'{DebugStatus.repr()}\n'
+        )
         # try to see if the supposed (sub)actor in debug still
         # has an active connection to *this* actor, and if not
         # it's likely they aren't using the TTY lock / debugger
         # and we should propagate SIGINT normally.
         any_connected: bool = any_connected_locker_child()
-        # if not any_connected:
-        #     return do_cancel()
 
         problem = (
             f'root {actor.uid} handling SIGINT\n'
@@ -1379,7 +1510,9 @@ def shield_sigint_handler(
                 # NOTE: don't emit this with `.pdb()` level in
                 # root without a higher level.
                 log.runtime(
-                    f'Ignoring SIGINT while debug REPL in use by child '
+                    _ctlc_ignore_header
+                    +
+                    f' by child '
                     f'{uid_in_debug}\n'
                 )
                 problem = None
@@ -1397,19 +1530,27 @@ def shield_sigint_handler(
             # an actor using the `Lock` (a bug state) ??
             # => so immediately cancel any stale lock cs and revert
             # the handler!
-            if not repl:
+            if not DebugStatus.repl:
                 # TODO: WHEN should we revert back to ``trio``
                 # handler if this one is stale?
                 # -[ ] maybe after a counts work of ctl-c mashes?
                 # -[ ] use a state var like `stale_handler: bool`?
                 problem += (
-                    '\n'
                     'No subactor is using a `pdb` REPL according `Lock.ctx_in_debug`?\n'
-                    'BUT, the root should be using it, WHY this handler ??\n'
+                    'BUT, the root should be using it, WHY this handler ??\n\n'
+                    'So either..\n'
+                    '- some root-thread is using it but has no `.repl` set?, OR\n'
+                    '- something else weird is going on outside the runtime!?\n'
                 )
             else:
+                # NOTE: since we emit this msg on ctl-c, we should
+                # also always re-print the prompt the tail block!
                 log.pdb(
-                    'Ignoring SIGINT while pdb REPL in use by root actor..\n'
+                    _ctlc_ignore_header
+                    +
+                    f' by root actor..\n'
+                    f'{DebugStatus.repl_task}\n'
+                    f' |_{repl}\n'
                 )
                 problem = None
 
@@ -1459,7 +1600,6 @@ def shield_sigint_handler(
                 'Allowing SIGINT propagation..'
             )
             DebugStatus.unshield_sigint()
-            # do_cancel()
 
         repl_task: str|None = DebugStatus.repl_task
         req_task: str|None = DebugStatus.req_task
@@ -1469,15 +1609,24 @@ def shield_sigint_handler(
             repl
         ):
             log.pdb(
-                f'Ignoring SIGINT while local task using debug REPL\n'
-                f'|_{repl_task}\n'
-                f'  |_{repl}\n'
+                _ctlc_ignore_header
+                +
+                f' by local task\n\n'
+                f'{repl_task}\n'
+                f' |_{repl}\n'
             )
         elif req_task:
-            log.pdb(
-                f'Ignoring SIGINT while debug request task is open\n'
-                f'|_{req_task}\n'
+            log.debug(
+                _ctlc_ignore_header
+                +
+                f' by local request-task and either,\n'
+                f'- someone else is already REPL-in and has the `Lock`, or\n'
+                f'- some other local task already is replin?\n\n'
+                f'{req_task}\n'
             )
+
+        # TODO can we remove this now?
+        # -[ ] does this path ever get hit any more?
         else:
             msg: str = (
                 'SIGINT shield handler still active BUT, \n\n'
@@ -1513,37 +1662,53 @@ def shield_sigint_handler(
         # https://github.com/goodboy/tractor/issues/320
         # elif debug_mode():
 
-    # NOTE: currently (at least on ``fancycompleter`` 0.9.2)
-    # it looks to be that the last command that was run (eg. ll)
-    # will be repeated by default.
-
     # maybe redraw/print last REPL output to console since
     # we want to alert the user that more input is expect since
     # nothing has been done dur to ignoring sigint.
     if (
-        repl  # only when current actor has a REPL engaged
+        DebugStatus.repl  # only when current actor has a REPL engaged
     ):
+        flush_status: str = (
+            'Flushing stdout to ensure new prompt line!\n'
+        )
+
         # XXX: yah, mega hack, but how else do we catch this madness XD
-        if repl.shname == 'xonsh':
+        if (
+            repl.shname == 'xonsh'
+        ):
+            flush_status += (
+                '-> ALSO re-flushing due to `xonsh`..\n'
+            )
             repl.stdout.write(repl.prompt)
 
+        # log.warning(
+        log.devx(
+            flush_status
+        )
         repl.stdout.flush()
 
-        # TODO: make this work like sticky mode where if there is output
-        # detected as written to the tty we redraw this part underneath
-        # and erase the past draw of this same bit above?
+        # TODO: better console UX to match the current "mode":
+        # -[ ] for example if in sticky mode where if there is output
+        #   detected as written to the tty we redraw this part underneath
+        #   and erase the past draw of this same bit above?
         # repl.sticky = True
         # repl._print_if_sticky()
 
-        # also see these links for an approach from ``ptk``:
+        # also see these links for an approach from `ptk`:
         # https://github.com/goodboy/tractor/issues/130#issuecomment-663752040
         # https://github.com/prompt-toolkit/python-prompt-toolkit/blob/c2c6af8a0308f9e5d7c0e28cb8a02963fe0ce07a/prompt_toolkit/patch_stdout.py
+    else:
+        log.devx(
+        # log.warning(
+            'Not flushing stdout since not needed?\n'
+            f'|_{repl}\n'
+        )
 
     # XXX only for tracing this handler
     log.devx('exiting SIGINT')
 
 
-_pause_msg: str = 'Attaching to pdb REPL in actor'
+_pause_msg: str = 'Opening a pdb REPL in paused actor'
 
 
 class DebugRequestError(RuntimeError):
@@ -1553,7 +1718,7 @@ class DebugRequestError(RuntimeError):
     '''
 
 
-_repl_fail_msg: str = (
+_repl_fail_msg: str|None = (
     'Failed to REPl via `_pause()` '
 )
 
@@ -1583,7 +1748,7 @@ async def _pause(
     ] = trio.TASK_STATUS_IGNORED,
     **debug_func_kwargs,
 
-) -> tuple[PdbREPL, Task]|None:
+) -> tuple[Task, PdbREPL]|None:
     '''
     Inner impl for `pause()` to avoid the `trio.CancelScope.__exit__()`
     stack frame when not shielded (since apparently i can't figure out
@@ -1593,22 +1758,29 @@ async def _pause(
 
     '''
     __tracebackhide__: bool = hide_tb
+    pause_err: BaseException|None = None
     actor: Actor = current_actor()
     try:
         task: Task = current_task()
     except RuntimeError as rte:
+        # NOTE, 2 cases we might get here:
+        #
+        # - ACTUALLY not a `trio.lowlevel.Task` nor runtime caller,
+        #  |_ error out as normal
+        #
+        # - an infected `asycio` actor calls it from an actual
+        #   `asyncio.Task`
+        #  |_ in this case we DO NOT want to RTE!
         __tracebackhide__: bool = False
-        log.exception(
-            'Failed to get current `trio`-task?'
-        )
-        # if actor.is_infected_aio():
-            # mk_pdb().set_trace()
-            # raise RuntimeError(
-            #     '`tractor.pause[_from_sync]()` not yet supported '
-            #     'directly (infected) `asyncio` tasks!'
-            # ) from rte
-
-        raise
+        if actor.is_infected_aio():
+            log.exception(
+                'Failed to get current `trio`-task?'
+            )
+            raise RuntimeError(
+                'An `asyncio` task should not be calling this!?'
+            ) from rte
+        else:
+            task = asyncio.current_task()
 
     if debug_func is not None:
         debug_func = partial(debug_func)
@@ -1616,9 +1788,13 @@ async def _pause(
     # XXX NOTE XXX set it here to avoid ctl-c from cancelling a debug
     # request from a subactor BEFORE the REPL is entered by that
     # process.
-    if not repl:
+    if (
+        not repl
+        and
+        debug_func
+    ):
+        repl: PdbREPL = mk_pdb()
         DebugStatus.shield_sigint()
-    repl: PdbREPL = repl or mk_pdb()
 
     # TODO: move this into a `open_debug_request()` @acm?
     # -[ ] prolly makes the most sense to do the request
@@ -1653,7 +1829,13 @@ async def _pause(
                 # recurrent entries/requests from the same
                 # actor-local task.
                 DebugStatus.repl_task = task
-                DebugStatus.repl = repl
+                if repl:
+                    DebugStatus.repl = repl
+                else:
+                    log.error(
+                        'No REPl instance set before entering `debug_func`?\n'
+                        f'{debug_func}\n'
+                    )
 
                 # invoke the low-level REPL activation routine which itself
                 # should call into a `Pdb.set_trace()` of some sort.
@@ -1752,7 +1934,7 @@ async def _pause(
                 )
                 with trio.CancelScope(shield=shield):
                     await trio.lowlevel.checkpoint()
-                return repl, task
+                return (repl, task)
 
             # elif repl_task:
             #     log.warning(
@@ -1959,11 +2141,13 @@ async def _pause(
 
     # TODO: prolly factor this plus the similar block from
     # `_enter_repl_sync()` into a common @cm?
-    except BaseException as pause_err:
+    except BaseException as _pause_err:
+        pause_err: BaseException = _pause_err
         if isinstance(pause_err, bdb.BdbQuit):
             log.devx(
-                'REPL for pdb was quit!\n'
+                'REPL for pdb was explicitly quit!\n'
             )
+            _repl_fail_msg = None
 
         # when the actor is mid-runtime cancellation the
         # `Actor._service_n` might get closed before we can spawn
@@ -1982,26 +2166,32 @@ async def _pause(
             )
             return
 
-        else:
-            log.exception(
-                _repl_fail_msg
-                +
-                f'on behalf of {repl_task} ??\n'
+        elif isinstance(pause_err, trio.Cancelled):
+            _repl_fail_msg = (
+                'You called `tractor.pause()` from an already cancelled scope!\n\n'
+                'Consider `await tractor.pause(shield=True)` to make it work B)\n'
             )
 
-        DebugStatus.release(cancel_req_task=True)
+        else:
+            _repl_fail_msg += f'on behalf of {repl_task} ??\n'
+
+        if _repl_fail_msg:
+            log.exception(_repl_fail_msg)
+
+        if not actor.is_infected_aio():
+            DebugStatus.release(cancel_req_task=True)
 
         # sanity checks for ^ on request/status teardown
-        assert DebugStatus.repl is None
+        # assert DebugStatus.repl is None  # XXX no more bc bg thread cases?
         assert DebugStatus.repl_task is None
 
         # sanity, for when hackin on all this?
         if not isinstance(pause_err, trio.Cancelled):
             req_ctx: Context = DebugStatus.req_ctx
-            if req_ctx:
-                # XXX, bc the child-task in root might cancel it?
-                # assert req_ctx._scope.cancel_called
-                assert req_ctx.maybe_error
+            # if req_ctx:
+            #     # XXX, bc the child-task in root might cancel it?
+            #     # assert req_ctx._scope.cancel_called
+            #     assert req_ctx.maybe_error
 
         raise
 
@@ -2016,6 +2206,8 @@ async def _pause(
             DebugStatus.req_err
             or
             repl_err
+            or
+            pause_err
         ):
             __tracebackhide__: bool = False
 
@@ -2041,11 +2233,13 @@ def _set_trace(
     # root here? Bo
     log.pdb(
         f'{_pause_msg}\n'
-        '|\n'
-        # TODO: more compact pformating?
+        f'>(\n'
+        f'|_{actor.uid}\n'
+        f'  |_{task}\n' #  @ {actor.uid}\n'
+        # f'|_{task}\n'
+        # ^-TODO-^ more compact pformating?
         # -[ ] make an `Actor.__repr()__`
         # -[ ] should we use `log.pformat_task_uid()`?
-        f'|_ {task} @ {actor.uid}\n'
     )
     # presuming the caller passed in the "api frame"
     # (the last frame before user code - like `.pause()`)
@@ -2231,7 +2425,12 @@ async def _pause_from_bg_root_thread(
         'Trying to acquire `Lock` on behalf of bg thread\n'
         f'|_{behalf_of_thread}\n'
     )
-    # DebugStatus.repl_task = behalf_of_thread
+
+    # NOTE: this is already a task inside the main-`trio`-thread, so
+    # we don't need to worry about calling it another time from the
+    # bg thread on which who's behalf this task is operating.
+    DebugStatus.shield_sigint()
+
     out = await _pause(
         debug_func=None,
         repl=repl,
@@ -2240,6 +2439,8 @@ async def _pause_from_bg_root_thread(
         called_from_bg_thread=True,
         **_pause_kwargs
     )
+    DebugStatus.repl_task = behalf_of_thread
+
     lock: trio.FIFOLock = Lock._debug_lock
     stats: trio.LockStatistics= lock.statistics()
     assert stats.owner is task
@@ -2273,7 +2474,6 @@ async def _pause_from_bg_root_thread(
         f'|_{behalf_of_thread}\n'
     )
     task_status.started(out)
-    DebugStatus.shield_sigint()
 
     # wait for bg thread to exit REPL sesh.
     try:
@@ -2290,6 +2490,8 @@ def pause_from_sync(
     hide_tb: bool = True,
     called_from_builtin: bool = False,
     api_frame: FrameType|None = None,
+
+    allow_no_runtime: bool = False,
 
     # proxy to `._pause()`, for ex:
     # shield: bool = False,
@@ -2309,40 +2511,41 @@ def pause_from_sync(
 
     '''
     __tracebackhide__: bool = hide_tb
+    repl_owner: Task|Thread|None = None
     try:
         actor: tractor.Actor = current_actor(
             err_on_no_runtime=False,
         )
-        message: str = (
-            f'{actor.uid} task called `tractor.pause_from_sync()`\n\n'
-        )
-        if not actor:
-            raise RuntimeError(
-                'Not inside the `tractor`-runtime?\n'
+        if (
+            not actor
+            and
+            not allow_no_runtime
+        ):
+            raise NoRuntime(
+                'The actor runtime has not been opened?\n\n'
                 '`tractor.pause_from_sync()` is not functional without a wrapping\n'
                 '- `async with tractor.open_nursery()` or,\n'
-                '- `async with tractor.open_root_actor()`\n'
-            )
+                '- `async with tractor.open_root_actor()`\n\n'
 
-        # TODO: once supported, remove this AND the one
-        # inside `._pause()`!
-        # outstanding impl fixes:
-        # -[ ] need to make `.shield_sigint()` below work here!
-        # -[ ] how to handle `asyncio`'s new SIGINT-handler
-        #     injection?
-        # -[ ] should `breakpoint()` work and what does it normally
-        #     do in `asyncio` ctxs?
-        if actor.is_infected_aio():
-            raise RuntimeError(
-                '`tractor.pause[_from_sync]()` not yet supported '
-                'for infected `asyncio` mode!'
+                'If you are getting this from a builtin `breakpoint()` call\n'
+                'it might mean the runtime was started then '
+                'stopped prematurely?\n'
             )
+        message: str = (
+            f'{actor.uid} task called `tractor.pause_from_sync()`\n'
+        )
 
-        DebugStatus.shield_sigint()
         repl: PdbREPL = mk_pdb()
 
         # message += f'-> created local REPL {repl}\n'
+        is_trio_thread: bool = DebugStatus.is_main_trio_thread()
         is_root: bool = is_root_process()
+        is_infected_aio: bool = actor.is_infected_aio()
+        thread: Thread = threading.current_thread()
+
+        asyncio_task: asyncio.Task|None = None
+        if is_infected_aio:
+            asyncio_task = asyncio.current_task()
 
         # TODO: we could also check for a non-`.to_thread` context
         # using `trio.from_thread.check_cancelled()` (says
@@ -2355,17 +2558,33 @@ def pause_from_sync(
         # when called from a (bg) thread, run an async task in a new
         # thread which will call `._pause()` manually with special
         # handling for root-actor caller usage.
-        if not DebugStatus.is_main_trio_thread():
-            thread: threading.Thread = threading.current_thread()
-            repl_owner = thread
+        if (
+            not is_trio_thread
+            and
+            not asyncio_task
+        ):
+            # TODO: `threading.Lock()` this so we don't get races in
+            # multi-thr cases where they're acquiring/releasing the
+            # REPL and setting request/`Lock` state, etc..
+            repl_owner: Thread = thread
 
             # TODO: make root-actor bg thread usage work!
             if is_root:
                 message += (
                     f'-> called from a root-actor bg {thread}\n'
-                    f'-> scheduling `._pause_from_sync_thread()`..\n'
                 )
-                bg_task, repl = trio.from_thread.run(
+
+                message += (
+                    '-> scheduling `._pause_from_bg_root_thread()`..\n'
+                )
+                # XXX SUBTLE BADNESS XXX that should really change!
+                # don't over-write the `repl` here since when
+                # this behalf-of-bg_thread-task calls pause it will
+                # pass `debug_func=None` which will result in it
+                # returing a `repl==None` output and that get's also
+                # `.started(out)` back here! So instead just ignore
+                # that output and assign the `repl` created above!
+                bg_task, _ = trio.from_thread.run(
                     afn=partial(
                         actor._service_n.start,
                         partial(
@@ -2375,10 +2594,11 @@ def pause_from_sync(
                             hide_tb=hide_tb,
                             **_pause_kwargs,
                         ),
-                    )
+                    ),
                 )
+                DebugStatus.shield_sigint()
                 message += (
-                    f'-> `._pause_from_sync_thread()` started bg task {bg_task}\n'
+                    f'-> `._pause_from_bg_root_thread()` started bg task {bg_task}\n'
                 )
             else:
                 message += f'-> called from a bg {thread}\n'
@@ -2387,7 +2607,7 @@ def pause_from_sync(
                 # `request_root_stdio_lock()` and we don't need to
                 # worry about all the special considerations as with
                 # the root-actor per above.
-                bg_task, repl = trio.from_thread.run(
+                bg_task, _ = trio.from_thread.run(
                     afn=partial(
                         _pause,
                         debug_func=None,
@@ -2402,7 +2622,100 @@ def pause_from_sync(
                         **_pause_kwargs
                     ),
                 )
+                # ?TODO? XXX where do we NEED to call this in the
+                # subactor-bg-thread case?
+                DebugStatus.shield_sigint()
                 assert bg_task is not DebugStatus.repl_task
+
+        # TODO: once supported, remove this AND the one
+        # inside `._pause()`!
+        # outstanding impl fixes:
+        # -[ ] need to make `.shield_sigint()` below work here!
+        # -[ ] how to handle `asyncio`'s new SIGINT-handler
+        #     injection?
+        # -[ ] should `breakpoint()` work and what does it normally
+        #     do in `asyncio` ctxs?
+        # if actor.is_infected_aio():
+        #     raise RuntimeError(
+        #         '`tractor.pause[_from_sync]()` not yet supported '
+        #         'for infected `asyncio` mode!'
+        #     )
+        elif (
+            not is_trio_thread
+            and
+            is_infected_aio  # as in, the special actor-runtime mode
+            # ^NOTE XXX, that doesn't mean the caller is necessarily
+            # an `asyncio.Task` just that `trio` has been embedded on
+            # the `asyncio` event loop!
+            and
+            asyncio_task  # transitive caller is an actual `asyncio.Task`
+        ):
+            greenback: ModuleType = maybe_import_greenback()
+
+            if greenback.has_portal():
+                DebugStatus.shield_sigint()
+                fute: asyncio.Future = run_trio_task_in_future(
+                    partial(
+                        _pause,
+                        debug_func=None,
+                        repl=repl,
+                        hide_tb=hide_tb,
+
+                        # XXX to prevent `._pause()` for setting
+                        # `DebugStatus.repl_task` to the gb task!
+                        called_from_sync=True,
+                        called_from_bg_thread=True,
+
+                        **_pause_kwargs
+                    )
+                )
+                repl_owner = asyncio_task
+                bg_task, _ = greenback.await_(fute)
+                # TODO: ASYNC version -> `.pause_from_aio()`?
+                # bg_task, _ = await fute
+
+            # handle the case where an `asyncio` task has been
+            # spawned WITHOUT enabling a `greenback` portal..
+            # => can often happen in 3rd party libs.
+            else:
+                bg_task = repl_owner
+
+                # TODO, ostensibly we can just acquire the
+                # debug lock directly presuming we're the
+                # root actor running in infected asyncio
+                # mode?
+                #
+                # TODO, this would be a special case where
+                # a `_pause_from_root()` would come in very
+                # handy!
+                # if is_root:
+                #     import pdbp; pdbp.set_trace()
+                #     log.warning(
+                #         'Allowing `asyncio` task to acquire debug-lock in root-actor..\n'
+                #         'This is not fully implemented yet; there may be teardown hangs!\n\n'
+                #     )
+                # else:
+
+                # simply unsupported, since there exists no hack (i
+                # can think of) to workaround this in a subactor
+                # which needs to lock the root's REPL ow we're sure
+                # to get prompt stdstreams clobbering..
+                cf_repr: str = ''
+                if api_frame:
+                    caller_frame: FrameType = api_frame.f_back
+                    cf_repr: str = f'caller_frame: {caller_frame!r}\n'
+
+                raise RuntimeError(
+                    f"CAN'T USE `greenback._await()` without a portal !?\n\n"
+                    f'Likely this task was NOT spawned via the `tractor.to_asyncio` API..\n'
+                    f'{asyncio_task}\n'
+                    f'{cf_repr}\n'
+
+                    f'Prolly the task was started out-of-band (from some lib?)\n'
+                    f'AND one of the below was never called ??\n'
+                    f'- greenback.ensure_portal()\n'
+                    f'- greenback.bestow_portal(<task>)\n'
+                )
 
         else:  # we are presumably the `trio.run()` + main thread
             # raises on not-found by default
@@ -2414,7 +2727,12 @@ def pause_from_sync(
             # greenback: ModuleType = await maybe_init_greenback()
 
             message += f'-> imported {greenback}\n'
+
+            # NOTE XXX seems to need to be set BEFORE the `_pause()`
+            # invoke using gb below?
+            DebugStatus.shield_sigint()
             repl_owner: Task = current_task()
+
             message += '-> calling `greenback.await_(_pause(debug_func=None))` from sync caller..\n'
             try:
                 out = greenback.await_(
@@ -2439,9 +2757,20 @@ def pause_from_sync(
                 raise
 
             if out:
-                bg_task, repl = out
-                assert repl is repl
-                assert bg_task is repl_owner
+                bg_task, _ = out
+            else:
+                bg_task: Task = current_task()
+
+            # assert repl is repl
+            # assert bg_task is repl_owner
+            if bg_task is not repl_owner:
+                raise DebugStateError(
+                    f'The registered bg task for this debug request is NOT its owner ??\n'
+                    f'bg_task: {bg_task}\n'
+                    f'repl_owner: {repl_owner}\n\n'
+
+                    f'{DebugStatus.repr()}\n'
+                )
 
         # NOTE: normally set inside `_enter_repl_sync()`
         DebugStatus.repl_task: str = repl_owner
@@ -2455,7 +2784,10 @@ def pause_from_sync(
         )
         log.devx(message)
 
+        # NOTE set as late as possible to avoid state clobbering
+        # in the multi-threaded case!
         DebugStatus.repl = repl
+
         _set_trace(
             api_frame=api_frame or inspect.currentframe(),
             repl=repl,
@@ -2470,6 +2802,10 @@ def pause_from_sync(
         # -[ ] tried to use `@pdbp.hideframe` decoration but
         #   still doesn't work
     except BaseException as err:
+        log.exception(
+            'Failed to sync-pause from\n\n'
+            f'{repl_owner}\n'
+        )
         __tracebackhide__: bool = False
         raise err
 
@@ -2513,13 +2849,12 @@ async def breakpoint(
 
 
 _crash_msg: str = (
-    'Attaching to pdb REPL in crashed actor'
+    'Opening a pdb REPL in crashed actor'
 )
 
 
 def _post_mortem(
-    # provided and passed by `_pause()`
-    repl: PdbREPL,
+    repl: PdbREPL,  # normally passed by `_pause()`
 
     # XXX all `partial`-ed in by `post_mortem()` below!
     tb: TracebackType,
@@ -2535,19 +2870,30 @@ def _post_mortem(
 
     '''
     __tracebackhide__: bool = hide_tb
-    actor: tractor.Actor = current_actor()
+    try:
+        actor: tractor.Actor = current_actor()
+        actor_repr: str = str(actor.uid)
+        # ^TODO, instead a nice runtime-info + maddr + uid?
+        # -[ ] impl a `Actor.__repr()__`??
+        #  |_ <task>:<thread> @ <actor>
+        # no_runtime: bool = False
+
+    except NoRuntime:
+        actor_repr: str = '<no-actor-runtime?>'
+        # no_runtime: bool = True
+
+    try:
+        task_repr: Task = current_task()
+    except RuntimeError:
+        task_repr: str = '<unknown-Task>'
 
     # TODO: print the actor supervion tree up to the root
     # here! Bo
     log.pdb(
         f'{_crash_msg}\n'
-        '|\n'
-        # f'|_ {current_task()}\n'
-        f'|_ {current_task()} @ {actor.uid}\n'
+        f'x>(\n'
+        f' |_ {task_repr} @ {actor_repr}\n'
 
-        # f'|_ @{actor.uid}\n'
-        # TODO: make an `Actor.__repr()__`
-        # f'|_ {current_task()} @ {actor.name}\n'
     )
 
     # NOTE only replacing this from `pdbp.xpm()` to add the
@@ -2570,6 +2916,8 @@ def _post_mortem(
     # Since we presume the post-mortem was enaged to a task-ending
     # error, we MUST release the local REPL request so that not other
     # local task nor the root remains blocked!
+    # if not no_runtime:
+    #     DebugStatus.release()
     DebugStatus.release()
 
 
@@ -2618,8 +2966,14 @@ async def _maybe_enter_pm(
     tb: TracebackType|None = None,
     api_frame: FrameType|None = None,
     hide_tb: bool = False,
+
+    # only enter debugger REPL when returns `True`
+    debug_filter: Callable[
+        [BaseException|BaseExceptionGroup],
+        bool,
+    ] = lambda err: not is_multi_cancelled(err),
+
 ):
-    from tractor._exceptions import is_multi_cancelled
     if (
         debug_mode()
 
@@ -2636,7 +2990,8 @@ async def _maybe_enter_pm(
 
         # Really we just want to mostly avoid catching KBIs here so there
         # might be a simpler check we can do?
-        and not is_multi_cancelled(err)
+        and
+        debug_filter(err)
     ):
         api_frame: FrameType = api_frame or inspect.currentframe()
         tb: TracebackType = tb or sys.exc_info()[2]
@@ -2658,7 +3013,8 @@ async def acquire_debug_lock(
     tuple,
 ]:
     '''
-    Request to acquire the TTY `Lock` in the root actor, release on exit.
+    Request to acquire the TTY `Lock` in the root actor, release on
+    exit.
 
     This helper is for actor's who don't actually need to acquired
     the debugger but want to wait until the lock is free in the
@@ -2670,10 +3026,14 @@ async def acquire_debug_lock(
         yield None
         return
 
+    task: Task = current_task()
     async with trio.open_nursery() as n:
         ctx: Context = await n.start(
-            request_root_stdio_lock,
-            subactor_uid,
+            partial(
+                request_root_stdio_lock,
+                actor_uid=subactor_uid,
+                task_uid=(task.name, id(task)),
+            )
         )
         yield ctx
         ctx.cancel()
@@ -2802,20 +3162,23 @@ async def maybe_wait_for_debugger(
     #         pass
     return False
 
+
 # TODO: better naming and what additionals?
 # - [ ] optional runtime plugging?
 # - [ ] detection for sync vs. async code?
 # - [ ] specialized REPL entry when in distributed mode?
+# -[x] hide tb by def
 # - [x] allow ignoring kbi Bo
 @cm
 def open_crash_handler(
     catch: set[BaseException] = {
-        Exception,
+        # Exception,
         BaseException,
     },
     ignore: set[BaseException] = {
         KeyboardInterrupt,
     },
+    tb_hide: bool = True,
 ):
     '''
     Generic "post mortem" crash handler using `pdbp` REPL debugger.
@@ -2828,19 +3191,52 @@ def open_crash_handler(
       `trio.run()`.
 
     '''
+    __tracebackhide__: bool = tb_hide
+
+    class BoxedMaybeException(Struct):
+        value: BaseException|None = None
+
+    # TODO, yield a `outcome.Error`-like boxed type?
+    # -[~] use `outcome.Value/Error` X-> frozen!
+    # -[x] write our own..?
+    # -[ ] consider just wtv is used by `pytest.raises()`?
+    #
+    boxed_maybe_exc = BoxedMaybeException()
     err: BaseException
     try:
-        yield
+        yield boxed_maybe_exc
     except tuple(catch) as err:
-        if type(err) not in ignore:
-            pdbp.xpm()
+        boxed_maybe_exc.value = err
+        if (
+            type(err) not in ignore
+            and
+            not is_multi_cancelled(
+                err,
+                ignore_nested=ignore
+            )
+        ):
+            try:
+                # use our re-impl-ed version
+                _post_mortem(
+                    repl=mk_pdb(),
+                    tb=sys.exc_info()[2],
+                    api_frame=inspect.currentframe().f_back,
+                )
+            except bdb.BdbQuit:
+                __tracebackhide__: bool = False
+                raise err
 
-        raise
+            # XXX NOTE, `pdbp`'s version seems to lose the up-stack
+            # tb-info?
+            # pdbp.xpm()
+
+        raise err
 
 
 @cm
 def maybe_open_crash_handler(
     pdb: bool = False,
+    tb_hide: bool = True,
 ):
     '''
     Same as `open_crash_handler()` but with bool input flag
@@ -2849,6 +3245,8 @@ def maybe_open_crash_handler(
     Normally this is used with CLI endpoints such that if the --pdb
     flag is passed the pdb REPL is engaed on any crashes B)
     '''
+    __tracebackhide__: bool = tb_hide
+
     rtctx = nullcontext
     if pdb:
         rtctx = open_crash_handler

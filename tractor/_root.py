@@ -80,7 +80,7 @@ async def open_root_actor(
 
     # enables the multi-process debugger support
     debug_mode: bool = False,
-    maybe_enable_greenback: bool = False,  # `.pause_from_sync()/breakpoint()` support
+    maybe_enable_greenback: bool = True,  # `.pause_from_sync()/breakpoint()` support
     enable_stack_on_sig: bool = False,
 
     # internal logging
@@ -94,6 +94,17 @@ async def open_root_actor(
     ensure_registry: bool = False,
 
     hide_tb: bool = True,
+
+    # XXX, proxied directly to `.devx._debug._maybe_enter_pm()`
+    # for REPL-entry logic.
+    debug_filter: Callable[
+        [BaseException|BaseExceptionGroup],
+        bool,
+    ] = lambda err: not is_multi_cancelled(err),
+
+    # TODO, a way for actors to augment passing derived
+    # read-only state to sublayers?
+    # extra_rt_vars: dict|None = None,
 
 ) -> Actor:
     '''
@@ -233,14 +244,8 @@ async def open_root_actor(
         and
         enable_stack_on_sig
     ):
-        try:
-            logger.info('Enabling `stackscope` traces on SIGUSR1')
-            from .devx import enable_stack_on_sig
-            enable_stack_on_sig()
-        except ImportError:
-            logger.warning(
-                '`stackscope` not installed for use in debug mode!'
-            )
+        from .devx._stackscope import enable_stack_on_sig
+        enable_stack_on_sig()
 
     # closed into below ping task-func
     ponged_addrs: list[tuple[str, int]] = []
@@ -336,6 +341,10 @@ async def open_root_actor(
             loglevel=loglevel,
             enable_modules=enable_modules,
         )
+        # XXX, in case the root actor runtime was actually run from
+        # `tractor.to_asyncio.run_as_asyncio_guest()` and NOt
+        # `.trio.run()`.
+        actor._infected_aio = _state._runtime_vars['_is_infected_aio']
 
     # Start up main task set via core actor-runtime nurseries.
     try:
@@ -377,6 +386,7 @@ async def open_root_actor(
                 Exception,
                 BaseExceptionGroup,
             ) as err:
+
                 # XXX NOTE XXX see equiv note inside
                 # `._runtime.Actor._stream_handler()` where in the
                 # non-root or root-that-opened-this-mahually case we
@@ -385,11 +395,15 @@ async def open_root_actor(
                 entered: bool = await _debug._maybe_enter_pm(
                     err,
                     api_frame=inspect.currentframe(),
+                    debug_filter=debug_filter,
                 )
+
                 if (
                     not entered
                     and
-                    not is_multi_cancelled(err)
+                    not is_multi_cancelled(
+                        err,
+                    )
                 ):
                     logger.exception('Root actor crashed\n')
 

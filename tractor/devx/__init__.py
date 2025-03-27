@@ -26,7 +26,7 @@ from ._debug import (
     breakpoint as breakpoint,
     pause as pause,
     pause_from_sync as pause_from_sync,
-    shield_sigint_handler as shield_sigint_handler,
+    sigint_shield as sigint_shield,
     open_crash_handler as open_crash_handler,
     maybe_open_crash_handler as maybe_open_crash_handler,
     maybe_init_greenback as maybe_init_greenback,

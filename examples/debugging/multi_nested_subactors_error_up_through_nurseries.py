@@ -10,7 +10,7 @@ async def name_error():
 async def breakpoint_forever():
     "Indefinitely re-enter debugger in child actor."
     while True:
-        await tractor.breakpoint()
+        await tractor.pause()
 
         # NOTE: if the test never sent 'q'/'quit' commands
         # on the pdb repl, without this checkpoint line the

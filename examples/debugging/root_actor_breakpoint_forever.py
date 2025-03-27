@@ -11,7 +11,7 @@ async def main(
         # loglevel='runtime',
     ):
         while True:
-            await tractor.breakpoint()
+            await tractor.pause()
 
 
 if __name__ == '__main__':

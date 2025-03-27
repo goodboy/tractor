@@ -6,7 +6,7 @@ async def breakpoint_forever():
     "Indefinitely re-enter debugger in child actor."
     while True:
         await trio.sleep(0.1)
-        await tractor.breakpoint()
+        await tractor.pause()
 
 
 async def name_error():

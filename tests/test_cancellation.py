@@ -130,7 +130,7 @@ def test_multierror(
             try:
                 await portal2.result()
             except tractor.RemoteActorError as err:
-                assert err.boxed_type == AssertionError
+                assert err.boxed_type is AssertionError
                 print("Look Maa that first actor failed hard, hehh")
                 raise
 
@@ -182,7 +182,7 @@ def test_multierror_fast_nursery(reg_addr, start_method, num_subactors, delay):
 
     for exc in exceptions:
         assert isinstance(exc, tractor.RemoteActorError)
-        assert exc.boxed_type == AssertionError
+        assert exc.boxed_type is AssertionError
 
 
 async def do_nothing():
@@ -504,7 +504,9 @@ def test_cancel_via_SIGINT_other_task(
     if is_win():  # smh
         timeout += 1
 
-    async def spawn_and_sleep_forever(task_status=trio.TASK_STATUS_IGNORED):
+    async def spawn_and_sleep_forever(
+        task_status=trio.TASK_STATUS_IGNORED
+    ):
         async with tractor.open_nursery() as tn:
             for i in range(3):
                 await tn.run_in_actor(

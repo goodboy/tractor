@@ -13,26 +13,25 @@ TODO:
 from functools import partial
 import itertools
 import platform
-import pathlib
 import time
 
 import pytest
-import pexpect
 from pexpect.exceptions import (
     TIMEOUT,
     EOF,
 )
 
-from tractor._testing import (
-    examples_dir,
-)
-from tractor.devx._debug import (
+from .conftest import (
+    do_ctlc,
+    PROMPT,
     _pause_msg,
     _crash_msg,
     _repl_fail_msg,
 )
 from .conftest import (
-    _ci_env,
+    expect,
+    in_prompt_msg,
+    assert_before,
 )
 
 # TODO: The next great debugger audit could be done by you!
@@ -52,15 +51,6 @@ if platform.system() == 'Windows':
     )
 
 
-def mk_cmd(ex_name: str) -> str:
-    '''
-    Generate a command suitable to pass to ``pexpect.spawn()``.
-
-    '''
-    script_path: pathlib.Path = examples_dir() / 'debugging' / f'{ex_name}.py'
-    return ' '.join(['python', str(script_path)])
-
-
 # TODO: was trying to this xfail style but some weird bug i see in CI
 # that's happening at collect time.. pretty soon gonna dump actions i'm
 # thinkin...
@@ -77,142 +67,6 @@ has_nested_actors = pytest.mark.has_nested_actors
 #         'https://github.com/goodboy/tractor/issues/320'
 #     )
 # )
-
-
-@pytest.fixture
-def spawn(
-    start_method,
-    testdir,
-    reg_addr,
-) -> 'pexpect.spawn':
-
-    if start_method != 'trio':
-        pytest.skip(
-            "Debugger tests are only supported on the trio backend"
-        )
-
-    def _spawn(cmd):
-        return testdir.spawn(
-            cmd=mk_cmd(cmd),
-            expect_timeout=3,
-        )
-
-    return _spawn
-
-
-PROMPT = r"\(Pdb\+\)"
-
-
-def expect(
-    child,
-
-    # prompt by default
-    patt: str = PROMPT,
-
-    **kwargs,
-
-) -> None:
-    '''
-    Expect wrapper that prints last seen console
-    data before failing.
-
-    '''
-    try:
-        child.expect(
-            patt,
-            **kwargs,
-        )
-    except TIMEOUT:
-        before = str(child.before.decode())
-        print(before)
-        raise
-
-
-def in_prompt_msg(
-    prompt: str,
-    parts: list[str],
-
-    pause_on_false: bool = False,
-    print_prompt_on_false: bool = True,
-
-) -> bool:
-    '''
-    Predicate check if (the prompt's) std-streams output has all
-    `str`-parts in it.
-
-    Can be used in test asserts for bulk matching expected
-    log/REPL output for a given `pdb` interact point.
-
-    '''
-    __tracebackhide__: bool = False
-
-    for part in parts:
-        if part not in prompt:
-            if pause_on_false:
-                import pdbp
-                pdbp.set_trace()
-
-            if print_prompt_on_false:
-                print(prompt)
-
-            return False
-
-    return True
-
-
-# TODO: todo support terminal color-chars stripping so we can match
-# against call stack frame output from the the 'll' command the like!
-# -[ ] SO answer for stipping ANSI codes: https://stackoverflow.com/a/14693789
-def assert_before(
-    child,
-    patts: list[str],
-
-    **kwargs,
-
-) -> None:
-    __tracebackhide__: bool = False
-
-    # as in before the prompt end
-    before: str = str(child.before.decode())
-    assert in_prompt_msg(
-        prompt=before,
-        parts=patts,
-
-        **kwargs
-    )
-
-
-@pytest.fixture(
-    params=[False, True],
-    ids='ctl-c={}'.format,
-)
-def ctlc(
-    request,
-    ci_env: bool,
-
-) -> bool:
-
-    use_ctlc = request.param
-
-    node = request.node
-    markers = node.own_markers
-    for mark in markers:
-        if mark.name == 'has_nested_actors':
-            pytest.skip(
-                f'Test {node} has nested actors and fails with Ctrl-C.\n'
-                f'The test can sometimes run fine locally but until'
-                ' we solve' 'this issue this CI test will be xfail:\n'
-                'https://github.com/goodboy/tractor/issues/320'
-            )
-
-    if use_ctlc:
-        # XXX: disable pygments highlighting for auto-tests
-        # since some envs (like actions CI) will struggle
-        # the the added color-char encoding..
-        from tractor.devx._debug import TractorConfig
-        TractorConfig.use_pygements = False
-
-    yield use_ctlc
 
 
 @pytest.mark.parametrize(
@@ -238,14 +92,15 @@ def test_root_actor_error(
     # scan for the prompt
     expect(child, PROMPT)
 
-    before = str(child.before.decode())
-
     # make sure expected logging and error arrives
     assert in_prompt_msg(
-        before,
-        [_crash_msg, "('root'"]
+        child,
+        [
+            _crash_msg,
+            "('root'",
+            'AssertionError',
+        ]
     )
-    assert 'AssertionError' in before
 
     # send user command
     child.sendline(user_input)
@@ -264,8 +119,10 @@ def test_root_actor_error(
     ids=lambda item: f'{item[0]} -> {item[1]}',
 )
 def test_root_actor_bp(spawn, user_in_out):
-    """Demonstrate breakpoint from in root actor.
-    """
+    '''
+    Demonstrate breakpoint from in root actor.
+
+    '''
     user_input, expect_err_str = user_in_out
     child = spawn('root_actor_breakpoint')
 
@@ -279,44 +136,12 @@ def test_root_actor_bp(spawn, user_in_out):
     child.expect('\r\n')
 
     # process should exit
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
     if expect_err_str is None:
         assert 'Error' not in str(child.before)
     else:
         assert expect_err_str in str(child.before)
-
-
-def do_ctlc(
-    child,
-    count: int = 3,
-    delay: float = 0.1,
-    patt: str|None = None,
-
-    # expect repl UX to reprint the prompt after every
-    # ctrl-c send.
-    # XXX: no idea but, in CI this never seems to work even on 3.10 so
-    # needs some further investigation potentially...
-    expect_prompt: bool = not _ci_env,
-
-) -> None:
-
-    # make sure ctl-c sends don't do anything but repeat output
-    for _ in range(count):
-        time.sleep(delay)
-        child.sendcontrol('c')
-
-        # TODO: figure out why this makes CI fail..
-        # if you run this test manually it works just fine..
-        if expect_prompt:
-            before = str(child.before.decode())
-            time.sleep(delay)
-            child.expect(PROMPT)
-            time.sleep(delay)
-
-            if patt:
-                # should see the last line on console
-                assert patt in before
 
 
 def test_root_actor_bp_forever(
@@ -358,7 +183,7 @@ def test_root_actor_bp_forever(
 
     # quit out of the loop
     child.sendline('q')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 @pytest.mark.parametrize(
@@ -380,10 +205,12 @@ def test_subactor_error(
     # scan for the prompt
     child.expect(PROMPT)
 
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
-        [_crash_msg, "('name_error'"]
+        child,
+        [
+            _crash_msg,
+            "('name_error'",
+        ]
     )
 
     if do_next:
@@ -402,17 +229,15 @@ def test_subactor_error(
         child.sendline('continue')
 
     child.expect(PROMPT)
-    before = str(child.before.decode())
-
-    # root actor gets debugger engaged
     assert in_prompt_msg(
-        before,
-        [_crash_msg, "('root'"]
-    )
-    # error is a remote error propagated from the subactor
-    assert in_prompt_msg(
-        before,
-        [_crash_msg, "('name_error'"]
+        child,
+        [
+            _crash_msg,
+            # root actor gets debugger engaged
+            "('root'",
+            # error is a remote error propagated from the subactor
+            "('name_error'",
+        ]
     )
 
     # another round
@@ -423,7 +248,7 @@ def test_subactor_error(
     child.expect('\r\n')
 
     # process should exit
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 def test_subactor_breakpoint(
@@ -433,14 +258,11 @@ def test_subactor_breakpoint(
     "Single subactor with an infinite breakpoint loop"
 
     child = spawn('subactor_breakpoint')
-
-    # scan for the prompt
     child.expect(PROMPT)
-
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
-        [_pause_msg, "('breakpoint_forever'"]
+        child,
+        [_pause_msg,
+         "('breakpoint_forever'",]
     )
 
     # do some "next" commands to demonstrate recurrent breakpoint
@@ -456,9 +278,8 @@ def test_subactor_breakpoint(
     for _ in range(5):
         child.sendline('continue')
         child.expect(PROMPT)
-        before = str(child.before.decode())
         assert in_prompt_msg(
-            before,
+            child,
             [_pause_msg, "('breakpoint_forever'"]
         )
 
@@ -471,9 +292,8 @@ def test_subactor_breakpoint(
     # child process should exit but parent will capture pdb.BdbQuit
     child.expect(PROMPT)
 
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         ['RemoteActorError:',
          "('breakpoint_forever'",
          'bdb.BdbQuit',]
@@ -486,11 +306,10 @@ def test_subactor_breakpoint(
     child.sendline('c')
 
     # process should exit
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         ['RemoteActorError:',
          "('breakpoint_forever'",
          'bdb.BdbQuit',]
@@ -514,7 +333,7 @@ def test_multi_subactors(
 
     before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         [_pause_msg, "('breakpoint_forever'"]
     )
 
@@ -535,12 +354,14 @@ def test_multi_subactors(
 
     # first name_error failure
     child.expect(PROMPT)
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
-        [_crash_msg, "('name_error'"]
+        child,
+        [
+            _crash_msg,
+            "('name_error'",
+            "NameError",
+        ]
     )
-    assert "NameError" in before
 
     if ctlc:
         do_ctlc(child)
@@ -564,9 +385,8 @@ def test_multi_subactors(
     # breakpoint loop should re-engage
     child.sendline('c')
     child.expect(PROMPT)
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         [_pause_msg, "('breakpoint_forever'"]
     )
 
@@ -629,7 +449,7 @@ def test_multi_subactors(
 
     # process should exit
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
     # repeat of previous multierror for final output
     assert_before(child, [
@@ -659,25 +479,28 @@ def test_multi_daemon_subactors(
     # the root's tty lock first so anticipate either crash
     # message on the first entry.
 
-    bp_forev_parts = [_pause_msg, "('bp_forever'"]
+    bp_forev_parts = [
+        _pause_msg,
+        "('bp_forever'",
+    ]
     bp_forev_in_msg = partial(
         in_prompt_msg,
         parts=bp_forev_parts,
     )
 
-    name_error_msg = "NameError: name 'doggypants' is not defined"
-    name_error_parts = [name_error_msg]
+    name_error_msg: str = "NameError: name 'doggypants' is not defined"
+    name_error_parts: list[str] = [name_error_msg]
 
     before = str(child.before.decode())
 
-    if bp_forev_in_msg(prompt=before):
+    if bp_forev_in_msg(child=child):
         next_parts = name_error_parts
 
     elif name_error_msg in before:
         next_parts = bp_forev_parts
 
     else:
-        raise ValueError("Neither log msg was found !?")
+        raise ValueError('Neither log msg was found !?')
 
     if ctlc:
         do_ctlc(child)
@@ -746,14 +569,12 @@ def test_multi_daemon_subactors(
     # wait for final error in root
     # where it crashs with boxed error
     while True:
-        try:
-            child.sendline('c')
-            child.expect(PROMPT)
-            assert_before(
-                child,
-                bp_forev_parts
-            )
-        except AssertionError:
+        child.sendline('c')
+        child.expect(PROMPT)
+        if not in_prompt_msg(
+            child,
+            bp_forev_parts
+        ):
             break
 
     assert_before(
@@ -769,7 +590,7 @@ def test_multi_daemon_subactors(
     )
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 @has_nested_actors
@@ -845,7 +666,7 @@ def test_multi_subactors_root_errors(
     ])
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
     assert_before(child, [
         # "Attaching to pdb in crashed actor: ('root'",
@@ -934,10 +755,13 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
     child = spawn('root_cancelled_but_child_is_in_tty_lock')
 
     child.expect(PROMPT)
-
-    before = str(child.before.decode())
-    assert "NameError: name 'doggypants' is not defined" in before
-    assert "tractor._exceptions.RemoteActorError: ('name_error'" not in before
+    assert_before(
+        child,
+        [
+            "NameError: name 'doggypants' is not defined",
+            "tractor._exceptions.RemoteActorError: ('name_error'",
+        ],
+    )
     time.sleep(0.5)
 
     if ctlc:
@@ -975,7 +799,7 @@ def test_root_nursery_cancels_before_child_releases_tty_lock(
 
     for i in range(3):
         try:
-            child.expect(pexpect.EOF, timeout=0.5)
+            child.expect(EOF, timeout=0.5)
             break
         except TIMEOUT:
             child.sendline('c')
@@ -1017,7 +841,7 @@ def test_root_cancels_child_context_during_startup(
         do_ctlc(child)
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 def test_different_debug_mode_per_actor(
@@ -1028,9 +852,8 @@ def test_different_debug_mode_per_actor(
     child.expect(PROMPT)
 
     # only one actor should enter the debugger
-    before = str(child.before.decode())
     assert in_prompt_msg(
-        before,
+        child,
         [_crash_msg, "('debugged_boi'", "RuntimeError"],
     )
 
@@ -1038,9 +861,7 @@ def test_different_debug_mode_per_actor(
         do_ctlc(child)
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
-
-    before = str(child.before.decode())
+    child.expect(EOF)
 
     # NOTE: this debugged actor error currently WON'T show up since the
     # root will actually cancel and terminate the nursery before the error
@@ -1057,103 +878,6 @@ def test_different_debug_mode_per_actor(
             "RuntimeError",
         ]
     )
-
-
-def test_pause_from_sync(
-    spawn,
-    ctlc: bool
-):
-    '''
-    Verify we can use the `pdbp` REPL from sync functions AND from
-    any thread spawned with `trio.to_thread.run_sync()`.
-
-    `examples/debugging/sync_bp.py`
-
-    '''
-    child = spawn('sync_bp')
-
-    # first `sync_pause()` after nurseries open
-    child.expect(PROMPT)
-    assert_before(
-        child,
-        [
-            # pre-prompt line
-            _pause_msg,
-            "<Task '__main__.main'",
-            "('root'",
-        ]
-    )
-    if ctlc:
-        do_ctlc(child)
-
-    child.sendline('c')
-
-
-    # first `await tractor.pause()` inside `p.open_context()` body
-    child.expect(PROMPT)
-
-    # XXX shouldn't see gb loaded message with PDB loglevel!
-    before = str(child.before.decode())
-    assert not in_prompt_msg(
-        before,
-        ['`greenback` portal opened!'],
-    )
-    # should be same root task
-    assert_before(
-        child,
-        [
-            _pause_msg,
-            "<Task '__main__.main'",
-            "('root'",
-        ]
-    )
-
-    if ctlc:
-        do_ctlc(child)
-
-    # one of the bg thread or subactor should have
-    # `Lock.acquire()`-ed
-    # (NOT both, which will result in REPL clobbering!)
-    attach_patts: dict[str, list[str]] = {
-        'subactor': [
-            "'start_n_sync_pause'",
-            "('subactor'",
-        ],
-        'inline_root_bg_thread': [
-            "<Thread(inline_root_bg_thread",
-            "('root'",
-        ],
-        'start_soon_root_bg_thread': [
-            "<Thread(start_soon_root_bg_thread",
-            "('root'",
-        ],
-    }
-    while attach_patts:
-        child.sendline('c')
-        child.expect(PROMPT)
-        before = str(child.before.decode())
-        for key in attach_patts.copy():
-            if key in before:
-                expected_patts: str = attach_patts.pop(key)
-                assert_before(
-                    child,
-                    [_pause_msg] + expected_patts
-                )
-                break
-
-        # ensure no other task/threads engaged a REPL
-        # at the same time as the one that was detected above.
-        for key, other_patts in attach_patts.items():
-            assert not in_prompt_msg(
-                before,
-                other_patts,
-            )
-
-        if ctlc:
-            do_ctlc(child)
-
-    child.sendline('c')
-    child.expect(pexpect.EOF)
 
 
 def test_post_mortem_api(
@@ -1258,7 +982,7 @@ def test_post_mortem_api(
     # )
 
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
 
 def test_shield_pause(
@@ -1333,8 +1057,25 @@ def test_shield_pause(
         ]
     )
     child.sendline('c')
-    child.expect(pexpect.EOF)
+    child.expect(EOF)
 
+
+# TODO: better error for "non-ideal" usage from the root actor.
+# -[ ] if called from an async scope emit a message that suggests
+#    using `await tractor.pause()` instead since it's less overhead
+#    (in terms of `greenback` and/or extra threads) and if it's from
+#    a sync scope suggest that usage must first call
+#    `ensure_portal()` in the (eventual parent) async calling scope?
+def test_sync_pause_from_bg_task_in_root_actor_():
+    '''
+    When used from the root actor, normally we can only implicitly
+    support `.pause_from_sync()` from the main-parent-task (that
+    opens the runtime via `open_root_actor()`) since `greenback`
+    requires a `.ensure_portal()` call per `trio.Task` where it is
+    used.
+
+    '''
+    ...
 
 # TODO: needs ANSI code stripping tho, see `assert_before()` # above!
 def test_correct_frames_below_hidden():

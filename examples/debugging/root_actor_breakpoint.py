@@ -10,7 +10,7 @@ async def main():
 
         await trio.sleep(0.1)
 
-        await tractor.breakpoint()
+        await tractor.pause()
 
         await trio.sleep(0.1)
 

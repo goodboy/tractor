@@ -258,20 +258,28 @@ class ActorContextInfo(Mapping):
 
 
 def get_logger(
-
-    name: str | None = None,
+    name: str|None = None,
     _root_name: str = _proj_name,
+
+    logger: Logger|None = None,
+
+    # TODO, using `.config.dictConfig()` api?
+    # -[ ] SO answer with docs links
+    #  |_https://stackoverflow.com/questions/7507825/where-is-a-complete-example-of-logging-config-dictconfig
+    #  |_https://docs.python.org/3/library/logging.config.html#configuration-dictionary-schema
+    subsys_spec: str|None = None,
 
 ) -> StackLevelAdapter:
     '''Return the package log or a sub-logger for ``name`` if provided.
 
     '''
     log: Logger
-    log = rlog = logging.getLogger(_root_name)
+    log = rlog = logger or logging.getLogger(_root_name)
 
     if (
         name
-        and name != _proj_name
+        and
+        name != _proj_name
     ):
 
         # NOTE: for handling for modules that use ``get_logger(__name__)``
@@ -283,7 +291,7 @@ def get_logger(
         #   since in python the {filename} is always this same
         #   module-file.
 
-        sub_name: None | str = None
+        sub_name: None|str = None
         rname, _, sub_name = name.partition('.')
         pkgpath, _, modfilename = sub_name.rpartition('.')
 
@@ -306,7 +314,10 @@ def get_logger(
 
     # add our actor-task aware adapter which will dynamically look up
     # the actor and task names at each log emit
-    logger = StackLevelAdapter(log, ActorContextInfo())
+    logger = StackLevelAdapter(
+        log,
+        ActorContextInfo(),
+    )
 
     # additional levels
     for name, val in CUSTOM_LEVELS.items():
@@ -319,15 +330,25 @@ def get_logger(
 
 
 def get_console_log(
-    level: str | None = None,
+    level: str|None = None,
+    logger: Logger|None = None,
     **kwargs,
-) -> LoggerAdapter:
-    '''Get the package logger and enable a handler which writes to stderr.
 
-    Yeah yeah, i know we can use ``DictConfig``. You do it.
+) -> LoggerAdapter:
     '''
-    log = get_logger(**kwargs)  # our root logger
-    logger = log.logger
+    Get a `tractor`-style logging instance: a `Logger` wrapped in
+    a `StackLevelAdapter` which injects various concurrency-primitive
+    (process, thread, task) fields and enables a `StreamHandler` that
+    writes on stderr using `colorlog` formatting.
+
+    Yeah yeah, i know we can use `logging.config.dictConfig()`. You do it.
+
+    '''
+    log = get_logger(
+        logger=logger,
+        **kwargs
+    )  # set a root logger
+    logger: Logger = log.logger
 
     if not level:
         return log
@@ -346,9 +367,13 @@ def get_console_log(
             None,
         )
     ):
+        fmt = LOG_FORMAT
+        # if logger:
+        #     fmt = None
+
         handler = StreamHandler()
         formatter = colorlog.ColoredFormatter(
-            LOG_FORMAT,
+            fmt=fmt,
             datefmt=DATE_FORMAT,
             log_colors=STD_PALETTE,
             secondary_log_colors=BOLD_PALETTE,
@@ -365,7 +390,7 @@ def get_loglevel() -> str:
 
 
 # global module logger for tractor itself
-log = get_logger('tractor')
+log: StackLevelAdapter = get_logger('tractor')
 
 
 def at_least_level(

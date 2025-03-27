@@ -158,6 +158,7 @@ class ActorNursery:
         # configure and pass runtime state
         _rtv = _state._runtime_vars.copy()
         _rtv['_is_root'] = False
+        _rtv['_is_infected_aio'] = infect_asyncio
 
         # allow setting debug policy per actor
         if debug_mode is not None:

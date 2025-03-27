@@ -53,6 +53,7 @@ def pformat_boxed_tb(
 
     tb_box_indent: int|None = None,
     tb_body_indent: int = 1,
+    boxer_header: str = '-'
 
 ) -> str:
     '''
@@ -88,10 +89,10 @@ def pformat_boxed_tb(
 
     tb_box: str = (
         f'|\n'
-        f' ------ - ------\n'
+        f' ------ {boxer_header} ------\n'
         f'{tb_body}'
-        f' ------ - ------\n'
-        f'_|\n'
+        f' ------ {boxer_header}- ------\n'
+        f'_|'
     )
     tb_box_indent: str = (
         tb_box_indent

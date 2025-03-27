@@ -170,7 +170,7 @@ def test_do_not_swallow_error_before_started_by_remote_contextcancelled(
         trio.run(main)
 
     rae = excinfo.value
-    assert rae.boxed_type == TypeError
+    assert rae.boxed_type is TypeError
 
 
 @tractor.context

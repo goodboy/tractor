@@ -54,6 +54,25 @@ def examples_dir() -> pathlib.Path:
     return repodir() / 'examples'
 
 
+def mk_cmd(
+    ex_name: str,
+    exs_subpath: str = 'debugging',
+) -> str:
+    '''
+    Generate a shell command suitable to pass to ``pexpect.spawn()``.
+
+    '''
+    script_path: pathlib.Path = (
+        examples_dir()
+        / exs_subpath
+        / f'{ex_name}.py'
+    )
+    return ' '.join([
+        'python',
+        str(script_path)
+    ])
+
+
 @acm
 async def expect_ctxc(
     yay: bool,

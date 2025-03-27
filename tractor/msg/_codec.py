@@ -41,8 +41,10 @@ import textwrap
 from typing import (
     Any,
     Callable,
+    Protocol,
     Type,
     TYPE_CHECKING,
+    TypeVar,
     Union,
 )
 from types import ModuleType
@@ -181,7 +183,11 @@ def mk_dec(
     dec_hook: Callable|None = None,
 
 ) -> MsgDec:
+    '''
+    Create an IPC msg decoder, normally used as the
+    `PayloadMsg.pld: PayloadT` field decoder inside a `PldRx`.
 
+    '''
     return MsgDec(
         _dec=msgpack.Decoder(
             type=spec,  # like `MsgType[Any]`
@@ -227,6 +233,13 @@ def pformat_msgspec(
     join_char: str = '\n',
 
 ) -> str:
+    '''
+    Pretty `str` format the `msgspec.msgpack.Decoder.type` attribute
+    for display in (console) log messages as a nice (maybe multiline)
+    presentation of all supported `Struct`s (subtypes) available for
+    typed decoding.
+
+    '''
     dec: msgpack.Decoder = getattr(codec, 'dec', codec)
     return join_char.join(
         mk_msgspec_table(
@@ -630,31 +643,57 @@ def limit_msg_spec(
 #         # import pdbp; pdbp.set_trace()
 #         assert ext_codec.pld_spec == extended_spec
 #         yield ext_codec
+#
+# ^-TODO-^ is it impossible to make something like this orr!?
+
+# TODO: make an auto-custom hook generator from a set of input custom
+# types?
+# -[ ] below is a proto design using a `TypeCodec` idea?
+#
+# type var for the expected interchange-lib's
+# IPC-transport type when not available as a built-in
+# serialization output.
+WireT = TypeVar('WireT')
 
 
-# TODO: make something similar to this inside `._codec` such that
-# user can just pass a type table of some sort?
-# -[ ] we would need to decode all msgs to `pretty_struct.Struct`
-#     and then call `.to_dict()` on them?
-# -[x] we're going to need to re-impl all the stuff changed in the
-#    runtime port such that it can handle dicts or `Msg`s?
-#
-# def mk_dict_msg_codec_hooks() -> tuple[Callable, Callable]:
-#     '''
-#     Deliver a `enc_hook()`/`dec_hook()` pair which does
-#     manual convertion from our above native `Msg` set
-#     to `dict` equivalent (wire msgs) in order to keep legacy compat
-#     with the original runtime implementation.
-#
-#     Note: this is is/was primarly used while moving the core
-#     runtime over to using native `Msg`-struct types wherein we
-#     start with the send side emitting without loading
-#     a typed-decoder and then later flipping the switch over to
-#     load to the native struct types once all runtime usage has
-#     been adjusted appropriately.
-#
-#     '''
-#     return (
-#         # enc_to_dict,
-#         dec_from_dict,
-#     )
+# TODO: some kinda (decorator) API for built-in subtypes
+# that builds this implicitly by inspecting the `mro()`?
+class TypeCodec(Protocol):
+    '''
+    A per-custom-type wire-transport serialization translator
+    description type.
+
+    '''
+    src_type: Type
+    wire_type: WireT
+
+    def encode(obj: Type) -> WireT:
+        ...
+
+    def decode(
+        obj_type: Type[WireT],
+        obj: WireT,
+    ) -> Type:
+        ...
+
+
+class MsgpackTypeCodec(TypeCodec):
+    ...
+
+
+def mk_codec_hooks(
+    type_codecs: list[TypeCodec],
+
+) -> tuple[Callable, Callable]:
+    '''
+    Deliver a `enc_hook()`/`dec_hook()` pair which handle
+    manual convertion from an input `Type` set such that whenever
+    the `TypeCodec.filter()` predicate matches the
+    `TypeCodec.decode()` is called on the input native object by
+    the `dec_hook()` and whenever the
+    `isiinstance(obj, TypeCodec.type)` matches against an
+    `enc_hook(obj=obj)` the return value is taken from a
+    `TypeCodec.encode(obj)` callback.
+
+    '''
+    ...

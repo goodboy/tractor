@@ -1703,14 +1703,27 @@ class Context:
         # TODO: expose as mod func instead!
         structfmt = pretty_struct.Struct.pformat
         if self._in_overrun:
-            log.warning(
-                f'Queueing OVERRUN msg on caller task:\n\n'
-
+            report: str = (
                 f'{flow_body}'
-
                 f'{structfmt(msg)}\n'
             )
+            over_q: deque = self._overflow_q
             self._overflow_q.append(msg)
+
+            if len(over_q) == over_q.maxlen:
+                report = (
+                    'FAILED to queue OVERRUN msg, OVERAN the OVERRUN QUEUE !!\n\n'
+                    + report
+                )
+                # log.error(report)
+                log.debug(report)
+
+            else:
+                report = (
+                    'Queueing OVERRUN msg on caller task:\n\n'
+                    + report
+                )
+                log.debug(report)
 
             # XXX NOTE XXX
             # overrun is the ONLY case where returning early is fine!
