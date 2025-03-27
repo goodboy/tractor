@@ -18,9 +18,10 @@
 Root actor runtime ignition(s).
 
 '''
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager as acm
 from functools import partial
 import importlib
+import inspect
 import logging
 import os
 import signal
@@ -60,7 +61,7 @@ _default_lo_addrs: list[tuple[str, int]] = [(
 logger = log.get_logger('tractor')
 
 
-@asynccontextmanager
+@acm
 async def open_root_actor(
 
     *,
@@ -92,11 +93,16 @@ async def open_root_actor(
     # and that this call creates it.
     ensure_registry: bool = False,
 
+    hide_tb: bool = True,
+
 ) -> Actor:
     '''
     Runtime init entry point for ``tractor``.
 
     '''
+    __tracebackhide__: bool = hide_tb
+    _debug.hide_runtime_frames()
+
     # TODO: stick this in a `@cm` defined in `devx._debug`?
     #
     # Override the global debugger hook to make it play nice with
@@ -110,20 +116,28 @@ async def open_root_actor(
     if (
         debug_mode
         and maybe_enable_greenback
-        and await _debug.maybe_init_greenback(
-            raise_not_found=False,
+        and (
+            maybe_mod := await _debug.maybe_init_greenback(
+                raise_not_found=False,
+            )
         )
     ):
-        os.environ['PYTHONBREAKPOINT'] = (
-            'tractor.devx._debug.pause_from_sync'
+        logger.info(
+            f'Found `greenback` installed @ {maybe_mod}\n'
+            'Enabling `tractor.pause_from_sync()` support!\n'
         )
+        os.environ['PYTHONBREAKPOINT'] = (
+            'tractor.devx._debug._sync_pause_from_builtin'
+        )
+        _state._runtime_vars['use_greenback'] = True
+
     else:
         # TODO: disable `breakpoint()` by default (without
         # `greenback`) since it will break any multi-actor
         # usage by a clobbered TTY's stdstreams!
         def block_bps(*args, **kwargs):
             raise RuntimeError(
-                'Trying to use `breakpoint()` eh?\n'
+                'Trying to use `breakpoint()` eh?\n\n'
                 'Welp, `tractor` blocks `breakpoint()` built-in calls by default!\n'
                 'If you need to use it please install `greenback` and set '
                 '`debug_mode=True` when opening the runtime '
@@ -131,11 +145,13 @@ async def open_root_actor(
             )
 
         sys.breakpointhook = block_bps
-        # os.environ['PYTHONBREAKPOINT'] = None
+        # lol ok,
+        # https://docs.python.org/3/library/sys.html#sys.breakpointhook
+        os.environ['PYTHONBREAKPOINT'] = "0"
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger lock state.
-    _debug.Lock._trio_handler = signal.getsignal(signal.SIGINT)
+    _debug.DebugStatus._trio_handler = signal.getsignal(signal.SIGINT)
 
     # mark top most level process as root actor
     _state._runtime_vars['_is_root'] = True
@@ -201,6 +217,7 @@ async def open_root_actor(
         ):
             loglevel = 'PDB'
 
+
     elif debug_mode:
         raise RuntimeError(
             "Debug mode is only supported for the `trio` backend!"
@@ -254,7 +271,9 @@ async def open_root_actor(
 
         except OSError:
             # TODO: make this a "discovery" log level?
-            logger.warning(f'No actor registry found @ {addr}')
+            logger.info(
+                f'No actor registry found @ {addr}\n'
+            )
 
     async with trio.open_nursery() as tn:
         for addr in registry_addrs:
@@ -268,7 +287,6 @@ async def open_root_actor(
     # Create a new local root-actor instance which IS NOT THE
     # REGISTRAR
     if ponged_addrs:
-
         if ensure_registry:
             raise RuntimeError(
                  f'Failed to open `{name}`@{ponged_addrs}: '
@@ -355,19 +373,25 @@ async def open_root_actor(
             )
             try:
                 yield actor
-
             except (
                 Exception,
                 BaseExceptionGroup,
             ) as err:
-
-                entered: bool = await _debug._maybe_enter_pm(err)
+                # XXX NOTE XXX see equiv note inside
+                # `._runtime.Actor._stream_handler()` where in the
+                # non-root or root-that-opened-this-mahually case we
+                # wait for the local actor-nursery to exit before
+                # exiting the transport channel handler.
+                entered: bool = await _debug._maybe_enter_pm(
+                    err,
+                    api_frame=inspect.currentframe(),
+                )
                 if (
                     not entered
                     and
                     not is_multi_cancelled(err)
                 ):
-                    logger.exception('Root actor crashed:\n')
+                    logger.exception('Root actor crashed\n')
 
                 # ALWAYS re-raise any error bubbled up from the
                 # runtime!
@@ -392,14 +416,20 @@ async def open_root_actor(
         _state._last_actor_terminated = actor
 
         # restore built-in `breakpoint()` hook state
-        if debug_mode:
+        if (
+            debug_mode
+            and
+            maybe_enable_greenback
+        ):
             if builtin_bp_handler is not None:
                 sys.breakpointhook = builtin_bp_handler
+
             if orig_bp_path is not None:
                 os.environ['PYTHONBREAKPOINT'] = orig_bp_path
+
             else:
                 # clear env back to having no entry
-                os.environ.pop('PYTHONBREAKPOINT')
+                os.environ.pop('PYTHONBREAKPOINT', None)
 
         logger.runtime("Root actor terminated")
 

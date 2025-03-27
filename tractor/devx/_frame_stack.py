@@ -20,9 +20,8 @@ as it pertains to improving the grok-ability of our runtime!
 
 '''
 from __future__ import annotations
+from functools import partial
 import inspect
-# import msgspec
-# from pprint import pformat
 from types import (
     FrameType,
     FunctionType,
@@ -30,9 +29,8 @@ from types import (
     # CodeType,
 )
 from typing import (
-    # Any,
+    Any,
     Callable,
-    # TYPE_CHECKING,
     Type,
 )
 
@@ -40,6 +38,7 @@ from tractor.msg import (
     pretty_struct,
     NamespacePath,
 )
+import wrapt
 
 
 # TODO: yeah, i don't love this and we should prolly just
@@ -81,6 +80,31 @@ def get_class_from_frame(fr: FrameType) -> (
     return None
 
 
+def get_ns_and_func_from_frame(
+    frame: FrameType,
+) -> Callable:
+    '''
+    Return the corresponding function object reference from
+    a `FrameType`, and return it and it's parent namespace `dict`.
+
+    '''
+    ns: dict[str, Any]
+
+    # for a method, go up a frame and lookup the name in locals()
+    if '.' in (qualname := frame.f_code.co_qualname):
+        cls_name, _, func_name = qualname.partition('.')
+        ns = frame.f_back.f_locals[cls_name].__dict__
+
+    else:
+        func_name: str = frame.f_code.co_name
+        ns = frame.f_globals
+
+    return (
+        ns,
+        ns[func_name],
+    )
+
+
 def func_ref_from_frame(
     frame: FrameType,
 ) -> Callable:
@@ -96,34 +120,63 @@ def func_ref_from_frame(
             )
 
 
-# TODO: move all this into new `.devx._code`!
-# -[ ] prolly create a `@runtime_api` dec?
-# -[ ] ^- make it capture and/or accept buncha optional
-#     meta-data like a fancier version of `@pdbp.hideframe`.
-#
 class CallerInfo(pretty_struct.Struct):
-    rt_fi: inspect.FrameInfo
-    call_frame: FrameType
+    # https://docs.python.org/dev/reference/datamodel.html#frame-objects
+    # https://docs.python.org/dev/library/inspect.html#the-interpreter-stack
+    _api_frame: FrameType
 
     @property
-    def api_func_ref(self) -> Callable|None:
-        return func_ref_from_frame(self.rt_fi.frame)
+    def api_frame(self) -> FrameType:
+        try:
+            self._api_frame.clear()
+        except RuntimeError:
+            # log.warning(
+            print(
+                f'Frame {self._api_frame} for {self.api_func} is still active!'
+            )
+
+        return self._api_frame
+
+    _api_func: Callable
+
+    @property
+    def api_func(self) -> Callable:
+        return self._api_func
+
+    _caller_frames_up: int|None = 1
+    _caller_frame: FrameType|None = None  # cached after first stack scan
 
     @property
     def api_nsp(self) -> NamespacePath|None:
-        func: FunctionType = self.api_func_ref
+        func: FunctionType = self.api_func
         if func:
             return NamespacePath.from_ref(func)
 
         return '<unknown>'
 
     @property
-    def caller_func_ref(self) -> Callable|None:
-        return func_ref_from_frame(self.call_frame)
+    def caller_frame(self) -> FrameType:
+
+        # if not already cached, scan up stack explicitly by
+        # configured count.
+        if not self._caller_frame:
+            if self._caller_frames_up:
+                for _ in range(self._caller_frames_up):
+                    caller_frame: FrameType|None = self.api_frame.f_back
+
+                if not caller_frame:
+                    raise ValueError(
+                        'No frame exists {self._caller_frames_up} up from\n'
+                        f'{self.api_frame} @ {self.api_nsp}\n'
+                    )
+
+            self._caller_frame = caller_frame
+
+        return self._caller_frame
 
     @property
     def caller_nsp(self) -> NamespacePath|None:
-        func: FunctionType = self.caller_func_ref
+        func: FunctionType = self.api_func
         if func:
             return NamespacePath.from_ref(func)
 
@@ -170,8 +223,66 @@ def find_caller_info(
                 call_frame = call_frame.f_back
 
             return CallerInfo(
-                rt_fi=fi,
-                call_frame=call_frame,
+                _api_frame=rt_frame,
+                _api_func=func_ref_from_frame(rt_frame),
+                _caller_frames_up=go_up_iframes,
             )
 
     return None
+
+
+_frame2callerinfo_cache: dict[FrameType, CallerInfo] = {}
+
+
+# TODO: -[x] move all this into new `.devx._code`!
+# -[ ] consider rename to _callstack?
+# -[ ] prolly create a `@runtime_api` dec?
+#   |_ @api_frame seems better?
+# -[ ] ^- make it capture and/or accept buncha optional
+#     meta-data like a fancier version of `@pdbp.hideframe`.
+#
+def api_frame(
+    wrapped: Callable|None = None,
+    *,
+    caller_frames_up: int = 1,
+
+) -> Callable:
+
+    # handle the decorator called WITHOUT () case,
+    # i.e. just @api_frame, NOT @api_frame(extra=<blah>)
+    if wrapped is None:
+        return partial(
+            api_frame,
+            caller_frames_up=caller_frames_up,
+        )
+
+    @wrapt.decorator
+    async def wrapper(
+        wrapped: Callable,
+        instance: object,
+        args: tuple,
+        kwargs: dict,
+    ):
+        # maybe cache the API frame for this call
+        global _frame2callerinfo_cache
+        this_frame: FrameType = inspect.currentframe()
+        api_frame: FrameType = this_frame.f_back
+
+        if not _frame2callerinfo_cache.get(api_frame):
+            _frame2callerinfo_cache[api_frame] = CallerInfo(
+                _api_frame=api_frame,
+                _api_func=wrapped,
+                _caller_frames_up=caller_frames_up,
+            )
+
+        return wrapped(*args, **kwargs)
+
+    # annotate the function as a "api function", meaning it is
+    # a function for which the function above it in the call stack should be
+    # non-`tractor` code aka "user code".
+    #
+    # in the global frame cache for easy lookup from a given
+    # func-instance
+    wrapped._call_infos: dict[FrameType, CallerInfo] = _frame2callerinfo_cache
+    wrapped.__api_func__: bool = True
+    return wrapper(wrapped)

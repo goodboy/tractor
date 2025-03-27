@@ -13,6 +13,7 @@ import trio
 import tractor
 from tractor._testing import (
     examples_dir,
+    break_ipc,
 )
 
 
@@ -90,10 +91,12 @@ def test_ipc_channel_break_during_stream(
 
         # non-`trio` spawners should never hit the hang condition that
         # requires the user to do ctl-c to cancel the actor tree.
-        expect_final_exc = trio.ClosedResourceError
+        # expect_final_exc = trio.ClosedResourceError
+        expect_final_exc = tractor.TransportClosed
 
     mod: ModuleType = import_path(
-        examples_dir() / 'advanced_faults' / 'ipc_failure_during_stream.py',
+        examples_dir() / 'advanced_faults'
+        / 'ipc_failure_during_stream.py',
         root=examples_dir(),
         consider_namespace_packages=False,
     )
@@ -155,7 +158,7 @@ def test_ipc_channel_break_during_stream(
         if pre_aclose_msgstream:
             expect_final_exc = KeyboardInterrupt
 
-    # NOTE when the parent IPC side dies (even if the child's does as well
+    # NOTE when the parent IPC side dies (even if the child does as well
     # but the child fails BEFORE the parent) we always expect the
     # IPC layer to raise a closed-resource, NEVER do we expect
     # a stop msg since the parent-side ctx apis will error out
@@ -167,7 +170,8 @@ def test_ipc_channel_break_during_stream(
         and
         ipc_break['break_child_ipc_after'] is False
     ):
-        expect_final_exc = trio.ClosedResourceError
+        # expect_final_exc = trio.ClosedResourceError
+        expect_final_exc = tractor.TransportClosed
 
     # BOTH but, PARENT breaks FIRST
     elif (
@@ -178,7 +182,8 @@ def test_ipc_channel_break_during_stream(
             ipc_break['break_parent_ipc_after']
         )
     ):
-        expect_final_exc = trio.ClosedResourceError
+        # expect_final_exc = trio.ClosedResourceError
+        expect_final_exc = tractor.TransportClosed
 
     with pytest.raises(
         expected_exception=(
@@ -197,14 +202,29 @@ def test_ipc_channel_break_during_stream(
                     **ipc_break,
                 )
             )
-        except KeyboardInterrupt as kbi:
-            _err = kbi
+        except KeyboardInterrupt as _kbi:
+            kbi = _kbi
             if expect_final_exc is not KeyboardInterrupt:
                 pytest.fail(
                     'Rxed unexpected KBI !?\n'
                     f'{repr(kbi)}'
                 )
 
+            raise
+
+        except tractor.TransportClosed as _tc:
+            tc = _tc
+            if expect_final_exc is KeyboardInterrupt:
+                pytest.fail(
+                    'Unexpected transport failure !?\n'
+                    f'{repr(tc)}'
+                )
+            cause: Exception = tc.__cause__
+            assert (
+                type(cause) is trio.ClosedResourceError
+                and
+                cause.args[0] == 'another task closed this fd'
+            )
             raise
 
     # get raw instance from pytest wrapper
@@ -225,9 +245,15 @@ async def break_ipc_after_started(
 ) -> None:
     await ctx.started()
     async with ctx.open_stream() as stream:
-        await stream.aclose()
-        await trio.sleep(0.2)
-        await ctx.chan.send(None)
+
+        # TODO: make a test which verifies the error
+        # for this, i.e. raises a `MsgTypeError`
+        # await ctx.chan.send(None)
+
+        await break_ipc(
+            stream=stream,
+            pre_close=True,
+        )
         print('child broke IPC and terminating')
 
 

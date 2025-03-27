@@ -19,7 +19,7 @@ from tractor._testing import (
 @pytest.fixture
 def run_example_in_subproc(
     loglevel: str,
-    testdir,
+    testdir: pytest.Testdir,
     reg_addr: tuple[str, int],
 ):
 

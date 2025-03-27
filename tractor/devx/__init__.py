@@ -27,21 +27,23 @@ from ._debug import (
     pause as pause,
     pause_from_sync as pause_from_sync,
     shield_sigint_handler as shield_sigint_handler,
-    MultiActorPdb as MultiActorPdb,
     open_crash_handler as open_crash_handler,
     maybe_open_crash_handler as maybe_open_crash_handler,
+    maybe_init_greenback as maybe_init_greenback,
     post_mortem as post_mortem,
+    mk_pdb as mk_pdb,
 )
 from ._stackscope import (
     enable_stack_on_sig as enable_stack_on_sig,
 )
-# from .pformat import (
-#     add_div as add_div,
-#     pformat_caller_frame as pformat_caller_frame,
-#     pformat_boxed_tb as pformat_boxed_tb,
-# )
+from .pformat import (
+    add_div as add_div,
+    pformat_caller_frame as pformat_caller_frame,
+    pformat_boxed_tb as pformat_boxed_tb,
+)
 
 
+# TODO, move this to a new `.devx._pdbp` mod?
 def _enable_readline_feats() -> str:
     '''
     Handle `readline` when compiled with `libedit` to avoid breaking
@@ -73,5 +75,4 @@ def _enable_readline_feats() -> str:
         return 'readline'
 
 
-# TODO, move this to a new `.devx._pdbp` mod?
 _enable_readline_feats()

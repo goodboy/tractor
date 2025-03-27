@@ -15,256 +15,716 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Extensions to built-in or (heavily used but 3rd party) friend-lib
-types.
+Define our strictly typed IPC message spec for the SCIPP:
+
+that is,
+
+the "Structurred-Concurrency-Inter-Process-(dialog)-(un)Protocol".
 
 '''
 from __future__ import annotations
-from collections import UserList
-from pprint import (
-    saferepr,
-)
+import types
 from typing import (
     Any,
-    Iterator,
+    Generic,
+    Literal,
+    Type,
+    TypeVar,
+    TypeAlias,
+    Union,
 )
 
 from msgspec import (
-    msgpack,
-    Struct as _Struct,
-    structs,
+    defstruct,
+    # field,
+    Raw,
+    Struct,
+    # UNSET,
+    # UnsetType,
 )
 
-# TODO: auto-gen type sig for input func both for
-# type-msgs and logging of RPC tasks?
-# taken and modified from:
-# https://stackoverflow.com/a/57110117
-# import inspect
-# from typing import List
-
-# def my_function(input_1: str, input_2: int) -> list[int]:
-#     pass
-
-# def types_of(func):
-#     specs = inspect.getfullargspec(func)
-#     return_type = specs.annotations['return']
-#     input_types = [t.__name__ for s, t in specs.annotations.items() if s != 'return']
-#     return f'{func.__name__}({": ".join(input_types)}) -> {return_type}'
-
-# types_of(my_function)
+from tractor.msg import (
+    pretty_struct,
+)
+from tractor.log import get_logger
 
 
-class DiffDump(UserList):
-    '''
-    Very simple list delegator that repr() dumps (presumed) tuple
-    elements of the form `tuple[str, Any, Any]` in a nice
-    multi-line readable form for analyzing `Struct` diffs.
+log = get_logger('tractor.msgspec')
 
-    '''
-    def __repr__(self) -> str:
-        if not len(self):
-            return super().__repr__()
-
-        # format by displaying item pair's ``repr()`` on multiple,
-        # indented lines such that they are more easily visually
-        # comparable when printed to console when printed to
-        # console.
-        repstr: str = '[\n'
-        for k, left, right in self:
-            repstr += (
-                f'({k},\n'
-                f'\t{repr(left)},\n'
-                f'\t{repr(right)},\n'
-                ')\n'
-            )
-        repstr += ']\n'
-        return repstr
+# type variable for the boxed payload field `.pld`
+PayloadT = TypeVar('PayloadT')
 
 
-class Struct(
-    _Struct,
+class PayloadMsg(
+    Struct,
+    Generic[PayloadT],
 
     # https://jcristharif.com/msgspec/structs.html#tagged-unions
-    # tag='pikerstruct',
-    # tag=True,
+    tag=True,
+    tag_field='msg_type',
+
+    # https://jcristharif.com/msgspec/structs.html#field-ordering
+    # kw_only=True,
+
+    # https://jcristharif.com/msgspec/structs.html#equality-and-order
+    # order=True,
+
+    # https://jcristharif.com/msgspec/structs.html#encoding-decoding-as-arrays
+    # as_array=True,
 ):
     '''
-    A "human friendlier" (aka repl buddy) struct subtype.
+    An abstract payload boxing/shuttling IPC msg type.
+
+    Boxes data-values passed to/from user code
+
+    (i.e. any values passed by `tractor` application code using any of
+
+      |_ `._streaming.MsgStream.send/receive()`
+      |_ `._context.Context.started/result()`
+      |_ `._ipc.Channel.send/recv()`
+
+     aka our "IPC primitive APIs")
+
+    as message "payloads" set to the `.pld` field and uses
+    `msgspec`'s "tagged unions" feature to support a subset of our
+    "SC-transitive shuttle protocol" specification with
+    a `msgspec.Struct` inheritance tree.
 
     '''
-    def _sin_props(self) -> Iterator[
-        tuple[
-            structs.FieldIinfo,
-            str,
-            Any,
-        ]
-    ]:
-        '''
-        Iterate over all non-@property fields of this struct.
+    cid: str  # call/context-id
+    # ^-TODO-^: more explicit type?
+    # -[ ] use UNSET here?
+    #  https://jcristharif.com/msgspec/supported-types.html#unset
+    #
+    # -[ ] `uuid.UUID` which has multi-protocol support
+    #  https://jcristharif.com/msgspec/supported-types.html#uuid
 
-        '''
-        fi: structs.FieldInfo
-        for fi in structs.fields(self):
-            key: str = fi.name
-            val: Any = getattr(self, key)
-            yield fi, key, val
+    # The msg's "payload" (spelled without vowels):
+    # https://en.wikipedia.org/wiki/Payload_(computing)
+    pld: Raw
 
-    def to_dict(
-        self,
-        include_non_members: bool = True,
+    # ^-NOTE-^ inherited from any `PayloadMsg` (and maybe type
+    # overriden via the `._ops.limit_plds()` API), but by default is
+    # parameterized to be `Any`.
+    #
+    # XXX this `Union` must strictly NOT contain `Any` if
+    # a limited msg-type-spec is intended, such that when
+    # creating and applying a new `MsgCodec` its 
+    # `.decoder: Decoder` is configured with a `Union[Type[Struct]]` which
+    # restricts the allowed payload content (this `.pld` field) 
+    # by type system defined loading constraints B)
+    #
+    # TODO: could also be set to `msgspec.Raw` if the sub-decoders
+    # approach is preferred over the generic parameterization 
+    # approach as take by `mk_msg_spec()` below.
 
-    ) -> dict:
-        '''
-        Like it sounds.. direct delegation to:
-        https://jcristharif.com/msgspec/api.html#msgspec.structs.asdict
 
-        BUT, by default we pop all non-member (aka not defined as
-        struct fields) fields by default.
+# TODO: complete rename
+Msg = PayloadMsg
 
-        '''
-        asdict: dict = structs.asdict(self)
-        if include_non_members:
-            return asdict
 
-        # only return a dict of the struct members
-        # which were provided as input, NOT anything
-        # added as type-defined `@property` methods!
-        sin_props: dict = {}
-        fi: structs.FieldInfo
-        for fi, k, v in self._sin_props():
-            sin_props[k] = asdict[k]
+class Aid(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+):
+    '''
+    Actor-identity msg.
 
-        return sin_props
+    Initial contact exchange enabling an actor "mailbox handshake"
+    delivering the peer identity (and maybe eventually contact)
+    info.
 
-    def pformat(
-        self,
-        field_indent: int = 2,
-        indent: int = 0,
+    Used by discovery protocol to register actors as well as
+    conduct the initial comms (capability) filtering.
 
-    ) -> str:
-        '''
-        Recursion-safe `pprint.pformat()` style formatting of
-        a `msgspec.Struct` for sane reading by a human using a REPL.
+    '''
+    name: str
+    uuid: str
+    # TODO: use built-in support for UUIDs?
+    # -[ ] `uuid.UUID` which has multi-protocol support
+    #  https://jcristharif.com/msgspec/supported-types.html#uuid
 
-        '''
-        # global whitespace indent
-        ws: str = ' '*indent
 
-        # field whitespace indent
-        field_ws: str = ' '*(field_indent + indent)
+class SpawnSpec(
+    pretty_struct.Struct,
+    tag=True,
+    tag_field='msg_type',
+):
+    '''
+    Initial runtime spec handed down from a spawning parent to its
+    child subactor immediately following first contact via an
+    `Aid` msg.
 
-        # qtn: str = ws + self.__class__.__qualname__
-        qtn: str = self.__class__.__qualname__
+    '''
+    # TODO: similar to the `Start` kwargs spec needed below, we need
+    # a hard `Struct` def for all of these fields!
+    _parent_main_data: dict
+    _runtime_vars: dict[str, Any]
 
-        obj_str: str = ''  # accumulator
-        fi: structs.FieldInfo
-        k: str
-        v: Any
-        for fi, k, v in self._sin_props():
+    # module import capability
+    enable_modules: dict[str, str]
 
-            # TODO: how can we prefer `Literal['option1',  'option2,
-            # ..]` over .__name__ == `Literal` but still get only the
-            # latter for simple types like `str | int | None` etc..?
-            ft: type = fi.type
-            typ_name: str = getattr(ft, '__name__', str(ft))
+    # TODO: not just sockaddr pairs?
+    # -[ ] abstract into a `TransportAddr` type?
+    reg_addrs: list[tuple[str, int]]
+    bind_addrs: list[tuple[str, int]]
 
-            # recurse to get sub-struct's `.pformat()` output Bo
-            if isinstance(v, Struct):
-                val_str: str =  v.pformat(
-                    indent=field_indent + indent,
-                    field_indent=indent + field_indent,
-                )
 
-            else:  # the `pprint` recursion-safe format:
-                # https://docs.python.org/3.11/library/pprint.html#pprint.saferepr
-                val_str: str = saferepr(v)
+# TODO: caps based RPC support in the payload?
+#
+# -[ ] integration with our ``enable_modules: list[str]`` caps sys.
+#   ``pkgutil.resolve_name()`` internally uses
+#   ``importlib.import_module()`` which can be filtered by
+#   inserting a ``MetaPathFinder`` into ``sys.meta_path`` (which
+#   we could do before entering the ``Actor._process_messages()``
+#   loop)?
+#   - https://github.com/python/cpython/blob/main/Lib/pkgutil.py#L645
+#   - https://stackoverflow.com/questions/1350466/preventing-python-code-from-importing-certain-modules
+#   - https://stackoverflow.com/a/63320902
+#   - https://docs.python.org/3/library/sys.html#sys.meta_path
+#
+# -[ ] can we combine .ns + .func into a native `NamespacePath` field?
+#
+# -[ ] better name, like `Call/TaskInput`?
+#
+# -[ ] XXX a debugger lock msg transaction with payloads like,
+#   child -> `.pld: DebugLock` -> root
+#   child <- `.pld: DebugLocked` <- root
+#   child -> `.pld: DebugRelease` -> root
+#
+#   WHY => when a pld spec is provided it might not allow for
+#   debug mode msgs as they currently are (using plain old `pld.
+#   str` payloads) so we only when debug_mode=True we need to
+#   union in this debugger payload set?
+#
+#   mk_msg_spec(
+#       MyPldSpec,
+#       debug_mode=True,
+#   ) -> (
+#       Union[MyPldSpec]
+#      | Union[DebugLock, DebugLocked, DebugRelease]
+#   )
 
-            # TODO: LOLOL use `textwrap.indent()` instead dawwwwwg!
-            obj_str += (field_ws + f'{k}: {typ_name} = {val_str},\n')
+# class Params(
+#     Struct,
+#     Generic[PayloadT],
+# ):
+#     spec: PayloadT|ParamSpec
+#     inputs: InputsT|dict[str, Any]
 
-        return (
-            f'{qtn}(\n'
-            f'{obj_str}'
-            f'{ws})'
+    # TODO: for eg. we could stringently check the target
+    # task-func's type sig and enforce it?
+    # as an example for an IPTC,
+    # @tractor.context
+    # async def send_back_nsp(
+    #     ctx: Context,
+    #     expect_debug: bool,
+    #     pld_spec_str: str,
+    #     add_hooks: bool,
+    #     started_msg_dict: dict,
+    # ) -> <WhatHere!>:
+
+    # TODO: figure out which of the `typing` feats we want to
+    # support:
+    # - plain ol `ParamSpec`:
+    #   https://docs.python.org/3/library/typing.html#typing.ParamSpec
+    # - new in 3.12 type parameter lists Bo
+    # |_ https://docs.python.org/3/reference/compound_stmts.html#type-params
+    # |_ historical pep 695: https://peps.python.org/pep-0695/
+    # |_ full lang spec: https://typing.readthedocs.io/en/latest/spec/
+    # |_ on annotation scopes:
+    #    https://docs.python.org/3/reference/executionmodel.html#annotation-scopes
+    # spec: ParamSpec[
+    #     expect_debug: bool,
+    #     pld_spec_str: str,
+    #     add_hooks: bool,
+    #     started_msg_dict: dict,
+    # ]
+
+
+# TODO: possibly sub-type for runtime method requests?
+# -[ ] `Runtime(Start)` with a `.ns: str = 'self' or
+#     we can just enforce any such method as having a strict
+#     ns for calling funcs, namely the `Actor` instance?
+class Start(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+):
+    '''
+    Initial request to remotely schedule an RPC `trio.Task` via
+    `Actor.start_remote_task()`.
+
+    It is called by all the following public APIs:
+
+    - `ActorNursery.run_in_actor()`
+
+    - `Portal.run()`
+          `|_.run_from_ns()`
+          `|_.open_stream_from()`
+          `|_._submit_for_result()`
+
+    - `Context.open_context()`
+
+    '''
+    cid: str
+
+    ns: str
+    func: str
+
+    # TODO: make this a sub-struct which can be further
+    # type-limited, maybe `Inputs`?
+    # => SEE ABOVE <=
+    kwargs: dict[str, Any]
+    uid: tuple[str, str]  # (calling) actor-id
+
+    # TODO: enforcing a msg-spec in terms `Msg.pld`
+    # parameterizable msgs to be used in the appls IPC dialog.
+    # => SEE `._codec.MsgDec` for more <=
+    pld_spec: str = str(Any)
+
+
+class StartAck(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+):
+    '''
+    Init response to a `Cmd` request indicating the far
+    end's RPC spec, namely its callable "type".
+
+    '''
+    cid: str
+    # TODO: maybe better names for all these?
+    # -[ ] obvi ^ would need sync with `._rpc`
+    functype: Literal[
+        'asyncfunc',
+        'asyncgen',
+        'context',  # TODO: the only one eventually?
+    ]
+
+    # import typing
+    # eval(str(Any), {}, {'typing': typing})
+    # started_spec: str = str(Any)
+    # return_spec
+
+
+class Started(
+    PayloadMsg,
+    Generic[PayloadT],
+):
+    '''
+    Packet to shuttle the "first value" delivered by
+    `Context.started(value: Any)` from a `@tractor.context`
+    decorated IPC endpoint.
+
+    '''
+    pld: PayloadT|Raw
+
+
+# TODO: cancel request dedicated msg?
+# -[ ] instead of using our existing `Start`?
+#
+# class Cancel:
+#     cid: str
+
+
+class Yield(
+    PayloadMsg,
+    Generic[PayloadT],
+):
+    '''
+    Per IPC transmission of a value from `await MsgStream.send(<value>)`.
+
+    '''
+    pld: PayloadT|Raw
+
+
+class Stop(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+):
+    '''
+    Stream termination signal much like an IPC version 
+    of `StopAsyncIteration`.
+
+    '''
+    cid: str
+    # TODO: do we want to support a payload on stop?
+    # pld: UnsetType = UNSET
+
+
+# TODO: is `Result` or `Out[come]` a better name?
+class Return(
+    PayloadMsg,
+    Generic[PayloadT],
+):
+    '''
+    Final `return <value>` from a remotely scheduled
+    func-as-`trio.Task`.
+
+    '''
+    pld: PayloadT|Raw
+
+
+class CancelAck(
+    PayloadMsg,
+    Generic[PayloadT],
+):
+    '''
+    Deliver the `bool` return-value from a cancellation `Actor`
+    method scheduled via and prior RPC request.
+
+    - `Actor.cancel()`
+       `|_.cancel_soon()`
+       `|_.cancel_rpc_tasks()`
+       `|_._cancel_task()`
+       `|_.cancel_server()`
+
+    RPCs to these methods must **always** be able to deliver a result
+    despite the currently configured IPC msg spec such that graceful
+    cancellation is always functional in the runtime.
+
+    '''
+    pld: bool
+
+
+# TODO: unify this with `._exceptions.RemoteActorError`
+# such that we can have a msg which is both raisable and
+# IPC-wire ready?
+# B~o
+class Error(
+    Struct,
+    tag=True,
+    tag_field='msg_type',
+
+    # TODO may omit defaults?
+    # https://jcristharif.com/msgspec/structs.html#omitting-default-values
+    # omit_defaults=True,
+):
+    '''
+    A pkt that wraps `RemoteActorError`s for relay and raising.
+
+    Fields are 1-to-1 meta-data as needed originally by
+    `RemoteActorError.msgdata: dict` but now are defined here.
+
+    Note: this msg shuttles `ContextCancelled` and `StreamOverrun`
+    as well is used to rewrap any `MsgTypeError` for relay-reponse
+    to bad `Yield.pld` senders during an IPC ctx's streaming dialog
+    phase.
+
+    '''
+    src_uid: tuple[str, str]
+    src_type_str: str
+    boxed_type_str: str
+    relay_path: list[tuple[str, str]]
+
+    # normally either both are provided or just
+    # a message for certain special cases where
+    # we pack a message for a locally raised
+    # mte or ctxc.
+    message: str|None = None
+    tb_str: str = ''
+
+    # TODO: only optionally include sub-type specfic fields?
+    # -[ ] use UNSET or don't include them via `omit_defaults` (see
+    #      inheritance-line options above)
+    #
+    # `ContextCancelled` reports the src cancelling `Actor.uid`
+    canceller: tuple[str, str]|None = None
+
+    # `StreamOverrun`-specific src `Actor.uid`
+    sender: tuple[str, str]|None = None
+
+    # `MsgTypeError` meta-data
+    cid: str|None = None
+    # when the receiver side fails to decode a delivered
+    # `PayloadMsg`-subtype; one and/or both the msg-struct instance
+    # and `Any`-decoded to `dict` of the msg are set and relayed
+    # (back to the sender) for introspection.
+    _bad_msg: Started|Yield|Return|None = None
+    _bad_msg_as_dict: dict|None = None
+
+
+def from_dict_msg(
+    dict_msg: dict,
+
+    msgT: MsgType|None = None,
+    tag_field: str = 'msg_type',
+    use_pretty: bool = False,
+
+) -> MsgType:
+    '''
+    Helper to build a specific `MsgType` struct from a "vanilla"
+    decoded `dict`-ified equivalent of the msg: i.e. if the
+    `msgpack.Decoder.type == Any`, the default when using
+    `msgspec.msgpack` and not "typed decoding" using
+    `msgspec.Struct`.
+
+    '''
+    msg_type_tag_field: str = (
+        msgT.__struct_config__.tag_field
+        if msgT is not None
+        else tag_field
+    )
+    # XXX ensure tag field is removed
+    msgT_name: str = dict_msg.pop(msg_type_tag_field)
+    msgT: MsgType = _msg_table[msgT_name]
+    if use_pretty:
+        msgT = defstruct(
+            name=msgT_name,
+            fields=[
+                (key, fi.type)
+                for fi, key, _
+                in pretty_struct.iter_fields(msgT)
+            ],
+            bases=(
+                pretty_struct.Struct,
+                msgT,
+            ),
+        )
+    return msgT(**dict_msg)
+
+# TODO: should be make a set of cancel msgs?
+# -[ ] a version of `ContextCancelled`?
+#     |_ and/or with a scope field?
+# -[ ] or, a full `ActorCancelled`?
+#
+# class Cancelled(MsgType):
+#     cid: str
+#
+# -[ ] what about overruns?
+#
+# class Overrun(MsgType):
+#     cid: str
+
+_runtime_msgs: list[Struct] = [
+
+    # identity handshake on first IPC `Channel` contact.
+    Aid,
+
+    # parent-to-child spawn specification passed as 2nd msg after
+    # handshake ONLY after child connects back to parent.
+    SpawnSpec,
+
+    # inter-actor RPC initiation
+    Start,  # schedule remote task-as-func
+    StartAck,  # ack the schedule request
+
+    # emission from `MsgStream.aclose()`
+    Stop,
+
+    # `Return` sub-type that we always accept from
+    # runtime-internal cancel endpoints
+    CancelAck,
+
+    # box remote errors, normally subtypes
+    # of `RemoteActorError`.
+    Error,
+]
+
+# the no-outcome-yet IAC (inter-actor-communication) sub-set which
+# can be `PayloadMsg.pld` payload field type-limited by application code
+# using `apply_codec()` and `limit_msg_spec()`.
+_payload_msgs: list[PayloadMsg] = [
+    # first <value> from `Context.started(<value>)`
+    Started,
+
+    # any <value> sent via `MsgStream.send(<value>)`
+    Yield,
+
+    # the final value returned from a `@context` decorated
+    # IPC endpoint.
+    Return,
+]
+
+# built-in SC shuttle protocol msg type set in
+# approx order of the IPC txn-state spaces.
+__msg_types__: list[MsgType] = (
+    _runtime_msgs
+    +
+    _payload_msgs
+)
+
+
+_msg_table: dict[str, MsgType] = {
+    msgT.__name__: msgT
+    for msgT in __msg_types__
+}
+
+# TODO: use new type declaration syntax for msg-type-spec
+# https://docs.python.org/3/library/typing.html#type-aliases
+# https://docs.python.org/3/reference/simple_stmts.html#type
+MsgType: TypeAlias = Union[*__msg_types__]
+
+
+def mk_msg_spec(
+    payload_type_union: Union[Type] = Any,
+
+    spec_build_method: Literal[
+        'indexed_generics',  # works
+        'defstruct',
+        'types_new_class',
+
+    ] = 'indexed_generics',
+
+) -> tuple[
+    Union[MsgType],
+    list[MsgType],
+]:
+    '''
+    Create a payload-(data-)type-parameterized IPC message specification.
+
+    Allows generating IPC msg types from the above builtin set
+    with a payload (field) restricted data-type, the `Msg.pld: PayloadT`.
+
+    This allows runtime-task contexts to use the python type system
+    to limit/filter payload values as determined by the input
+    `payload_type_union: Union[Type]`.
+
+    Notes: originally multiple approaches for constructing the
+    type-union passed to `msgspec` were attempted as selected via the
+    `spec_build_method`, but it turns out only the defaul method
+    'indexed_generics' seems to work reliably in all use cases. As
+    such, the others will likely be removed in the near future.
+
+    '''
+    submsg_types: list[MsgType] = Msg.__subclasses__()
+    bases: tuple = (
+        # XXX NOTE XXX the below generic-parameterization seems to
+        # be THE ONLY way to get this to work correctly in terms
+        # of getting ValidationError on a roundtrip?
+        Msg[payload_type_union],
+        Generic[PayloadT],
+    )
+    defstruct_bases: tuple = (
+        Msg, # [payload_type_union],
+        # Generic[PayloadT],
+        # ^-XXX-^: not allowed? lul..
+    )
+    ipc_msg_types: list[Msg] = []
+
+    idx_msg_types: list[Msg] = []
+    defs_msg_types: list[Msg] = []
+    nc_msg_types: list[Msg] = []
+
+    for msgtype in __msg_types__:
+
+        # for the NON-payload (user api) type specify-able
+        # msgs types, we simply aggregate the def as is
+        # for inclusion in the output type `Union`.
+        if msgtype not in _payload_msgs:
+            ipc_msg_types.append(msgtype)
+            continue
+
+        # check inheritance sanity
+        assert msgtype in submsg_types
+
+        # TODO: wait why do we need the dynamic version here?
+        # XXX ANSWER XXX -> BC INHERITANCE.. don't work w generics..
+        #
+        # NOTE previously bc msgtypes WERE NOT inheritting
+        # directly the `Generic[PayloadT]` type, the manual method
+        # of generic-paraming with `.__class_getitem__()` wasn't
+        # working..
+        #
+        # XXX but bc i changed that to make every subtype inherit
+        # it, this manual "indexed parameterization" method seems
+        # to work?
+        #
+        # -[x] paraming the `PayloadT` values via `Generic[T]`
+        #   does work it seems but WITHOUT inheritance of generics
+        #
+        # -[-] is there a way to get it to work at module level
+        #   just using inheritance or maybe a metaclass?
+        #  => thot that `defstruct` might work, but NOPE, see
+        #   below..
+        #
+        idxed_msg_type: Msg = msgtype[payload_type_union]
+        idx_msg_types.append(idxed_msg_type)
+
+        # TODO: WHY do we need to dynamically generate the
+        # subtype-msgs here to ensure the `.pld` parameterization
+        # propagates as well as works at all in terms of the
+        # `msgpack.Decoder()`..?
+        #
+        # dynamically create the payload type-spec-limited msg set.
+        newclass_msgtype: Type = types.new_class(
+            name=msgtype.__name__,
+            bases=bases,
+            kwds={},
+        )
+        nc_msg_types.append(
+            newclass_msgtype[payload_type_union]
         )
 
-    # TODO: use a pprint.PrettyPrinter instance around ONLY rendering
-    # inside a known tty?
-    # def __repr__(self) -> str:
-    #     ...
+        # with `msgspec.structs.defstruct`
+        # XXX ALSO DOESN'T WORK
+        defstruct_msgtype = defstruct(
+            name=msgtype.__name__,
+            fields=[
+                ('cid', str),
 
-    # __str__ = __repr__ = pformat
-    __repr__ = pformat
+                # XXX doesn't seem to work..
+                # ('pld', PayloadT),
 
-    def copy(
-        self,
-        update: dict | None = None,
-
-    ) -> Struct:
-        '''
-        Validate-typecast all self defined fields, return a copy of
-        us with all such fields.
-
-        NOTE: This is kinda like the default behaviour in
-        `pydantic.BaseModel` except a copy of the object is
-        returned making it compat with `frozen=True`.
-
-        '''
-        if update:
-            for k, v in update.items():
-                setattr(self, k, v)
-
-        # NOTE: roundtrip serialize to validate
-        # - enode to msgpack binary format,
-        # - decode that back to a struct.
-        return msgpack.Decoder(type=type(self)).decode(
-            msgpack.Encoder().encode(self)
+                ('pld', payload_type_union),
+            ],
+            bases=defstruct_bases,
         )
+        defs_msg_types.append(defstruct_msgtype)
 
-    def typecast(
-        self,
+        # assert index_paramed_msg_type == manual_paramed_msg_subtype
 
-        # TODO: allow only casting a named subset?
-        # fields: set[str] | None = None,
+        # paramed_msg_type = manual_paramed_msg_subtype
 
-    ) -> None:
-        '''
-        Cast all fields using their declared type annotations
-        (kinda like what `pydantic` does by default).
+        # ipc_payload_msgs_type_union |= index_paramed_msg_type
 
-        NOTE: this of course won't work on frozen types, use
-        ``.copy()`` above in such cases.
+    idx_spec: Union[Type[Msg]] = Union[*idx_msg_types]
+    def_spec: Union[Type[Msg]] = Union[*defs_msg_types]
+    nc_spec: Union[Type[Msg]] = Union[*nc_msg_types]
 
-        '''
-        # https://jcristharif.com/msgspec/api.html#msgspec.structs.fields
-        fi: structs.FieldInfo
-        for fi in structs.fields(self):
-            setattr(
-                self,
-                fi.name,
-                fi.type(getattr(self, fi.name)),
-            )
+    specs: dict[str, Union[Type[Msg]]] = {
+        'indexed_generics': idx_spec,
+        'defstruct': def_spec,
+        'types_new_class': nc_spec,
+    }
+    msgtypes_table: dict[str, list[Msg]] = {
+        'indexed_generics': idx_msg_types,
+        'defstruct': defs_msg_types,
+        'types_new_class': nc_msg_types,
+    }
 
-    def __sub__(
-        self,
-        other: Struct,
+    # XXX lol apparently type unions can't ever
+    # be equal eh?
+    # TODO: grok the diff here better..
+    #
+    # assert (
+    #     idx_spec
+    #     ==
+    #     nc_spec
+    #     ==
+    #     def_spec
+    # )
+    # breakpoint()
 
-    ) -> DiffDump[tuple[str, Any, Any]]:
-        '''
-        Compare fields/items key-wise and return a ``DiffDump``
-        for easy visual REPL comparison B)
-
-        '''
-        diffs: DiffDump[tuple[str, Any, Any]] = DiffDump()
-        for fi in structs.fields(self):
-            attr_name: str = fi.name
-            ours: Any = getattr(self, attr_name)
-            theirs: Any = getattr(other, attr_name)
-            if ours != theirs:
-                diffs.append((
-                    attr_name,
-                    ours,
-                    theirs,
-                ))
-
-        return diffs
+    pld_spec: Union[Type] = specs[spec_build_method]
+    runtime_spec: Union[Type] = Union[*ipc_msg_types]
+    ipc_spec = pld_spec | runtime_spec
+    log.runtime(
+        'Generating new IPC msg-spec\n'
+        f'{ipc_spec}\n'
+    )
+    assert (
+        ipc_spec
+        and
+        ipc_spec is not Any
+    )
+    return (
+        ipc_spec,
+        msgtypes_table[spec_build_method]
+        +
+        ipc_msg_types,
+    )

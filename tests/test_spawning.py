@@ -2,7 +2,9 @@
 Spawning basics
 
 """
-from typing import Optional
+from typing import (
+    Any,
+)
 
 import pytest
 import trio
@@ -25,13 +27,11 @@ async def spawn(
     async with tractor.open_root_actor(
         arbiter_addr=reg_addr,
     ):
-
         actor = tractor.current_actor()
         assert actor.is_arbiter == is_arbiter
         data = data_to_pass_down
 
         if actor.is_arbiter:
-
             async with tractor.open_nursery() as nursery:
 
                 # forks here
@@ -95,7 +95,9 @@ async def test_movie_theatre_convo(start_method):
         await portal.cancel_actor()
 
 
-async def cellar_door(return_value: Optional[str]):
+async def cellar_door(
+    return_value: str|None,
+):
     return return_value
 
 
@@ -105,16 +107,18 @@ async def cellar_door(return_value: Optional[str]):
 )
 @tractor_test
 async def test_most_beautiful_word(
-    start_method,
-    return_value
+    start_method: str,
+    return_value: Any,
+    debug_mode: bool,
 ):
     '''
     The main ``tractor`` routine.
 
     '''
     with trio.fail_after(1):
-        async with tractor.open_nursery() as n:
-
+        async with tractor.open_nursery(
+            debug_mode=debug_mode,
+        ) as n:
             portal = await n.run_in_actor(
                 cellar_door,
                 return_value=return_value,

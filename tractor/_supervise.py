@@ -80,15 +80,19 @@ class ActorNursery:
     '''
     def __init__(
         self,
+        # TODO: maybe def these as fields of a struct looking type?
         actor: Actor,
         ria_nursery: trio.Nursery,
         da_nursery: trio.Nursery,
         errors: dict[tuple[str, str], BaseException],
+
     ) -> None:
         # self.supervisor = supervisor  # TODO
         self._actor: Actor = actor
-        self._ria_nursery = ria_nursery
+
+        # TODO: rename to `._tn` for our conventional "task-nursery"
         self._da_nursery = da_nursery
+
         self._children: dict[
             tuple[str, str],
             tuple[
@@ -97,13 +101,12 @@ class ActorNursery:
                 Portal | None,
             ]
         ] = {}
-        # portals spawned with ``run_in_actor()`` are
-        # cancelled when their "main" result arrives
-        self._cancel_after_result_on_exit: set = set()
+
         self.cancelled: bool = False
         self._join_procs = trio.Event()
         self._at_least_one_child_in_debug: bool = False
         self.errors = errors
+        self._scope_error: BaseException|None = None
         self.exited = trio.Event()
 
         # NOTE: when no explicit call is made to
@@ -114,24 +117,43 @@ class ActorNursery:
         # and syncing purposes to any actor opened nurseries.
         self._implicit_runtime_started: bool = False
 
+        # TODO: remove the `.run_in_actor()` API and thus this 2ndary
+        # nursery when that API get's moved outside this primitive!
+        self._ria_nursery = ria_nursery
+        # portals spawned with ``run_in_actor()`` are
+        # cancelled when their "main" result arrives
+        self._cancel_after_result_on_exit: set = set()
+
     async def start_actor(
         self,
         name: str,
+
         *,
+
         bind_addrs: list[tuple[str, int]] = [_default_bind_addr],
         rpc_module_paths: list[str]|None = None,
         enable_modules: list[str]|None = None,
         loglevel: str|None = None,  # set log level per subactor
-        nursery: trio.Nursery|None = None,
         debug_mode: bool|None = None,
         infect_asyncio: bool = False,
+
+        # TODO: ideally we can rm this once we no longer have
+        # a `._ria_nursery` since the dependent APIs have been
+        # removed!
+        nursery: trio.Nursery|None = None,
+
     ) -> Portal:
         '''
         Start a (daemon) actor: an process that has no designated
         "main task" besides the runtime.
 
         '''
-        loglevel = loglevel or self._actor.loglevel or get_loglevel()
+        __runtimeframe__: int = 1  # noqa
+        loglevel: str = (
+            loglevel
+            or self._actor.loglevel
+            or get_loglevel()
+        )
 
         # configure and pass runtime state
         _rtv = _state._runtime_vars.copy()
@@ -184,6 +206,14 @@ class ActorNursery:
             )
         )
 
+    # TODO: DEPRECATE THIS:
+    # -[ ] impl instead as a hilevel wrapper on
+    #   top of a `@context` style invocation.
+    #  |_ dynamic @context decoration on child side
+    #  |_ implicit `Portal.open_context() as (ctx, first):`
+    #    and `return first` on parent side.
+    #  |_ mention how it's similar to `trio-parallel` API?
+    # -[ ] use @api_frame on the wrapper
     async def run_in_actor(
         self,
 
@@ -209,13 +239,14 @@ class ActorNursery:
         the actor is terminated.
 
         '''
+        __runtimeframe__: int = 1  # noqa
         mod_path: str = fn.__module__
 
         if name is None:
             # use the explicit function name if not provided
             name = fn.__name__
 
-        portal = await self.start_actor(
+        portal: Portal = await self.start_actor(
             name,
             enable_modules=[mod_path] + (
                 enable_modules or rpc_module_paths or []
@@ -244,19 +275,24 @@ class ActorNursery:
         )
         return portal
 
+    # @api_frame
     async def cancel(
         self,
         hard_kill: bool = False,
 
     ) -> None:
         '''
-        Cancel this nursery by instructing each subactor to cancel
-        itself and wait for all subactors to terminate.
+        Cancel this actor-nursery by instructing each subactor's
+        runtime to cancel and wait for all underlying sub-processes
+        to terminate.
 
-        If ``hard_killl`` is set to ``True`` then kill the processes
-        directly without any far end graceful ``trio`` cancellation.
+        If `hard_kill` is set then kill the processes directly using
+        the spawning-backend's API/OS-machinery without any attempt
+        at (graceful) `trio`-style cancellation using our
+        `Actor.cancel()`.
 
         '''
+        __runtimeframe__: int = 1  # noqa
         self.cancelled = True
 
         # TODO: impl a repr for spawn more compact
@@ -337,11 +373,15 @@ class ActorNursery:
 @acm
 async def _open_and_supervise_one_cancels_all_nursery(
     actor: Actor,
+    tb_hide: bool = False,
 
 ) -> typing.AsyncGenerator[ActorNursery, None]:
 
-    # TODO: yay or nay?
-    __tracebackhide__ = True
+    # normally don't need to show user by default
+    __tracebackhide__: bool = tb_hide
+
+    outer_err: BaseException|None = None
+    inner_err: BaseException|None = None
 
     # the collection of errors retreived from spawned sub-actors
     errors: dict[tuple[str, str], BaseException] = {}
@@ -351,7 +391,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
     # handling errors that are generated by the inner nursery in
     # a supervisor strategy **before** blocking indefinitely to wait for
     # actors spawned in "daemon mode" (aka started using
-    # ``ActorNursery.start_actor()``).
+    # `ActorNursery.start_actor()`).
 
     # errors from this daemon actor nursery bubble up to caller
     async with trio.open_nursery() as da_nursery:
@@ -386,7 +426,8 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     )
                     an._join_procs.set()
 
-                except BaseException as inner_err:
+                except BaseException as _inner_err:
+                    inner_err = _inner_err
                     errors[actor.uid] = inner_err
 
                     # If we error in the root but the debugger is
@@ -464,8 +505,10 @@ async def _open_and_supervise_one_cancels_all_nursery(
             Exception,
             BaseExceptionGroup,
             trio.Cancelled
+        ) as _outer_err:
+            outer_err = _outer_err
 
-        ) as err:
+            an._scope_error = outer_err or inner_err
 
             # XXX: yet another guard before allowing the cancel
             # sequence in case a (single) child is in debug.
@@ -480,7 +523,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
             if an._children:
                 log.cancel(
                     'Actor-nursery cancelling due error type:\n'
-                    f'{err}\n'
+                    f'{outer_err}\n'
                 )
                 with trio.CancelScope(shield=True):
                     await an.cancel()
@@ -507,11 +550,19 @@ async def _open_and_supervise_one_cancels_all_nursery(
                 else:
                     raise list(errors.values())[0]
 
+            # show frame on any (likely) internal error
+            if (
+                not an.cancelled
+                and an._scope_error
+            ):
+                __tracebackhide__: bool = False
+
         # da_nursery scope end - nursery checkpoint
     # final exit
 
 
 @acm
+# @api_frame
 async def open_nursery(
     **kwargs,
 
@@ -531,6 +582,7 @@ async def open_nursery(
     which cancellation scopes correspond to each spawned subactor set.
 
     '''
+    __tracebackhide__: bool = True
     implicit_runtime: bool = False
     actor: Actor = current_actor(err_on_no_runtime=False)
     an: ActorNursery|None = None
@@ -581,13 +633,25 @@ async def open_nursery(
                 an.exited.set()
 
     finally:
+        # show frame on any internal runtime-scope error
+        if (
+            an
+            and not an.cancelled
+            and an._scope_error
+        ):
+            __tracebackhide__: bool = False
+
         msg: str = (
             'Actor-nursery exited\n'
             f'|_{an}\n'
         )
 
-        # shutdown runtime if it was started
         if implicit_runtime:
+            # shutdown runtime if it was started and report noisly
+            # that we're did so.
             msg += '=> Shutting down actor runtime <=\n'
+            log.info(msg)
 
-        log.info(msg)
+        else:
+            # keep noise low during std operation.
+            log.runtime(msg)

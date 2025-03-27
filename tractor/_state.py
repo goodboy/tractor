@@ -19,13 +19,19 @@ Per process state
 
 """
 from __future__ import annotations
+from contextvars import (
+    ContextVar,
+)
 from typing import (
     Any,
     TYPE_CHECKING,
 )
 
+from trio.lowlevel import current_task
+
 if TYPE_CHECKING:
     from ._runtime import Actor
+    from ._context import Context
 
 
 _current_actor: Actor|None = None  # type: ignore # noqa
@@ -38,7 +44,7 @@ _runtime_vars: dict[str, Any] = {
     '_root_mailbox': (None, None),
     '_registry_addrs': [],
 
-    # for `breakpoint()` support
+    # for `tractor.pause_from_sync()` & `breakpoint()` support
     'use_greenback': False,
 }
 
@@ -66,7 +72,7 @@ def current_actor(
         err_on_no_runtime
         and _current_actor is None
     ):
-        msg: str = 'No local actor has been initialized yet'
+        msg: str = 'No local actor has been initialized yet?\n'
         from ._exceptions import NoRuntime
 
         if last := last_actor():
@@ -79,8 +85,8 @@ def current_actor(
         # this process.
         else:
             msg += (
-                'No last actor found?\n'
-                'Did you forget to open one of:\n\n'
+                # 'No last actor found?\n'
+                '\nDid you forget to call one of,\n'
                 '- `tractor.open_root_actor()`\n'
                 '- `tractor.open_nursery()`\n'
             )
@@ -110,3 +116,26 @@ def debug_mode() -> bool:
 
 def is_root_process() -> bool:
     return _runtime_vars['_is_root']
+
+
+_ctxvar_Context: ContextVar[Context] = ContextVar(
+    'ipc_context',
+    default=None,
+)
+
+
+def current_ipc_ctx(
+    error_on_not_set: bool = False,
+) -> Context|None:
+    ctx: Context = _ctxvar_Context.get()
+
+    if (
+        not ctx
+        and error_on_not_set
+    ):
+        from ._exceptions import InternalError
+        raise InternalError(
+            'No IPC context has been allocated for this task yet?\n'
+            f'|_{current_task()}\n'
+        )
+    return ctx

@@ -18,9 +18,56 @@
 Built-in messaging patterns, types, APIs and helpers.
 
 '''
+from typing import (
+    TypeAlias,
+)
 from .ptr import (
     NamespacePath as NamespacePath,
 )
-from .types import (
+from .pretty_struct import (
     Struct as Struct,
 )
+from ._codec import (
+    _def_msgspec_codec as _def_msgspec_codec,
+    _ctxvar_MsgCodec as _ctxvar_MsgCodec,
+
+    apply_codec as apply_codec,
+    mk_codec as mk_codec,
+    MsgCodec as MsgCodec,
+    MsgDec as MsgDec,
+    current_codec as current_codec,
+)
+# currently can't bc circular with `._context`
+# from ._ops import (
+#     PldRx as PldRx,
+#     _drain_to_final_msg as _drain_to_final_msg,
+# )
+
+from .types import (
+    PayloadMsg as PayloadMsg,
+
+    Aid as Aid,
+    SpawnSpec as SpawnSpec,
+
+    Start as Start,
+    StartAck as StartAck,
+
+    Started as Started,
+    Yield as Yield,
+    Stop as Stop,
+    Return as Return,
+    CancelAck as CancelAck,
+
+    Error as Error,
+
+    # type-var for `.pld` field
+    PayloadT as PayloadT,
+
+    # full msg class set from above as list
+    __msg_types__ as __msg_types__,
+
+    # type-alias for union of all msgs
+    MsgType as MsgType,
+)
+
+__msg_spec__: TypeAlias = MsgType

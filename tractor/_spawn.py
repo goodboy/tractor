@@ -43,12 +43,16 @@ from tractor._state import (
     is_main_process,
     is_root_process,
     debug_mode,
+    _runtime_vars,
 )
 from tractor.log import get_logger
 from tractor._portal import Portal
 from tractor._runtime import Actor
 from tractor._entry import _mp_main
 from tractor._exceptions import ActorFailure
+from tractor.msg.types import (
+    SpawnSpec,
+)
 
 
 if TYPE_CHECKING:
@@ -139,11 +143,13 @@ async def exhaust_portal(
     '''
     __tracebackhide__ = True
     try:
-        log.debug(f"Waiting on final result from {actor.uid}")
+        log.debug(
+            f'Waiting on final result from {actor.uid}'
+        )
 
         # XXX: streams should never be reaped here since they should
         # always be established and shutdown using a context manager api
-        final: Any = await portal.result()
+        final: Any = await portal.wait_for_result()
 
     except (
         Exception,
@@ -192,7 +198,10 @@ async def cancel_on_completion(
     # if this call errors we store the exception for later
     # in ``errors`` which will be reraised inside
     # an exception group and we still send out a cancel request
-    result: Any|Exception = await exhaust_portal(portal, actor)
+    result: Any|Exception = await exhaust_portal(
+        portal,
+        actor,
+    )
     if isinstance(result, Exception):
         errors[actor.uid]: Exception = result
         log.cancel(
@@ -214,8 +223,8 @@ async def cancel_on_completion(
 
 async def hard_kill(
     proc: trio.Process,
-    terminate_after: int = 1.6,
 
+    terminate_after: int = 1.6,
     # NOTE: for mucking with `.pause()`-ing inside the runtime
     # whilst also hacking on it XD
     # terminate_after: int = 99999,
@@ -241,8 +250,9 @@ async def hard_kill(
 
     '''
     log.cancel(
-        'Terminating sub-proc:\n'
-        f'|_{proc}\n'
+        'Terminating sub-proc\n'
+        f'>x)\n'
+        f' |_{proc}\n'
     )
     # NOTE: this timeout used to do nothing since we were shielding
     # the ``.wait()`` inside ``new_proc()`` which will pretty much
@@ -288,14 +298,13 @@ async def hard_kill(
         log.critical(
             # 'Well, the #ZOMBIE_LORD_IS_HERE# to collect\n'
             '#T-800 deployed to collect zombie B0\n'
-            f'|\n'
-            f'|_{proc}\n'
+            f'>x)\n'
+            f' |_{proc}\n'
         )
         proc.kill()
 
 
 async def soft_kill(
-
     proc: ProcessType,
     wait_func: Callable[
         [ProcessType],
@@ -318,13 +327,26 @@ async def soft_kill(
     uid: tuple[str, str] = portal.channel.uid
     try:
         log.cancel(
-            'Soft killing sub-actor via `Portal.cancel_actor()`\n'
-            f'|_{proc}\n'
+            'Soft killing sub-actor via portal request\n'
+            f'c)> {portal.chan.uid}\n'
+            f' |_{proc}\n'
         )
         # wait on sub-proc to signal termination
         await wait_func(proc)
 
     except trio.Cancelled:
+        with trio.CancelScope(shield=True):
+            await maybe_wait_for_debugger(
+                child_in_debug=_runtime_vars.get(
+                    '_debug_mode', False
+                ),
+                header_msg=(
+                    'Delaying `soft_kill()` subproc reaper while debugger locked..\n'
+                ),
+                # TODO: need a diff value then default?
+                # poll_steps=9999999,
+            )
+
         # if cancelled during a soft wait, cancel the child
         # actor before entering the hard reap sequence
         # below. This means we try to do a graceful teardown
@@ -452,10 +474,9 @@ async def trio_proc(
     proc: trio.Process|None = None
     try:
         try:
-            # TODO: needs ``trio_typing`` patch?
-            proc = await trio.lowlevel.open_process(spawn_cmd)
+            proc: trio.Process = await trio.lowlevel.open_process(spawn_cmd)
             log.runtime(
-                'Started new sub-proc\n'
+                'Started new child\n'
                 f'|_{proc}\n'
             )
 
@@ -493,14 +514,17 @@ async def trio_proc(
             portal,
         )
 
-        # send additional init params
-        await chan.send({
-            '_parent_main_data': subactor._parent_main_data,
-            'enable_modules': subactor.enable_modules,
-            'reg_addrs': subactor.reg_addrs,
-            'bind_addrs': bind_addrs,
-            '_runtime_vars': _runtime_vars,
-        })
+        # send a "spawning specification" which configures the
+        # initial runtime state of the child.
+        await chan.send(
+            SpawnSpec(
+                _parent_main_data=subactor._parent_main_data,
+                enable_modules=subactor.enable_modules,
+                reg_addrs=subactor.reg_addrs,
+                bind_addrs=bind_addrs,
+                _runtime_vars=_runtime_vars,
+            )
+        )
 
         # track subactor in current nursery
         curr_actor: Actor = current_actor()
@@ -534,8 +558,9 @@ async def trio_proc(
             # cancel result waiter that may have been spawned in
             # tandem if not done already
             log.cancel(
-                'Cancelling existing result waiter task for '
-                f'{subactor.uid}'
+                'Cancelling portal result reaper task\n'
+                f'>c)\n'
+                f' |_{subactor.uid}\n'
             )
             nursery.cancel_scope.cancel()
 
@@ -544,9 +569,13 @@ async def trio_proc(
         # allowed! Do this **after** cancellation/teardown to avoid
         # killing the process too early.
         if proc:
-            log.cancel(f'Hard reap sequence starting for {subactor.uid}')
-            with trio.CancelScope(shield=True):
+            log.cancel(
+                f'Hard reap sequence starting for subactor\n'
+                f'>x)\n'
+                f' |_{subactor}@{subactor.uid}\n'
+            )
 
+            with trio.CancelScope(shield=True):
                 # don't clobber an ongoing pdb
                 if cancelled_during_spawn:
                     # Try again to avoid TTY clobbering.

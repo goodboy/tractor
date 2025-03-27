@@ -31,7 +31,7 @@ from ._streaming import (
     stream as stream,
 )
 from ._discovery import (
-    get_arbiter as get_arbiter,
+    get_registry as get_registry,
     find_actor as find_actor,
     wait_for_actor as wait_for_actor,
     query_actor as query_actor,
@@ -43,11 +43,14 @@ from ._supervise import (
 from ._state import (
     current_actor as current_actor,
     is_root_process as is_root_process,
+    current_ipc_ctx as current_ipc_ctx,
 )
 from ._exceptions import (
-    RemoteActorError as RemoteActorError,
-    ModuleNotExposed as ModuleNotExposed,
     ContextCancelled as ContextCancelled,
+    ModuleNotExposed as ModuleNotExposed,
+    MsgTypeError as MsgTypeError,
+    RemoteActorError as RemoteActorError,
+    TransportClosed as TransportClosed,
 )
 from .devx import (
     breakpoint as breakpoint,
