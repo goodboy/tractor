@@ -19,10 +19,13 @@ Actor cluster helpers.
 
 '''
 from __future__ import annotations
-
-from contextlib import asynccontextmanager as acm
+from contextlib import (
+    asynccontextmanager as acm,
+)
 from multiprocessing import cpu_count
-from typing import AsyncGenerator, Optional
+from typing import (
+    AsyncGenerator,
+)
 
 import trio
 import tractor

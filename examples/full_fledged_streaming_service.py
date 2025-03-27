@@ -91,7 +91,7 @@ async def main() -> list[int]:
     an: ActorNursery
     async with tractor.open_nursery(
         loglevel='cancel',
-        debug_mode=True,
+        # debug_mode=True,
     ) as an:
 
         seed = int(1e3)

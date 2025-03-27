@@ -258,6 +258,9 @@ class PldRx(Struct):
                         f'|_pld={pld!r}\n'
                     )
                     return pld
+                except TypeError as typerr:
+                    __tracebackhide__: bool = False
+                    raise typerr
 
                 # XXX pld-value type failure
                 except ValidationError as valerr:
@@ -796,8 +799,14 @@ def validate_payload_msg(
     __tracebackhide__: bool = hide_tb
     codec: MsgCodec = current_codec()
     msg_bytes: bytes = codec.encode(pld_msg)
+    roundtripped: Started|None = None
     try:
         roundtripped: Started = codec.decode(msg_bytes)
+    except TypeError as typerr:
+        __tracebackhide__: bool = False
+        raise typerr
+
+    try:
         ctx: Context = getattr(ipc, 'ctx', ipc)
         pld: PayloadT = ctx.pld_rx.decode_pld(
             msg=roundtripped,
@@ -822,6 +831,11 @@ def validate_payload_msg(
             )
             raise ValidationError(complaint)
 
+    # usually due to `.decode()` input type
+    except TypeError as typerr:
+        __tracebackhide__: bool = False
+        raise typerr
+
     # raise any msg type error NO MATTER WHAT!
     except ValidationError as verr:
         try:
@@ -832,9 +846,13 @@ def validate_payload_msg(
                 verb_header='Trying to send ',
                 is_invalid_payload=True,
             )
-        except BaseException:
+        except BaseException as _be:
+            if not roundtripped:
+                raise verr
+
+            be = _be
             __tracebackhide__: bool = False
-            raise
+            raise be
 
         if not raise_mte:
             return mte

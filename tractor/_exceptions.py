@@ -22,6 +22,7 @@ from __future__ import annotations
 import builtins
 import importlib
 from pprint import pformat
+from pdb import bdb
 import sys
 from types import (
     TracebackType,
@@ -181,6 +182,7 @@ def get_err_type(type_name: str) -> BaseException|None:
         builtins,
         _this_mod,
         trio,
+        bdb,
     ]:
         if type_ref := getattr(
             ns,

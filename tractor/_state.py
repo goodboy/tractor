@@ -108,6 +108,7 @@ def is_main_process() -> bool:
     return mp.current_process().name == 'MainProcess'
 
 
+# TODO, more verby name?
 def debug_mode() -> bool:
     '''
     Bool determining if "debug mode" is on which enables

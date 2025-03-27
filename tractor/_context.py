@@ -950,7 +950,7 @@ class Context:
             # f'Context.cancel() => {self.chan.uid}\n'
             f'c)=> {self.chan.uid}\n'
             # f'{self.chan.uid}\n'
-            f' |_ @{self.dst_maddr}\n'
+            f'  |_ @{self.dst_maddr}\n'
             f'    >> {self.repr_rpc}\n'
             # f'    >> {self._nsf}() -> {codec}[dict]:\n\n'
             # TODO: pull msg-type from spec re #320
@@ -1003,7 +1003,8 @@ class Context:
                     )
                 else:
                     log.cancel(
-                        'Timed out on cancel request of remote task?\n'
+                        f'Timed out on cancel request of remote task?\n'
+                        f'\n'
                         f'{reminfo}'
                     )
 
@@ -1560,12 +1561,12 @@ class Context:
                     strict_pld_parity=strict_pld_parity,
                     hide_tb=hide_tb,
                 )
-            except BaseException as err:
+            except BaseException as _bexc:
+                err = _bexc
                 if not isinstance(err, MsgTypeError):
                     __tracebackhide__: bool = False
 
-                raise
-
+                raise err
 
         # TODO: maybe a flag to by-pass encode op if already done
         # here in caller?
@@ -1982,7 +1983,10 @@ async def open_context_from_portal(
     ctxc_from_callee: ContextCancelled|None = None
     try:
         async with (
-            trio.open_nursery() as tn,
+            trio.open_nursery(
+                strict_exception_groups=False,
+            ) as tn,
+
             msgops.maybe_limit_plds(
                 ctx=ctx,
                 spec=ctx_meta.get('pld_spec'),

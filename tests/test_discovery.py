@@ -181,7 +181,9 @@ async def spawn_and_check_registry(
 
             try:
                 async with tractor.open_nursery() as n:
-                    async with trio.open_nursery() as trion:
+                    async with trio.open_nursery(
+                        strict_exception_groups=False,
+                    ) as trion:
 
                         portals = {}
                         for i in range(3):
@@ -316,7 +318,9 @@ async def close_chans_before_nursery(
                         async with portal2.open_stream_from(
                             stream_forever
                         ) as agen2:
-                            async with trio.open_nursery() as n:
+                            async with trio.open_nursery(
+                                strict_exception_groups=False,
+                            ) as n:
                                 n.start_soon(streamer, agen1)
                                 n.start_soon(cancel, use_signal, .5)
                                 try:

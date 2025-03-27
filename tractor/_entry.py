@@ -238,7 +238,7 @@ def _trio_main(
             nest_from_op(
                 input_op='>(',  # see syntax ideas above
                 tree_str=actor_info,
-                back_from_op=1,
+                back_from_op=2,  # since "complete"
             )
         )
     logmeth = log.info

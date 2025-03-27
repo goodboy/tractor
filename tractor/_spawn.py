@@ -327,9 +327,10 @@ async def soft_kill(
     uid: tuple[str, str] = portal.channel.uid
     try:
         log.cancel(
-            'Soft killing sub-actor via portal request\n'
-            f'c)> {portal.chan.uid}\n'
-            f' |_{proc}\n'
+            f'Soft killing sub-actor via portal request\n'
+            f'\n'
+            f'(c=> {portal.chan.uid}\n'
+            f'  |_{proc}\n'
         )
         # wait on sub-proc to signal termination
         await wait_func(proc)

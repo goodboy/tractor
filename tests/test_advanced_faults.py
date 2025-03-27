@@ -3,7 +3,6 @@ Sketchy network blackoutz, ugly byzantine gens, puedes eschuchar la
 cancelacion?..
 
 '''
-import itertools
 from functools import partial
 from types import ModuleType
 
@@ -230,13 +229,10 @@ def test_ipc_channel_break_during_stream(
     # get raw instance from pytest wrapper
     value = excinfo.value
     if isinstance(value, ExceptionGroup):
-        value = next(
-            itertools.dropwhile(
-                lambda exc: not isinstance(exc, expect_final_exc),
-                value.exceptions,
-            )
-        )
-        assert value
+        excs = value.exceptions
+        assert len(excs) == 1
+        final_exc = excs[0]
+        assert isinstance(final_exc, expect_final_exc)
 
 
 @tractor.context
@@ -259,15 +255,16 @@ async def break_ipc_after_started(
 
 def test_stream_closed_right_after_ipc_break_and_zombie_lord_engages():
     '''
-    Verify that is a subactor's IPC goes down just after bringing up a stream
-    the parent can trigger a SIGINT and the child will be reaped out-of-IPC by
-    the localhost process supervision machinery: aka "zombie lord".
+    Verify that is a subactor's IPC goes down just after bringing up
+    a stream the parent can trigger a SIGINT and the child will be
+    reaped out-of-IPC by the localhost process supervision machinery:
+    aka "zombie lord".
 
     '''
     async def main():
         with trio.fail_after(3):
-            async with tractor.open_nursery() as n:
-                portal = await n.start_actor(
+            async with tractor.open_nursery() as an:
+                portal = await an.start_actor(
                     'ipc_breaker',
                     enable_modules=[__name__],
                 )

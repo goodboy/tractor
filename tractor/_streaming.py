@@ -376,7 +376,7 @@ class MsgStream(trio.abc.Channel):
                 f'Stream self-closed by {self._ctx.side!r}-side before EoC\n'
                 # } bc a stream is a "scope"/msging-phase inside an IPC
                 f'x}}>\n'
-                f'|_{self}\n'
+                f'  |_{self}\n'
             )
             log.cancel(message)
             self._eoc = trio.EndOfChannel(message)

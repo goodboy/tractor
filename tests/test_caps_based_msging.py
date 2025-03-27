@@ -874,13 +874,13 @@ def chk_pld_type(
     return roundtrip
 
 
-def test_limit_msgspec():
-
+def test_limit_msgspec(
+    debug_mode: bool,
+):
     async def main():
         async with tractor.open_root_actor(
-            debug_mode=True
+            debug_mode=debug_mode,
         ):
-
             # ensure we can round-trip a boxing `PayloadMsg`
             assert chk_pld_type(
                 payload_spec=Any,

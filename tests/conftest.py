@@ -75,7 +75,10 @@ def pytest_configure(config):
 
 @pytest.fixture(scope='session')
 def debug_mode(request):
-    return request.config.option.tractor_debug_mode
+    debug_mode: bool = request.config.option.tractor_debug_mode
+    # if debug_mode:
+    #     breakpoint()
+    return debug_mode
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -91,6 +94,12 @@ def loglevel(request):
 def spawn_backend(request) -> str:
     return request.config.option.spawn_backend
 
+
+# @pytest.fixture(scope='function', autouse=True)
+# def debug_enabled(request) -> str:
+#     from tractor import _state
+#     if _state._runtime_vars['_debug_mode']:
+#         breakpoint()
 
 _ci_env: bool = os.environ.get('CI', False)
 

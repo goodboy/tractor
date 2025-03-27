@@ -19,7 +19,10 @@ Various helpers/utils for auditing your `tractor` app and/or the
 core runtime.
 
 '''
-from contextlib import asynccontextmanager as acm
+from contextlib import (
+    asynccontextmanager as acm,
+)
+import os
 import pathlib
 
 import tractor
@@ -59,7 +62,12 @@ def mk_cmd(
     exs_subpath: str = 'debugging',
 ) -> str:
     '''
-    Generate a shell command suitable to pass to ``pexpect.spawn()``.
+    Generate a shell command suitable to pass to `pexpect.spawn()`
+    which runs the script as a python program's entrypoint.
+
+    In particular ensure we disable the new tb coloring via unsetting
+    `$PYTHON_COLORS` so that `pexpect` can pattern match without
+    color-escape-codes.
 
     '''
     script_path: pathlib.Path = (
@@ -67,10 +75,15 @@ def mk_cmd(
         / exs_subpath
         / f'{ex_name}.py'
     )
-    return ' '.join([
+    py_cmd: str = ' '.join([
         'python',
         str(script_path)
     ])
+    # XXX, required for py 3.13+
+    # https://docs.python.org/3/using/cmdline.html#using-on-controlling-color
+    # https://docs.python.org/3/using/cmdline.html#envvar-PYTHON_COLORS
+    os.environ['PYTHON_COLORS'] = '0'
+    return py_cmd
 
 
 @acm
