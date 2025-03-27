@@ -61,6 +61,7 @@ from tractor.msg.pretty_struct import Struct
 from tractor.msg.types import (
     mk_msg_spec,
     MsgType,
+    PayloadMsg,
 )
 from tractor.log import get_logger
 
@@ -80,6 +81,7 @@ class MsgDec(Struct):
 
     '''
     _dec: msgpack.Decoder
+    # _ext_types_box: Struct|None = None
 
     @property
     def dec(self) -> msgpack.Decoder:
@@ -179,21 +181,124 @@ class MsgDec(Struct):
 
 
 def mk_dec(
-    spec: Union[Type[Struct]]|Any = Any,
+    spec: Union[Type[Struct]]|Type|None,
+
+    # NOTE, required for ad-hoc type extensions to the underlying
+    # serialization proto (which is default `msgpack`),
+    # https://jcristharif.com/msgspec/extending.html#mapping-to-from-native-types
     dec_hook: Callable|None = None,
+    ext_types: list[Type]|None = None,
 
 ) -> MsgDec:
     '''
-    Create an IPC msg decoder, normally used as the
-    `PayloadMsg.pld: PayloadT` field decoder inside a `PldRx`.
+    Create an IPC msg decoder, a slightly higher level wrapper around
+    a `msgspec.msgpack.Decoder` which provides,
+
+    - easier introspection of the underlying type spec via
+      the `.spec` and `.spec_str` attrs,
+    - `.hook` access to the `Decoder.dec_hook()`,
+    - automatic custom extension-types decode support when
+      `dec_hook()` is provided such that any `PayloadMsg.pld` tagged
+      as a type from from `ext_types` (presuming the `MsgCodec.encode()` also used
+      a `.enc_hook()`) is processed and constructed by a `PldRx` implicitily.
+
+    NOTE, as mentioned a `MsgDec` is normally used for `PayloadMsg.pld: PayloadT` field
+    decoding inside an IPC-ctx-oriented `PldRx`.
 
     '''
+    if (
+        spec is None
+        and
+        ext_types is None
+    ):
+        raise TypeError(
+            f'MIssing type-`spec` for msg decoder!\n'
+            f'\n'
+            f'`spec=None` is **only** permitted is if custom extension types '
+            f'are provided via `ext_types`, meaning it must be non-`None`.\n'
+            f'\n'
+            f'In this case it is presumed that only the `ext_types`, '
+            f'which much be handled by a paired `dec_hook()`, '
+            f'will be permitted within the payload type-`spec`!\n'
+            f'\n'
+            f'spec = {spec!r}\n'
+            f'dec_hook = {dec_hook!r}\n'
+            f'ext_types = {ext_types!r}\n'
+        )
+
+    if dec_hook:
+        if ext_types is None:
+            raise TypeError(
+                f'If extending the serializable types with a custom decode hook (`dec_hook()`), '
+                f'you must also provide the expected type set that the hook will handle '
+                f'via a `ext_types: Union[Type]|None = None` argument!\n'
+                f'\n'
+                f'dec_hook = {dec_hook!r}\n'
+                f'ext_types = {ext_types!r}\n'
+            )
+
+        # XXX, i *thought* we would require a boxing struct as per docs,
+        # https://jcristharif.com/msgspec/extending.html#mapping-to-from-native-types
+        # |_ see comment,
+        #  > Note that typed deserialization is required for
+        #  > successful roundtripping here, so we pass `MyMessage` to
+        #  > `Decoder`.
+        #
+        # BUT, turns out as long as you spec a union with `Raw` it
+        # will work? kk B)
+        #
+        # maybe_box_struct = mk_boxed_ext_struct(ext_types)
+        spec = Raw | Union[*ext_types]
+
     return MsgDec(
         _dec=msgpack.Decoder(
             type=spec,  # like `MsgType[Any]`
             dec_hook=dec_hook,
-        )
+        ),
     )
+
+
+# TODO? remove since didn't end up needing this?
+def mk_boxed_ext_struct(
+    ext_types: list[Type],
+) -> Struct:
+    # NOTE, originally was to wrap non-msgpack-supported "extension
+    # types" in a field-typed boxing struct, see notes around the
+    # `dec_hook()` branch in `mk_dec()`.
+    ext_types_union = Union[*ext_types]
+    repr_ext_types_union: str = (
+        str(ext_types_union)
+        or
+        "|".join(ext_types)
+    )
+    BoxedExtType = msgspec.defstruct(
+        f'BoxedExts[{repr_ext_types_union}]',
+        fields=[
+            ('boxed', ext_types_union),
+        ],
+    )
+    return BoxedExtType
+
+
+def unpack_spec_types(
+    spec: Union[Type]|Type,
+) -> set[Type]:
+    '''
+    Given an input type-`spec`, either a lone type
+    or a `Union` of types (like `str|int|MyThing`),
+    return a set of individual types.
+
+    When `spec` is not a type-union returns `{spec,}`.
+
+    '''
+    spec_subtypes: set[Union[Type]] = set(
+         getattr(
+             spec,
+             '__args__',
+             {spec,},
+         )
+    )
+    return spec_subtypes
 
 
 def mk_msgspec_table(
@@ -273,6 +378,8 @@ class MsgCodec(Struct):
     _dec: msgpack.Decoder
     _pld_spec: Type[Struct]|Raw|Any
 
+    # _ext_types_box: Struct|None = None
+
     def __repr__(self) -> str:
         speclines: str = textwrap.indent(
             pformat_msgspec(codec=self),
@@ -339,11 +446,14 @@ class MsgCodec(Struct):
 
     def encode(
         self,
-        py_obj: Any,
+        py_obj: Any|PayloadMsg,
 
         use_buf: bool = False,
         # ^-XXX-^ uhh why am i getting this?
         # |_BufferError: Existing exports of data: object cannot be re-sized
+
+        as_ext_type: bool = False,
+        hide_tb: bool = True,
 
     ) -> bytes:
         '''
@@ -354,11 +464,46 @@ class MsgCodec(Struct):
         https://jcristharif.com/msgspec/perf-tips.html#reusing-an-output-buffer
 
         '''
+        __tracebackhide__: bool = hide_tb
         if use_buf:
             self._enc.encode_into(py_obj, self._buf)
             return self._buf
-        else:
-            return self._enc.encode(py_obj)
+
+        return self._enc.encode(py_obj)
+        # try:
+        #     return self._enc.encode(py_obj)
+        # except TypeError as typerr:
+        #     typerr.add_note(
+        #         '|_src error from `msgspec`'
+        #         # f'|_{self._enc.encode!r}'
+        #     )
+        #     raise typerr
+
+        # TODO! REMOVE once i'm confident we won't ever need it!
+        #
+        # box: Struct = self._ext_types_box
+        # if (
+        #     as_ext_type
+        #     or
+        #     (
+        #         # XXX NOTE, auto-detect if the input type
+        #         box
+        #         and
+        #         (ext_types := unpack_spec_types(
+        #             spec=box.__annotations__['boxed'])
+        #         )
+        #     )
+        # ):
+        #     match py_obj:
+        #         # case PayloadMsg(pld=pld) if (
+        #         #     type(pld) in ext_types
+        #         # ):
+        #         #     py_obj.pld = box(boxed=py_obj)
+        #         #     breakpoint()
+        #         case _ if (
+        #             type(py_obj) in ext_types
+        #         ):
+        #             py_obj = box(boxed=py_obj)
 
     @property
     def dec(self) -> msgpack.Decoder:
@@ -378,21 +523,30 @@ class MsgCodec(Struct):
         return self._dec.decode(msg)
 
 
-# [x] TODO: a sub-decoder system as well? => No!
+# ?TODO? time to remove this finally?
+#
+# -[x] TODO: a sub-decoder system as well?
+# => No! already re-architected to include a "payload-receiver"
+#   now found in `._ops`.
 #
 # -[x] do we still want to try and support the sub-decoder with
 # `.Raw` technique in the case that the `Generic` approach gives
 # future grief?
-# => NO, since we went with the `PldRx` approach instead B)
+# => well YES but NO, since we went with the `PldRx` approach
+#   instead!
 #
 # IF however you want to see the code that was staged for this
 # from wayyy back, see the pure removal commit.
 
 
 def mk_codec(
-    # struct type unions set for `Decoder`
-    # https://jcristharif.com/msgspec/structs.html#tagged-unions
-    ipc_pld_spec: Union[Type[Struct]]|Any = Any,
+    ipc_pld_spec: Union[Type[Struct]]|Any|Raw = Raw,
+    # tagged-struct-types-union set for `Decoder`ing of payloads, as
+    # per https://jcristharif.com/msgspec/structs.html#tagged-unions.
+    # NOTE that the default `Raw` here **is very intentional** since
+    # the `PldRx._pld_dec: MsgDec` is responsible for per ipc-ctx-task
+    # decoding of msg-specs defined by the user as part of **their**
+    # `tractor` "app's" type-limited IPC msg-spec.
 
     # TODO: offering a per-msg(-field) type-spec such that
     # the fields can be dynamically NOT decoded and left as `Raw`
@@ -405,13 +559,18 @@ def mk_codec(
 
     libname: str = 'msgspec',
 
-    # proxy as `Struct(**kwargs)` for ad-hoc type extensions
+    # settings for encoding-to-send extension-types,
     # https://jcristharif.com/msgspec/extending.html#mapping-to-from-native-types
-    # ------ - ------
-    dec_hook: Callable|None = None,
+    # dec_hook: Callable|None = None,
     enc_hook: Callable|None = None,
-    # ------ - ------
+    ext_types: list[Type]|None = None,
+
+    # optionally provided msg-decoder from which we pull its,
+    # |_.dec_hook()
+    # |_.type
+    ext_dec: MsgDec|None = None
     #
+    # ?TODO? other params we might want to support
     # Encoder:
     # write_buffer_size=write_buffer_size,
     #
@@ -425,26 +584,44 @@ def mk_codec(
     `msgspec` ;).
 
     '''
-    # (manually) generate a msg-payload-spec for all relevant
-    # god-boxing-msg subtypes, parameterizing the `PayloadMsg.pld: PayloadT`
-    # for the decoder such that all sub-type msgs in our SCIPP
-    # will automatically decode to a type-"limited" payload (`Struct`)
-    # object (set).
+    pld_spec = ipc_pld_spec
+    if enc_hook:
+        if not ext_types:
+            raise TypeError(
+                f'If extending the serializable types with a custom encode hook (`enc_hook()`), '
+                f'you must also provide the expected type set that the hook will handle '
+                f'via a `ext_types: Union[Type]|None = None` argument!\n'
+                f'\n'
+                f'enc_hook = {enc_hook!r}\n'
+                f'ext_types = {ext_types!r}\n'
+            )
+
+    dec_hook: Callable|None = None
+    if ext_dec:
+        dec: msgspec.Decoder = ext_dec.dec
+        dec_hook = dec.dec_hook
+        pld_spec |= dec.type
+        if ext_types:
+            pld_spec |= Union[*ext_types]
+
+    # (manually) generate a msg-spec (how appropes) for all relevant
+    # payload-boxing-struct-msg-types, parameterizing the
+    # `PayloadMsg.pld: PayloadT` for the decoder such that all msgs
+    # in our SC-RPC-protocol will automatically decode to
+    # a type-"limited" payload (`Struct`) object (set).
     (
         ipc_msg_spec,
         msg_types,
     ) = mk_msg_spec(
-        payload_type_union=ipc_pld_spec,
+        payload_type_union=pld_spec,
     )
-    assert len(ipc_msg_spec.__args__) == len(msg_types)
-    assert ipc_msg_spec
 
-    # TODO: use this shim instead?
-    # bc.. unification, err somethin?
-    # dec: MsgDec = mk_dec(
-    #     spec=ipc_msg_spec,
-    #     dec_hook=dec_hook,
-    # )
+    msg_spec_types: set[Type] = unpack_spec_types(ipc_msg_spec)
+    assert (
+        len(ipc_msg_spec.__args__) == len(msg_types)
+        and
+        len(msg_spec_types) == len(msg_types)
+    )
 
     dec = msgpack.Decoder(
         type=ipc_msg_spec,
@@ -453,22 +630,29 @@ def mk_codec(
     enc = msgpack.Encoder(
        enc_hook=enc_hook,
     )
-
     codec = MsgCodec(
         _enc=enc,
         _dec=dec,
-        _pld_spec=ipc_pld_spec,
+        _pld_spec=pld_spec,
     )
-
     # sanity on expected backend support
     assert codec.lib.__name__ == libname
-
     return codec
 
 
 # instance of the default `msgspec.msgpack` codec settings, i.e.
 # no custom structs, hooks or other special types.
-_def_msgspec_codec: MsgCodec = mk_codec(ipc_pld_spec=Any)
+#
+# XXX NOTE XXX, this will break our `Context.start()` call!
+#
+# * by default we roundtrip the started pld-`value` and if you apply
+#   this codec (globally anyway with `apply_codec()`) then the
+#   `roundtripped` value will include a non-`.pld: Raw` which will
+#   then type-error on the consequent `._ops.validte_payload_msg()`..
+#
+_def_msgspec_codec: MsgCodec = mk_codec(
+    ipc_pld_spec=Any,
+)
 
 # The built-in IPC `Msg` spec.
 # Our composing "shuttle" protocol which allows `tractor`-app code
@@ -476,13 +660,13 @@ _def_msgspec_codec: MsgCodec = mk_codec(ipc_pld_spec=Any)
 # https://jcristharif.com/msgspec/supported-types.html
 #
 _def_tractor_codec: MsgCodec = mk_codec(
-    # TODO: use this for debug mode locking prot?
-    # ipc_pld_spec=Any,
-    ipc_pld_spec=Raw,
+    ipc_pld_spec=Raw,  # XXX should be default righ!?
 )
-# TODO: IDEALLY provides for per-`trio.Task` specificity of the
+
+# -[x] TODO, IDEALLY provides for per-`trio.Task` specificity of the
 # IPC msging codec used by the transport layer when doing
 # `Channel.send()/.recv()` of wire data.
+# => impled as our `PldRx` which is `Context` scoped B)
 
 # ContextVar-TODO: DIDN'T WORK, kept resetting in every new task to default!?
 # _ctxvar_MsgCodec: ContextVar[MsgCodec] = ContextVar(
@@ -559,17 +743,6 @@ def apply_codec(
     )
     token: Token = var.set(codec)
 
-    # ?TODO? for TreeVar approach which copies from the
-    # cancel-scope of the prior value, NOT the prior task
-    # See the docs:
-    # - https://tricycle.readthedocs.io/en/latest/reference.html#tree-variables
-    # - https://github.com/oremanj/tricycle/blob/master/tricycle/_tests/test_tree_var.py
-    #   ^- see docs for @cm `.being()` API
-    # with _ctxvar_MsgCodec.being(codec):
-    #     new = _ctxvar_MsgCodec.get()
-    #     assert new is codec
-    #     yield codec
-
     try:
         yield var.get()
     finally:
@@ -579,6 +752,19 @@ def apply_codec(
             f'{orig}\n'
         )
         assert var.get() is orig
+
+    # ?TODO? for TreeVar approach which copies from the
+    # cancel-scope of the prior value, NOT the prior task
+    #
+    # See the docs:
+    # - https://tricycle.readthedocs.io/en/latest/reference.html#tree-variables
+    # - https://github.com/oremanj/tricycle/blob/master/tricycle/_tests/test_tree_var.py
+    #   ^- see docs for @cm `.being()` API
+    #
+    # with _ctxvar_MsgCodec.being(codec):
+    #     new = _ctxvar_MsgCodec.get()
+    #     assert new is codec
+    #     yield codec
 
 
 def current_codec() -> MsgCodec:
@@ -599,6 +785,7 @@ def limit_msg_spec(
     # -> related to the `MsgCodec._payload_decs` stuff above..
     # tagged_structs: list[Struct]|None = None,
 
+    hide_tb: bool = True,
     **codec_kwargs,
 
 ) -> MsgCodec:
@@ -609,7 +796,7 @@ def limit_msg_spec(
     for all IPC contexts in use by the current `trio.Task`.
 
     '''
-    __tracebackhide__: bool = True
+    __tracebackhide__: bool = hide_tb
     curr_codec: MsgCodec = current_codec()
     msgspec_codec: MsgCodec = mk_codec(
         ipc_pld_spec=payload_spec,

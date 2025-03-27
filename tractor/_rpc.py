@@ -649,6 +649,10 @@ async def _invoke(
                 )
                 # set and shuttle final result to "parent"-side task.
                 ctx._result = res
+                log.runtime(
+                    f'Sending result msg and exiting {ctx.side!r}\n'
+                    f'{return_msg}\n'
+                )
                 await chan.send(return_msg)
 
             # NOTE: this happens IFF `ctx._scope.cancel()` is

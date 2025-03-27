@@ -836,8 +836,10 @@ class Actor:
             )]
         except KeyError:
             report: str = (
-                'Ignoring invalid IPC ctx msg!\n\n'
-                f'<=? {uid}\n\n'
+                'Ignoring invalid IPC msg!?\n'
+                f'Ctx seems to not/no-longer exist??\n'
+                f'\n'
+                f'<=? {uid}\n'
                 f'  |_{pretty_struct.pformat(msg)}\n'
             )
             match msg:

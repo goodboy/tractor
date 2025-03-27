@@ -26,6 +26,9 @@ import os
 import pathlib
 
 import tractor
+from tractor.devx._debug import (
+    BoxedMaybeException,
+)
 from .pytest import (
     tractor_test as tractor_test
 )
@@ -98,12 +101,13 @@ async def expect_ctxc(
     '''
     if yay:
         try:
-            yield
+            yield (maybe_exc := BoxedMaybeException())
             raise RuntimeError('Never raised ctxc?')
-        except tractor.ContextCancelled:
+        except tractor.ContextCancelled as ctxc:
+            maybe_exc.value = ctxc
             if reraise:
                 raise
             else:
                 return
     else:
-        yield
+        yield (maybe_exc := BoxedMaybeException())

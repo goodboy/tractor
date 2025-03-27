@@ -50,7 +50,9 @@ from tractor._exceptions import (
     _mk_recv_mte,
     pack_error,
 )
-from tractor._state import current_ipc_ctx
+from tractor._state import (
+    current_ipc_ctx,
+)
 from ._codec import (
     mk_dec,
     MsgDec,
@@ -78,7 +80,7 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-_def_any_pldec: MsgDec[Any] = mk_dec()
+_def_any_pldec: MsgDec[Any] = mk_dec(spec=Any)
 
 
 class PldRx(Struct):
@@ -108,32 +110,10 @@ class PldRx(Struct):
     # TODO: better to bind it here?
     # _rx_mc: trio.MemoryReceiveChannel
     _pld_dec: MsgDec
-    _ctx: Context|None = None
-    _ipc: Context|MsgStream|None = None
 
     @property
     def pld_dec(self) -> MsgDec:
         return self._pld_dec
-
-    # TODO: a better name?
-    # -[ ] when would this be used as it avoids needingn to pass the
-    #   ipc prim to every method
-    @cm
-    def wraps_ipc(
-        self,
-        ipc_prim: Context|MsgStream,
-
-    ) -> PldRx:
-        '''
-        Apply this payload receiver to an IPC primitive type, one
-        of `Context` or `MsgStream`.
-
-        '''
-        self._ipc = ipc_prim
-        try:
-            yield self
-        finally:
-            self._ipc = None
 
     @cm
     def limit_plds(
@@ -148,6 +128,10 @@ class PldRx(Struct):
         exit.
 
         '''
+        # TODO, ensure we pull the current `MsgCodec`'s custom
+        # dec/enc_hook settings as well ?
+        # -[ ] see `._codec.mk_codec()` inputs
+        #
         orig_dec: MsgDec = self._pld_dec
         limit_dec: MsgDec = mk_dec(
             spec=spec,
@@ -163,7 +147,7 @@ class PldRx(Struct):
     def dec(self) -> msgpack.Decoder:
         return self._pld_dec.dec
 
-    def recv_pld_nowait(
+    def recv_msg_nowait(
         self,
         # TODO: make this `MsgStream` compat as well, see above^
         # ipc_prim: Context|MsgStream,
@@ -174,34 +158,95 @@ class PldRx(Struct):
         hide_tb: bool = False,
         **dec_pld_kwargs,
 
-    ) -> Any|Raw:
+    ) -> tuple[
+        MsgType[PayloadT],
+        PayloadT,
+    ]:
+        '''
+        Attempt to non-blocking receive a message from the `._rx_chan` and
+        unwrap it's payload delivering the pair to the caller.
+
+        '''
         __tracebackhide__: bool = hide_tb
 
         msg: MsgType = (
             ipc_msg
             or
-
             # sync-rx msg from underlying IPC feeder (mem-)chan
             ipc._rx_chan.receive_nowait()
         )
-        return self.decode_pld(
+        pld: PayloadT = self.decode_pld(
             msg,
             ipc=ipc,
             expect_msg=expect_msg,
             hide_tb=hide_tb,
             **dec_pld_kwargs,
         )
+        return (
+            msg,
+            pld,
+        )
+
+    async def recv_msg(
+        self,
+        ipc: Context|MsgStream,
+        expect_msg: MsgType,
+
+        # NOTE: ONLY for handling `Stop`-msgs that arrive during
+        # a call to `drain_to_final_msg()` above!
+        passthrough_non_pld_msgs: bool = True,
+        hide_tb: bool = True,
+
+        **decode_pld_kwargs,
+
+    ) -> tuple[MsgType, PayloadT]:
+        '''
+        Retrieve the next avail IPC msg, decode its payload, and
+        return the (msg, pld) pair.
+
+        '''
+        __tracebackhide__: bool = hide_tb
+        msg: MsgType = await ipc._rx_chan.receive()
+        match msg:
+            case Return()|Error():
+                log.runtime(
+                    f'Rxed final outcome msg\n'
+                    f'{msg}\n'
+                )
+            case Stop():
+                log.runtime(
+                    f'Rxed stream stopped msg\n'
+                    f'{msg}\n'
+                )
+                if passthrough_non_pld_msgs:
+                    return msg, None
+
+        # TODO: is there some way we can inject the decoded
+        # payload into an existing output buffer for the original
+        # msg instance?
+        pld: PayloadT = self.decode_pld(
+            msg,
+            ipc=ipc,
+            expect_msg=expect_msg,
+            hide_tb=hide_tb,
+
+            **decode_pld_kwargs,
+        )
+        return (
+            msg,
+            pld,
+        )
 
     async def recv_pld(
         self,
         ipc: Context|MsgStream,
-        ipc_msg: MsgType|None = None,
+        ipc_msg: MsgType[PayloadT]|None = None,
         expect_msg: Type[MsgType]|None = None,
         hide_tb: bool = True,
 
         **dec_pld_kwargs,
 
-    ) -> Any|Raw:
+    ) -> PayloadT:
         '''
         Receive a `MsgType`, then decode and return its `.pld` field.
 
@@ -213,6 +258,13 @@ class PldRx(Struct):
             # async-rx msg from underlying IPC feeder (mem-)chan
             await ipc._rx_chan.receive()
         )
+        if (
+            type(msg) is Return
+        ):
+            log.info(
+                f'Rxed final result msg\n'
+                f'{msg}\n'
+            )
         return self.decode_pld(
             msg=msg,
             ipc=ipc,
@@ -401,45 +453,6 @@ class PldRx(Struct):
             __tracebackhide__: bool = False
             raise
 
-    dec_msg = decode_pld
-
-    async def recv_msg_w_pld(
-        self,
-        ipc: Context|MsgStream,
-        expect_msg: MsgType,
-
-        # NOTE: generally speaking only for handling `Stop`-msgs that
-        # arrive during a call to `drain_to_final_msg()` above!
-        passthrough_non_pld_msgs: bool = True,
-        hide_tb: bool = True,
-        **kwargs,
-
-    ) -> tuple[MsgType, PayloadT]:
-        '''
-        Retrieve the next avail IPC msg, decode it's payload, and return
-        the pair of refs.
-
-        '''
-        __tracebackhide__: bool = hide_tb
-        msg: MsgType = await ipc._rx_chan.receive()
-
-        if passthrough_non_pld_msgs:
-            match msg:
-                case Stop():
-                    return msg, None
-
-        # TODO: is there some way we can inject the decoded
-        # payload into an existing output buffer for the original
-        # msg instance?
-        pld: PayloadT = self.decode_pld(
-            msg,
-            ipc=ipc,
-            expect_msg=expect_msg,
-            hide_tb=hide_tb,
-            **kwargs,
-        )
-        return msg, pld
-
 
 @cm
 def limit_plds(
@@ -455,11 +468,16 @@ def limit_plds(
 
     '''
     __tracebackhide__: bool = True
+    curr_ctx: Context|None = current_ipc_ctx()
+    if curr_ctx is None:
+        raise RuntimeError(
+            'No IPC `Context` is active !?\n'
+            'Did you open `limit_plds()` from outside '
+            'a `Portal.open_context()` scope-block?'
+        )
     try:
-        curr_ctx: Context = current_ipc_ctx()
         rx: PldRx = curr_ctx._pld_rx
         orig_pldec: MsgDec = rx.pld_dec
-
         with rx.limit_plds(
             spec=spec,
             **dec_kwargs,
@@ -469,6 +487,11 @@ def limit_plds(
                 f'{pldec}\n'
             )
             yield pldec
+
+    except BaseException:
+        __tracebackhide__: bool = False
+        raise
+
     finally:
         log.runtime(
             'Reverted to previous payload-decoder\n\n'
@@ -522,8 +545,8 @@ async def maybe_limit_plds(
 async def drain_to_final_msg(
     ctx: Context,
 
-    hide_tb: bool = True,
     msg_limit: int = 6,
+    hide_tb: bool = True,
 
 ) -> tuple[
     Return|None,
@@ -552,8 +575,8 @@ async def drain_to_final_msg(
     even after ctx closure and the `.open_context()` block exit.
 
     '''
-    __tracebackhide__: bool = hide_tb
     raise_overrun: bool = not ctx._allow_overruns
+    parent_never_opened_stream: bool = ctx._stream is None
 
     # wait for a final context result by collecting (but
     # basically ignoring) any bi-dir-stream msgs still in transit
@@ -562,13 +585,14 @@ async def drain_to_final_msg(
     result_msg: Return|Error|None = None
     while not (
         ctx.maybe_error
-        and not ctx._final_result_is_set()
+        and
+        not ctx._final_result_is_set()
     ):
         try:
             # receive all msgs, scanning for either a final result
             # or error; the underlying call should never raise any
             # remote error directly!
-            msg, pld = await ctx._pld_rx.recv_msg_w_pld(
+            msg, pld = await ctx._pld_rx.recv_msg(
                 ipc=ctx,
                 expect_msg=Return,
                 raise_error=False,
@@ -615,6 +639,11 @@ async def drain_to_final_msg(
                     )
                     __tracebackhide__: bool = False
 
+            else:
+                log.cancel(
+                    f'IPC ctx cancelled externally during result drain ?\n'
+                    f'{ctx}'
+                )
             # CASE 2: mask the local cancelled-error(s)
             # only when we are sure the remote error is
             # the source cause of this local task's
@@ -646,17 +675,24 @@ async def drain_to_final_msg(
             case Yield():
                 pre_result_drained.append(msg)
                 if (
-                    (ctx._stream.closed
-                     and (reason := 'stream was already closed')
-                    )
-                    or (ctx.cancel_acked
-                        and (reason := 'ctx cancelled other side')
-                    )
-                    or (ctx._cancel_called
-                        and (reason := 'ctx called `.cancel()`')
-                    )
-                    or (len(pre_result_drained) > msg_limit
-                        and (reason := f'"yield" limit={msg_limit}')
+                    not parent_never_opened_stream
+                    and (
+                        (ctx._stream.closed
+                         and
+                         (reason := 'stream was already closed')
+                        ) or
+                        (ctx.cancel_acked
+                            and
+                            (reason := 'ctx cancelled other side')
+                        )
+                        or (ctx._cancel_called
+                            and
+                            (reason := 'ctx called `.cancel()`')
+                        )
+                        or (len(pre_result_drained) > msg_limit
+                            and
+                            (reason := f'"yield" limit={msg_limit}')
+                        )
                     )
                 ):
                     log.cancel(
@@ -674,7 +710,7 @@ async def drain_to_final_msg(
                 # drain up to the `msg_limit` hoping to get
                 # a final result or error/ctxc.
                 else:
-                    log.warning(
+                    report: str = (
                         'Ignoring "yield" msg during `ctx.result()` drain..\n'
                         f'<= {ctx.chan.uid}\n'
                         f'  |_{ctx._nsf}()\n\n'
@@ -683,6 +719,14 @@ async def drain_to_final_msg(
 
                         f'{pretty_struct.pformat(msg)}\n'
                     )
+                    if parent_never_opened_stream:
+                        report = (
+                            f'IPC ctx never opened stream on {ctx.side!r}-side!\n'
+                            f'\n'
+                            # f'{ctx}\n'
+                        ) + report
+
+                    log.warning(report)
                     continue
 
             # stream terminated, but no result yet..
@@ -774,6 +818,7 @@ async def drain_to_final_msg(
             f'{ctx.outcome}\n'
         )
 
+    __tracebackhide__: bool = hide_tb
     return (
         result_msg,
         pre_result_drained,

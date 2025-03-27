@@ -38,9 +38,9 @@ from tractor._testing import (
 # - standard setup/teardown:
 #   ``Portal.open_context()`` starts a new
 #   remote task context in another actor. The target actor's task must
-#   call ``Context.started()`` to unblock this entry on the caller side.
-#   the callee task executes until complete and returns a final value
-#   which is delivered to the caller side and retreived via
+#   call ``Context.started()`` to unblock this entry on the parent side.
+#   the child task executes until complete and returns a final value
+#   which is delivered to the parent side and retreived via
 #   ``Context.result()``.
 
 # - cancel termination:
@@ -170,9 +170,9 @@ async def assert_state(value: bool):
     [False, ValueError, KeyboardInterrupt],
 )
 @pytest.mark.parametrize(
-    'callee_blocks_forever',
+    'child_blocks_forever',
     [False, True],
-    ids=lambda item: f'callee_blocks_forever={item}'
+    ids=lambda item: f'child_blocks_forever={item}'
 )
 @pytest.mark.parametrize(
     'pointlessly_open_stream',
@@ -181,7 +181,7 @@ async def assert_state(value: bool):
 )
 def test_simple_context(
     error_parent,
-    callee_blocks_forever,
+    child_blocks_forever,
     pointlessly_open_stream,
     debug_mode: bool,
 ):
@@ -204,13 +204,13 @@ def test_simple_context(
                         portal.open_context(
                             simple_setup_teardown,
                             data=10,
-                            block_forever=callee_blocks_forever,
+                            block_forever=child_blocks_forever,
                         ) as (ctx, sent),
                     ):
                         assert current_ipc_ctx() is ctx
                         assert sent == 11
 
-                        if callee_blocks_forever:
+                        if child_blocks_forever:
                             await portal.run(assert_state, value=True)
                         else:
                             assert await ctx.result() == 'yo'
@@ -220,7 +220,7 @@ def test_simple_context(
                                 if error_parent:
                                     raise error_parent
 
-                                if callee_blocks_forever:
+                                if child_blocks_forever:
                                     await ctx.cancel()
                                 else:
                                     # in this case the stream will send a
@@ -259,9 +259,9 @@ def test_simple_context(
 
 
 @pytest.mark.parametrize(
-    'callee_returns_early',
+    'child_returns_early',
     [True, False],
-    ids=lambda item: f'callee_returns_early={item}'
+    ids=lambda item: f'child_returns_early={item}'
 )
 @pytest.mark.parametrize(
     'cancel_method',
@@ -273,14 +273,14 @@ def test_simple_context(
     [True, False],
     ids=lambda item: f'chk_ctx_result_before_exit={item}'
 )
-def test_caller_cancels(
+def test_parent_cancels(
     cancel_method: str,
     chk_ctx_result_before_exit: bool,
-    callee_returns_early: bool,
+    child_returns_early: bool,
     debug_mode: bool,
 ):
     '''
-    Verify that when the opening side of a context (aka the caller)
+    Verify that when the opening side of a context (aka the parent)
     cancels that context, the ctx does not raise a cancelled when
     either calling `.result()` or on context exit.
 
@@ -294,7 +294,7 @@ def test_caller_cancels(
 
         if (
             cancel_method == 'portal'
-            and not callee_returns_early
+            and not child_returns_early
         ):
             try:
                 res = await ctx.result()
@@ -318,7 +318,7 @@ def test_caller_cancels(
                 pytest.fail(f'should not have raised ctxc\n{ctxc}')
 
         # we actually get a result
-        if callee_returns_early:
+        if child_returns_early:
             assert res == 'yo'
             assert ctx.outcome is res
             assert ctx.maybe_error is None
@@ -362,14 +362,14 @@ def test_caller_cancels(
             )
             timeout: float = (
                 0.5
-                if not callee_returns_early
+                if not child_returns_early
                 else 2
             )
             with trio.fail_after(timeout):
                 async with (
                     expect_ctxc(
                         yay=(
-                            not callee_returns_early
+                            not child_returns_early
                             and cancel_method == 'portal'
                         )
                     ),
@@ -377,13 +377,13 @@ def test_caller_cancels(
                     portal.open_context(
                         simple_setup_teardown,
                         data=10,
-                        block_forever=not callee_returns_early,
+                        block_forever=not child_returns_early,
                     ) as (ctx, sent),
                 ):
 
-                    if callee_returns_early:
+                    if child_returns_early:
                         # ensure we block long enough before sending
-                        # a cancel such that the callee has already
+                        # a cancel such that the child has already
                         # returned it's result.
                         await trio.sleep(0.5)
 
@@ -421,7 +421,7 @@ def test_caller_cancels(
             #   which should in turn cause `ctx._scope` to
             # catch any cancellation?
             if (
-                not callee_returns_early
+                not child_returns_early
                 and cancel_method != 'portal'
             ):
                 assert not ctx._scope.cancelled_caught
@@ -430,11 +430,11 @@ def test_caller_cancels(
 
 
 # basic stream terminations:
-# - callee context closes without using stream
-# - caller context closes without using stream
-# - caller context calls `Context.cancel()` while streaming
-#   is ongoing resulting in callee being cancelled
-# - callee calls `Context.cancel()` while streaming and caller
+# - child context closes without using stream
+# - parent context closes without using stream
+# - parent context calls `Context.cancel()` while streaming
+#   is ongoing resulting in child being cancelled
+# - child calls `Context.cancel()` while streaming and parent
 #   sees stream terminated in `RemoteActorError`
 
 # TODO: future possible features
@@ -443,7 +443,6 @@ def test_caller_cancels(
 
 @tractor.context
 async def close_ctx_immediately(
-
     ctx: Context,
 
 ) -> None:
@@ -454,13 +453,24 @@ async def close_ctx_immediately(
     async with ctx.open_stream():
         pass
 
+    print('child returning!')
 
+
+@pytest.mark.parametrize(
+    'parent_send_before_receive',
+    [
+        False,
+        True,
+    ],
+    ids=lambda item: f'child_send_before_receive={item}'
+)
 @tractor_test
-async def test_callee_closes_ctx_after_stream_open(
+async def test_child_exits_ctx_after_stream_open(
     debug_mode: bool,
+    parent_send_before_receive: bool,
 ):
     '''
-    callee context closes without using stream.
+    child context closes without using stream.
 
     This should result in a msg sequence
     |_<root>_
@@ -474,6 +484,9 @@ async def test_callee_closes_ctx_after_stream_open(
     => {'stop': True, 'cid': <str>}
 
     '''
+    timeout: float = (
+        0.5 if not debug_mode else 999
+    )
     async with tractor.open_nursery(
         debug_mode=debug_mode,
     ) as an:
@@ -482,7 +495,7 @@ async def test_callee_closes_ctx_after_stream_open(
             enable_modules=[__name__],
         )
 
-        with trio.fail_after(0.5):
+        with trio.fail_after(timeout):
             async with portal.open_context(
                 close_ctx_immediately,
 
@@ -494,34 +507,48 @@ async def test_callee_closes_ctx_after_stream_open(
 
                 with trio.fail_after(0.4):
                     async with ctx.open_stream() as stream:
+                        if parent_send_before_receive:
+                            print('sending first msg from parent!')
+                            await stream.send('yo')
 
                         # should fall through since ``StopAsyncIteration``
                         # should be raised through translation of
                         # a ``trio.EndOfChannel`` by
                         # ``trio.abc.ReceiveChannel.__anext__()``
-                        async for _ in stream:
+                        msg = 10
+                        async for msg in stream:
                             # trigger failure if we DO NOT
                             # get an EOC!
                             assert 0
                         else:
+                            # never should get anythinig new from
+                            # the underlying stream
+                            assert msg == 10
 
                             # verify stream is now closed
                             try:
                                 with trio.fail_after(0.3):
+                                    print('parent trying to `.receive()` on EoC stream!')
                                     await stream.receive()
+                                    assert 0, 'should have raised eoc!?'
                             except trio.EndOfChannel:
+                                print('parent got EoC as expected!')
                                 pass
+                                # raise
 
                 # TODO: should be just raise the closed resource err
                 # directly here to enforce not allowing a re-open
                 # of a stream to the context (at least until a time of
                 # if/when we decide that's a good idea?)
                 try:
-                    with trio.fail_after(0.5):
+                    with trio.fail_after(timeout):
                         async with ctx.open_stream() as stream:
                             pass
                 except trio.ClosedResourceError:
                     pass
+
+                # if ctx._rx_chan._state.data:
+                #     await tractor.pause()
 
         await portal.cancel_actor()
 
@@ -529,6 +556,7 @@ async def test_callee_closes_ctx_after_stream_open(
 @tractor.context
 async def expect_cancelled(
     ctx: Context,
+    send_before_receive: bool = False,
 
 ) -> None:
     global _state
@@ -538,6 +566,10 @@ async def expect_cancelled(
 
     try:
         async with ctx.open_stream() as stream:
+
+            if send_before_receive:
+                await stream.send('yo')
+
             async for msg in stream:
                 await stream.send(msg)  # echo server
 
@@ -564,26 +596,49 @@ async def expect_cancelled(
         raise
 
     else:
-        assert 0, "callee wasn't cancelled !?"
+        assert 0, "child wasn't cancelled !?"
 
 
 @pytest.mark.parametrize(
+    'child_send_before_receive',
+    [
+        False,
+        True,
+    ],
+    ids=lambda item: f'child_send_before_receive={item}'
+)
+@pytest.mark.parametrize(
+    'rent_wait_for_msg',
+    [
+        False,
+        True,
+    ],
+    ids=lambda item: f'rent_wait_for_msg={item}'
+)
+@pytest.mark.parametrize(
     'use_ctx_cancel_method',
-    [False, True],
+    [
+        False,
+        'pre_stream',
+        'post_stream_open',
+        'post_stream_close',
+    ],
+    ids=lambda item: f'use_ctx_cancel_method={item}'
 )
 @tractor_test
-async def test_caller_closes_ctx_after_callee_opens_stream(
-    use_ctx_cancel_method: bool,
+async def test_parent_exits_ctx_after_child_enters_stream(
+    use_ctx_cancel_method: bool|str,
     debug_mode: bool,
+    rent_wait_for_msg: bool,
+    child_send_before_receive: bool,
 ):
     '''
-    caller context closes without using/opening stream
+    Parent-side of IPC context closes without sending on `MsgStream`.
 
     '''
     async with tractor.open_nursery(
         debug_mode=debug_mode,
     ) as an:
-
         root: Actor = current_actor()
         portal = await an.start_actor(
             'ctx_cancelled',
@@ -592,41 +647,52 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
 
         async with portal.open_context(
             expect_cancelled,
+            send_before_receive=child_send_before_receive,
         ) as (ctx, sent):
             assert sent is None
 
             await portal.run(assert_state, value=True)
 
             # call `ctx.cancel()` explicitly
-            if use_ctx_cancel_method:
+            if use_ctx_cancel_method == 'pre_stream':
                 await ctx.cancel()
 
                 # NOTE: means the local side `ctx._scope` will
                 # have been cancelled by an ctxc ack and thus
                 # `._scope.cancelled_caught` should be set.
-                try:
+                async with (
+                    expect_ctxc(
+                        # XXX: the cause is US since we call
+                        # `Context.cancel()` just above!
+                        yay=True,
+
+                        # XXX: must be propagated to __aexit__
+                        # and should be silently absorbed there
+                        # since we called `.cancel()` just above ;)
+                        reraise=True,
+                    ) as maybe_ctxc,
+                ):
                     async with ctx.open_stream() as stream:
-                        async for msg in stream:
-                            pass
 
-                except tractor.ContextCancelled as ctxc:
-                    # XXX: the cause is US since we call
-                    # `Context.cancel()` just above!
-                    assert (
-                        ctxc.canceller
-                        ==
-                        current_actor().uid
-                        ==
-                        root.uid
-                    )
+                        if rent_wait_for_msg:
+                            async for msg in stream:
+                                print(f'PARENT rx: {msg!r}\n')
+                                break
 
-                    # XXX: must be propagated to __aexit__
-                    # and should be silently absorbed there
-                    # since we called `.cancel()` just above ;)
-                    raise
+                        if use_ctx_cancel_method == 'post_stream_open':
+                            await ctx.cancel()
 
-                else:
-                    assert 0, "Should have context cancelled?"
+                    if use_ctx_cancel_method == 'post_stream_close':
+                        await ctx.cancel()
+
+                ctxc: tractor.ContextCancelled = maybe_ctxc.value
+                assert (
+                    ctxc.canceller
+                    ==
+                    current_actor().uid
+                    ==
+                    root.uid
+                )
 
                 # channel should still be up
                 assert portal.channel.connected()
@@ -637,13 +703,20 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
                     value=False,
                 )
 
+            # XXX CHILD-BLOCKS case, we SHOULD NOT exit from the
+            # `.open_context()` before the child has returned,
+            # errored or been cancelled!
             else:
                 try:
-                    with trio.fail_after(0.2):
-                        await ctx.result()
+                    with trio.fail_after(
+                        0.5  # if not debug_mode else 999
+                    ):
+                        res = await ctx.wait_for_result()
+                        assert res is not tractor._context.Unresolved
                         assert 0, "Callee should have blocked!?"
                 except trio.TooSlowError:
-                    # NO-OP -> since already called above
+                    # NO-OP -> since already triggered by
+                    # `trio.fail_after()` above!
                     await ctx.cancel()
 
         # NOTE: local scope should have absorbed the cancellation since
@@ -683,7 +756,7 @@ async def test_caller_closes_ctx_after_callee_opens_stream(
 
 
 @tractor_test
-async def test_multitask_caller_cancels_from_nonroot_task(
+async def test_multitask_parent_cancels_from_nonroot_task(
     debug_mode: bool,
 ):
     async with tractor.open_nursery(
@@ -735,7 +808,6 @@ async def test_multitask_caller_cancels_from_nonroot_task(
 
 @tractor.context
 async def cancel_self(
-
     ctx: Context,
 
 ) -> None:
@@ -775,11 +847,11 @@ async def cancel_self(
 
 
 @tractor_test
-async def test_callee_cancels_before_started(
+async def test_child_cancels_before_started(
     debug_mode: bool,
 ):
     '''
-    Callee calls `Context.cancel()` while streaming and caller
+    Callee calls `Context.cancel()` while streaming and parent
     sees stream terminated in `ContextCancelled`.
 
     '''
@@ -826,14 +898,13 @@ async def never_open_stream(
 
 
 @tractor.context
-async def keep_sending_from_callee(
-
+async def keep_sending_from_child(
     ctx:  Context,
     msg_buffer_size: int|None = None,
 
 ) -> None:
     '''
-    Send endlessly on the calleee stream.
+    Send endlessly on the child stream.
 
     '''
     await ctx.started()
@@ -841,7 +912,7 @@ async def keep_sending_from_callee(
         msg_buffer_size=msg_buffer_size,
     ) as stream:
         for msg in count():
-            print(f'callee sending {msg}')
+            print(f'child sending {msg}')
             await stream.send(msg)
             await trio.sleep(0.01)
 
@@ -849,12 +920,12 @@ async def keep_sending_from_callee(
 @pytest.mark.parametrize(
     'overrun_by',
     [
-        ('caller', 1, never_open_stream),
-        ('callee', 0, keep_sending_from_callee),
+        ('parent', 1, never_open_stream),
+        ('child', 0, keep_sending_from_child),
     ],
     ids=[
-         ('caller_1buf_never_open_stream'),
-         ('callee_0buf_keep_sending_from_callee'),
+         ('parent_1buf_never_open_stream'),
+         ('child_0buf_keep_sending_from_child'),
     ]
 )
 def test_one_end_stream_not_opened(
@@ -885,8 +956,7 @@ def test_one_end_stream_not_opened(
                 ) as (ctx, sent):
                     assert sent is None
 
-                    if 'caller' in overrunner:
-
+                    if 'parent' in overrunner:
                         async with ctx.open_stream() as stream:
 
                             # itersend +1 msg more then the buffer size
@@ -901,7 +971,7 @@ def test_one_end_stream_not_opened(
                                 await trio.sleep_forever()
 
                     else:
-                        # callee overruns caller case so we do nothing here
+                        # child overruns parent case so we do nothing here
                         await trio.sleep_forever()
 
             await portal.cancel_actor()
@@ -909,19 +979,19 @@ def test_one_end_stream_not_opened(
     # 2 overrun cases and the no overrun case (which pushes right up to
     # the msg limit)
     if (
-        overrunner == 'caller'
+        overrunner == 'parent'
     ):
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
         assert excinfo.value.boxed_type == StreamOverrun
 
-    elif overrunner == 'callee':
+    elif overrunner == 'child':
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             trio.run(main)
 
         # TODO: embedded remote errors so that we can verify the source
-        # error? the callee delivers an error which is an overrun
+        # error? the child delivers an error which is an overrun
         # wrapped in a remote actor error.
         assert excinfo.value.boxed_type == tractor.RemoteActorError
 
@@ -931,8 +1001,7 @@ def test_one_end_stream_not_opened(
 
 @tractor.context
 async def echo_back_sequence(
-
-    ctx:  Context,
+    ctx: Context,
     seq: list[int],
     wait_for_cancel: bool,
     allow_overruns_side: str,
@@ -941,12 +1010,12 @@ async def echo_back_sequence(
 
 ) -> None:
     '''
-    Send endlessly on the calleee stream using a small buffer size
+    Send endlessly on the child stream using a small buffer size
     setting on the contex to simulate backlogging that would normally
     cause overruns.
 
     '''
-    # NOTE: ensure that if the caller is expecting to cancel this task
+    # NOTE: ensure that if the parent is expecting to cancel this task
     # that we stay echoing much longer then they are so we don't
     # return early instead of receive the cancel msg.
     total_batches: int = (
@@ -996,18 +1065,18 @@ async def echo_back_sequence(
                 if be_slow:
                     await trio.sleep(0.05)
 
-                print('callee waiting on next')
+                print('child waiting on next')
 
-            print(f'callee echoing back latest batch\n{batch}')
+            print(f'child echoing back latest batch\n{batch}')
             for msg in batch:
-                print(f'callee sending msg\n{msg}')
+                print(f'child sending msg\n{msg}')
                 await stream.send(msg)
 
     try:
         return 'yo'
     finally:
         print(
-            'exiting callee with context:\n'
+            'exiting child with context:\n'
             f'{pformat(ctx)}\n'
         )
 
@@ -1061,7 +1130,7 @@ def test_maybe_allow_overruns_stream(
             debug_mode=debug_mode,
         ) as an:
             portal = await an.start_actor(
-                'callee_sends_forever',
+                'child_sends_forever',
                 enable_modules=[__name__],
                 loglevel=loglevel,
                 debug_mode=debug_mode,
