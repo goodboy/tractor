@@ -14,14 +14,16 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""
-Per process state
+'''
+Per actor-process runtime state mgmt APIs.
 
-"""
+'''
 from __future__ import annotations
 from contextvars import (
     ContextVar,
 )
+import os
+from pathlib import Path
 from typing import (
     Any,
     TYPE_CHECKING,
@@ -143,3 +145,22 @@ def current_ipc_ctx(
             f'|_{current_task()}\n'
         )
     return ctx
+
+
+# std ODE (mutable) app state location
+_rtdir: Path = Path(os.environ['XDG_RUNTIME_DIR'])
+
+
+def get_rt_dir(
+    subdir: str = 'tractor'
+) -> Path:
+    '''
+    Return the user "runtime dir" where most userspace apps stick
+    their IPC and cache related system util-files; we take hold
+    of a `'XDG_RUNTIME_DIR'/tractor/` subdir by default.
+
+    '''
+    rtdir: Path = _rtdir / subdir
+    if not rtdir.is_dir():
+        rtdir.mkdir()
+    return rtdir
