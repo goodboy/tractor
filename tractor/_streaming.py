@@ -595,8 +595,17 @@ class MsgStream(trio.abc.Channel):
             trio.ClosedResourceError,
             trio.BrokenResourceError,
             BrokenPipeError,
-        ) as trans_err:
-            if hide_tb:
+        ) as _trans_err:
+            trans_err = _trans_err
+            if (
+                hide_tb
+                and
+                self._ctx.chan._exc is trans_err
+                # ^XXX, IOW, only if the channel is marked errored
+                # for the same reason as whatever its underlying
+                # transport raised, do we keep the full low-level tb
+                # suppressed from the user.
+            ):
                 raise type(trans_err)(
                     *trans_err.args
                 ) from trans_err
