@@ -50,8 +50,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     subactor = Actor(
-        args.uid[0],
-        uid=args.uid[1],
+        name=args.uid[0],
+        uuid=args.uid[1],
         loglevel=args.loglevel,
         spawn_method="trio"
     )
