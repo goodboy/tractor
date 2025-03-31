@@ -22,7 +22,9 @@ from contextlib import asynccontextmanager as acm
 from functools import partial
 import inspect
 from pprint import pformat
-from typing import TYPE_CHECKING
+from typing import (
+    TYPE_CHECKING,
+)
 import typing
 import warnings
 
@@ -31,9 +33,9 @@ import trio
 
 from .devx._debug import maybe_wait_for_debugger
 from ._addr import (
-    AddressTypes,
+    UnwrappedAddress,
     preferred_transport,
-    get_address_cls
+    mk_uuid,
 )
 from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
@@ -134,7 +136,7 @@ class ActorNursery:
 
         *,
 
-        bind_addrs: list[AddressTypes]|None = None,
+        bind_addrs: list[UnwrappedAddress]|None = None,
         rpc_module_paths: list[str]|None = None,
         enable_transports: list[str] = [preferred_transport],
         enable_modules: list[str]|None = None,
@@ -161,12 +163,6 @@ class ActorNursery:
             or get_loglevel()
         )
 
-        if not bind_addrs:
-            bind_addrs: list[AddressTypes] = [
-                get_address_cls(transport).get_random().unwrap()
-                for transport in enable_transports
-            ]
-
         # configure and pass runtime state
         _rtv = _state._runtime_vars.copy()
         _rtv['_is_root'] = False
@@ -189,7 +185,9 @@ class ActorNursery:
             enable_modules.extend(rpc_module_paths)
 
         subactor = Actor(
-            name,
+            name=name,
+            uuid=mk_uuid(),
+
             # modules allowed to invoked funcs from
             enable_modules=enable_modules,
             loglevel=loglevel,
@@ -197,7 +195,7 @@ class ActorNursery:
             # verbatim relay this actor's registrar addresses
             registry_addrs=current_actor().reg_addrs,
         )
-        parent_addr = self._actor.accept_addr
+        parent_addr: UnwrappedAddress = self._actor.accept_addr
         assert parent_addr
 
         # start a task to spawn a process
@@ -235,7 +233,7 @@ class ActorNursery:
         *,
 
         name: str | None = None,
-        bind_addrs: AddressTypes|None = None,
+        bind_addrs: UnwrappedAddress|None = None,
         rpc_module_paths: list[str] | None = None,
         enable_modules: list[str] | None = None,
         loglevel: str | None = None,  # set log level per subactor

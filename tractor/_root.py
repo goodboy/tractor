@@ -47,10 +47,11 @@ from .ipc import (
     _connect_chan,
 )
 from ._addr import (
-    AddressTypes,
-    wrap_address,
+    UnwrappedAddress,
+    default_lo_addrs,
+    mk_uuid,
     preferred_transport,
-    default_lo_addrs
+    wrap_address,
 )
 from ._exceptions import is_multi_cancelled
 
@@ -63,10 +64,10 @@ async def open_root_actor(
 
     *,
     # defaults are above
-    registry_addrs: list[AddressTypes]|None = None,
+    registry_addrs: list[UnwrappedAddress]|None = None,
 
     # defaults are above
-    arbiter_addr: tuple[AddressTypes]|None = None,
+    arbiter_addr: tuple[UnwrappedAddress]|None = None,
 
     enable_transports: list[str] = [preferred_transport],
 
@@ -195,7 +196,9 @@ async def open_root_actor(
         registry_addrs = [arbiter_addr]
 
     if not registry_addrs:
-        registry_addrs: list[AddressTypes] = default_lo_addrs(enable_transports)
+        registry_addrs: list[UnwrappedAddress] = default_lo_addrs(
+            enable_transports
+        )
 
     assert registry_addrs
 
@@ -245,10 +248,10 @@ async def open_root_actor(
         enable_stack_on_sig()
 
     # closed into below ping task-func
-    ponged_addrs: list[AddressTypes] = []
+    ponged_addrs: list[UnwrappedAddress] = []
 
     async def ping_tpt_socket(
-        addr: AddressTypes,
+        addr: UnwrappedAddress,
         timeout: float = 1,
     ) -> None:
         '''
@@ -284,7 +287,7 @@ async def open_root_actor(
                 addr,
             )
 
-    trans_bind_addrs: list[AddressTypes] = []
+    trans_bind_addrs: list[UnwrappedAddress] = []
 
     # Create a new local root-actor instance which IS NOT THE
     # REGISTRAR
@@ -302,6 +305,7 @@ async def open_root_actor(
 
         actor = Actor(
             name=name or 'anonymous',
+            uuid=mk_uuid(),
             registry_addrs=ponged_addrs,
             loglevel=loglevel,
             enable_modules=enable_modules,
@@ -336,7 +340,8 @@ async def open_root_actor(
         # https://github.com/goodboy/tractor/issues/296
 
         actor = Arbiter(
-            name or 'registrar',
+            name=name or 'registrar',
+            uuid=mk_uuid(),
             registry_addrs=registry_addrs,
             loglevel=loglevel,
             enable_modules=enable_modules,
@@ -462,7 +467,7 @@ def run_daemon(
 
     # runtime kwargs
     name: str | None = 'root',
-    registry_addrs: list[AddressTypes]|None = None,
+    registry_addrs: list[UnwrappedAddress]|None = None,
 
     start_method: str | None = None,
     debug_mode: bool = False,
