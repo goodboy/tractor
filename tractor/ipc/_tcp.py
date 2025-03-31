@@ -42,24 +42,15 @@ class MsgpackTCPStream(MsgpackTransport):
     address_type = TCPAddress
     layer_key: int = 4
 
-    # def __init__(
-    #     self,
-    #     stream: trio.SocketStream,
-    #     prefix_size: int = 4,
-    #     codec: CodecType = None,
-
-    # ) -> None:
-    #     super().__init__(
-    #         stream,
-    #         prefix_size=prefix_size,
-    #         codec=codec
-    #     )
-
     @property
     def maddr(self) -> str:
         host, port = self.raddr.unwrap()
         return (
+            # TODO, use `ipaddress` from stdlib to handle
+            # first detecting which of `ipv4/6` before
+            # choosing the routing prefix part.
             f'/ipv4/{host}'
+
             f'/{self.address_type.name_key}/{port}'
             # f'/{self.chan.uid[0]}'
             # f'/{self.cid}'
@@ -94,12 +85,15 @@ class MsgpackTCPStream(MsgpackTransport):
         cls,
         stream: trio.SocketStream
     ) -> tuple[
-        tuple[str, int],
-        tuple[str, int]
+        TCPAddress,
+        TCPAddress,
     ]:
+        # TODO, what types are these?
         lsockname = stream.socket.getsockname()
+        l_sockaddr: tuple[str, int] = tuple(lsockname[:2])
         rsockname = stream.socket.getpeername()
+        r_sockaddr: tuple[str, int] = tuple(rsockname[:2])
         return (
-            TCPAddress.from_addr(tuple(lsockname[:2])),
-            TCPAddress.from_addr(tuple(rsockname[:2])),
+            TCPAddress.from_addr(l_sockaddr),
+            TCPAddress.from_addr(r_sockaddr),
         )
