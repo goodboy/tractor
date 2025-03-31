@@ -24,6 +24,7 @@ from contextlib import (
     asynccontextmanager as acm,
     contextmanager as cm,
 )
+import os
 import platform
 from pprint import pformat
 import typing
@@ -39,9 +40,10 @@ from tractor.ipc._types import (
     transport_from_stream,
 )
 from tractor._addr import (
+    is_wrapped_addr,
     wrap_address,
     Address,
-    AddressTypes
+    UnwrappedAddress,
 )
 from tractor.log import get_logger
 from tractor._exceptions import (
@@ -88,7 +90,8 @@ class Channel:
         self.uid: tuple[str, str]|None = None
 
         self._aiter_msgs = self._iter_msgs()
-        self._exc: Exception|None = None  # set if far end actor errors
+        self._exc: Exception|None = None
+        # ^XXX! ONLY set if a remote actor sends an `Error`-msg
         self._closed: bool = False
 
         # flag set by ``Portal.cancel_actor()`` indicating remote
@@ -124,17 +127,26 @@ class Channel:
     @classmethod
     async def from_addr(
         cls,
-        addr: AddressTypes,
+        addr: UnwrappedAddress,
         **kwargs
     ) -> Channel:
-        addr: Address = wrap_address(addr)
-        transport_cls = transport_from_addr(addr)
-        transport = await transport_cls.connect_to(addr, **kwargs)
 
-        log.transport(
-            f'Opened channel[{type(transport)}]: {transport.laddr} -> {transport.raddr}'
+        if not is_wrapped_addr(addr):
+            addr: Address = wrap_address(addr)
+
+        transport_cls = transport_from_addr(addr)
+        transport = await transport_cls.connect_to(
+            addr,
+            **kwargs,
         )
-        return Channel(transport=transport)
+        assert transport.raddr == addr
+        chan = Channel(transport=transport)
+        log.runtime(
+            f'Connected channel IPC transport\n'
+            f'[>\n'
+            f' |_{chan}\n'
+        )
+        return chan
 
     @cm
     def apply_codec(
@@ -154,16 +166,50 @@ class Channel:
             self._transport.codec = orig
 
     # TODO: do a .src/.dst: str for maddrs?
-    def __repr__(self) -> str:
+    def pformat(self) -> str:
         if not self._transport:
             return '<Channel with inactive transport?>'
 
-        return repr(
-            self._transport
-        ).replace(  # type: ignore
-            "socket.socket",
-            "Channel",
+        tpt: MsgTransport = self._transport
+        tpt_name: str = type(tpt).__name__
+        tpt_status: str = (
+            'connected' if self.connected()
+            else 'closed'
         )
+        return (
+            f'<Channel(\n'
+            f' |_status: {tpt_status!r}\n'
+            f'   _closed={self._closed}\n'
+            f'   _cancel_called={self._cancel_called}\n'
+            f'\n'
+            f' |_runtime: Actor\n'
+            f'   pid={os.getpid()}\n'
+            f'   uid={self.uid}\n'
+            f'\n'
+            f' |_msgstream: {tpt_name}\n'
+            f'   proto={tpt.laddr.name_key!r}\n'
+            f'   layer={tpt.layer_key!r}\n'
+            f'   laddr={tpt.laddr}\n'
+            f'   raddr={tpt.raddr}\n'
+            f'   codec={tpt.codec_key!r}\n'
+            f'   stream={tpt.stream}\n'
+            f'   maddr={tpt.maddr!r}\n'
+            f'   drained={tpt.drained}\n'
+            f'   _send_lock={tpt._send_lock.statistics()}\n'
+            f')>\n'
+        )
+
+    # NOTE: making this return a value that can be passed to
+    # `eval()` is entirely **optional** FYI!
+    # https://docs.python.org/3/library/functions.html#repr
+    # https://docs.python.org/3/reference/datamodel.html#object.__repr__
+    #
+    # Currently we target **readability** from a (console)
+    # logging perspective over `eval()`-ability since we do NOT
+    # target serializing non-struct instances!
+    # def __repr__(self) -> str:
+    __str__ = pformat
+    __repr__ = pformat
 
     @property
     def laddr(self) -> Address|None:
@@ -338,7 +384,7 @@ class Channel:
 
 @acm
 async def _connect_chan(
-    addr: AddressTypes
+    addr: UnwrappedAddress
 ) -> typing.AsyncGenerator[Channel, None]:
     '''
     Create and connect a channel with disconnect on context manager
