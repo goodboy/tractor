@@ -46,6 +46,7 @@ dependencies = [
   # typed IPC msging
   "msgspec>=0.19.0",
   "cffi>=1.17.1",
+  "bidict>=0.23.1",
 ]
 
 # ------ project ------
