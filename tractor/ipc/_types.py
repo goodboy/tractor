@@ -76,7 +76,7 @@ def transport_from_stream(
     '''
     transport = None
     if isinstance(stream, trio.SocketStream):
-        sock = stream.socket
+        sock: socket.socket = stream.socket
         match sock.family:
             case socket.AF_INET | socket.AF_INET6:
                 transport = 'tcp'

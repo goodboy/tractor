@@ -50,7 +50,10 @@ if _USE_POSIX:
 try:
     import numpy as np
     from numpy.lib import recfunctions as rfn
-    import nptyping
+    # TODO ruff complains with,
+    # warning| F401: `nptyping` imported but unused; consider using
+    # `importlib.util.find_spec` to test for availability
+    import nptyping  # noqa
 except ImportError:
     pass
 
