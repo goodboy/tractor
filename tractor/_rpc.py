@@ -1156,7 +1156,7 @@ async def process_messages(
                                 trio.Event(),
                             )
 
-                    # runtime-scoped remote (internal) error
+                    # XXX RUNTIME-SCOPED! remote (likely internal) error
                     # (^- bc no `Error.cid` -^)
                     #
                     # NOTE: this is the non-rpc error case, that
