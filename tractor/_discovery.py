@@ -31,7 +31,7 @@ from tractor.log import get_logger
 from .trionics import gather_contexts
 from .ipc import _connect_chan, Channel
 from ._addr import (
-    AddressTypes,
+    UnwrappedAddress,
     Address,
     preferred_transport,
     wrap_address
@@ -54,7 +54,9 @@ log = get_logger(__name__)
 
 
 @acm
-async def get_registry(addr: AddressTypes | None = None) -> AsyncGenerator[
+async def get_registry(
+    addr: UnwrappedAddress|None = None,
+) -> AsyncGenerator[
     Portal | LocalPortal | None,
     None,
 ]:
@@ -71,7 +73,9 @@ async def get_registry(addr: AddressTypes | None = None) -> AsyncGenerator[
         # (likely a re-entrant call from the arbiter actor)
         yield LocalPortal(
             actor,
-            await Channel.from_addr(addr)
+            Channel(transport=None)
+            # ^XXX, we DO NOT actually provide nor connect an
+            # underlying transport since this is merely an API shim.
         )
     else:
         # TODO: try to look pre-existing connection from
@@ -135,10 +139,10 @@ def get_peer_by_name(
 @acm
 async def query_actor(
     name: str,
-    regaddr: AddressTypes|None = None,
+    regaddr: UnwrappedAddress|None = None,
 
 ) -> AsyncGenerator[
-    AddressTypes|None,
+    UnwrappedAddress|None,
     None,
 ]:
     '''
@@ -168,7 +172,7 @@ async def query_actor(
     async with get_registry(regaddr) as reg_portal:
         # TODO: return portals to all available actors - for now
         # just the last one that registered
-        addr: AddressTypes = await reg_portal.run_from_ns(
+        addr: UnwrappedAddress = await reg_portal.run_from_ns(
             'self',
             'find_actor',
             name=name,
@@ -178,7 +182,7 @@ async def query_actor(
 
 @acm
 async def maybe_open_portal(
-    addr: AddressTypes,
+    addr: UnwrappedAddress,
     name: str,
 ):
     async with query_actor(
@@ -198,7 +202,7 @@ async def maybe_open_portal(
 @acm
 async def find_actor(
     name: str,
-    registry_addrs: list[AddressTypes]|None = None,
+    registry_addrs: list[UnwrappedAddress]|None = None,
     enable_transports: list[str] = [preferred_transport],
 
     only_first: bool = True,
@@ -234,7 +238,7 @@ async def find_actor(
         )
 
     maybe_portals: list[
-        AsyncContextManager[AddressTypes]
+        AsyncContextManager[UnwrappedAddress]
     ] = list(
         maybe_open_portal(
             addr=addr,
@@ -276,7 +280,7 @@ async def find_actor(
 @acm
 async def wait_for_actor(
     name: str,
-    registry_addr: AddressTypes | None = None,
+    registry_addr: UnwrappedAddress | None = None,
 
 ) -> AsyncGenerator[Portal, None]:
     '''
@@ -293,7 +297,7 @@ async def wait_for_actor(
             yield peer_portal
             return
 
-    regaddr: AddressTypes = (
+    regaddr: UnwrappedAddress = (
         registry_addr
         or
         actor.reg_addrs[0]
@@ -310,7 +314,7 @@ async def wait_for_actor(
 
         # get latest registered addr by default?
         # TODO: offer multi-portal yields in multi-homed case?
-        addr: AddressTypes = addrs[-1]
+        addr: UnwrappedAddress = addrs[-1]
 
         async with _connect_chan(addr) as chan:
             async with open_portal(chan) as portal:

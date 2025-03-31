@@ -46,7 +46,7 @@ from tractor._state import (
     _runtime_vars,
 )
 from tractor.log import get_logger
-from tractor._addr import AddressTypes
+from tractor._addr import UnwrappedAddress
 from tractor._portal import Portal
 from tractor._runtime import Actor
 from tractor._entry import _mp_main
@@ -393,8 +393,8 @@ async def new_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addrs: list[AddressTypes],
-    parent_addr: AddressTypes,
+    bind_addrs: list[UnwrappedAddress],
+    parent_addr: UnwrappedAddress,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
 
     *,
@@ -432,8 +432,8 @@ async def trio_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addrs: list[AddressTypes],
-    parent_addr: AddressTypes,
+    bind_addrs: list[UnwrappedAddress],
+    parent_addr: UnwrappedAddress,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
@@ -639,8 +639,8 @@ async def mp_proc(
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
     # passed through to actor main
-    bind_addrs: list[AddressTypes],
-    parent_addr: AddressTypes,
+    bind_addrs: list[UnwrappedAddress],
+    parent_addr: UnwrappedAddress,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
