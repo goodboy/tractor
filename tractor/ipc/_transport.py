@@ -157,7 +157,10 @@ class MsgpackTransport(MsgTransport):
 
     ) -> None:
         self.stream = stream
-        self._laddr, self._raddr = self.get_stream_addrs(stream)
+        (
+            self._laddr,
+            self._raddr,
+        ) = self.get_stream_addrs(stream)
 
         # create read loop instance
         self._aiter_pkts = self._iter_packets()
