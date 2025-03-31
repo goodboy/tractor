@@ -107,6 +107,10 @@ class Portal:
         # point.
         self._expect_result_ctx: Context|None = None
         self._streams: set[MsgStream] = set()
+
+        # TODO, this should be PRIVATE (and never used publicly)! since it's just
+        # a cached ref to the local runtime instead of calling
+        # `current_actor()` everywhere.. XD
         self.actor: Actor = current_actor()
 
     @property
@@ -504,8 +508,12 @@ class LocalPortal:
         return it's result.
 
         '''
-        obj = self.actor if ns == 'self' else importlib.import_module(ns)
-        func = getattr(obj, func_name)
+        obj = (
+            self.actor
+            if ns == 'self'
+            else importlib.import_module(ns)
+        )
+        func: Callable = getattr(obj, func_name)
         return await func(**kwargs)
 
 
