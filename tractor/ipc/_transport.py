@@ -412,7 +412,33 @@ class MsgpackTransport(MsgTransport):
             # supposedly the fastest says,
             # https://stackoverflow.com/a/54027962
             size: bytes = struct.pack("<I", len(bytes_data))
-            return await self.stream.send_all(size + bytes_data)
+            try:
+                return await self.stream.send_all(size + bytes_data)
+            except (
+                trio.BrokenResourceError,
+            ) as trans_err:
+                loglevel = 'transport'
+                match trans_err:
+                    case trio.BrokenResourceError() if (
+                        '[Errno 32] Broken pipe' in trans_err.args[0]
+                        # ^XXX, specifc to UDS transport afaik?
+                        # likely todo with races related to how fast
+                        # the socket is setup/torn-down on linux..
+                    ):
+                        raise TransportClosed(
+                            message=(
+                                f'IPC transport already closed by peer\n'
+                                f'x)> {type(trans_err)}\n'
+                                f' |_{self}\n'
+                            ),
+                            loglevel=loglevel,
+                        ) from trans_err
+
+                    # unless the disconnect condition falls under "a
+                    # normal operation breakage" we usualy console warn
+                    # about it.
+                    case _:
+                        raise trans_err
 
         # ?TODO? does it help ever to dynamically show this
         # frame?
