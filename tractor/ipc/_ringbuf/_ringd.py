@@ -34,10 +34,8 @@ import trio
 import tractor
 from tractor.linux import send_fds, recv_fds
 
-from . import (
-    RBToken,
-    open_ringbuf as ipc_open_ringbuf
-)
+import tractor.ipc._ringbuf as ringbuf
+from tractor.ipc._ringbuf import RBToken
 
 
 log = tractor.log.get_logger(__name__)
@@ -141,7 +139,7 @@ async def _open_ringbuf(
                 f'Tried to open_ringbuf but it doesn\'t exist: {name}'
             )
 
-        with ipc_open_ringbuf(
+        with ringbuf.open_ringbuf(
             _root_key + name,
             buf_size=buf_size
         ) as token:
