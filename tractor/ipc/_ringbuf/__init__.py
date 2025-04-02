@@ -35,15 +35,15 @@ from msgspec import (
     to_builtins
 )
 
-from ._linux import (
+from ...log import get_logger
+from ..._exceptions import (
+    InternalError
+)
+from .._mp_bs import disable_mantracker
+from ...linux.eventfd import (
     open_eventfd,
     EFDReadCancelled,
     EventFD
-)
-from ._mp_bs import disable_mantracker
-from tractor.log import get_logger
-from tractor._exceptions import (
-    InternalError
 )
 
 
@@ -183,6 +183,9 @@ class RingBuffSender(trio.abc.SendStream):
     def wrap_fd(self) -> int:
         return self._wrap_event.fd
 
+    async def _wait_wrap(self):
+        await self._wrap_event.read()
+
     async def send_all(self, data: Buffer):
         async with self._send_lock:
             # while data is larger than the remaining buf
@@ -193,7 +196,7 @@ class RingBuffSender(trio.abc.SendStream):
                 self._shm.buf[self.ptr:] = data[:remaining]
                 # signal write and wait for reader wrap around
                 self._write_event.write(remaining)
-                await self._wrap_event.read()
+                await self._wait_wrap()
 
                 # wrap around and trim already written bytes
                 self._ptr = 0
@@ -209,14 +212,19 @@ class RingBuffSender(trio.abc.SendStream):
         raise NotImplementedError
 
     def open(self):
-        self._shm = SharedMemory(
-            name=self._token.shm_name,
-            size=self._token.buf_size,
-            create=False
-        )
-        self._write_event.open()
-        self._wrap_event.open()
-        self._eof_event.open()
+        try:
+            self._shm = SharedMemory(
+                name=self._token.shm_name,
+                size=self._token.buf_size,
+                create=False
+            )
+            self._write_event.open()
+            self._wrap_event.open()
+            self._eof_event.open()
+
+        except Exception as e:
+            e.add_note(f'while opening sender for {self._token.as_msg()}')
+            raise e
 
     def close(self):
         self._eof_event.write(
@@ -363,14 +371,19 @@ class RingBuffReceiver(trio.abc.ReceiveStream):
         return segment
 
     def open(self):
-        self._shm = SharedMemory(
-            name=self._token.shm_name,
-            size=self._token.buf_size,
-            create=False
-        )
-        self._write_event.open()
-        self._wrap_event.open()
-        self._eof_event.open()
+        try:
+            self._shm = SharedMemory(
+                name=self._token.shm_name,
+                size=self._token.buf_size,
+                create=False
+            )
+            self._write_event.open()
+            self._wrap_event.open()
+            self._eof_event.open()
+
+        except Exception as e:
+            e.add_note(f'while opening receiver for {self._token.as_msg()}')
+            raise e
 
     def close(self):
         if self._cleanup:
@@ -502,26 +515,52 @@ class RingBuffBytesSender(trio.abc.SendChannel[bytes]):
         self.batch_size = batch_size
         self._batch_msg_len = 0
         self._batch: bytes = b''
+        self._send_lock = trio.StrictFIFOLock()
 
-    async def flush(self) -> None:
+    @property
+    def pending_msgs(self) -> int:
+        return self._batch_msg_len
+
+    @property
+    def must_flush(self) -> bool:
+        return self._batch_msg_len >= self.batch_size
+
+    async def _flush(
+        self,
+        new_batch_size: int | None = None
+    ) -> None:
         await self._sender.send_all(self._batch)
         self._batch = b''
         self._batch_msg_len = 0
+        if new_batch_size:
+            self.batch_size = new_batch_size
+
+    async def flush(
+        self,
+        new_batch_size: int | None = None
+    ) -> None:
+        async with self._send_lock:
+            await self._flush(new_batch_size=new_batch_size)
 
     async def send(self, value: bytes) -> None:
-        msg: bytes = struct.pack("<I", len(value)) + value
-        if self.batch_size == 1:
-            await self._sender.send_all(msg)
-            return
+        async with self._send_lock:
+            msg: bytes = struct.pack("<I", len(value)) + value
+            if self.batch_size == 1:
+                await self._sender.send_all(msg)
+                return
 
-        self._batch += msg
-        self._batch_msg_len += 1
-        if self._batch_msg_len == self.batch_size:
-            await self.flush()
+            self._batch += msg
+            self._batch_msg_len += 1
+            if self.must_flush:
+                await self._flush()
 
+    async def send_eof(self) -> None:
+        await self.flush(new_batch_size=1)
+        await self.send(b'')
 
     async def aclose(self) -> None:
-        await self._sender.aclose()
+        async with self._send_lock:
+            await self._sender.aclose()
 
 
 class RingBuffBytesReceiver(trio.abc.ReceiveChannel[bytes]):
@@ -615,8 +654,29 @@ class RingBuffChannel(trio.abc.Channel[bytes]):
         self._sender = sender
         self._receiver = receiver
 
-    async def send(self, value: bytes):
+    @property
+    def batch_size(self) -> int:
+        return self._sender.batch_size
+
+    @batch_size.setter
+    def batch_size(self, value: int) -> None:
+        self._sender.batch_size = value
+
+    @property
+    def pending_msgs(self) -> int:
+        return self._sender.pending_msgs
+
+    async def flush(
+        self,
+        new_batch_size: int | None = None
+    ) -> None:
+        await self._sender.flush(new_batch_size=new_batch_size)
+
+    async def send(self, value: bytes) -> None:
         await self._sender.send(value)
+
+    async def send_eof(self) -> None:
+        await self._sender.send_eof()
 
     async def receive(self) -> bytes:
         return await self._receiver.receive()
@@ -631,7 +691,8 @@ async def attach_to_ringbuf_channel(
     token_in: RBToken,
     token_out: RBToken,
     cleanup_in: bool = True,
-    cleanup_out: bool = True
+    cleanup_out: bool = True,
+    batch_size: int = 1
 ) -> AsyncContextManager[RingBuffChannel]:
     '''
     Attach to an already opened ringbuf pair and return
@@ -645,7 +706,8 @@ async def attach_to_ringbuf_channel(
         ) as receiver,
         attach_to_ringbuf_schannel(
             token_out,
-            cleanup=cleanup_out
+            cleanup=cleanup_out,
+            batch_size=batch_size
         ) as sender,
     ):
         yield RingBuffChannel(sender, receiver)
