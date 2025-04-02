@@ -143,6 +143,7 @@ class Aid(
     '''
     name: str
     uuid: str
+    pid: int|None = None
 
     # TODO? can/should we extend this field set?
     # -[ ] use built-in support for UUIDs? `uuid.UUID` which has
