@@ -99,7 +99,7 @@ class MsgTransport(Protocol[MsgType]):
 
     @classmethod
     def key(cls) -> MsgTransportKey:
-        return cls.codec_key, cls.address_type.name_key
+        return cls.codec_key, cls.address_type.proto_key
 
     @property
     def laddr(self) -> Address:
@@ -135,6 +135,16 @@ class MsgTransport(Protocol[MsgType]):
 
         '''
         ...
+
+    # TODO, such that all `.raddr`s for each `SocketStream` are
+    # delivered?
+    # -[ ] move `.open_listener()` here and internally track the
+    #     listener set, per address?
+    # def get_peers(
+    #     self,
+    # ) -> list[Address]:
+    #     ...
+
 
 
 class MsgpackTransport(MsgTransport):
@@ -421,9 +431,12 @@ class MsgpackTransport(MsgTransport):
                 match trans_err:
                     case trio.BrokenResourceError() if (
                         '[Errno 32] Broken pipe' in trans_err.args[0]
-                        # ^XXX, specifc to UDS transport afaik?
-                        # likely todo with races related to how fast
-                        # the socket is setup/torn-down on linux..
+                        # ^XXX, specifc to UDS transport and its,
+                        # well, "speediness".. XD
+                        # |_ likely todo with races related to how fast
+                        #    the socket is setup/torn-down on linux
+                        #    as it pertains to rando pings from the
+                        #    `.discovery` subsys and protos.
                     ):
                         raise TransportClosed(
                             message=(
@@ -438,6 +451,9 @@ class MsgpackTransport(MsgTransport):
                     # normal operation breakage" we usualy console warn
                     # about it.
                     case _:
+                        log.exception(
+                            'Transport layer failed for {self.transport!r} ?\n'
+                        )
                         raise trans_err
 
         # ?TODO? does it help ever to dynamically show this
@@ -477,3 +493,16 @@ class MsgpackTransport(MsgTransport):
     @property
     def raddr(self) -> Address:
         return self._raddr
+
+    def pformat(self) -> str:
+        return (
+            f'<{type(self).__name__}(\n'
+            f' |_task: {self._task}\n'
+            f'\n'
+            f' |_peers: 2\n'
+            f'   laddr: {self._laddr}\n'
+            f'   raddr: {self._raddr}\n'
+            f')>\n'
+        )
+
+    __repr__ = __str__ = pformat
