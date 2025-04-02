@@ -119,7 +119,7 @@ class MsgpackUDSStream(MsgpackTransport):
 
         filepath: Path = Path(self.raddr.unwrap()[0])
         return (
-            f'/{self.address_type.name_key}/{filepath}'
+            f'/{self.address_type.proto_key}/{filepath}'
             # f'/{self.chan.uid[0]}'
             # f'/{self.cid}'
 
@@ -190,14 +190,6 @@ class MsgpackUDSStream(MsgpackTransport):
             uid,
             gid,
         ) = get_peer_info(sock)
-        log.info(
-            f'UDS connection from process {pid!r}\n'
-            f'>[\n'
-            f'|_{sock_path}\n'
-            f'   |_pid: {pid}\n'
-            f'   |_uid: {uid}\n'
-            f'   |_gid: {gid}\n'
-        )
         laddr = UDSAddress.from_addr((
             sock_path,
             os.getpid(),
