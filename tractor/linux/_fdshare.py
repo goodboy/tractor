@@ -29,10 +29,10 @@ async def send_fds(fds: list[int], sock_path: str):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     await sock.bind(sock_path)
     sock.listen(1)
+    yield
     fds = array.array('i', fds)
     # first byte of msg will be len of fds to send % 256
     msg = bytes([len(fds) % 256])
-    yield
     conn, _ = await sock.accept()
     await conn.sendmsg(
         [msg],
@@ -46,7 +46,6 @@ async def send_fds(fds: list[int], sock_path: str):
     sock.close()
 
 
-@acm
 async def recv_fds(sock_path: str, amount: int) -> tuple:
     stream = await trio.open_unix_socket(sock_path)
     sock = stream.socket
@@ -87,8 +86,7 @@ async def recv_fds(sock_path: str, amount: int) -> tuple:
                     )
                 )
 
-            yield tuple(a)
-            return
+            return tuple(a)
 
     except (ValueError, IndexError):
         pass

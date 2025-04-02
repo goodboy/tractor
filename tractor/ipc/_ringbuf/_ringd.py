@@ -70,8 +70,8 @@ async def _attach_to_ring(
             name=ring_name,
             sock_path=sock_path
         ) as (ctx, token),
-        recv_fds(sock_path, fd_amount) as fds,
     ):
+        fds = await recv_fds(sock_path, fd_amount)
         log.info(
             f'received fds: {fds}'
         )
