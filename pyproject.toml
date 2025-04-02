@@ -64,6 +64,7 @@ dev = [
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
   "xonsh>=0.19.2",
+  "psutil>=7.0.0",
 ]
 # TODO, add these with sane versions; were originally in
 # `requirements-docs.txt`..
