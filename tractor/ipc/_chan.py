@@ -187,7 +187,7 @@ class Channel:
             f'   uid={self.uid}\n'
             f'\n'
             f' |_msgstream: {tpt_name}\n'
-            f'   proto={tpt.laddr.name_key!r}\n'
+            f'   proto={tpt.laddr.proto_key!r}\n'
             f'   layer={tpt.layer_key!r}\n'
             f'   laddr={tpt.laddr}\n'
             f'   raddr={tpt.raddr}\n'

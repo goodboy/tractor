@@ -51,7 +51,7 @@ class MsgpackTCPStream(MsgpackTransport):
             # choosing the routing prefix part.
             f'/ipv4/{host}'
 
-            f'/{self.address_type.name_key}/{port}'
+            f'/{self.address_type.proto_key}/{port}'
             # f'/{self.chan.uid[0]}'
             # f'/{self.cid}'
 
