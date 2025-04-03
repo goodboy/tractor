@@ -126,6 +126,12 @@ class TrioTaskExited(Exception):
     '''
 
 
+class DebugRequestError(RuntimeError):
+    '''
+    Failed to request stdio lock from root actor!
+
+    '''
+
 # NOTE: more or less should be close to these:
 # 'boxed_type',
 # 'src_type',
@@ -190,6 +196,8 @@ def get_err_type(type_name: str) -> BaseException|None:
             False,
         ):
             return type_ref
+
+    return None
 
 
 def pack_from_raise(
@@ -1009,7 +1017,10 @@ class TransportClosed(trio.BrokenResourceError):
                 f'    {cause}\n'  # exc repr
             )
 
-        getattr(log, self._loglevel)(message)
+        getattr(
+            log,
+            self._loglevel
+        )(message)
 
         # some errors we want to blow up from
         # inside the RPC msg loop
