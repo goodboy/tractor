@@ -1219,8 +1219,10 @@ async def process_messages(
         # -[ ] figure out how this will break with other transports?
         tc.report_n_maybe_raise(
             message=(
-                f'peer IPC channel closed abruptly?\n\n'
-                f'<=x {chan}\n'
+                f'peer IPC channel closed abruptly?\n'
+                f'\n'
+                f'<=x[\n'
+                f'  {chan}\n'
                 f'  |_{chan.raddr}\n\n'
             )
             +

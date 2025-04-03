@@ -437,21 +437,22 @@ class MsgStream(trio.abc.Channel):
             message: str = (
                 f'Stream self-closed by {this_side!r}-side before EoC from {peer_side!r}\n'
                 # } bc a stream is a "scope"/msging-phase inside an IPC
-                f'x}}>\n'
+                f'c}}>\n'
                 f'  |_{self}\n'
             )
-            log.cancel(message)
-            self._eoc = trio.EndOfChannel(message)
-
             if (
                 (rx_chan := self._rx_chan)
                 and
                 (stats := rx_chan.statistics()).tasks_waiting_receive
             ):
-                log.cancel(
-                    f'Msg-stream is closing but there is still reader tasks,\n'
+                message += (
+                    f'AND there is still reader tasks,\n'
+                    f'\n'
                     f'{stats}\n'
                 )
+
+            log.cancel(message)
+            self._eoc = trio.EndOfChannel(message)
 
         # ?XXX WAIT, why do we not close the local mem chan `._rx_chan` XXX?
         # => NO, DEFINITELY NOT! <=
@@ -811,13 +812,12 @@ async def open_stream_from_ctx(
                 # sanity, can remove?
                 assert eoc is stream._eoc
 
-                log.warning(
+                log.runtime(
                     'Stream was terminated by EoC\n\n'
                     # NOTE: won't show the error <Type> but
                     # does show txt followed by IPC msg.
                     f'{str(eoc)}\n'
                 )
-
         finally:
             if ctx._portal:
                 try:
