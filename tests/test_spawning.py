@@ -2,6 +2,7 @@
 Spawning basics
 
 """
+from functools import partial
 from typing import (
     Any,
 )
@@ -12,74 +13,95 @@ import tractor
 
 from tractor._testing import tractor_test
 
-data_to_pass_down = {'doggy': 10, 'kitty': 4}
+data_to_pass_down = {
+    'doggy': 10,
+    'kitty': 4,
+}
 
 
 async def spawn(
-    is_arbiter: bool,
+    should_be_root: bool,
     data: dict,
     reg_addr: tuple[str, int],
+
+    debug_mode: bool = False,
 ):
-    namespaces = [__name__]
-
     await trio.sleep(0.1)
+    actor = tractor.current_actor(err_on_no_runtime=False)
 
-    async with tractor.open_root_actor(
-        arbiter_addr=reg_addr,
-    ):
-        actor = tractor.current_actor()
-        assert actor.is_arbiter == is_arbiter
-        data = data_to_pass_down
+    if should_be_root:
+        assert actor is None  # no runtime yet
+        async with (
+            tractor.open_root_actor(
+                arbiter_addr=reg_addr,
+            ),
+            tractor.open_nursery() as an,
+        ):
+            # now runtime exists
+            actor: tractor.Actor = tractor.current_actor()
+            assert actor.is_arbiter == should_be_root
 
-        if actor.is_arbiter:
-            async with tractor.open_nursery() as nursery:
+            # spawns subproc here
+            portal: tractor.Portal = await an.run_in_actor(
+                fn=spawn,
 
-                # forks here
-                portal = await nursery.run_in_actor(
-                    spawn,
-                    is_arbiter=False,
-                    name='sub-actor',
-                    data=data,
-                    reg_addr=reg_addr,
-                    enable_modules=namespaces,
-                )
+                # spawning args
+                name='sub-actor',
+                enable_modules=[__name__],
 
-                assert len(nursery._children) == 1
-                assert portal.channel.uid in tractor.current_actor()._peers
-                # be sure we can still get the result
-                result = await portal.result()
-                assert result == 10
-                return result
-        else:
-            return 10
+                # passed to a subactor-recursive RPC invoke
+                # of this same `spawn()` fn.
+                should_be_root=False,
+                data=data_to_pass_down,
+                reg_addr=reg_addr,
+            )
+
+            assert len(an._children) == 1
+            assert portal.channel.uid in tractor.current_actor()._peers
+
+            # get result from child subactor
+            result = await portal.result()
+            assert result == 10
+            return result
+    else:
+        assert actor.is_arbiter == should_be_root
+        return 10
 
 
-def test_local_arbiter_subactor_global_state(
-    reg_addr,
+def test_run_in_actor_same_func_in_child(
+    reg_addr: tuple,
+    debug_mode: bool,
 ):
     result = trio.run(
-        spawn,
-        True,
-        data_to_pass_down,
-        reg_addr,
+        partial(
+            spawn,
+            should_be_root=True,
+            data=data_to_pass_down,
+            reg_addr=reg_addr,
+            debug_mode=debug_mode,
+        )
     )
     assert result == 10
 
 
 async def movie_theatre_question():
-    """A question asked in a dark theatre, in a tangent
+    '''
+    A question asked in a dark theatre, in a tangent
     (errr, I mean different) process.
-    """
+
+    '''
     return 'have you ever seen a portal?'
 
 
 @tractor_test
 async def test_movie_theatre_convo(start_method):
-    """The main ``tractor`` routine.
-    """
-    async with tractor.open_nursery(debug_mode=True) as n:
+    '''
+    The main ``tractor`` routine.
 
-        portal = await n.start_actor(
+    '''
+    async with tractor.open_nursery(debug_mode=True) as an:
+
+        portal = await an.start_actor(
             'frank',
             # enable the actor to run funcs from this current module
             enable_modules=[__name__],
@@ -118,8 +140,8 @@ async def test_most_beautiful_word(
     with trio.fail_after(1):
         async with tractor.open_nursery(
             debug_mode=debug_mode,
-        ) as n:
-            portal = await n.run_in_actor(
+        ) as an:
+            portal = await an.run_in_actor(
                 cellar_door,
                 return_value=return_value,
                 name='some_linguist',
