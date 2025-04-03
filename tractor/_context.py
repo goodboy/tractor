@@ -366,7 +366,7 @@ class Context:
             # f'   ---\n'
             f' |_ipc: {self.dst_maddr}\n'
             # f'   dst_maddr{ds}{self.dst_maddr}\n'
-            f"   uid{ds}'{self.chan.uid}'\n"
+            f"   uid{ds}'{self.chan.aid}'\n"
             f"   cid{ds}'{self.cid}'\n"
             # f'   ---\n'
             f'\n'
@@ -945,10 +945,10 @@ class Context:
         reminfo: str = (
             # ' =>\n'
             # f'Context.cancel() => {self.chan.uid}\n'
+            f'\n'
             f'c)=> {self.chan.uid}\n'
-            # f'{self.chan.uid}\n'
-            f'  |_ @{self.dst_maddr}\n'
-            f'    >> {self.repr_rpc}\n'
+            f'   |_[{self.dst_maddr}\n'
+            f'     >>{self.repr_rpc}\n'
             # f'    >> {self._nsf}() -> {codec}[dict]:\n\n'
             # TODO: pull msg-type from spec re #320
         )

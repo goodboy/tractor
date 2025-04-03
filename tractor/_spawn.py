@@ -52,6 +52,7 @@ from tractor._runtime import Actor
 from tractor._entry import _mp_main
 from tractor._exceptions import ActorFailure
 from tractor.msg.types import (
+    Aid,
     SpawnSpec,
 )
 
@@ -164,7 +165,7 @@ async def exhaust_portal(
         # TODO: merge with above?
         log.warning(
             'Cancelled portal result waiter task:\n'
-            f'uid: {portal.channel.uid}\n'
+            f'uid: {portal.channel.aid}\n'
             f'error: {err}\n'
         )
         return err
@@ -172,7 +173,7 @@ async def exhaust_portal(
     else:
         log.debug(
             f'Returning final result from portal:\n'
-            f'uid: {portal.channel.uid}\n'
+            f'uid: {portal.channel.aid}\n'
             f'result: {final}\n'
         )
         return final
@@ -325,12 +326,12 @@ async def soft_kill(
     see `.hard_kill()`).
 
     '''
-    uid: tuple[str, str] = portal.channel.uid
+    peer_aid: Aid = portal.channel.aid
     try:
         log.cancel(
             f'Soft killing sub-actor via portal request\n'
             f'\n'
-            f'(c=> {portal.chan.uid}\n'
+            f'(c=> {peer_aid}\n'
             f'  |_{proc}\n'
         )
         # wait on sub-proc to signal termination
@@ -379,7 +380,7 @@ async def soft_kill(
             if proc.poll() is None:  # type: ignore
                 log.warning(
                     'Subactor still alive after cancel request?\n\n'
-                    f'uid: {uid}\n'
+                    f'uid: {peer_aid}\n'
                     f'|_{proc}\n'
                 )
                 n.cancel_scope.cancel()
@@ -460,6 +461,9 @@ async def trio_proc(
         # the OS; it otherwise can be passed via the parent channel if
         # we prefer in the future (for privacy).
         "--uid",
+        # TODO, how to pass this over "wire" encodings like
+        # cmdline args?
+        # -[ ] maybe we can add an `Aid.min_tuple()` ?
         str(subactor.uid),
         # Address the child must connect to on startup
         "--parent_addr",
@@ -725,7 +729,8 @@ async def mp_proc(
         # channel should have handshake completed by the
         # local actor by the time we get a ref to it
         event, chan = await actor_nursery._actor.wait_for_peer(
-            subactor.uid)
+            subactor.uid,
+        )
 
         # XXX: monkey patch poll API to match the ``subprocess`` API..
         # not sure why they don't expose this but kk.
