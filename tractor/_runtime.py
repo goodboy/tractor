@@ -2134,15 +2134,15 @@ async def async_main(
     log.info(teardown_report)
 
 
-# TODO: rename to `Registry` and move to `._discovery`!
+# TODO: rename to `Registry` and move to `.discovery._registry`!
 class Arbiter(Actor):
     '''
-    A special registrar actor who can contact all other actors
-    within its immediate process tree and possibly keeps a registry
-    of others meant to be discoverable in a distributed
-    application. Normally the registrar is also the "root actor"
-    and thus always has access to the top-most-level actor
-    (process) nursery.
+    A special registrar (and for now..) `Actor` who can contact all
+    other actors within its immediate process tree and possibly keeps
+    a registry of others meant to be discoverable in a distributed
+    application. Normally the registrar is also the "root actor" and
+    thus always has access to the top-most-level actor (process)
+    nursery.
 
     By default, the registrar is always initialized when and if no
     other registrar socket addrs have been specified to runtime
@@ -2161,6 +2161,12 @@ class Arbiter(Actor):
 
     '''
     is_arbiter = True
+
+    # TODO, implement this as a read on there existing a `._state` of
+    # some sort setup by whenever we impl this all as
+    # a `.discovery._registry.open_registry()` API
+    def is_registry(self) -> bool:
+        return self.is_arbiter
 
     def __init__(
         self,
