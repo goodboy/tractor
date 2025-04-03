@@ -24,13 +24,13 @@ from contextlib import (
     asynccontextmanager as acm,
     contextmanager as cm,
 )
-import os
 import platform
 from pprint import pformat
 import typing
 from typing import (
     Any,
 )
+import warnings
 
 import trio
 
@@ -50,7 +50,10 @@ from tractor._exceptions import (
     MsgTypeError,
     pack_from_raise,
 )
-from tractor.msg import MsgCodec
+from tractor.msg import (
+    Aid,
+    MsgCodec,
+)
 
 
 log = get_logger(__name__)
@@ -86,8 +89,8 @@ class Channel:
         # user in ``.from_stream()``.
         self._transport: MsgTransport|None = transport
 
-        # set after handshake - always uid of far end
-        self.uid: tuple[str, str]|None = None
+        # set after handshake - always info from peer end
+        self.aid: Aid|None = None
 
         self._aiter_msgs = self._iter_msgs()
         self._exc: Exception|None = None
@@ -98,6 +101,29 @@ class Channel:
         # (possibly peer) cancellation of the far end actor
         # runtime.
         self._cancel_called: bool = False
+
+    @property
+    def uid(self) -> tuple[str, str]:
+        '''
+        Peer actor's unique id.
+
+        '''
+        msg: str = (
+            f'`{type(self).__name__}.uid` is now deprecated.\n'
+            'Use the new `.aid: tractor.msg.Aid` (struct) instead '
+            'which also provides additional named (optional) fields '
+            'beyond just the `.name` and `.uuid`.'
+        )
+        warnings.warn(
+            msg,
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        peer_aid: Aid = self.aid
+        return (
+            peer_aid.name,
+            peer_aid.uuid,
+        )
 
     @property
     def stream(self) -> trio.abc.Stream | None:
@@ -182,9 +208,7 @@ class Channel:
             f'   _closed={self._closed}\n'
             f'   _cancel_called={self._cancel_called}\n'
             f'\n'
-            f' |_runtime: Actor\n'
-            f'   pid={os.getpid()}\n'
-            f'   uid={self.uid}\n'
+            f' |_peer: {self.aid}\n'
             f'\n'
             f' |_msgstream: {tpt_name}\n'
             f'   proto={tpt.laddr.proto_key!r}\n'
@@ -281,7 +305,7 @@ class Channel:
     async def aclose(self) -> None:
 
         log.transport(
-            f'Closing channel to {self.uid} '
+            f'Closing channel to {self.aid} '
             f'{self.laddr} -> {self.raddr}'
         )
         assert self._transport
@@ -380,6 +404,29 @@ class Channel:
 
     def connected(self) -> bool:
         return self._transport.connected() if self._transport else False
+
+    async def _do_handshake(
+        self,
+        aid: Aid,
+
+    ) -> Aid:
+        '''
+        Exchange `(name, UUIDs)` identifiers as the first
+        communication step with any (peer) remote `Actor`.
+
+        These are essentially the "mailbox addresses" found in
+        "actor model" parlance.
+
+        '''
+        await self.send(aid)
+        peer_aid: Aid = await self.recv()
+        log.runtime(
+            f'Received hanshake with peer actor,\n'
+            f'{peer_aid}\n'
+        )
+        # NOTE, we always are referencing the remote peer!
+        self.aid = peer_aid
+        return peer_aid
 
 
 @acm
