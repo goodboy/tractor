@@ -72,8 +72,22 @@ log = get_logger('tractor')
 _this_mod = importlib.import_module(__name__)
 
 
-class ActorFailure(Exception):
-    "General actor failure"
+class RuntimeFailure(RuntimeError):
+    '''
+    General `Actor`-runtime failure due to,
+
+    - a bad runtime-env,
+    - falied spawning (bad input to process),
+    -   API usage.
+
+    '''
+
+
+class ActorFailure(RuntimeFailure):
+    '''
+    `Actor` failed to boot before/after spawn
+
+    '''
 
 
 class InternalError(RuntimeError):

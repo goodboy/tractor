@@ -60,7 +60,7 @@ from ._addr import (
     wrap_address,
 )
 from ._exceptions import (
-    ActorFailure,
+    RuntimeFailure,
     is_multi_cancelled,
 )
 
@@ -195,7 +195,7 @@ async def open_root_actor(
         rtvs: dict[str, Any] = _state._runtime_vars
         root_mailbox: list[str, int] = rtvs['_root_mailbox']
         registry_addrs: list[list[str, int]] = rtvs['_registry_addrs']
-        raise ActorFailure(
+        raise RuntimeFailure(
             f'A current actor already exists !?\n'
             f'({already_actor}\n'
             f'\n'
