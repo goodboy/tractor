@@ -175,7 +175,7 @@ class Portal:
         # not expecting a "main" result
         if self._expect_result_ctx is None:
             log.warning(
-                f"Portal for {self.channel.uid} not expecting a final"
+                f"Portal for {self.channel.aid} not expecting a final"
                 " result?\nresult() should only be called if subactor"
                 " was spawned with `ActorNursery.run_in_actor()`")
             return NoResult
@@ -222,7 +222,7 @@ class Portal:
         # IPC calls
         if self._streams:
             log.cancel(
-                f"Cancelling all streams with {self.channel.uid}")
+                f"Cancelling all streams with {self.channel.aid}")
             for stream in self._streams.copy():
                 try:
                     await stream.aclose()
@@ -267,7 +267,7 @@ class Portal:
             return False
 
         reminfo: str = (
-            f'c)=> {self.channel.uid}\n'
+            f'c)=> {self.channel.aid}\n'
             f'  |_{chan}\n'
         )
         log.cancel(
@@ -310,7 +310,7 @@ class Portal:
         ):
             log.debug(
                 'IPC chan for actor already closed or broken?\n\n'
-                f'{self.channel.uid}\n'
+                f'{self.channel.aid}\n'
                 f' |_{self.channel}\n'
             )
             return False
@@ -551,8 +551,10 @@ async def open_portal(
             await channel.connect()
             was_connected = True
 
-        if channel.uid is None:
-            await actor._do_handshake(channel)
+        if channel.aid is None:
+            await channel._do_handshake(
+                aid=actor.aid,
+            )
 
         msg_loop_cs: trio.CancelScope|None = None
         if start_msg_loop:
