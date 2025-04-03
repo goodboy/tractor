@@ -22,7 +22,6 @@ from typing import (
     runtime_checkable,
     Protocol,
     TypeVar,
-    Self,
     AsyncContextManager
 )
 from contextlib import asynccontextmanager as acm
@@ -71,7 +70,7 @@ class ChannelManager(Protocol[ChannelType]):
         n: trio.Nursery,
     ):
         self._n = n
-        self._channels: list[Self.ChannelInfo] = []
+        self._channels: list[ChannelInfo] = []
 
     async def _open_channel(
         self,
@@ -93,7 +92,7 @@ class ChannelManager(Protocol[ChannelType]):
     async def _channel_handler_task(self, name: str):
         async with self._open_channel(name) as chan:
             with trio.CancelScope() as cancel_scope:
-                info = Self.ChannelInfo(
+                info = ChannelInfo(
                     connect_time=time.time(),
                     name=name,
                     channel=chan,
@@ -198,7 +197,7 @@ class RingBuffPublisher(
         ):
             yield chan
 
-    async def _channel_task(self, info: Self.ChannelInfo) -> None:
+    async def _channel_task(self, info: ChannelInfo) -> None:
         self._connect_event.set()
         await trio.sleep_forever()
 
