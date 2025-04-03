@@ -139,20 +139,28 @@ class MsgpackUDSStream(MsgpackTransport):
         **kwargs
     ) -> MsgpackUDSStream:
 
-        filepath: Path
-        pid: int
-        (
-            filepath,
-            pid,
-        ) = addr.unwrap()
 
-        # XXX NOTE, we don't need to provide the `.pid` part from
-        # the addr since the OS does this implicitly! .. lel
-        # stream = await trio.open_unix_socket(
-        stream = await open_unix_socket_w_passcred(
-            str(filepath),
-            **kwargs
-        )
+        sockpath: Path = addr.sockpath
+        #
+        # ^XXX NOTE, we don't provide any out-of-band `.pid` info
+        # (like, over the socket as extra msgs) since the (augmented)
+        # `.setsockopt()` call tells the OS provide it; the client
+        # pid can then be read on server/listen() side via
+        # `get_peer_info()` above.
+        try:
+            stream = await open_unix_socket_w_passcred(
+                str(sockpath),
+                **kwargs
+            )
+        except (
+            FileNotFoundError,
+        ) as fdne:
+            raise ConnectionError(
+                f'Bad UDS socket-filepath-as-address ??\n'
+                f'{addr}\n'
+                f' |_sockpath: {sockpath}\n'
+            ) from fdne
+
         stream = MsgpackUDSStream(
             stream,
             prefix_size=prefix_size,
