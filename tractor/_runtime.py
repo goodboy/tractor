@@ -289,7 +289,9 @@ class Actor:
     @property
     def aid(self) -> msgtypes.Aid:
         '''
-        This process-singleton-actor's "unique ID" in struct form.
+        This process-singleton-actor's "unique actor ID" in struct form.
+
+        See the `tractor.msg.Aid` struct for details.
 
         '''
         return self._aid
@@ -308,6 +310,17 @@ class Actor:
         process plane.
 
         '''
+        msg: str = (
+            f'`{type(self).__name__}.uid` is now deprecated.\n'
+            'Use the new `.aid: tractor.msg.Aid` (struct) instead '
+            'which also provides additional named (optional) fields '
+            'beyond just the `.name` and `.uuid`.'
+        )
+        warnings.warn(
+            msg,
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return (
             self._aid.name,
             self._aid.uuid,
@@ -495,7 +508,9 @@ class Actor:
 
         # send/receive initial handshake response
         try:
-            uid: tuple|None = await self._do_handshake(chan)
+            peer_aid: msgtypes.Aid = await chan._do_handshake(
+                aid=self.aid,
+            )
         except (
             TransportClosed,
             # ^XXX NOTE, the above wraps `trio` exc types raised
@@ -524,6 +539,12 @@ class Actor:
             )
             return
 
+        uid: tuple[str, str] = (
+            peer_aid.name,
+            peer_aid.uuid,
+        )
+        # TODO, can we make this downstream peer tracking use the
+        # `peer_aid` instead?
         familiar: str = 'new-peer'
         if _pre_chan := self._peers.get(uid):
             familiar: str = 'pre-existing-peer'
@@ -1127,9 +1148,8 @@ class Actor:
             )
             assert isinstance(chan, Channel)
 
-            # TODO: move this into a `Channel.handshake()`?
             # Initial handshake: swap names.
-            await self._do_handshake(chan)
+            await chan._do_handshake(aid=self.aid)
 
             accept_addrs: list[UnwrappedAddress]|None = None
 
@@ -1270,11 +1290,16 @@ class Actor:
                 # -[ ] need to extend the `SpawnSpec` tho!
             )
 
-        except OSError:  # failed to connect
+        # failed to connect back?
+        except (
+            OSError,
+            ConnectionError,
+        ):
             log.warning(
                 f'Failed to connect to spawning parent actor!?\n'
+                f'\n'
                 f'x=> {parent_addr}\n'
-                f'|_{self}\n\n'
+                f'  |_{self}\n\n'
             )
             await self.cancel(req_chan=None)  # self cancel
             raise
@@ -1316,13 +1341,13 @@ class Actor:
                         if (
                             '[Errno 98] Address already in use'
                             in
-                            oserr.args[0]
+                            oserr.args#[0]
                         ):
                             log.exception(
                                 f'Address already in use?\n'
                                 f'{addr}\n'
                             )
-                            raise
+                        raise
                     listeners.append(listener)
 
                 await server_n.start(
@@ -1337,8 +1362,10 @@ class Actor:
                         handler_nursery=handler_nursery
                     )
                 )
-                log.runtime(
+                # TODO, wow make this message better! XD
+                log.info(
                     'Started server(s)\n'
+                    +
                     '\n'.join([f'|_{addr}' for addr in listen_addrs])
                 )
                 self._listen_addrs.extend(listen_addrs)
@@ -1457,8 +1484,13 @@ class Actor:
             if self._server_down is not None:
                 await self._server_down.wait()
             else:
+                tpt_protos: list[str] = []
+                addr: Address
+                for addr in self._listen_addrs:
+                    tpt_protos.append(addr.proto_key)
                 log.warning(
-                    'Transport[TCP] server was cancelled start?'
+                    'Transport server(s) may have been cancelled before started?\n'
+                    f'protos: {tpt_protos!r}\n'
                 )
 
             # cancel all rpc tasks permanently
@@ -1744,41 +1776,6 @@ class Actor:
 
         '''
         return self._peers[uid]
-
-    # TODO: move to `Channel.handshake(uid)`
-    async def _do_handshake(
-        self,
-        chan: Channel
-
-    ) -> msgtypes.Aid:
-        '''
-        Exchange `(name, UUIDs)` identifiers as the first
-        communication step with any (peer) remote `Actor`.
-
-        These are essentially the "mailbox addresses" found in
-        "actor model" parlance.
-
-        '''
-        name, uuid = self.uid
-        await chan.send(
-            msgtypes.Aid(
-                name=name,
-                uuid=uuid,
-            )
-        )
-        aid: msgtypes.Aid = await chan.recv()
-        chan.aid = aid
-
-        uid: tuple[str, str] = (
-            aid.name,
-            aid.uuid,
-        )
-
-        if not isinstance(uid, tuple):
-            raise ValueError(f"{uid} is not a valid uid?!")
-
-        chan.uid = uid
-        return uid
 
     def is_infected_aio(self) -> bool:
         '''
