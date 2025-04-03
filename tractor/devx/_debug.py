@@ -73,6 +73,7 @@ from tractor.log import get_logger
 from tractor._context import Context
 from tractor import _state
 from tractor._exceptions import (
+    DebugRequestError,
     InternalError,
     NoRuntime,
     is_multi_cancelled,
@@ -1738,13 +1739,6 @@ def sigint_shield(
 
 
 _pause_msg: str = 'Opening a pdb REPL in paused actor'
-
-
-class DebugRequestError(RuntimeError):
-    '''
-    Failed to request stdio lock from root actor!
-
-    '''
 
 
 _repl_fail_msg: str|None = (
