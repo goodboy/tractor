@@ -313,10 +313,18 @@ class UDSAddress(Address):
         # root actor to create a registry address.
         maybe_pid: int|None = None,
     ):
-        fdir = self._filedir = Path(filedir or self.def_bindspace).absolute()
-        fpath = self._filepath = Path(filename)
+        fdir = self._filedir = Path(
+            filedir
+            or
+            self.def_bindspace
+        ).absolute()
+        fpath = self._filename = Path(filename)
         fp: Path = fdir / fpath
-        assert fp.is_absolute()
+        assert (
+            fp.is_absolute()
+            and
+            fp == self.sockpath
+        )
 
         # to track which "side" is the peer process by reading socket
         # credentials-info.
@@ -324,7 +332,7 @@ class UDSAddress(Address):
 
     @property
     def sockpath(self) -> Path:
-        return self._filedir / self._filepath
+        return self._filedir / self._filename
 
     @property
     def is_valid(self) -> bool:
@@ -347,19 +355,20 @@ class UDSAddress(Address):
     def from_addr(
         cls,
         addr: (
-            tuple[Path|str|None, int]
-            |Path|str
+            tuple[Path|str, Path|str]|Path|str
         ),
     ) -> UDSAddress:
         match addr:
             case tuple()|list():
-                sockpath: Path = Path(addr[0])
-                filedir, filename = unwrap_sockpath(sockpath)
-                pid: int = addr[1]
+                filedir = Path(addr[0])
+                filename = Path(addr[1])
+                # sockpath: Path = Path(addr[0])
+                # filedir, filename = unwrap_sockpath(sockpath)
+                # pid: int = addr[1]
                 return UDSAddress(
                     filedir=filedir,
                     filename=filename,
-                    maybe_pid=pid,
+                    # maybe_pid=pid,
                 )
             # NOTE, in case we ever decide to just `.unwrap()`
             # to a `Path|str`?
@@ -377,8 +386,8 @@ class UDSAddress(Address):
         # XXX NOTE, since this gets passed DIRECTLY to
         # `.ipc._uds.open_unix_socket_w_passcred()`
         return (
-            str(self.sockpath),
-            self._pid,
+            str(self._filedir),
+            str(self._filename),
         )
 
     @classmethod
@@ -409,18 +418,18 @@ class UDSAddress(Address):
 
     @classmethod
     def get_root(cls) -> Address:
-        def_uds_filepath: Path = 'registry@1616.sock'
+        def_uds_filename: Path = 'registry@1616.sock'
         return UDSAddress(
             filedir=None,
-            filename=def_uds_filepath,
-            maybe_pid=1616,
+            filename=def_uds_filename,
+            # maybe_pid=1616,
         )
 
     def __repr__(self) -> str:
         return (
             f'{type(self).__name__}'
             f'['
-            f'({self.sockpath}, {self._pid})'
+            f'({self._filedir}, {self._filename})'
             f']'
         )
 
@@ -430,7 +439,7 @@ class UDSAddress(Address):
                 f'Can not compare {type(other)} with {type(self)}'
             )
 
-        return self._filepath == other._filepath
+        return self.sockpath == other.sockpath
 
     # async def open_listener(self, **kwargs) -> SocketListener:
     async def open_listener(
@@ -520,14 +529,6 @@ def wrap_address(
     # if 'sock' in addr[0]:
     #     import pdbp; pdbp.set_trace()
     match addr:
-        # TODO! BUT THIS WILL MATCH FOR TCP !...
-        # -[ ] so prolly go back to what guille had orig XD
-        #   a plain ol' `str`?
-        # case ((
-        #     str()|Path(),
-        #     int(),
-        # )):
-        #     cls = UDSAddress
 
         # classic network socket-address as tuple/list
         case (
@@ -536,6 +537,14 @@ def wrap_address(
             [str(), int()]
         ):
             cls = TCPAddress
+
+        case (
+            # (str()|Path(), str()|Path()),
+            # ^TODO? uhh why doesn't this work!?
+
+            (_, filename)
+        ) if type(filename) is str:
+            cls = UDSAddress
 
         # likely an unset UDS or TCP reg address as defaulted in
         # `_state._runtime_vars['_root_mailbox']`
@@ -552,8 +561,9 @@ def wrap_address(
         case _:
             # import pdbp; pdbp.set_trace()
             raise TypeError(
-                f'Can not wrap address {type(addr)}\n'
-                f'{addr!r}\n'
+                f'Can not wrap unwrapped-address ??\n'
+                f'type(addr): {type(addr)!r}\n'
+                f'addr: {addr!r}\n'
             )
 
     return cls.from_addr(addr)

@@ -38,7 +38,10 @@ from trio._highlevel_open_unix_stream import (
 
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
-from tractor._addr import UDSAddress
+from tractor._addr import (
+    UDSAddress,
+    unwrap_sockpath,
+)
 from tractor.ipc._transport import MsgpackTransport
 
 
@@ -194,16 +197,20 @@ class MsgpackUDSStream(MsgpackTransport):
             case (bytes(), str()):
                 sock_path: Path = Path(sockname)
         (
-            pid,
-            uid,
-            gid,
+            peer_pid,
+            _,
+            _,
         ) = get_peer_info(sock)
-        laddr = UDSAddress.from_addr((
-            sock_path,
-            os.getpid(),
-        ))
-        raddr = UDSAddress.from_addr((
-            sock_path,
-            pid
-        ))
+
+        filedir, filename = unwrap_sockpath(sock_path)
+        laddr = UDSAddress(
+            filedir=filedir,
+            filename=filename,
+            maybe_pid=os.getpid(),
+        )
+        raddr = UDSAddress(
+            filedir=filedir,
+            filename=filename,
+            maybe_pid=peer_pid
+        )
         return (laddr, raddr)
