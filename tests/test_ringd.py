@@ -196,10 +196,9 @@ async def publisher_child(ctx: tractor.Context):
 
 def test_pubsub():
     '''
-    Spawn ringd actor and two childs that access same ringbuf through ringd.
-
-    Both will use `ringd.open_ringbuf` to allocate the ringbuf, then attach to
-    them as sender and receiver.
+    Spawn to childs a publisher and a subscriber, use context streams
+    to dynamically test different scenarios with different channel
+    configurations between them.
 
     '''
     async def main():
