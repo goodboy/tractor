@@ -1,5 +1,6 @@
 import os
 import random
+import hashlib
 
 
 def generate_single_byte_msgs(amount: int) -> bytes:
@@ -23,7 +24,7 @@ def generate_sample_messages(
     rand_min: int = 0,
     rand_max: int = 0,
     silent: bool = False,
-) -> tuple[list[bytes], int]:
+) -> tuple[str, list[bytes], int]:
     '''
     Generate bytes msgs for tests.
 
@@ -55,6 +56,7 @@ def generate_sample_messages(
         else:
             log_interval = 1000
 
+    payload_hash = hashlib.sha256()
     for i in range(amount):
         msg = f'[{i:08}]'.encode('utf-8')
 
@@ -64,6 +66,7 @@ def generate_sample_messages(
 
         size += len(msg)
 
+        payload_hash.update(msg)
         msgs.append(msg)
 
         if (
@@ -78,4 +81,4 @@ def generate_sample_messages(
     if not silent:
         print(f'done, {size:,} bytes in total')
 
-    return msgs, size
+    return payload_hash.hexdigest(), msgs, size

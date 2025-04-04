@@ -9,7 +9,6 @@ from tractor.ipc._ringbuf import (
     open_ringbuf,
     attach_to_ringbuf_receiver,
     attach_to_ringbuf_sender,
-    attach_to_ringbuf_stream,
     attach_to_ringbuf_channel,
     RBToken,
 )
@@ -25,7 +24,6 @@ pytestmark = pytest.mark.skip
 @tractor.context
 async def child_read_shm(
     ctx: tractor.Context,
-    msg_amount: int,
     token: RBToken,
 ) -> str:
     '''
@@ -41,11 +39,13 @@ async def child_read_shm(
     '''
     await ctx.started()
     print('reader started')
+    msg_amount = 0
     recvd_bytes = 0
     recvd_hash = hashlib.sha256()
     start_ts = time.time()
     async with attach_to_ringbuf_receiver(token) as receiver:
         async for msg in receiver:
+            msg_amount += 1
             recvd_hash.update(msg)
             recvd_bytes += len(msg)
 
@@ -79,19 +79,16 @@ async def child_write_shm(
     Attach to ringbuf and send all generated messages.
 
     '''
-    msgs, _total_bytes = generate_sample_messages(
+    sent_hash, msgs, _total_bytes = generate_sample_messages(
         msg_amount,
         rand_min=rand_min,
         rand_max=rand_max,
     )
-    print('writer hashing payload...')
-    sent_hash = hashlib.sha256(b''.join(msgs)).hexdigest()
-    print('writer done hashing.')
     await ctx.started(sent_hash)
     print('writer started')
     async with attach_to_ringbuf_sender(token, cleanup=False) as sender:
         for msg in msgs:
-            await sender.send_all(msg)
+            await sender.send(msg)
 
     print('writer exit')
 
@@ -159,7 +156,6 @@ def test_ringbuf(
                     recv_p.open_context(
                         child_read_shm,
                         token=token,
-                        msg_amount=msg_amount
                     ) as (rctx, _sent),
                 ):
                     recvd_hash = await rctx.result()
@@ -295,75 +291,6 @@ def test_receiver_max_bytes():
     assert msg == b''.join(msgs)
 
 
-def test_stapled_ringbuf():
-    '''
-    Open two ringbufs and give tokens to tasks (swap them such that in/out tokens
-    are inversed on each task) which will open the streams and use trio.StapledStream
-    to have a single bidirectional stream.
-
-    Then take turns to send and receive messages.
-
-    '''
-    msg = generate_single_byte_msgs(100)
-    pair_0_msgs = []
-    pair_1_msgs = []
-
-    pair_0_done = trio.Event()
-    pair_1_done = trio.Event()
-
-    async def pair_0(token_in: RBToken, token_out: RBToken):
-        async with attach_to_ringbuf_stream(
-            token_in,
-            token_out,
-            cleanup_in=False,
-            cleanup_out=False
-        ) as stream:
-            # first turn to send
-            await stream.send_all(msg)
-
-            # second turn to receive
-            while len(pair_0_msgs) != len(msg):
-                _msg = await stream.receive_some(max_bytes=1)
-                pair_0_msgs.append(_msg)
-
-            pair_0_done.set()
-            await pair_1_done.wait()
-
-
-    async def pair_1(token_in: RBToken, token_out: RBToken):
-        async with attach_to_ringbuf_stream(
-            token_in,
-            token_out,
-            cleanup_in=False,
-            cleanup_out=False
-        ) as stream:
-            # first turn to receive
-            while len(pair_1_msgs) != len(msg):
-                _msg = await stream.receive_some(max_bytes=1)
-                pair_1_msgs.append(_msg)
-
-            # second turn to send
-            await stream.send_all(msg)
-
-            pair_1_done.set()
-            await pair_0_done.wait()
-
-
-    async def main():
-        with tractor.ipc.open_ringbuf_pair(
-            'test_stapled_ringbuf'
-        ) as (token_0, token_1):
-            async with trio.open_nursery() as n:
-                n.start_soon(pair_0, token_0, token_1)
-                n.start_soon(pair_1, token_1, token_0)
-
-
-    trio.run(main)
-
-    assert msg == b''.join(pair_0_msgs)
-    assert msg == b''.join(pair_1_msgs)
-
-
 @tractor.context
 async def child_channel_sender(
     ctx: tractor.Context,
@@ -373,7 +300,7 @@ async def child_channel_sender(
     token_out: RBToken
 ):
     import random
-    msgs, _total_bytes = generate_sample_messages(
+    _hash, msgs, _total_bytes = generate_sample_messages(
         random.randint(msg_amount_min, msg_amount_max),
         rand_min=256,
         rand_max=1024,
@@ -383,7 +310,6 @@ async def child_channel_sender(
         token_out
     ) as chan:
         await ctx.started(msgs)
-
         for msg in msgs:
             await chan.send(msg)
 
@@ -396,16 +322,16 @@ def test_channel():
     async def main():
         with tractor.ipc.open_ringbuf_pair(
             'test_ringbuf_transport'
-        ) as (token_0, token_1):
+        ) as (send_token, recv_token):
             async with (
-                attach_to_ringbuf_channel(token_0, token_1) as chan,
+                attach_to_ringbuf_channel(send_token, recv_token) as chan,
                 tractor.open_nursery() as an
             ):
                 recv_p = await an.start_actor(
                     'test_ringbuf_transport_sender',
                     enable_modules=[__name__],
                     proc_kwargs={
-                        'pass_fds': token_0.fds + token_1.fds
+                        'pass_fds': send_token.fds + recv_token.fds
                     }
                 )
                 async with (
@@ -413,8 +339,8 @@ def test_channel():
                         child_channel_sender,
                         msg_amount_min=msg_amount_min,
                         msg_amount_max=msg_amount_max,
-                        token_in=token_1,
-                        token_out=token_0
+                        token_in=recv_token,
+                        token_out=send_token
                     ) as (ctx, msgs),
                 ):
                     recv_msgs = []

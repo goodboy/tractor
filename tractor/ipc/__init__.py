@@ -27,17 +27,16 @@ from ._chan import (
 if platform.system() == 'Linux':
     from ._ringbuf import (
         RBToken as RBToken,
+
         open_ringbuf as open_ringbuf,
-        RingBuffSender as RingBuffSender,
-        RingBuffReceiver as RingBuffReceiver,
         open_ringbuf_pair as open_ringbuf_pair,
-        attach_to_ringbuf_receiver as attach_to_ringbuf_receiver,
+
+        RingBufferSendChannel as RingBufferSendChannel,
         attach_to_ringbuf_sender as attach_to_ringbuf_sender,
-        attach_to_ringbuf_stream as attach_to_ringbuf_stream,
-        RingBuffBytesSender as RingBuffBytesSender,
-        RingBuffBytesReceiver as RingBuffBytesReceiver,
-        RingBuffChannel as RingBuffChannel,
-        attach_to_ringbuf_schannel as attach_to_ringbuf_schannel,
-        attach_to_ringbuf_rchannel as attach_to_ringbuf_rchannel,
+
+        RingBufferReceiveChannel as RingBufferReceiveChannel,
+        attach_to_ringbuf_receiver as attach_to_ringbuf_receiver,
+
+        RingBufferChannel as RingBufferChannel,
         attach_to_ringbuf_channel as attach_to_ringbuf_channel,
     )
