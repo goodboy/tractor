@@ -74,6 +74,7 @@ def test_ipc_channel_break_during_stream(
     spawn_backend: str,
     ipc_break: dict|None,
     pre_aclose_msgstream: bool,
+    tpt_proto: str,
 ):
     '''
     Ensure we can have an IPC channel break its connection during
@@ -198,6 +199,7 @@ def test_ipc_channel_break_during_stream(
                     start_method=spawn_backend,
                     loglevel=loglevel,
                     pre_close=pre_aclose_msgstream,
+                    tpt_proto=tpt_proto,
                     **ipc_break,
                 )
             )
