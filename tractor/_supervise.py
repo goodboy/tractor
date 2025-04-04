@@ -34,7 +34,6 @@ import trio
 from .devx._debug import maybe_wait_for_debugger
 from ._addr import (
     UnwrappedAddress,
-    preferred_transport,
     mk_uuid,
 )
 from ._state import current_actor, is_main_process
@@ -45,7 +44,9 @@ from ._exceptions import (
     is_multi_cancelled,
     ContextCancelled,
 )
-from ._root import open_root_actor
+from ._root import (
+    open_root_actor,
+)
 from . import _state
 from . import _spawn
 
@@ -138,7 +139,7 @@ class ActorNursery:
 
         bind_addrs: list[UnwrappedAddress]|None = None,
         rpc_module_paths: list[str]|None = None,
-        enable_transports: list[str] = [preferred_transport],
+        enable_transports: list[str] = [_state._def_tpt_proto],
         enable_modules: list[str]|None = None,
         loglevel: str|None = None,  # set log level per subactor
         debug_mode: bool|None = None,

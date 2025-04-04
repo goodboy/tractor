@@ -40,6 +40,7 @@ from ._state import (
     get_rt_dir,
     current_actor,
     is_root_process,
+    _def_tpt_proto,
 )
 
 if TYPE_CHECKING:
@@ -461,9 +462,6 @@ class UDSAddress(Address):
         os.unlink(self.sockpath)
 
 
-preferred_transport: str = 'uds'
-
-
 _address_types: bidict[str, Type[Address]] = {
     'tcp': TCPAddress,
     'uds': UDSAddress
@@ -525,11 +523,11 @@ def wrap_address(
         # TODO! BUT THIS WILL MATCH FOR TCP !...
         # -[ ] so prolly go back to what guille had orig XD
         #   a plain ol' `str`?
-        case ((
-            str()|Path(),
-            int(),
-        )):
-            cls = UDSAddress
+        # case ((
+        #     str()|Path(),
+        #     int(),
+        # )):
+        #     cls = UDSAddress
 
         # classic network socket-address as tuple/list
         case (
@@ -541,12 +539,14 @@ def wrap_address(
 
         # likely an unset UDS or TCP reg address as defaulted in
         # `_state._runtime_vars['_root_mailbox']`
+        #
+        # TODO? figure out when/if we even need this?
         case (
             None
             |
             [None, None]
         ):
-            cls: Type[Address] = get_address_cls(preferred_transport)
+            cls: Type[Address] = get_address_cls(_def_tpt_proto)
             addr: UnwrappedAddress = cls.get_root().unwrap()
 
         case _:

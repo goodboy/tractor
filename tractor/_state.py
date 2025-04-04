@@ -26,6 +26,7 @@ import os
 from pathlib import Path
 from typing import (
     Any,
+    Literal,
     TYPE_CHECKING,
 )
 
@@ -164,3 +165,11 @@ def get_rt_dir(
     if not rtdir.is_dir():
         rtdir.mkdir()
     return rtdir
+
+
+# default IPC transport protocol settings
+TransportProtocolKey = Literal[
+    'tcp',
+    'uds',
+]
+_def_tpt_proto: TransportProtocolKey = 'tcp'

@@ -33,7 +33,6 @@ from .ipc import _connect_chan, Channel
 from ._addr import (
     UnwrappedAddress,
     Address,
-    preferred_transport,
     wrap_address
 )
 from ._portal import (
@@ -44,6 +43,7 @@ from ._portal import (
 from ._state import (
     current_actor,
     _runtime_vars,
+    _def_tpt_proto,
 )
 
 if TYPE_CHECKING:
@@ -203,7 +203,7 @@ async def maybe_open_portal(
 async def find_actor(
     name: str,
     registry_addrs: list[UnwrappedAddress]|None = None,
-    enable_transports: list[str] = [preferred_transport],
+    enable_transports: list[str] = [_def_tpt_proto],
 
     only_first: bool = True,
     raise_on_none: bool = False,
