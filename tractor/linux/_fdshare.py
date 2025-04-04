@@ -19,6 +19,7 @@ Reimplementation of multiprocessing.reduction.sendfds & recvfds, using acms and 
 cpython impl:
 https://github.com/python/cpython/blob/275056a7fdcbe36aaac494b4183ae59943a338eb/Lib/multiprocessing/reduction.py#L138
 '''
+import os
 import array
 from typing import AsyncContextManager
 from contextlib import asynccontextmanager as acm
@@ -73,6 +74,7 @@ async def send_fds(fds: list[int], sock_path: str) -> AsyncContextManager[None]:
 
     conn.close()
     sock.close()
+    os.unlink(sock_path)
 
 
 async def recv_fds(sock_path: str, amount: int) -> tuple:

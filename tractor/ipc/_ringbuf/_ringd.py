@@ -29,6 +29,7 @@ from pathlib import Path
 from contextlib import (
     asynccontextmanager as acm
 )
+from dataclasses import dataclass
 
 import trio
 import tractor
@@ -42,12 +43,41 @@ log = tractor.log.get_logger(__name__)
 # log = tractor.log.get_console_log(level='info')
 
 
+class RingNotFound(Exception):
+    ...
+
+
 _ringd_actor_name = 'ringd'
 _root_key = _ringd_actor_name + f'-{os.getpid()}'
-_rings: dict[str, RBToken] = {}
+
+
+@dataclass
+class RingInfo:
+    token: RBToken
+    creator: str
+    unlink: trio.Event()
+
+
+_rings: dict[str, RingInfo] = {}
+
+
+def _maybe_get_ring(name: str) -> RingInfo | None:
+    if name in _rings:
+        return _rings[name]
+
+    return None
+
+
+def _insert_ring(name: str, info: RingInfo):
+    _rings[name] = info
+
+
+def _destroy_ring(name: str):
+    del _rings[name]
 
 
 async def _attach_to_ring(
+    ringd_pid: int,
     ring_name: str
 ) -> RBToken:
     actor = tractor.current_actor()
@@ -56,7 +86,7 @@ async def _attach_to_ring(
     sock_path = str(
         Path(tempfile.gettempdir())
         /
-        f'{os.getpid()}-pass-ring-fds-{ring_name}-to-{actor.name}.sock'
+        f'ringd-{ringd_pid}-{ring_name}-to-{actor.name}.sock'
     )
 
     log.info(f'trying to attach to ring {ring_name}...')
@@ -94,8 +124,12 @@ async def _pass_fds(
     sock_path: str
 ):
     global _rings
+    info = _maybe_get_ring(name)
 
-    token = _rings[name]
+    if not info:
+        raise RingNotFound(f'Ring \"{name}\" not found!')
+
+    token = info.token
 
     async with send_fds(token.fds, sock_path):
         log.info(f'connected to {sock_path} for fd passing')
@@ -109,48 +143,58 @@ async def _pass_fds(
 @tractor.context
 async def _open_ringbuf(
     ctx: tractor.Context,
+    caller: str,
     name: str,
+    buf_size: int = 10 * 1024,
     must_exist: bool = False,
-    buf_size: int = 10 * 1024
 ):
     global _root_key, _rings
+    log.info(f'maybe open ring {name} from {caller}, must_exist = {must_exist}')
 
-    teardown = trio.Event()
-    async def _teardown_listener(task_status=trio.TASK_STATUS_IGNORED):
+    info = _maybe_get_ring(name)
+
+    if info:
+        log.info(f'ring {name} exists, {caller} attached')
+
+        await ctx.started(os.getpid())
+
         async with ctx.open_stream() as stream:
-            task_status.started()
             await stream.receive()
-            teardown.set()
 
-    log.info(f'maybe open ring {name}, must_exist = {must_exist}')
+        info.unlink.set()
 
-    token = _rings.get(name, None)
+        log.info(f'{caller} detached from ring {name}')
 
-    async with trio.open_nursery() as n:
-        if token:
-            log.info(f'ring {name} exists')
-            await ctx.started()
-            await n.start(_teardown_listener)
-            await teardown.wait()
-            return
+        return
 
-        if must_exist:
-            raise FileNotFoundError(
-                f'Tried to open_ringbuf but it doesn\'t exist: {name}'
+    if must_exist:
+        raise RingNotFound(
+            f'Tried to open_ringbuf but it doesn\'t exist: {name}'
+        )
+
+    with ringbuf.open_ringbuf(
+        _root_key + name,
+        buf_size=buf_size
+    ) as token:
+        unlink_event = trio.Event()
+        _insert_ring(
+            name,
+            RingInfo(
+                token=token,
+                creator=caller,
+                unlink=unlink_event,
             )
+        )
+        log.info(f'ring {name} created by {caller}')
+        await ctx.started(os.getpid())
 
-        with ringbuf.open_ringbuf(
-            _root_key + name,
-            buf_size=buf_size
-        ) as token:
-            _rings[name] = token
-            log.info(f'ring {name} created')
-            await ctx.started()
-            await n.start(_teardown_listener)
-            await teardown.wait()
-            del _rings[name]
+        async with ctx.open_stream() as stream:
+            await stream.receive()
 
-    log.info(f'ring {name} destroyed')
+        await unlink_event.wait()
+        _destroy_ring(name)
+
+    log.info(f'ring {name} destroyed by {caller}')
 
 
 @acm
@@ -174,22 +218,28 @@ async def wait_for_ringd() -> tractor.Portal:
 
 @acm
 async def open_ringbuf(
+
     name: str,
+    buf_size: int = 10 * 1024,
+
     must_exist: bool = False,
-    buf_size: int = 10 * 1024
+
 ) -> RBToken:
+    actor = tractor.current_actor()
     async with (
         wait_for_ringd() as ringd,
+
         ringd.open_context(
             _open_ringbuf,
+            caller=actor.name,
             name=name,
-            must_exist=must_exist,
-            buf_size=buf_size
-        ) as (rd_ctx, _),
-        rd_ctx.open_stream() as stream,
+            buf_size=buf_size,
+            must_exist=must_exist
+        ) as (rd_ctx, ringd_pid),
+
+        rd_ctx.open_stream() as _stream,
     ):
-        token = await _attach_to_ring(name)
+        token = await _attach_to_ring(ringd_pid, name)
         log.info(f'attached to {token}')
         yield token
-        await stream.send(b'bye')
 
