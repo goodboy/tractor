@@ -32,3 +32,8 @@ from ._broadcast import (
 from ._beg import (
     collapse_eg as collapse_eg,
 )
+
+from ._ordering import (
+    order_send_channel as order_send_channel,
+    order_receive_channel as order_receive_channel
+)
