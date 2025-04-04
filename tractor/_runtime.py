@@ -80,7 +80,6 @@ from ._addr import (
     Address,
     default_lo_addrs,
     get_address_cls,
-    preferred_transport,
     wrap_address,
 )
 from ._context import (
@@ -1322,7 +1321,9 @@ class Actor:
 
         '''
         if listen_addrs is None:
-            listen_addrs = default_lo_addrs([preferred_transport])
+            listen_addrs = default_lo_addrs([
+                _state._def_tpt_proto
+            ])
 
         else:
             listen_addrs: list[Address] = [
@@ -1846,7 +1847,7 @@ async def async_main(
                 enable_transports: list[str] = (
                     maybe_preferred_transports_says_rent
                     or
-                    [preferred_transport]
+                    [_state._def_tpt_proto]
                 )
                 for transport_key in enable_transports:
                     transport_cls: Type[Address] = get_address_cls(

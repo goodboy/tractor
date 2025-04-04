@@ -56,7 +56,6 @@ from ._addr import (
     UnwrappedAddress,
     default_lo_addrs,
     mk_uuid,
-    preferred_transport,
     wrap_address,
 )
 from ._exceptions import (
@@ -139,6 +138,7 @@ async def maybe_block_bp(
             os.environ.pop('PYTHONBREAKPOINT', None)
 
 
+
 @acm
 async def open_root_actor(
     *,
@@ -148,7 +148,9 @@ async def open_root_actor(
     # defaults are above
     arbiter_addr: tuple[UnwrappedAddress]|None = None,
 
-    enable_transports: list[str] = [preferred_transport],
+    enable_transports: list[
+        _state.TransportProtocolKey,
+    ] = [_state._def_tpt_proto],
 
     name: str|None = 'root',
 
