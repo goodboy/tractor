@@ -120,6 +120,7 @@ async def main(
     break_parent_ipc_after: int|bool = False,
     break_child_ipc_after: int|bool = False,
     pre_close: bool = False,
+    tpt_proto: str = 'tcp',
 
 ) -> None:
 
@@ -131,6 +132,7 @@ async def main(
             # a hang since it never engages due to broken IPC
             debug_mode=debug_mode,
             loglevel=loglevel,
+            enable_transports=[tpt_proto],
 
         ) as an,
     ):
@@ -145,7 +147,8 @@ async def main(
             _testing.expect_ctxc(
                 yay=(
                     break_parent_ipc_after
-                    or break_child_ipc_after
+                    or
+                    break_child_ipc_after
                 ),
                 # TODO: we CAN'T remove this right?
                 # since we need the ctxc to bubble up from either

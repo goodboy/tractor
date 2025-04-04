@@ -45,7 +45,9 @@ no_windows = pytest.mark.skipif(
 )
 
 
-def pytest_addoption(parser):
+def pytest_addoption(
+    parser: pytest.Parser,
+):
     parser.addoption(
         "--ll",
         action="store",
@@ -62,7 +64,8 @@ def pytest_addoption(parser):
     )
 
     parser.addoption(
-        "--tpdb", "--debug-mode",
+        "--tpdb",
+        "--debug-mode",
         action="store_true",
         dest='tractor_debug_mode',
         # default=False,
@@ -73,12 +76,14 @@ def pytest_addoption(parser):
         ),
     )
 
+    # provide which IPC transport protocols opting-in test suites
+    # should accumulatively run against.
     parser.addoption(
         "--tpt-proto",
+        nargs='+',  # accumulate-multiple-args
         action="store",
-        dest='tpt_proto',
-        # default='tcp',  # TODO, mk this default!
-        default='uds',
+        dest='tpt_protos',
+        default=['tcp'],
         help="Transport protocol to use under the `tractor.ipc.Channel`",
     )
 
@@ -111,19 +116,34 @@ def spawn_backend(request) -> str:
 
 
 @pytest.fixture(scope='session')
-def tpt_proto(request) -> str:
-    proto_key: str = request.config.option.tpt_proto
-    # XXX ensure we support the protocol by name
-    addr_type = tractor._addr._address_types[proto_key]
-    assert addr_type.proto_key == proto_key
-    yield proto_key
+def tpt_protos(request) -> list[str]:
+
+    # allow quoting on CLI
+    proto_keys: list[str] = [
+        proto_key.replace('"', '').replace("'", "")
+        for proto_key in request.config.option.tpt_protos
+    ]
+
+    # ?TODO, eventually support multiple protos per test-sesh?
+    if len(proto_keys) > 1:
+        pytest.fail(
+            'We only support one `--tpt-proto <key>` atm!\n'
+        )
+
+    # XXX ensure we support the protocol by name via lookup!
+    for proto_key in proto_keys:
+        addr_type = tractor._addr._address_types[proto_key]
+        assert addr_type.proto_key == proto_key
+
+    yield proto_keys
 
 
-# @pytest.fixture(scope='function', autouse=True)
-# def debug_enabled(request) -> str:
-#     from tractor import _state
-#     if _state._runtime_vars['_debug_mode']:
-#         breakpoint()
+@pytest.fixture(scope='session')
+def tpt_proto(
+    tpt_protos: list[str],
+) -> str:
+    yield tpt_protos[0]
+
 
 _ci_env: bool = os.environ.get('CI', False)
 
@@ -131,7 +151,7 @@ _ci_env: bool = os.environ.get('CI', False)
 @pytest.fixture(scope='session')
 def ci_env() -> bool:
     '''
-    Detect CI envoirment.
+    Detect CI environment.
 
     '''
     return _ci_env
@@ -139,17 +159,16 @@ def ci_env() -> bool:
 
 # TODO: also move this to `._testing` for now?
 # -[ ] possibly generalize and re-use for multi-tree spawning
-#    along with the new stuff for multi-addrs in distribute_dis
-#    branch?
+#    along with the new stuff for multi-addrs?
 #
-# choose randomly at import time
+# choose random port at import time
 _rando_port: str = random.randint(1000, 9999)
 
 
 @pytest.fixture(scope='session')
 def reg_addr(
     tpt_proto: str,
-) -> tuple[str, int]:
+) -> tuple[str, int|str]:
 
     # globally override the runtime to the per-test-session-dynamic
     # addr so that all tests never conflict with any other actor
@@ -157,7 +176,6 @@ def reg_addr(
     from tractor import (
         _addr,
     )
-    tpt_proto: str = _addr.preferred_transport
     addr_type = _addr._address_types[tpt_proto]
     def_reg_addr: tuple[str, int] = _addr._default_lo_addrs[tpt_proto]
 
@@ -168,17 +186,18 @@ def reg_addr(
                 addr_type.def_bindspace,
                 _rando_port,
             )
+
+        # NOTE, file-name uniqueness (no-collisions) will be based on
+        # the runtime-directory and root (pytest-proc's) pid.
         case 'uds':
-            # NOTE, uniqueness will be based on the pid
             testrun_reg_addr = addr_type.get_random().unwrap()
-            # testrun_reg_addr = def_reg_addr
 
     assert def_reg_addr != testrun_reg_addr
     return testrun_reg_addr
 
 
 def pytest_generate_tests(metafunc):
-    spawn_backend = metafunc.config.option.spawn_backend
+    spawn_backend: str = metafunc.config.option.spawn_backend
 
     if not spawn_backend:
         # XXX some weird windows bug with `pytest`?
@@ -202,25 +221,14 @@ def pytest_generate_tests(metafunc):
             scope='module',
         )
 
-    # TODO, is this better then parametrizing the fixture above?
-    # spawn_backend = metafunc.config.option.tpt_backend
+    # TODO, parametrize any `tpt_proto: str` declaring tests!
+    # proto_tpts: list[str] = metafunc.config.option.proto_tpts
     # if 'tpt_proto' in metafunc.fixturenames:
     #     metafunc.parametrize(
     #         'tpt_proto',
-    #         [spawn_backend],
+    #         proto_tpts,  # TODO, double check this list usage!
     #         scope='module',
     #     )
-
-# TODO: a way to let test scripts (like from `examples/`)
-# guarantee they won't registry addr collide!
-# @pytest.fixture
-# def open_test_runtime(
-#     reg_addr: tuple,
-# ) -> AsyncContextManager:
-#     return partial(
-#         tractor.open_nursery,
-#         registry_addrs=[reg_addr],
-#     )
 
 
 def sig_prog(
@@ -311,6 +319,7 @@ def daemon(
             f'{proc.args}\n'
         )
 
+
 # @pytest.fixture(autouse=True)
 # def shared_last_failed(pytestconfig):
 #     val = pytestconfig.cache.get("example/value", None)
@@ -318,3 +327,38 @@ def daemon(
 #     if val is None:
 #         pytestconfig.cache.set("example/value", val)
 #     return val
+
+
+# TODO: a way to let test scripts (like from `examples/`)
+# guarantee they won't `registry_addrs` collide!
+# -[ ] maybe use some kinda standard `def main()` arg-spec that
+#     we can introspect from a fixture that is called from the test
+#     body?
+# -[ ] test and figure out typing for below prototype! Bp
+#
+# @pytest.fixture
+# def set_script_runtime_args(
+#     reg_addr: tuple,
+# ) -> Callable[[...], None]:
+
+#     def import_n_partial_in_args_n_triorun(
+#         script: Path,  # under examples?
+#         **runtime_args,
+#     ) -> Callable[[], Any]:  # a `partial`-ed equiv of `trio.run()`
+
+#         # NOTE, below is taken from
+#         # `.test_advanced_faults.test_ipc_channel_break_during_stream`
+#         mod: ModuleType = import_path(
+#             examples_dir() / 'advanced_faults'
+#             / 'ipc_failure_during_stream.py',
+#             root=examples_dir(),
+#             consider_namespace_packages=False,
+#         )
+#         return partial(
+#             trio.run,
+#             partial(
+#                 mod.main,
+#                 **runtime_args,
+#             )
+#         )
+#     return import_n_partial_in_args_n_triorun
