@@ -296,7 +296,9 @@ def daemon(
     # so it's often required that we delay a bit more starting
     # the first actor-tree..
     if tpt_proto == 'uds':
-        _PROC_SPAWN_WAIT: float = 0.6
+        global _PROC_SPAWN_WAIT
+        _PROC_SPAWN_WAIT = 0.6
+
     time.sleep(_PROC_SPAWN_WAIT)
 
     assert not proc.returncode
