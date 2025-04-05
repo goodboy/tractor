@@ -10,6 +10,9 @@ import pytest
 from _pytest.pathlib import import_path
 import trio
 import tractor
+from tractor import (
+    TransportClosed,
+)
 from tractor._testing import (
     examples_dir,
     break_ipc,
@@ -92,7 +95,7 @@ def test_ipc_channel_break_during_stream(
         # non-`trio` spawners should never hit the hang condition that
         # requires the user to do ctl-c to cancel the actor tree.
         # expect_final_exc = trio.ClosedResourceError
-        expect_final_exc = tractor.TransportClosed
+        expect_final_exc = TransportClosed
 
     mod: ModuleType = import_path(
         examples_dir() / 'advanced_faults'
@@ -105,6 +108,8 @@ def test_ipc_channel_break_during_stream(
     # period" wherein the user eventually hits ctl-c to kill the
     # root-actor tree.
     expect_final_exc: BaseException = KeyboardInterrupt
+    expect_final_cause: BaseException|None = None
+
     if (
         # only expect EoC if trans is broken on the child side,
         ipc_break['break_child_ipc_after'] is not False
@@ -139,6 +144,9 @@ def test_ipc_channel_break_during_stream(
         # a user sending ctl-c by raising a KBI.
         if pre_aclose_msgstream:
             expect_final_exc = KeyboardInterrupt
+            if tpt_proto == 'uds':
+                expect_final_exc = TransportClosed
+                expect_final_cause = trio.BrokenResourceError
 
             # XXX OLD XXX
             # if child calls `MsgStream.aclose()` then expect EoC.
@@ -158,6 +166,10 @@ def test_ipc_channel_break_during_stream(
         if pre_aclose_msgstream:
             expect_final_exc = KeyboardInterrupt
 
+            if tpt_proto == 'uds':
+                expect_final_exc = TransportClosed
+                expect_final_cause = trio.BrokenResourceError
+
     # NOTE when the parent IPC side dies (even if the child does as well
     # but the child fails BEFORE the parent) we always expect the
     # IPC layer to raise a closed-resource, NEVER do we expect
@@ -170,8 +182,8 @@ def test_ipc_channel_break_during_stream(
         and
         ipc_break['break_child_ipc_after'] is False
     ):
-        # expect_final_exc = trio.ClosedResourceError
         expect_final_exc = tractor.TransportClosed
+        expect_final_cause = trio.ClosedResourceError
 
     # BOTH but, PARENT breaks FIRST
     elif (
@@ -182,8 +194,8 @@ def test_ipc_channel_break_during_stream(
             ipc_break['break_parent_ipc_after']
         )
     ):
-        # expect_final_exc = trio.ClosedResourceError
         expect_final_exc = tractor.TransportClosed
+        expect_final_cause = trio.ClosedResourceError
 
     with pytest.raises(
         expected_exception=(
@@ -222,10 +234,15 @@ def test_ipc_channel_break_during_stream(
                 )
             cause: Exception = tc.__cause__
             assert (
-                type(cause) is trio.ClosedResourceError
-                and
-                cause.args[0] == 'another task closed this fd'
+                # type(cause) is trio.ClosedResourceError
+                type(cause) is expect_final_cause
+
+                # TODO, should we expect a certain exc-message (per
+                # tpt) as well??
+                # and
+                # cause.args[0] == 'another task closed this fd'
             )
+
             raise
 
     # get raw instance from pytest wrapper
