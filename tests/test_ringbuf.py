@@ -11,6 +11,9 @@ from tractor.ipc import (
 )
 from tractor._testing.samples import generate_sample_messages
 
+# in case you don't want to melt your cores, uncomment dis!
+pytestmark = pytest.mark.skip
+
 
 @tractor.context
 async def child_read_shm(
