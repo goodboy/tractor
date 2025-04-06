@@ -56,6 +56,7 @@ async def child_read_shm(
     print(f'\n\telapsed ms: {elapsed_ms}')
     print(f'\tmsg/sec: {int(msg_amount / elapsed):,}')
     print(f'\tbytes/sec: {int(recvd_bytes / elapsed):,}')
+    print(f'\treceived msgs: {msg_amount:,}')
     print(f'\treceived bytes: {recvd_bytes:,}')
 
     return recvd_hash.hexdigest()
@@ -164,7 +165,6 @@ def test_ringbuf(
 
                 await send_p.cancel_actor()
                 await recv_p.cancel_actor()
-
 
     trio.run(main)
 
