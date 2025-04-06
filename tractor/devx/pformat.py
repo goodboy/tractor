@@ -19,6 +19,7 @@ Pretty formatters for use throughout the code base.
 Mostly handy for logging and exception message content.
 
 '''
+import sys
 import textwrap
 import traceback
 
@@ -112,6 +113,85 @@ def pformat_boxed_tb(
         fields
         +
         tb_box
+    )
+
+
+def pformat_exc(
+    exc: Exception,
+    header: str = '',
+    message: str = '',
+    body: str = '',
+    with_type_header: bool = True,
+) -> str:
+
+    # XXX when the currently raised exception is this instance,
+    # we do not ever use the "type header" style repr.
+    is_being_raised: bool = False
+    if (
+        (curr_exc := sys.exception())
+        and
+        curr_exc is exc
+    ):
+        is_being_raised: bool = True
+
+    with_type_header: bool = (
+        with_type_header
+        and
+        not is_being_raised
+    )
+
+    # <RemoteActorError( .. )> style
+    if (
+        with_type_header
+        and
+        not header
+    ):
+        header: str = f'<{type(exc).__name__}('
+
+    message: str = (
+        message
+        or
+        exc.message
+    )
+    if message:
+        # split off the first line so, if needed, it isn't
+        # indented the same like the "boxed content" which
+        # since there is no `.tb_str` is just the `.message`.
+        lines: list[str] = message.splitlines()
+        first: str = lines[0]
+        message: str = message.removeprefix(first)
+
+        # with a type-style header we,
+        # - have no special message "first line" extraction/handling
+        # - place the message a space in from the header:
+        #  `MsgTypeError( <message> ..`
+        #                 ^-here
+        # - indent the `.message` inside the type body.
+        if with_type_header:
+            first = f' {first} )>'
+
+        message: str = textwrap.indent(
+            message,
+            prefix=' '*2,
+        )
+        message: str = first + message
+
+    tail: str = ''
+    if (
+        with_type_header
+        and
+        not message
+    ):
+        tail: str = '>'
+
+    return (
+        header
+        +
+        message
+        +
+        f'{body}'
+        +
+        tail
     )
 
 

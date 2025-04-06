@@ -208,6 +208,7 @@ class MsgpackTransport(MsgTransport):
         '''
         decodes_failed: int = 0
 
+        tpt_name: str = f'{type(self).__name__!r}'
         while True:
             try:
                 header: bytes = await self.recv_stream.receive_exactly(4)
@@ -252,10 +253,9 @@ class MsgpackTransport(MsgTransport):
 
                 raise TransportClosed(
                     message=(
-                        f'IPC transport already closed by peer\n'
-                        f'x)> {type(trans_err)}\n'
-                        f' |_{self}\n'
+                        f'{tpt_name} already closed by peer\n'
                     ),
+                    src_exc=trans_err,
                     loglevel=loglevel,
                 ) from trans_err
 
@@ -267,18 +267,17 @@ class MsgpackTransport(MsgTransport):
             #
             # NOTE: as such we always re-raise this error from the
             #       RPC msg loop!
-            except trio.ClosedResourceError as closure_err:
+            except trio.ClosedResourceError as cre:
+                closure_err = cre
+
                 raise TransportClosed(
                     message=(
-                        f'IPC transport already manually closed locally?\n'
-                        f'x)> {type(closure_err)} \n'
-                        f' |_{self}\n'
+                        f'{tpt_name} was already closed locally ?\n'
                     ),
+                    src_exc=closure_err,
                     loglevel='error',
                     raise_on_report=(
-                        closure_err.args[0] == 'another task closed this fd'
-                        or
-                        closure_err.args[0] in ['another task closed this fd']
+                        'another task closed this fd' in closure_err.args
                     ),
                 ) from closure_err
 
@@ -286,12 +285,9 @@ class MsgpackTransport(MsgTransport):
             if header == b'':
                 raise TransportClosed(
                     message=(
-                        f'IPC transport already gracefully closed\n'
-                        f')>\n'
-                        f'|_{self}\n'
+                        f'{tpt_name} already gracefully closed\n'
                     ),
                     loglevel='transport',
-                    # cause=???  # handy or no?
                 )
 
             size: int
