@@ -23,7 +23,6 @@ import builtins
 import importlib
 from pprint import pformat
 from pdb import bdb
-import sys
 from types import (
     TracebackType,
 )
@@ -543,7 +542,6 @@ class RemoteActorError(Exception):
             if val:
                 _repr += f'{key}={val_str}{end_char}'
 
-
         return _repr
 
     def reprol(self) -> str:
@@ -622,56 +620,9 @@ class RemoteActorError(Exception):
             the type name is already implicitly shown by python).
 
         '''
-        header: str = ''
-        body: str = ''
-        message: str = ''
-
-        # XXX when the currently raised exception is this instance,
-        # we do not ever use the "type header" style repr.
-        is_being_raised: bool = False
-        if (
-            (exc := sys.exception())
-            and
-            exc is self
-        ):
-            is_being_raised: bool = True
-
-        with_type_header: bool = (
-            with_type_header
-            and
-            not is_being_raised
-        )
-
-        # <RemoteActorError( .. )> style
-        if with_type_header:
-            header: str = f'<{type(self).__name__}('
-
-        if message := self._message:
-
-            # split off the first line so, if needed, it isn't
-            # indented the same like the "boxed content" which
-            # since there is no `.tb_str` is just the `.message`.
-            lines: list[str] = message.splitlines()
-            first: str = lines[0]
-            message: str = message.removeprefix(first)
-
-            # with a type-style header we,
-            # - have no special message "first line" extraction/handling
-            # - place the message a space in from the header:
-            #  `MsgTypeError( <message> ..`
-            #                 ^-here
-            # - indent the `.message` inside the type body.
-            if with_type_header:
-                first = f' {first} )>'
-
-            message: str = textwrap.indent(
-                message,
-                prefix=' '*2,
-            )
-            message: str = first + message
-
         # IFF there is an embedded traceback-str we always
         # draw the ascii-box around it.
+        body: str = ''
         if tb_str := self.tb_str:
             fields: str = self._mk_fields_str(
                 _body_fields
@@ -692,21 +643,15 @@ class RemoteActorError(Exception):
                 boxer_header=self.relay_uid,
             )
 
-        tail = ''
-        if (
-            with_type_header
-            and not message
-        ):
-            tail: str = '>'
-
-        return (
-            header
-            +
-            message
-            +
-            f'{body}'
-            +
-            tail
+        # !TODO, it'd be nice to import these top level without
+        # cycles!
+        from tractor.devx.pformat import (
+            pformat_exc,
+        )
+        return pformat_exc(
+            exc=self,
+            with_type_header=with_type_header,
+            body=body,
         )
 
     __repr__ = pformat
@@ -984,7 +929,7 @@ class StreamOverrun(
     '''
 
 
-class TransportClosed(trio.BrokenResourceError):
+class TransportClosed(Exception):
     '''
     IPC transport (protocol) connection was closed or broke and
     indicates that the wrapping communication `Channel` can no longer
@@ -995,16 +940,21 @@ class TransportClosed(trio.BrokenResourceError):
         self,
         message: str,
         loglevel: str = 'transport',
-        cause: BaseException|None = None,
+        src_exc: Exception|None = None,
         raise_on_report: bool = False,
 
     ) -> None:
         self.message: str = message
-        self._loglevel = loglevel
+        self._loglevel: str = loglevel
         super().__init__(message)
 
-        if cause is not None:
-            self.__cause__ = cause
+        self.src_exc = src_exc
+        if (
+            src_exc is not None
+            and
+            not self.__cause__
+        ):
+            self.__cause__ = src_exc
 
         # flag to toggle whether the msg loop should raise
         # the exc in its `TransportClosed` handler block.
@@ -1040,6 +990,26 @@ class TransportClosed(trio.BrokenResourceError):
         # inside the RPC msg loop
         if self._raise_on_report:
             raise self from cause
+
+    def pformat(self) -> str:
+        from tractor.devx.pformat import (
+            pformat_exc,
+        )
+        src_err: Exception|None = self.src_exc or '<unknown>'
+        src_msg: tuple[str] = src_err.args
+        src_exc_repr: str = (
+            f'{type(src_err).__name__}[ {src_msg} ]'
+        )
+        return pformat_exc(
+            exc=self,
+            # message=self.message,  # implicit!
+            body=(
+                f' |_src_exc: {src_exc_repr}\n'
+            ),
+        )
+
+    # delegate to `str`-ified pformat
+    __repr__ = pformat
 
 
 class NoResult(RuntimeError):
