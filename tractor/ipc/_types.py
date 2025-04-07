@@ -13,19 +13,37 @@
 
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-from typing import Type
+
+'''
+IPC subsys type-lookup helpers?
+
+'''
+from typing import (
+    Type,
+    # TYPE_CHECKING,
+)
 
 import trio
 import socket
 
-from tractor._addr import Address
 from tractor.ipc._transport import (
     MsgTransportKey,
     MsgTransport
 )
-from tractor.ipc._tcp import MsgpackTCPStream
-from tractor.ipc._uds import MsgpackUDSStream
+from tractor.ipc._tcp import (
+    TCPAddress,
+    MsgpackTCPStream,
+)
+from tractor.ipc._uds import (
+    UDSAddress,
+    MsgpackUDSStream,
+)
 
+# if TYPE_CHECKING:
+#     from tractor._addr import Address
+
+
+Address = TCPAddress|UDSAddress
 
 # manually updated list of all supported msg transport types
 _msg_transports = [
@@ -41,7 +59,10 @@ _key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
 }
 
 # convert an Address wrapper to its corresponding transport type
-_addr_to_transport: dict[Type[Address], Type[MsgTransport]] = {
+_addr_to_transport: dict[
+    Type[TCPAddress|UDSAddress],
+    Type[MsgTransport]
+] = {
     cls.address_type: cls
     for cls in _msg_transports
 }
