@@ -129,12 +129,21 @@ class EventFD:
         self._omode: str = omode
         self._fobj = None
         self._cscope: trio.CancelScope | None = None
+        self._is_closed: bool = True
+        self._read_lock = trio.StrictFIFOLock()
+
+    @property
+    def closed(self) -> bool:
+        return self._is_closed
 
     @property
     def fd(self) -> int | None:
         return self._fd
 
     def write(self, value: int) -> int:
+        if self.closed:
+            raise trio.ClosedResourceError
+
         return write_eventfd(self._fd, value)
 
     async def read(self) -> int:
@@ -145,19 +154,26 @@ class EventFD:
         in order to make it cancellable when `self.close()` is called.
 
         '''
-        self._cscope = trio.CancelScope()
-        with self._cscope:
-            return await trio.to_thread.run_sync(
-                read_eventfd, self._fd,
-                abandon_on_cancel=True
-            )
+        if self.closed:
+            raise trio.ClosedResourceError
 
-        if self._cscope.cancelled_caught:
-            raise EFDReadCancelled
+        if self._read_lock.locked():
+            raise trio.BusyResourceError
 
-        self._cscope = None
+        async with self._read_lock:
+            self._cscope = trio.CancelScope()
+            with self._cscope:
+                return await trio.to_thread.run_sync(
+                    read_eventfd, self._fd,
+                    abandon_on_cancel=True
+                )
 
-    def read_direct(self) -> int:
+            if self._cscope.cancelled_caught:
+                raise EFDReadCancelled
+
+            self._cscope = None
+
+    def read_nowait(self) -> int:
         '''
         Direct call to `read_eventfd(self.fd)`, unless `eventfd` was
         opened with `EFD_NONBLOCK` its gonna block the thread.
@@ -167,6 +183,7 @@ class EventFD:
 
     def open(self):
         self._fobj = os.fdopen(self._fd, self._omode)
+        self._is_closed = False
 
     def close(self):
         if self._fobj:
@@ -178,6 +195,8 @@ class EventFD:
 
         if self._cscope:
             self._cscope.cancel()
+
+        self._is_closed = True
 
     def __enter__(self):
         self.open()
