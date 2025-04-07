@@ -14,7 +14,7 @@ from tractor.ipc._ringbuf import (
 )
 from tractor._testing.samples import (
     generate_single_byte_msgs,
-    generate_sample_messages
+    RandomBytesGenerator
 )
 
 # in case you don't want to melt your cores, uncomment dis!
@@ -80,18 +80,22 @@ async def child_write_shm(
     Attach to ringbuf and send all generated messages.
 
     '''
-    sent_hash, msgs, _total_bytes = generate_sample_messages(
+    rng = RandomBytesGenerator(
         msg_amount,
         rand_min=rand_min,
         rand_max=rand_max,
     )
-    await ctx.started(sent_hash)
+    await ctx.started()
     print('writer started')
     async with attach_to_ringbuf_sender(token, cleanup=False) as sender:
-        for msg in msgs:
+        for msg in rng:
             await sender.send(msg)
 
+            if rng.msgs_generated % rng.recommended_log_interval == 0:
+                print(f'wrote {rng.total_msgs} msgs')
+
     print('writer exit')
+    return rng.hexdigest
 
 
 @pytest.mark.parametrize(
@@ -153,12 +157,14 @@ def test_ringbuf(
                         msg_amount=msg_amount,
                         rand_min=rand_min,
                         rand_max=rand_max,
-                    ) as (_sctx, sent_hash),
+                    ) as (sctx, _),
+
                     recv_p.open_context(
                         child_read_shm,
                         token=token,
-                    ) as (rctx, _sent),
+                    ) as (rctx, _),
                 ):
+                    sent_hash = await sctx.result()
                     recvd_hash = await rctx.result()
 
                     assert sent_hash == recvd_hash
@@ -300,7 +306,7 @@ async def child_channel_sender(
     token_out: RBToken
 ):
     import random
-    _hash, msgs, _total_bytes = generate_sample_messages(
+    rng = RandomBytesGenerator(
         random.randint(msg_amount_min, msg_amount_max),
         rand_min=256,
         rand_max=1024,
@@ -309,9 +315,13 @@ async def child_channel_sender(
         token_in,
         token_out
     ) as chan:
-        await ctx.started(msgs)
-        for msg in msgs:
+        await ctx.started()
+        for msg in rng:
             await chan.send(msg)
+
+        await chan.send(b'bye')
+        await chan.receive()
+        return rng.hexdigest
 
 
 def test_channel():
@@ -327,7 +337,7 @@ def test_channel():
                 attach_to_ringbuf_channel(send_token, recv_token) as chan,
                 tractor.open_nursery() as an
             ):
-                recv_p = await an.start_actor(
+                sender = await an.start_actor(
                     'test_ringbuf_transport_sender',
                     enable_modules=[__name__],
                     proc_kwargs={
@@ -335,19 +345,26 @@ def test_channel():
                     }
                 )
                 async with (
-                    recv_p.open_context(
+                    sender.open_context(
                         child_channel_sender,
                         msg_amount_min=msg_amount_min,
                         msg_amount_max=msg_amount_max,
                         token_in=recv_token,
                         token_out=send_token
-                    ) as (ctx, msgs),
+                    ) as (ctx, _),
                 ):
-                    recv_msgs = []
+                    recvd_hash = hashlib.sha256()
                     async for msg in chan:
-                        recv_msgs.append(msg)
+                        if msg == b'bye':
+                            await chan.send(b'bye')
+                            break
 
-                    await recv_p.cancel_actor()
-                    assert recv_msgs == msgs
+                        recvd_hash.update(msg)
+
+                    sent_hash = await ctx.result()
+
+                    assert recvd_hash.hexdigest() == sent_hash
+
+                await an.cancel()
 
     trio.run(main)
