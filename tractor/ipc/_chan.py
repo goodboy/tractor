@@ -29,13 +29,13 @@ from pprint import pformat
 import typing
 from typing import (
     Any,
+    TYPE_CHECKING,
 )
 import warnings
 
 import trio
 
-from tractor.ipc._transport import MsgTransport
-from tractor.ipc._types import (
+from ._types import (
     transport_from_addr,
     transport_from_stream,
 )
@@ -54,6 +54,9 @@ from tractor.msg import (
     Aid,
     MsgCodec,
 )
+
+if TYPE_CHECKING:
+    from ._transport import MsgTransport
 
 
 log = get_logger(__name__)

@@ -14,8 +14,8 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 '''
-typing.Protocol based generic msg API, implement this class to add backends for
-tractor.ipc.Channel
+typing.Protocol based generic msg API, implement this class to add
+backends for tractor.ipc.Channel
 
 '''
 from __future__ import annotations
@@ -23,8 +23,9 @@ from typing import (
     runtime_checkable,
     Type,
     Protocol,
-    TypeVar,
-    ClassVar
+    # TypeVar,
+    ClassVar,
+    TYPE_CHECKING,
 )
 from collections.abc import (
     AsyncGenerator,
@@ -47,10 +48,13 @@ from tractor.msg import (
     _ctxvar_MsgCodec,
     # _codec,  XXX see `self._codec` sanity/debug checks
     MsgCodec,
+    MsgType,
     types as msgtypes,
     pretty_struct,
 )
-from tractor._addr import Address
+
+if TYPE_CHECKING:
+    from tractor._addr import Address
 
 log = get_logger(__name__)
 
@@ -63,12 +67,13 @@ MsgTransportKey = tuple[str, str]
 # ?TODO? this should be our `Union[*msgtypes.__spec__]` alias now right..?
 # => BLEH, except can't bc prots must inherit typevar or param-spec
 #   vars..
-MsgType = TypeVar('MsgType')
+# MsgType = TypeVar('MsgType')
 
 
 @runtime_checkable
-class MsgTransport(Protocol[MsgType]):
+class MsgTransport(Protocol):
 #
+# class MsgTransport(Protocol[MsgType]):
 # ^-TODO-^ consider using a generic def and indexing with our
 # eventual msg definition/types?
 # - https://docs.python.org/3/library/typing.html#typing.Protocol

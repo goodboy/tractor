@@ -2,14 +2,17 @@ import time
 
 import trio
 import pytest
+
 import tractor
-from tractor.ipc import (
+from tractor.ipc._ringbuf import (
     open_ringbuf,
     RBToken,
     RingBuffSender,
     RingBuffReceiver
 )
-from tractor._testing.samples import generate_sample_messages
+from tractor._testing.samples import (
+    generate_sample_messages,
+)
 
 # in case you don't want to melt your cores, uncomment dis!
 pytestmark = pytest.mark.skip

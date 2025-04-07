@@ -105,7 +105,7 @@ from ._state import (
 if TYPE_CHECKING:
     from ._portal import Portal
     from ._runtime import Actor
-    from .ipc import MsgTransport
+    from .ipc._transport import MsgTransport
     from .devx._frame_stack import (
         CallerInfo,
     )
