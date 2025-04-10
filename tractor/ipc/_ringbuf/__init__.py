@@ -533,7 +533,7 @@ class RingBufferReceiveChannel(trio.abc.ReceiveChannel[bytes]):
                         self._write_ptr += delta
                         # yield lock and re-enter
 
-                    except EFDReadCancelled:
+                    except (EFDReadCancelled, trio.Cancelled):
                         # while waiting for new data `self._write_event` was closed
                         try:
                             # if eof was signaled receive no wait will not raise
@@ -654,7 +654,7 @@ async def attach_to_ringbuf_receiver(
     Launches `receiver._eof_monitor_task` in a `trio.Nursery`.
     '''
     async with (
-        trio.open_nursery() as n,
+        trio.open_nursery(strict_exception_groups=False) as n,
         RingBufferReceiveChannel(
             token,
             cleanup=cleanup

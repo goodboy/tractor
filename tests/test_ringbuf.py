@@ -92,7 +92,7 @@ async def child_write_shm(
             await sender.send(msg)
 
             if rng.msgs_generated % rng.recommended_log_interval == 0:
-                print(f'wrote {rng.total_msgs} msgs')
+                print(f'wrote {rng.msgs_generated} msgs')
 
     print('writer exit')
     return rng.hexdigest
