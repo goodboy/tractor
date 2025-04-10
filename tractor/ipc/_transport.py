@@ -104,7 +104,10 @@ class MsgTransport(Protocol):
 
     @classmethod
     def key(cls) -> MsgTransportKey:
-        return cls.codec_key, cls.address_type.proto_key
+        return (
+            cls.codec_key,
+            cls.address_type.proto_key,
+        )
 
     @property
     def laddr(self) -> Address:
@@ -135,8 +138,8 @@ class MsgTransport(Protocol):
         Address   # remote
     ]:
         '''
-        Return the `trio` streaming transport prot's addrs for both
-        the local and remote sides as a pair.
+        Return the transport protocol's address pair for the local
+        and remote-peer side.
 
         '''
         ...

@@ -21,7 +21,6 @@ from __future__ import annotations
 from pathlib import Path
 import os
 from socket import (
-    # socket,
     AF_UNIX,
     SOCK_STREAM,
     SO_PASSCRED,
@@ -31,8 +30,10 @@ from socket import (
 import struct
 from typing import (
     TYPE_CHECKING,
+    ClassVar,
 )
 
+import msgspec
 import trio
 from trio import (
     socket,
@@ -70,56 +71,22 @@ def unwrap_sockpath(
     )
 
 
-class UDSAddress:
+class UDSAddress(
+    msgspec.Struct,
+    frozen=True,
+):
+    filedir: str|Path|None
+    filename: str|Path
+    maybe_pid: int|None = None
+
     # TODO, maybe we should use better field and value
     # -[x] really this is a `.protocol_key` not a "name" of anything.
     # -[ ] consider a 'unix' proto-key instead?
     # -[ ] need to check what other mult-transport frameworks do
     #     like zmq, nng, uri-spec et al!
-    proto_key: str = 'uds'
-    unwrapped_type: type = tuple[str, int]
-    def_bindspace: Path = get_rt_dir()
-
-    def __init__(
-        self,
-        filedir: Path|str|None,
-        # TODO, i think i want `.filename` here?
-        filename: str|Path,
-
-        # XXX, in the sense you can also pass
-        # a "non-real-world-process-id" such as is handy to represent
-        # our host-local default "port-like" key for the very first
-        # root actor to create a registry address.
-        maybe_pid: int|None = None,
-    ):
-        fdir = self._filedir = Path(
-            filedir
-            or
-            self.def_bindspace
-        ).absolute()
-        fpath = self._filename = Path(filename)
-        fp: Path = fdir / fpath
-        assert (
-            fp.is_absolute()
-            and
-            fp == self.sockpath
-        )
-
-        # to track which "side" is the peer process by reading socket
-        # credentials-info.
-        self._pid: int = maybe_pid
-
-    @property
-    def sockpath(self) -> Path:
-        return self._filedir / self._filename
-
-    @property
-    def is_valid(self) -> bool:
-        '''
-        We block socket files not allocated under the runtime subdir.
-
-        '''
-        return self.bindspace in self.sockpath.parents
+    proto_key: ClassVar[str] = 'uds'
+    unwrapped_type: ClassVar[type] = tuple[str, int]
+    def_bindspace: ClassVar[Path] = get_rt_dir()
 
     @property
     def bindspace(self) -> Path:
@@ -128,7 +95,25 @@ class UDSAddress:
         just the sub-directory in which we allocate socket files.
 
         '''
-        return self._filedir or self.def_bindspace
+        return (
+            self.filedir
+            or
+            self.def_bindspace
+            # or
+            # get_rt_dir()
+        )
+
+    @property
+    def sockpath(self) -> Path:
+        return self.bindspace / self.filename
+
+    @property
+    def is_valid(self) -> bool:
+        '''
+        We block socket files not allocated under the runtime subdir.
+
+        '''
+        return self.bindspace in self.sockpath.parents
 
     @classmethod
     def from_addr(
@@ -141,9 +126,6 @@ class UDSAddress:
             case tuple()|list():
                 filedir = Path(addr[0])
                 filename = Path(addr[1])
-                # sockpath: Path = Path(addr[0])
-                # filedir, filename = unwrap_sockpath(sockpath)
-                # pid: int = addr[1]
                 return UDSAddress(
                     filedir=filedir,
                     filename=filename,
@@ -165,8 +147,8 @@ class UDSAddress:
         # XXX NOTE, since this gets passed DIRECTLY to
         # `.ipc._uds.open_unix_socket_w_passcred()`
         return (
-            str(self._filedir),
-            str(self._filename),
+            str(self.filedir),
+            str(self.filename),
         )
 
     @classmethod
@@ -199,55 +181,77 @@ class UDSAddress:
     def get_root(cls) -> UDSAddress:
         def_uds_filename: Path = 'registry@1616.sock'
         return UDSAddress(
-            filedir=None,
+            filedir=cls.def_bindspace,
             filename=def_uds_filename,
             # maybe_pid=1616,
         )
 
+    # ?TODO, maybe we should just our .msg.pretty_struct.Struct` for
+    # this instead?
+    # -[ ] is it too "multi-line"y tho?
+    #      the compact tuple/.unwrapped() form is simple enough?
+    #
     def __repr__(self) -> str:
+        if not (pid := self.maybe_pid):
+            pid: str = '<unknown-peer-pid>'
+
+        body: str = (
+            f'({self.filedir}, {self.filename}, {pid})'
+        )
         return (
             f'{type(self).__name__}'
             f'['
-            f'({self._filedir}, {self._filename})'
+            f'{body}'
             f']'
         )
 
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, UDSAddress):
-            raise TypeError(
-                f'Can not compare {type(other)} with {type(self)}'
-            )
 
-        return self.sockpath == other.sockpath
+async def start_listener(
+    addr: UDSAddress,
+    **kwargs,
+) -> SocketListener:
+    # sock = addr._sock = socket.socket(
+    sock = socket.socket(
+        socket.AF_UNIX,
+        socket.SOCK_STREAM
+    )
+    log.info(
+        f'Attempting to bind UDS socket\n'
+        f'>[\n'
+        f'|_{addr}\n'
+    )
 
-    # async def open_listener(self, **kwargs) -> SocketListener:
-    async def open_listener(
-        self,
-        **kwargs,
-    ) -> SocketListener:
-        sock = self._sock = socket.socket(
-            socket.AF_UNIX,
-            socket.SOCK_STREAM
-        )
-        log.info(
-            f'Attempting to bind UDS socket\n'
-            f'>[\n'
-            f'|_{self}\n'
-        )
-
-        bindpath: Path = self.sockpath
+    bindpath: Path = addr.sockpath
+    try:
         await sock.bind(str(bindpath))
-        sock.listen(1)
-        log.info(
-            f'Listening on UDS socket\n'
-            f'[>\n'
-            f' |_{self}\n'
-        )
-        return SocketListener(self._sock)
+    except (
+        FileNotFoundError,
+    ) as fdne:
+        raise ConnectionError(
+            f'Bad UDS socket-filepath-as-address ??\n'
+            f'{addr}\n'
+            f' |_sockpath: {addr.sockpath}\n'
+        ) from fdne
 
-    def close_listener(self):
-        self._sock.close()
-        os.unlink(self.sockpath)
+    sock.listen(1)
+    log.info(
+        f'Listening on UDS socket\n'
+        f'[>\n'
+        f' |_{addr}\n'
+    )
+    return SocketListener(sock)
+
+
+def close_listener(
+    addr: UDSAddress,
+    lstnr: SocketListener,
+) -> None:
+    '''
+    Close and remove the listening unix socket's path.
+
+    '''
+    lstnr.socket.close()
+    os.unlink(addr.sockpath)
 
 
 async def open_unix_socket_w_passcred(
@@ -416,5 +420,3 @@ class MsgpackUDSStream(MsgpackTransport):
             maybe_pid=peer_pid
         )
         return (laddr, raddr)
-
-
