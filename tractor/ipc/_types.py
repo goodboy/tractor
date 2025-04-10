@@ -53,9 +53,12 @@ _msg_transports = [
 
 
 # convert a MsgTransportKey to the corresponding transport type
-_key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
-    cls.key(): cls
-    for cls in _msg_transports
+_key_to_transport: dict[
+    MsgTransportKey,
+    Type[MsgTransport],
+] = {
+    ('msgpack', 'tcp'): MsgpackTCPStream,
+    ('msgpack', 'uds'): MsgpackUDSStream,
 }
 
 # convert an Address wrapper to its corresponding transport type
@@ -63,8 +66,8 @@ _addr_to_transport: dict[
     Type[TCPAddress|UDSAddress],
     Type[MsgTransport]
 ] = {
-    cls.address_type: cls
-    for cls in _msg_transports
+    TCPAddress: MsgpackTCPStream,
+    UDSAddress: MsgpackUDSStream,
 }
 
 

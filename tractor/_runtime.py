@@ -74,11 +74,14 @@ from tractor.msg import (
     pretty_struct,
     types as msgtypes,
 )
-from .ipc import Channel
+from .ipc import (
+    Channel,
+    _server,
+)
 from ._addr import (
     UnwrappedAddress,
     Address,
-    default_lo_addrs,
+    # default_lo_addrs,
     get_address_cls,
     wrap_address,
 )
@@ -157,15 +160,23 @@ class Actor:
     # nursery placeholders filled in by `async_main()` after fork
     _root_n: Nursery|None = None
     _service_n: Nursery|None = None
-    _server_n: Nursery|None = None
+
+    # XXX moving to IPCServer!
+    _ipc_server: _server.IPCServer|None = None
+
+    @property
+    def ipc_server(self) -> _server.IPCServer:
+        '''
+        The IPC transport-server for this actor; normally
+        a process-singleton.
+
+        '''
+        return self._ipc_server
 
     # Information about `__main__` from parent
     _parent_main_data: dict[str, str]
     _parent_chan_cs: CancelScope|None = None
     _spawn_spec: msgtypes.SpawnSpec|None = None
-
-    # syncs for setup/teardown sequences
-    _server_down: trio.Event|None = None
 
     # if started on ``asycio`` running ``trio`` in guest mode
     _infected_aio: bool = False
@@ -266,8 +277,6 @@ class Actor:
             Context
         ] = {}
 
-        self._listeners: list[trio.abc.Listener] = []
-        self._listen_addrs: list[Address] = []
         self._parent_chan: Channel|None = None
         self._forkserver_info: tuple|None = None
 
@@ -335,7 +344,6 @@ class Actor:
         if rent_chan := self._parent_chan:
             parent_uid = rent_chan.uid
         peers: list[tuple] = list(self._peer_connected)
-        listen_addrs: str = pformat(self._listen_addrs)
         fmtstr: str = (
             f' |_id: {self.aid!r}\n'
             # f"   aid{ds}{self.aid!r}\n"
@@ -343,8 +351,7 @@ class Actor:
             f'\n'
             f' |_ipc: {len(peers)!r} connected peers\n'
             f"   peers{ds}{peers!r}\n"
-            f"   _listen_addrs{ds}'{listen_addrs}'\n"
-            f"   _listeners{ds}'{self._listeners}'\n"
+            f"   ipc_server{ds}{self._ipc_server}\n"
             f'\n'
             f' |_rpc: {len(self._rpc_tasks)} tasks\n'
             f"   ctxs{ds}{len(self._contexts)}\n"
@@ -499,6 +506,9 @@ class Actor:
 
         '''
         self._no_more_peers = trio.Event()  # unset by making new
+        # with _debug.maybe_open_crash_handler(
+        #     pdb=True,
+        # ) as boxerr:
         chan = Channel.from_stream(stream)
         con_status: str = (
             'New inbound IPC connection <=\n'
@@ -1303,85 +1313,6 @@ class Actor:
             await self.cancel(req_chan=None)  # self cancel
             raise
 
-    async def _serve_forever(
-        self,
-        handler_nursery: Nursery,
-        *,
-        listen_addrs: list[UnwrappedAddress]|None = None,
-
-        task_status: TaskStatus[Nursery] = trio.TASK_STATUS_IGNORED,
-    ) -> None:
-        '''
-        Start the IPC transport server, begin listening/accepting new
-        `trio.SocketStream` connections.
-
-        This will cause an actor to continue living (and thus
-        blocking at the process/OS-thread level) until
-        `.cancel_server()` is called.
-
-        '''
-        if listen_addrs is None:
-            listen_addrs = default_lo_addrs([
-                _state._def_tpt_proto
-            ])
-
-        else:
-            listen_addrs: list[Address] = [
-                wrap_address(a) for a in listen_addrs
-            ]
-
-        self._server_down = trio.Event()
-        try:
-            async with trio.open_nursery() as server_n:
-
-                listeners: list[trio.abc.Listener] = []
-                for addr in listen_addrs:
-                    try:
-                        listener: trio.abc.Listener = await addr.open_listener()
-                    except OSError as oserr:
-                        if (
-                            '[Errno 98] Address already in use'
-                            in
-                            oserr.args#[0]
-                        ):
-                            log.exception(
-                                f'Address already in use?\n'
-                                f'{addr}\n'
-                            )
-                        raise
-                    listeners.append(listener)
-
-                await server_n.start(
-                    partial(
-                        trio.serve_listeners,
-                        handler=self._stream_handler,
-                        listeners=listeners,
-
-                        # NOTE: configured such that new
-                        # connections will stay alive even if
-                        # this server is cancelled!
-                        handler_nursery=handler_nursery
-                    )
-                )
-                # TODO, wow make this message better! XD
-                log.info(
-                    'Started server(s)\n'
-                    +
-                    '\n'.join([f'|_{addr}' for addr in listen_addrs])
-                )
-                self._listen_addrs.extend(listen_addrs)
-                self._listeners.extend(listeners)
-
-                task_status.started(server_n)
-
-        finally:
-            addr: Address
-            for addr in listen_addrs:
-                addr.close_listener()
-
-            # signal the server is down since nursery above terminated
-            self._server_down.set()
-
     def cancel_soon(self) -> None:
         '''
         Cancel this actor asap; can be called from a sync context.
@@ -1481,18 +1412,9 @@ class Actor:
             )
 
             # stop channel server
-            self.cancel_server()
-            if self._server_down is not None:
-                await self._server_down.wait()
-            else:
-                tpt_protos: list[str] = []
-                addr: Address
-                for addr in self._listen_addrs:
-                    tpt_protos.append(addr.proto_key)
-                log.warning(
-                    'Transport server(s) may have been cancelled before started?\n'
-                    f'protos: {tpt_protos!r}\n'
-                )
+            if ipc_server := self.ipc_server:
+                ipc_server.cancel()
+                await ipc_server.wait_for_shutdown()
 
             # cancel all rpc tasks permanently
             if self._service_n:
@@ -1723,24 +1645,6 @@ class Actor:
             )
         await self._ongoing_rpc_tasks.wait()
 
-    def cancel_server(self) -> bool:
-        '''
-        Cancel the internal IPC transport server nursery thereby
-        preventing any new inbound IPC connections establishing.
-
-        '''
-        if self._server_n:
-            # TODO: obvi a different server type when we eventually
-            # support some others XD
-            server_prot: str = 'TCP'
-            log.runtime(
-                f'Cancelling {server_prot} server'
-            )
-            self._server_n.cancel_scope.cancel()
-            return True
-
-        return False
-
     @property
     def accept_addrs(self) -> list[UnwrappedAddress]:
         '''
@@ -1748,7 +1652,7 @@ class Actor:
         and listens for new connections.
 
         '''
-        return [a.unwrap() for a in self._listen_addrs]
+        return self._ipc_server.accept_addrs
 
     @property
     def accept_addr(self) -> UnwrappedAddress:
@@ -1856,6 +1760,7 @@ async def async_main(
                     addr: Address = transport_cls.get_random()
                     accept_addrs.append(addr.unwrap())
 
+        assert accept_addrs
         # The "root" nursery ensures the channel with the immediate
         # parent is kept alive as a resilient service until
         # cancellation steps have (mostly) occurred in
@@ -1866,15 +1771,37 @@ async def async_main(
             actor._root_n = root_nursery
             assert actor._root_n
 
-            async with trio.open_nursery(
-                strict_exception_groups=False,
-            ) as service_nursery:
+            ipc_server: _server.IPCServer
+            async with (
+                trio.open_nursery(
+                    strict_exception_groups=False,
+                ) as service_nursery,
+
+                _server.open_ipc_server(
+                    actor=actor,
+                    parent_tn=service_nursery,
+                    stream_handler_tn=service_nursery,
+                ) as ipc_server,
+                # ) as actor._ipc_server,
+                # ^TODO? prettier?
+
+            ):
                 # This nursery is used to handle all inbound
                 # connections to us such that if the TCP server
                 # is killed, connections can continue to process
                 # in the background until this nursery is cancelled.
                 actor._service_n = service_nursery
-                assert actor._service_n
+                actor._ipc_server = ipc_server
+                assert (
+                    actor._service_n
+                    and (
+                        actor._service_n
+                        is
+                        actor._ipc_server._parent_tn
+                        is
+                        ipc_server._stream_handler_tn
+                    )
+                )
 
                 # load exposed/allowed RPC modules
                 # XXX: do this **after** establishing a channel to the parent
@@ -1898,30 +1825,42 @@ async def async_main(
                 # - subactor: the bind address is sent by our parent
                 #   over our established channel
                 # - root actor: the ``accept_addr`` passed to this method
-                assert accept_addrs
 
+                # TODO: why is this not with the root nursery?
                 try:
-                    # TODO: why is this not with the root nursery?
-                    actor._server_n = await service_nursery.start(
-                        partial(
-                            actor._serve_forever,
-                            service_nursery,
-                            listen_addrs=accept_addrs,
-                        )
+                    log.runtime(
+                        'Booting IPC server'
                     )
+                    eps: list = await ipc_server.listen_on(
+                        actor=actor,
+                        accept_addrs=accept_addrs,
+                        stream_handler_nursery=service_nursery,
+                    )
+                    log.runtime(
+                        f'Booted IPC server\n'
+                        f'{ipc_server}\n'
+                    )
+                    assert (
+                        (eps[0].listen_tn)
+                        is not service_nursery
+                    )
+
                 except OSError as oserr:
                     # NOTE: always allow runtime hackers to debug
                     # tranport address bind errors - normally it's
                     # something silly like the wrong socket-address
                     # passed via a config or CLI Bo
-                    entered_debug: bool = await _debug._maybe_enter_pm(oserr)
+                    entered_debug: bool = await _debug._maybe_enter_pm(
+                        oserr,
+                    )
                     if not entered_debug:
-                        log.exception('Failed to init IPC channel server !?\n')
+                        log.exception('Failed to init IPC server !?\n')
                     else:
                         log.runtime('Exited debug REPL..')
 
                     raise
 
+                # TODO, just read direct from ipc_server?
                 accept_addrs: list[UnwrappedAddress] = actor.accept_addrs
 
                 # NOTE: only set the loopback addr for the 
@@ -1954,7 +1893,9 @@ async def async_main(
                     async with get_registry(addr) as reg_portal:
                         for accept_addr in accept_addrs:
                             accept_addr = wrap_address(accept_addr)
-                            assert accept_addr.is_valid
+
+                            if not accept_addr.is_valid:
+                                breakpoint()
 
                             await reg_portal.run_from_ns(
                                 'self',

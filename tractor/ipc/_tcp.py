@@ -18,7 +18,14 @@ TCP implementation of tractor.ipc._transport.MsgTransport protocol
 
 '''
 from __future__ import annotations
+from typing import (
+    ClassVar,
+)
+# from contextlib import (
+#     asynccontextmanager as acm,
+# )
 
+import msgspec
 import trio
 from trio import (
     SocketListener,
@@ -27,33 +34,25 @@ from trio import (
 
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
-from tractor.ipc._transport import MsgpackTransport
+from tractor.ipc._transport import (
+    MsgTransport,
+    MsgpackTransport,
+)
 
 
 log = get_logger(__name__)
 
 
-class TCPAddress:
-    proto_key: str = 'tcp'
-    unwrapped_type: type = tuple[str, int]
-    def_bindspace: str = '127.0.0.1'
+class TCPAddress(
+    msgspec.Struct,
+    frozen=True,
+):
+    _host: str
+    _port: int
 
-    def __init__(
-        self,
-        host: str,
-        port: int
-    ):
-        if (
-            not isinstance(host, str)
-            or
-            not isinstance(port, int)
-        ):
-            raise TypeError(
-                f'Expected host {host!r} to be str and port {port!r} to be int'
-            )
-
-        self._host: str = host
-        self._port: int = port
+    proto_key: ClassVar[str] = 'tcp'
+    unwrapped_type: ClassVar[type] = tuple[str, int]
+    def_bindspace: ClassVar[str] = '127.0.0.1'
 
     @property
     def is_valid(self) -> bool:
@@ -106,34 +105,42 @@ class TCPAddress:
             f'{type(self).__name__}[{self.unwrap()}]'
         )
 
-    def __eq__(self, other) -> bool:
-        if not isinstance(other, TCPAddress):
-            raise TypeError(
-                f'Can not compare {type(other)} with {type(self)}'
-            )
+    @classmethod
+    def get_transport(
+        cls,
+        codec: str = 'msgpack',
+    ) -> MsgTransport:
+        match codec:
+            case 'msgspack':
+                return MsgpackTCPStream
+            case _:
+                raise ValueError(
+                    f'No IPC transport with {codec!r} supported !'
+                )
 
-        return (
-            self._host == other._host
-            and
-            self._port == other._port
-        )
 
-    async def open_listener(
-        self,
-        **kwargs,
-    ) -> SocketListener:
-        listeners: list[SocketListener] = await open_tcp_listeners(
-            host=self._host,
-            port=self._port,
-            **kwargs
-        )
-        assert len(listeners) == 1
-        listener = listeners[0]
-        self._host, self._port = listener.socket.getsockname()[:2]
-        return listener
+async def start_listener(
+    addr: TCPAddress,
+    **kwargs,
+) -> SocketListener:
+    '''
+    Start a TCP socket listener on the given `TCPAddress`.
 
-    async def close_listener(self):
-        ...
+    '''
+    # ?TODO, maybe we should just change the lower-level call this is
+    # using internall per-listener?
+    listeners: list[SocketListener] = await open_tcp_listeners(
+        host=addr._host,
+        port=addr._port,
+        **kwargs
+    )
+    # NOTE, for now we don't expect non-singleton-resolving
+    # domain-addresses/multi-homed-hosts.
+    # (though it is supported by `open_tcp_listeners()`)
+    assert len(listeners) == 1
+    listener = listeners[0]
+    host, port = listener.socket.getsockname()[:2]
+    return listener
 
 
 # TODO: typing oddity.. not sure why we have to inherit here, but it
