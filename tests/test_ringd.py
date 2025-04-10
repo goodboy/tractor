@@ -1,5 +1,3 @@
-from contextlib import asynccontextmanager as acm
-
 import trio
 import tractor
 import msgspec
@@ -40,7 +38,7 @@ async def send_child(
     ring_name: str
 ):
     async with (
-        ringd.open_ringbuf(ring_name) as token,
+        ringd.attach_ringbuf(ring_name) as token,
 
         attach_to_ringbuf_sender(token) as chan,
     ):
@@ -63,9 +61,7 @@ def test_ringd():
         async with (
             tractor.open_nursery() as an,
 
-            ringd.open_ringd(
-                loglevel='info'
-            )
+            ringd.open_ringd()
         ):
             recv_portal = await an.start_actor(
                 'recv',
@@ -133,10 +129,10 @@ async def subscriber_child(ctx: tractor.Context):
                 msg = msgspec.msgpack.decode(msg, type=ControlMessages)
                 match msg:
                     case AddChannelMsg():
-                        await subs.add_channel(msg.name, must_exist=False)
+                        await subs.add_channel(msg.name)
 
                     case RemoveChannelMsg():
-                        await subs.remove_channel(msg.name)
+                        subs.remove_channel(msg.name)
 
                     case RangeMsg():
                         range_msg = msg
@@ -171,7 +167,7 @@ async def subscriber_child(ctx: tractor.Context):
 async def publisher_child(ctx: tractor.Context):
     await ctx.started()
     async with (
-        open_ringbuf_publisher(batch_size=100, guarantee_order=True) as pub,
+        open_ringbuf_publisher(guarantee_order=True) as pub,
         ctx.open_stream() as stream
     ):
         async for msg in stream:
@@ -181,7 +177,7 @@ async def publisher_child(ctx: tractor.Context):
                     await pub.add_channel(msg.name, must_exist=True)
 
                 case RemoveChannelMsg():
-                    await pub.remove_channel(msg.name)
+                    pub.remove_channel(msg.name)
 
                 case RangeMsg():
                     for i in range(msg.size):
@@ -254,11 +250,6 @@ def test_pubsub():
 
                 # redo
                 ring_name = 'ring-redo'
-                await add_channel(ring_name)
-                await send_range(100)
-                await remove_channel(ring_name)
-
-                # try using same ring name
                 await add_channel(ring_name)
                 await send_range(100)
                 await remove_channel(ring_name)
