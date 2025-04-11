@@ -19,10 +19,12 @@ multi-transport-protcol needs!
 
 '''
 from __future__ import annotations
+from collections import defaultdict
 from contextlib import (
     asynccontextmanager as acm,
 )
 from functools import partial
+from itertools import chain
 import inspect
 from pprint import pformat
 from types import (
@@ -41,7 +43,7 @@ from trio import (
     SocketListener,
 )
 
-from ..devx import _debug
+# from ..devx import _debug
 from .._exceptions import (
     TransportClosed,
 )
@@ -82,6 +84,9 @@ log = log.get_logger(__name__)
 #
 async def handle_stream_from_peer(
     stream: trio.SocketStream,
+
+    *,
+    server: IPCServer,
     actor: Actor,
 
 ) -> None:
@@ -99,7 +104,7 @@ async def handle_stream_from_peer(
       )
 
     '''
-    actor._no_more_peers = trio.Event()  # unset by making new
+    server._no_more_peers = trio.Event()  # unset by making new
 
     # TODO, debug_mode tooling for when hackin this lower layer?
     # with _debug.maybe_open_crash_handler(
@@ -152,7 +157,7 @@ async def handle_stream_from_peer(
     # TODO, can we make this downstream peer tracking use the
     # `peer_aid` instead?
     familiar: str = 'new-peer'
-    if _pre_chan := actor._peers.get(uid):
+    if _pre_chan := server._peers.get(uid):
         familiar: str = 'pre-existing-peer'
     uid_short: str = f'{uid[0]}[{uid[1][-6:]}]'
     con_status += (
@@ -175,7 +180,7 @@ async def handle_stream_from_peer(
     #   sub-actor there will be a spawn wait even registered
     #   by a call to `.wait_for_peer()`.
     # - if a peer is connecting no such event will exit.
-    event: trio.Event|None = actor._peer_connected.pop(
+    event: trio.Event|None = server._peer_connected.pop(
         uid,
         None,
     )
@@ -195,7 +200,7 @@ async def handle_stream_from_peer(
             f' -> Registered IPC chan for peer actor {uid}@{chan.raddr}\n'
         )  # type: ignore
 
-    chans: list[Channel] = actor._peers[uid]
+    chans: list[Channel] = server._peers[uid]
     # if chans:
     #     # TODO: re-use channels for new connections instead
     #     # of always new ones?
@@ -417,10 +422,10 @@ async def handle_stream_from_peer(
             con_teardown_status += (
                 f'-> No more channels with {chan.uid}'
             )
-            actor._peers.pop(uid, None)
+            server._peers.pop(uid, None)
 
         peers_str: str = ''
-        for uid, chans in actor._peers.items():
+        for uid, chans in server._peers.items():
             peers_str += (
                 f'uid: {uid}\n'
             )
@@ -430,23 +435,28 @@ async def handle_stream_from_peer(
                 )
 
         con_teardown_status += (
-            f'-> Remaining IPC {len(actor._peers)} peers: {peers_str}\n'
+            f'-> Remaining IPC {len(server._peers)} peers: {peers_str}\n'
         )
 
         # No more channels to other actors (at all) registered
         # as connected.
-        if not actor._peers:
+        if not server._peers:
             con_teardown_status += (
                 'Signalling no more peer channel connections'
             )
-            actor._no_more_peers.set()
+            server._no_more_peers.set()
 
             # NOTE: block this actor from acquiring the
             # debugger-TTY-lock since we have no way to know if we
             # cancelled it and further there is no way to ensure the
             # lock will be released if acquired due to having no
             # more active IPC channels.
-            if _state.is_root_process():
+            if (
+                _state.is_root_process()
+                and
+                _state.is_debug_mode()
+            ):
+                from ..devx import _debug
                 pdb_lock = _debug.Lock
                 pdb_lock._blocked.add(uid)
 
@@ -581,7 +591,22 @@ class IPCEndpoint(Struct):
 class IPCServer(Struct):
     _parent_tn: Nursery
     _stream_handler_tn: Nursery
+    # level-triggered sig for whether "no peers are currently
+    # connected"; field is **always** set to an instance but
+    # initialized with `.is_set() == True`.
+    _no_more_peers: trio.Event
+
     _endpoints: list[IPCEndpoint] = []
+
+    # connection tracking & mgmt
+    _peers: defaultdict[
+        str,  # uaid
+        list[Channel],  # IPC conns from peer
+    ] = defaultdict(list)
+    _peer_connected: dict[
+        tuple[str, str],
+        trio.Event,
+    ] = {}
 
     # syncs for setup/teardown sequences
     _shutdown: trio.Event|None = None
@@ -644,6 +669,65 @@ class IPCServer(Struct):
                 f'protos: {tpt_protos!r}\n'
             )
 
+    def has_peers(
+        self,
+        check_chans: bool = False,
+    ) -> bool:
+        '''
+        Predicate for "are there any active peer IPC `Channel`s at the moment?"
+
+        '''
+        has_peers: bool = not self._no_more_peers.is_set()
+        if (
+            has_peers
+            and
+            check_chans
+        ):
+            has_peers: bool = (
+                any(chan.connected()
+                    for chan in chain(
+                        *self._peers.values()
+                    )
+                )
+                and
+                has_peers
+            )
+
+        return has_peers
+
+    async def wait_for_no_more_peers(
+        self,
+        shield: bool = False,
+    ) -> None:
+        with trio.CancelScope(shield=shield):
+            await self._no_more_peers.wait()
+
+    async def wait_for_peer(
+        self,
+        uid: tuple[str, str],
+
+    ) -> tuple[trio.Event, Channel]:
+        '''
+        Wait for a connection back from a (spawned sub-)actor with
+        a `uid` using a `trio.Event`.
+
+        Returns a pair of the event and the "last" registered IPC
+        `Channel` for the peer with `uid`.
+
+        '''
+        log.debug(f'Waiting for peer {uid!r} to connect')
+        event: trio.Event = self._peer_connected.setdefault(
+            uid,
+            trio.Event(),
+        )
+        await event.wait()
+        log.debug(f'{uid!r} successfully connected back to us')
+        mru_chan: Channel = self._peers[uid][-1]
+        return (
+            event,
+            mru_chan,
+        )
+
     @property
     def addrs(self) -> list[Address]:
         return [ep.addr for ep in self._endpoints]
@@ -672,16 +756,26 @@ class IPCServer(Struct):
         return ev.is_set()
 
     def pformat(self) -> str:
+        eps: list[IPCEndpoint] = self._endpoints
 
-        fmtstr: str = (
-            f' |_endpoints: {self._endpoints}\n'
+        state_repr: str = (
+            f'{len(eps)!r} IPC-endpoints active'
+        )
+        fmtstr = (
+            f' |_state: {state_repr}\n'
+            f'   no_more_peers: {self.has_peers()}\n'
         )
         if self._shutdown is not None:
             shutdown_stats: EventStatistics = self._shutdown.statistics()
             fmtstr += (
-                f'\n'
-                f' |_shutdown: {shutdown_stats}\n'
+                f'   task_waiting_on_shutdown: {shutdown_stats}\n'
             )
+
+        fmtstr += (
+            # TODO, use the `ppfmt()` helper from `modden`!
+            f' |_endpoints: {pformat(self._endpoints)}\n'
+            f' |_peers: {len(self._peers)} connected\n'
+        )
 
         return (
             f'<IPCServer(\n'
@@ -842,6 +936,7 @@ async def _serve_ipc_eps(
                     trio.serve_listeners,
                     handler=partial(
                         handle_stream_from_peer,
+                        server=server,
                         actor=actor,
                     ),
                     listeners=listeners,
@@ -894,20 +989,28 @@ async def open_ipc_server(
     async with maybe_open_nursery(
         nursery=parent_tn,
     ) as rent_tn:
+        no_more_peers = trio.Event()
+        no_more_peers.set()
+
         ipc_server = IPCServer(
             _parent_tn=rent_tn,
             _stream_handler_tn=stream_handler_tn or rent_tn,
+            _no_more_peers=no_more_peers,
         )
         try:
             yield ipc_server
+            log.runtime(
+                f'Waiting on server to shutdown or be cancelled..\n'
+                f'{ipc_server}'
+            )
+            # TODO? when if ever would we want/need this?
+            # with trio.CancelScope(shield=True):
+            #     await ipc_server.wait_for_shutdown()
 
-        # except BaseException as berr:
-        #     log.exception(
-        #         'IPC server crashed on exit ?'
-        #     )
-        #     raise berr
-
-        finally:
+        except BaseException as berr:
+            log.exception(
+                'IPC server caller crashed ??'
+            )
             # ?TODO, maybe we can ensure the endpoints are torndown
             # (and thus their managed listeners) beforehand to ensure
             # super graceful RPC mechanics?
@@ -915,17 +1018,5 @@ async def open_ipc_server(
             # -[ ] but aren't we doing that already per-`listen_tn`
             #      inside `_serve_ipc_eps()` above?
             #
-            # if not ipc_server.is_shutdown():
-            #     ipc_server.cancel()
-            #     await ipc_server.wait_for_shutdown()
-            # assert ipc_server.is_shutdown()
-            pass
-
-            # !XXX TODO! lol so classic, the below code is rekt!
-            #
-            # XXX here is a perfect example of suppressing errors with
-            # `trio.Cancelled` as per our demonstrating example,
-            # `test_trioisms::test_acm_embedded_nursery_propagates_enter_err
-            #
-            # with trio.CancelScope(shield=True):
-            #     await ipc_server.wait_for_shutdown()
+            # ipc_server.cancel()
+            raise berr

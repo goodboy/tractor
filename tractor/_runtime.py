@@ -40,9 +40,7 @@ from __future__ import annotations
 from contextlib import (
     ExitStack,
 )
-from collections import defaultdict
 from functools import partial
-from itertools import chain
 import importlib
 import importlib.util
 import os
@@ -76,6 +74,7 @@ from tractor.msg import (
 )
 from .ipc import (
     Channel,
+    # IPCServer,  # causes cycles atm..
     _server,
 )
 from ._addr import (
@@ -156,7 +155,6 @@ class Actor:
     _root_n: Nursery|None = None
     _service_n: Nursery|None = None
 
-    # XXX moving to IPCServer!
     _ipc_server: _server.IPCServer|None = None
 
     @property
@@ -246,14 +244,6 @@ class Actor:
         # by the user (currently called the "arbiter")
         self._spawn_method: str = spawn_method
 
-        self._peers: defaultdict[
-            str,  # uaid
-            list[Channel],  # IPC conns from peer
-        ] = defaultdict(list)
-        self._peer_connected: dict[tuple[str, str], trio.Event] = {}
-        self._no_more_peers = trio.Event()
-        self._no_more_peers.set()
-
         # RPC state
         self._ongoing_rpc_tasks = trio.Event()
         self._ongoing_rpc_tasks.set()
@@ -338,7 +328,12 @@ class Actor:
         parent_uid: tuple|None = None
         if rent_chan := self._parent_chan:
             parent_uid = rent_chan.uid
-        peers: list[tuple] = list(self._peer_connected)
+
+        peers: list = []
+        server: _server.IPCServer = self.ipc_server
+        if server:
+            peers: list[tuple] = list(server._peer_connected)
+
         fmtstr: str = (
             f' |_id: {self.aid!r}\n'
             # f"   aid{ds}{self.aid!r}\n"
@@ -393,25 +388,6 @@ class Actor:
             return
 
         self._reg_addrs = addrs
-
-    async def wait_for_peer(
-        self,
-        uid: tuple[str, str],
-
-    ) -> tuple[trio.Event, Channel]:
-        '''
-        Wait for a connection back from a (spawned sub-)actor with
-        a `uid` using a `trio.Event` for sync.
-
-        '''
-        log.debug(f'Waiting for peer {uid!r} to connect')
-        event = self._peer_connected.setdefault(uid, trio.Event())
-        await event.wait()
-        log.debug(f'{uid!r} successfully connected back to us')
-        return (
-            event,
-            self._peers[uid][-1],
-        )
 
     def load_modules(
         self,
@@ -724,7 +700,7 @@ class Actor:
             )
             assert isinstance(chan, Channel)
 
-            # Initial handshake: swap names.
+            # init handshake: swap actor-IDs.
             await chan._do_handshake(aid=self.aid)
 
             accept_addrs: list[UnwrappedAddress]|None = None
@@ -1620,16 +1596,18 @@ async def async_main(
                     )
 
         # Ensure all peers (actors connected to us as clients) are finished
-        if not actor._no_more_peers.is_set():
-            if any(
-                chan.connected() for chan in chain(*actor._peers.values())
-            ):
-                teardown_report += (
-                    f'-> Waiting for remaining peers {actor._peers} to clear..\n'
-                )
-                log.runtime(teardown_report)
-                with CancelScope(shield=True):
-                    await actor._no_more_peers.wait()
+        if (
+            (ipc_server := actor.ipc_server)
+            and
+            ipc_server.has_peers(check_chans=True)
+        ):
+            teardown_report += (
+                f'-> Waiting for remaining peers {ipc_server._peers} to clear..\n'
+            )
+            log.runtime(teardown_report)
+            await ipc_server.wait_for_no_more_peers(
+                shield=True,
+            )
 
         teardown_report += (
             '-> All peer channels are complete\n'

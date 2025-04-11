@@ -53,6 +53,9 @@ from . import _spawn
 
 if TYPE_CHECKING:
     import multiprocessing as mp
+    # from .ipc._server import IPCServer
+    from .ipc import IPCServer
+
 
 log = get_logger(__name__)
 
@@ -315,6 +318,9 @@ class ActorNursery:
         children: dict = self._children
         child_count: int = len(children)
         msg: str = f'Cancelling actor nursery with {child_count} children\n'
+
+        server: IPCServer = self._actor.ipc_server
+
         with trio.move_on_after(3) as cs:
             async with trio.open_nursery(
                 strict_exception_groups=False,
@@ -337,7 +343,7 @@ class ActorNursery:
 
                     else:
                         if portal is None:  # actor hasn't fully spawned yet
-                            event = self._actor._peer_connected[subactor.uid]
+                            event: trio.Event = server._peer_connected[subactor.uid]
                             log.warning(
                                 f"{subactor.uid} never 't finished spawning?"
                             )
@@ -353,7 +359,7 @@ class ActorNursery:
                             if portal is None:
                                 # cancelled while waiting on the event
                                 # to arrive
-                                chan = self._actor._peers[subactor.uid][-1]
+                                chan = server._peers[subactor.uid][-1]
                                 if chan:
                                     portal = Portal(chan)
                                 else:  # there's no other choice left

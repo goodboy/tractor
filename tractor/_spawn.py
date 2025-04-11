@@ -58,8 +58,10 @@ from tractor.msg.types import (
 
 
 if TYPE_CHECKING:
+    from ipc import IPCServer
     from ._supervise import ActorNursery
     ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
+
 
 log = get_logger('tractor')
 
@@ -481,6 +483,7 @@ async def trio_proc(
 
     cancelled_during_spawn: bool = False
     proc: trio.Process|None = None
+    ipc_server: IPCServer = actor_nursery._actor.ipc_server
     try:
         try:
             proc: trio.Process = await trio.lowlevel.open_process(spawn_cmd, **proc_kwargs)
@@ -492,7 +495,7 @@ async def trio_proc(
             # wait for actor to spawn and connect back to us
             # channel should have handshake completed by the
             # local actor by the time we get a ref to it
-            event, chan = await actor_nursery._actor.wait_for_peer(
+            event, chan = await ipc_server.wait_for_peer(
                 subactor.uid
             )
 
@@ -724,11 +727,12 @@ async def mp_proc(
 
     log.runtime(f"Started {proc}")
 
+    ipc_server: IPCServer = actor_nursery._actor.ipc_server
     try:
         # wait for actor to spawn and connect back to us
         # channel should have handshake completed by the
         # local actor by the time we get a ref to it
-        event, chan = await actor_nursery._actor.wait_for_peer(
+        event, chan = await ipc_server.wait_for_peer(
             subactor.uid,
         )
 
