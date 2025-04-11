@@ -49,6 +49,7 @@ from tractor.log import get_logger
 from tractor._exceptions import (
     MsgTypeError,
     pack_from_raise,
+    TransportClosed,
 )
 from tractor.msg import (
     Aid,
@@ -256,7 +257,7 @@ class Channel:
         self,
         payload: Any,
 
-        hide_tb: bool = False,
+        hide_tb: bool = True,
 
     ) -> None:
         '''
@@ -274,18 +275,27 @@ class Channel:
                 payload,
                 hide_tb=hide_tb,
             )
-        except BaseException as _err:
+        except (
+            BaseException,
+            MsgTypeError,
+            TransportClosed,
+        )as _err:
             err = _err  # bind for introspection
-            if not isinstance(_err, MsgTypeError):
-                # assert err
-                __tracebackhide__: bool = False
-            else:
-                try:
-                    assert err.cid
+            match err:
+                case MsgTypeError():
+                    try:
+                        assert err.cid
+                    except KeyError:
+                        raise err
+                case TransportClosed():
+                    log.transport(
+                        f'Transport stream closed due to\n'
+                        f'{err.repr_src_exc()}\n'
+                    )
 
-                except KeyError:
-                    raise err
-
+                case _:
+                    # never suppress non-tpt sources
+                    __tracebackhide__: bool = False
             raise
 
     async def recv(self) -> Any:
