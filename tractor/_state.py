@@ -102,7 +102,7 @@ def current_actor(
     return _current_actor
 
 
-def is_main_process() -> bool:
+def is_root_process() -> bool:
     '''
     Bool determining if this actor is running in the top-most process.
 
@@ -111,14 +111,19 @@ def is_main_process() -> bool:
     return mp.current_process().name == 'MainProcess'
 
 
-# TODO, more verby name?
-def debug_mode() -> bool:
+is_main_process = is_root_process
+
+
+def is_debug_mode() -> bool:
     '''
     Bool determining if "debug mode" is on which enables
     remote subactor pdb entry on crashes.
 
     '''
     return bool(_runtime_vars['_debug_mode'])
+
+
+debug_mode = is_debug_mode
 
 
 def is_root_process() -> bool:
@@ -173,3 +178,15 @@ TransportProtocolKey = Literal[
     'uds',
 ]
 _def_tpt_proto: TransportProtocolKey = 'tcp'
+
+
+def current_ipc_protos() -> list[str]:
+    '''
+    Return the list of IPC transport protocol keys currently
+    in use by this actor.
+
+    The keys are as declared by `MsgTransport` and `Address`
+    concrete-backend sub-types defined throughout `tractor.ipc`.
+
+    '''
+    return [_def_tpt_proto]
