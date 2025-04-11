@@ -948,7 +948,8 @@ class TransportClosed(Exception):
         self._loglevel: str = loglevel
         super().__init__(message)
 
-        self.src_exc = src_exc
+        self._src_exc = src_exc
+        # set the cause manually if not already set by python
         if (
             src_exc is not None
             and
@@ -960,9 +961,18 @@ class TransportClosed(Exception):
         # the exc in its `TransportClosed` handler block.
         self._raise_on_report = raise_on_report
 
+    @property
+    def src_exc(self) -> Exception:
+        return (
+            self.__cause__
+            or
+            self._src_exc
+        )
+
     def report_n_maybe_raise(
         self,
         message: str|None = None,
+        hide_tb: bool = True,
 
     ) -> None:
         '''
@@ -970,9 +980,10 @@ class TransportClosed(Exception):
         for this error.
 
         '''
+        __tracebackhide__: bool = hide_tb
         message: str = message or self.message
         # when a cause is set, slap it onto the log emission.
-        if cause := self.__cause__:
+        if cause := self.src_exc:
             cause_tb_str: str = ''.join(
                 traceback.format_tb(cause.__traceback__)
             )
@@ -991,25 +1002,75 @@ class TransportClosed(Exception):
         if self._raise_on_report:
             raise self from cause
 
+    @classmethod
+    def repr_src_exc(
+        self,
+        src_exc: Exception|None = None,
+    ) -> str:
+
+        if src_exc is None:
+            return '<unknown>'
+
+        src_msg: tuple[str] = src_exc.args
+        src_exc_repr: str = (
+            f'{type(src_exc).__name__}[ {src_msg} ]'
+        )
+        return src_exc_repr
+
     def pformat(self) -> str:
         from tractor.devx.pformat import (
             pformat_exc,
         )
-        src_err: Exception|None = self.src_exc or '<unknown>'
-        src_msg: tuple[str] = src_err.args
-        src_exc_repr: str = (
-            f'{type(src_err).__name__}[ {src_msg} ]'
-        )
         return pformat_exc(
             exc=self,
-            # message=self.message,  # implicit!
-            body=(
-                f' |_src_exc: {src_exc_repr}\n'
-            ),
         )
 
     # delegate to `str`-ified pformat
     __repr__ = pformat
+
+    @classmethod
+    def from_src_exc(
+        cls,
+        src_exc: (
+            Exception|
+            trio.ClosedResource|
+            trio.BrokenResourceError
+        ),
+        message: str,
+        body: str = '',
+        **init_kws,
+    ) -> TransportClosed:
+        '''
+        Convenience constructor for creation from an underlying
+        `trio`-sourced async-resource/chan/stream error.
+
+        Embeds the original `src_exc`'s repr within the
+        `Exception.args` via a first-line-in-`.message`-put-in-header
+        pre-processing and allows inserting additional content beyond
+        the main message via a `body: str`.
+
+        '''
+        repr_src_exc: str = cls.repr_src_exc(
+            src_exc,
+        )
+        next_line: str = f'  src_exc: {repr_src_exc}\n'
+        if body:
+            body: str = textwrap.indent(
+                body,
+                prefix=' '*2,
+            )
+
+        return TransportClosed(
+            message=(
+                message
+                +
+                next_line
+                +
+                body
+            ),
+            src_exc=src_exc,
+            **init_kws,
+        )
 
 
 class NoResult(RuntimeError):
