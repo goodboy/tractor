@@ -3003,6 +3003,7 @@ async def _maybe_enter_pm(
         [BaseException|BaseExceptionGroup],
         bool,
     ] = lambda err: not is_multi_cancelled(err),
+    **_pause_kws,
 
 ):
     if (
@@ -3029,6 +3030,7 @@ async def _maybe_enter_pm(
         await post_mortem(
             api_frame=api_frame,
             tb=tb,
+            **_pause_kws,
         )
         return True
 
