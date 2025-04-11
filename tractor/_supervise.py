@@ -316,7 +316,9 @@ class ActorNursery:
         child_count: int = len(children)
         msg: str = f'Cancelling actor nursery with {child_count} children\n'
         with trio.move_on_after(3) as cs:
-            async with trio.open_nursery() as tn:
+            async with trio.open_nursery(
+                strict_exception_groups=False,
+            ) as tn:
 
                 subactor: Actor
                 proc: trio.Process
