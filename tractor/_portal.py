@@ -578,10 +578,10 @@ async def open_portal(
 
         msg_loop_cs: trio.CancelScope|None = None
         if start_msg_loop:
-            from ._runtime import process_messages
+            from . import _rpc
             msg_loop_cs = await tn.start(
                 partial(
-                    process_messages,
+                    _rpc.process_messages,
                     actor,
                     channel,
                     # if the local task is cancelled we want to keep
