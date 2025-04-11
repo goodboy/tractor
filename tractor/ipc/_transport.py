@@ -367,7 +367,7 @@ class MsgpackTransport(MsgTransport):
         msg: msgtypes.MsgType,
 
         strict_types: bool = True,
-        hide_tb: bool = False,
+        hide_tb: bool = True,
 
     ) -> None:
         '''
@@ -430,8 +430,9 @@ class MsgpackTransport(MsgTransport):
                 return await self.stream.send_all(size + bytes_data)
             except (
                 trio.BrokenResourceError,
-            ) as trans_err:
-                loglevel = 'transport'
+            ) as bre:
+                trans_err = bre
+                tpt_name: str = f'{type(self).__name__!r}'
                 match trans_err:
                     case trio.BrokenResourceError() if (
                         '[Errno 32] Broken pipe' in trans_err.args[0]
@@ -442,21 +443,22 @@ class MsgpackTransport(MsgTransport):
                         #    as it pertains to rando pings from the
                         #    `.discovery` subsys and protos.
                     ):
-                        raise TransportClosed(
+                        raise TransportClosed.from_src_exc(
                             message=(
-                                f'IPC transport already closed by peer\n'
-                                f'x)> {type(trans_err)}\n'
-                                f' |_{self}\n'
+                                f'{tpt_name} already closed by peer\n'
                             ),
-                            loglevel=loglevel,
-                        ) from trans_err
+                            body=f'{self}\n',
+                            src_exc=trans_err,
+                            raise_on_report=True,
+                            loglevel='transport',
+                        ) from bre
 
                     # unless the disconnect condition falls under "a
                     # normal operation breakage" we usualy console warn
                     # about it.
                     case _:
                         log.exception(
-                            'Transport layer failed for {self.transport!r} ?\n'
+                            '{tpt_name} layer failed pre-send ??\n'
                         )
                         raise trans_err
 
@@ -501,11 +503,11 @@ class MsgpackTransport(MsgTransport):
     def pformat(self) -> str:
         return (
             f'<{type(self).__name__}(\n'
-            f' |_task: {self._task}\n'
-            f'\n'
             f' |_peers: 2\n'
             f'   laddr: {self._laddr}\n'
             f'   raddr: {self._raddr}\n'
+            # f'\n'
+            f' |_task: {self._task}\n'
             f')>\n'
         )
 
