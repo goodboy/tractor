@@ -149,8 +149,10 @@ async def open_root_actor(
     arbiter_addr: tuple[UnwrappedAddress]|None = None,
 
     enable_transports: list[
+        # TODO, this should eventually be the pairs as
+        # defined by (codec, proto) as on `MsgTransport.
         _state.TransportProtocolKey,
-    ] = [_state._def_tpt_proto],
+    ]|None = None,
 
     name: str|None = 'root',
 
@@ -213,6 +215,14 @@ async def open_root_actor(
         debug_mode=debug_mode,
         maybe_enable_greenback=maybe_enable_greenback,
     ):
+        if enable_transports is None:
+            enable_transports: list[str] = _state.current_ipc_protos()
+
+            # TODO! support multi-tpts per actor! Bo
+            assert (
+                len(enable_transports) == 1
+            ), 'No multi-tpt support yet!'
+
         _debug.hide_runtime_frames()
         __tracebackhide__: bool = hide_tb
 
