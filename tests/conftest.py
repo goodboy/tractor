@@ -138,11 +138,19 @@ def tpt_protos(request) -> list[str]:
     yield proto_keys
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(
+    scope='session',
+    autouse=True,
+)
 def tpt_proto(
     tpt_protos: list[str],
 ) -> str:
-    yield tpt_protos[0]
+    proto_key: str = tpt_protos[0]
+    from tractor import _state
+    if _state._def_tpt_proto != proto_key:
+        _state._def_tpt_proto = proto_key
+    # breakpoint()
+    yield proto_key
 
 
 _ci_env: bool = os.environ.get('CI', False)
