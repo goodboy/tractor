@@ -57,7 +57,11 @@ async def spawn(
             )
 
             assert len(an._children) == 1
-            assert portal.channel.uid in tractor.current_actor()._peers
+            assert (
+                portal.channel.uid
+                in
+                tractor.current_actor().ipc_server._peers
+            )
 
             # get result from child subactor
             result = await portal.result()

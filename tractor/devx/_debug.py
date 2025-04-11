@@ -92,7 +92,11 @@ from tractor._state import (
 if TYPE_CHECKING:
     from trio.lowlevel import Task
     from threading import Thread
-    from tractor.ipc import Channel
+    from tractor.ipc import (
+        Channel,
+        IPCServer,
+        # _server,  # TODO? export at top level?
+    )
     from tractor._runtime import (
         Actor,
     )
@@ -1434,6 +1438,7 @@ def any_connected_locker_child() -> bool:
 
     '''
     actor: Actor = current_actor()
+    server: IPCServer = actor.ipc_server
 
     if not is_root_process():
         raise InternalError('This is a root-actor only API!')
@@ -1443,7 +1448,7 @@ def any_connected_locker_child() -> bool:
         and
         (uid_in_debug := ctx.chan.uid)
     ):
-        chans: list[tractor.Channel] = actor._peers.get(
+        chans: list[tractor.Channel] = server._peers.get(
             tuple(uid_in_debug)
         )
         if chans:

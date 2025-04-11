@@ -48,6 +48,7 @@ from ._state import (
 
 if TYPE_CHECKING:
     from ._runtime import Actor
+    from .ipc._server import IPCServer
 
 
 log = get_logger(__name__)
@@ -79,7 +80,7 @@ async def get_registry(
         )
     else:
         # TODO: try to look pre-existing connection from
-        # `Actor._peers` and use it instead?
+        # `IPCServer._peers` and use it instead?
         async with (
             _connect_chan(addr) as chan,
             open_portal(chan) as regstr_ptl,
@@ -111,7 +112,7 @@ def get_peer_by_name(
 ) -> list[Channel]|None:  # at least 1
     '''
     Scan for an existing connection (set) to a named actor
-    and return any channels from `Actor._peers`.
+    and return any channels from `IPCServer._peers: dict`.
 
     This is an optimization method over querying the registrar for
     the same info.
