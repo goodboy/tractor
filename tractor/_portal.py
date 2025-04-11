@@ -52,8 +52,8 @@ from .msg import (
     Return,
 )
 from ._exceptions import (
-    # unpack_error,
     NoResult,
+    TransportClosed,
 )
 from ._context import (
     Context,
@@ -305,14 +305,34 @@ class Portal:
             return False
 
         except (
+            # XXX, should never really get raised unless we aren't
+            # wrapping them in the below type by mistake?
+            #
+            # Leaving the catch here for now until we're very sure
+            # all the cases (for various tpt protos) have indeed been
+            # re-wrapped ;p
             trio.ClosedResourceError,
             trio.BrokenResourceError,
-        ):
-            log.debug(
-                'IPC chan for actor already closed or broken?\n\n'
+
+            TransportClosed,
+        ) as tpt_err:
+            report: str = (
+                f'IPC chan for actor already closed or broken?\n\n'
                 f'{self.channel.aid}\n'
                 f' |_{self.channel}\n'
             )
+            match tpt_err:
+                case TransportClosed():
+                    log.debug(report)
+                case _:
+                    report += (
+                        f'\n'
+                        f'Unhandled low-level transport-closed/error during\n'
+                        f'Portal.cancel_actor()` request?\n'
+                        f'<{type(tpt_err).__name__}( {tpt_err} )>\n'
+                    )
+                    log.warning(report)
+
             return False
 
     # TODO: do we still need this for low level `Actor`-runtime
