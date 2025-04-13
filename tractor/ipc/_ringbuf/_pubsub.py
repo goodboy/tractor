@@ -31,7 +31,8 @@ from dataclasses import dataclass
 import trio
 import tractor
 
-from tractor.ipc import (
+from tractor.ipc._ringbuf import (
+    RBToken,
     RingBufferSendChannel,
     RingBufferReceiveChannel,
     attach_to_ringbuf_sender,
@@ -42,7 +43,8 @@ from tractor.trionics import (
     order_send_channel,
     order_receive_channel
 )
-import tractor.ipc._ringbuf._ringd as ringd
+
+import tractor.linux._fdshare as fdshare
 
 
 log = tractor.log.get_logger(__name__)
@@ -53,9 +55,10 @@ ChannelType = TypeVar('ChannelType')
 
 @dataclass
 class ChannelInfo:
-    name: str
+    token: RBToken
     channel: ChannelType
     cancel_scope: trio.CancelScope
+    teardown: trio.Event
 
 
 class ChannelManager(Generic[ChannelType]):
@@ -88,8 +91,6 @@ class ChannelManager(Generic[ChannelType]):
 
         self._is_closed: bool = True
 
-        self._teardown = trio.Event()
-
     @property
     def closed(self) -> bool:
         return self._is_closed
@@ -100,9 +101,9 @@ class ChannelManager(Generic[ChannelType]):
 
     async def _channel_handler_task(
         self,
-        name: str,
-        must_exist: bool = False,
+        token: RBToken,
         task_status=trio.TASK_STATUS_IGNORED,
+        **kwargs
     ):
         '''
         Open channel resources, add to internal data structures, signal channel
@@ -114,12 +115,16 @@ class ChannelManager(Generic[ChannelType]):
 
         kwargs are proxied to `self._open_channel` acm.
         '''
-        async with self._open_channel(name, must_exist=must_exist) as chan:
+        async with self._open_channel(
+            token,
+            **kwargs
+        ) as chan:
             cancel_scope = trio.CancelScope()
             info = ChannelInfo(
-                name=name,
+                token=token,
                 channel=chan,
-                cancel_scope=cancel_scope
+                cancel_scope=cancel_scope,
+                teardown=trio.Event()
             )
             self._channels.append(info)
 
@@ -131,10 +136,7 @@ class ChannelManager(Generic[ChannelType]):
             with cancel_scope:
                 await self._channel_task(info)
 
-        self._maybe_destroy_channel(name)
-
-        if len(self) == 0:
-            self._teardown.set()
+        self._maybe_destroy_channel(token.shm_name)
 
     def _find_channel(self, name: str) -> tuple[int, ChannelInfo] | None:
         '''
@@ -145,7 +147,7 @@ class ChannelManager(Generic[ChannelType]):
         '''
         for entry in enumerate(self._channels):
             i, info = entry
-            if info.name == name:
+            if info.token.shm_name == name:
                 return entry
 
         return None
@@ -161,9 +163,14 @@ class ChannelManager(Generic[ChannelType]):
         if maybe_entry:
             i, info = maybe_entry
             info.cancel_scope.cancel()
+            info.teardown.set()
             del self._channels[i]
 
-    async def add_channel(self, name: str, must_exist: bool = False):
+    async def add_channel(
+        self,
+        token: RBToken,
+        **kwargs
+    ):
         '''
         Add a new channel to be handled
 
@@ -173,11 +180,11 @@ class ChannelManager(Generic[ChannelType]):
 
         await self._n.start(partial(
             self._channel_handler_task,
-            name,
-            must_exist=must_exist
+            RBToken.from_msg(token),
+            **kwargs
         ))
 
-    def remove_channel(self, name: str):
+    async def remove_channel(self, name: str):
         '''
         Remove a channel and stop its handling
 
@@ -185,7 +192,17 @@ class ChannelManager(Generic[ChannelType]):
         if self.closed:
             raise trio.ClosedResourceError
 
+        maybe_entry = self._find_channel(name)
+        if not maybe_entry:
+            # return
+            raise RuntimeError(
+                f'tried to remove channel {name} but if does not exist'
+            )
+
+        i, info = maybe_entry
         self._maybe_destroy_channel(name)
+
+        await info.teardown.wait()
 
         # if that was last channel reset connect event
         if len(self) == 0:
@@ -225,15 +242,7 @@ class ChannelManager(Generic[ChannelType]):
             if info.channel.closed:
                 continue
 
-            self.remove_channel(info.name)
-
-        try:
-            await self._teardown.wait()
-
-        except trio.Cancelled:
-            # log.exception('close was cancelled')
-            raise
-
+            await self.remove_channel(info.name)
 
         self._is_closed = True
 
@@ -257,16 +266,12 @@ class RingBufferPublisher(trio.abc.SendChannel[bytes]):
         self,
         n: trio.Nursery,
 
-        # new ringbufs created will have this buf_size
-        buf_size: int = 10 * 1024,
-
         # amount of msgs to each ring before switching turns
         msgs_per_turn: int = 1,
 
         # global batch size for all channels
         batch_size: int = 1
     ):
-        self._buf_size = buf_size
         self._batch_size: int = batch_size
         self.msgs_per_turn = msgs_per_turn
 
@@ -331,63 +336,32 @@ class RingBufferPublisher(trio.abc.SendChannel[bytes]):
 
     async def add_channel(
         self,
-        name: str,
-        must_exist: bool = False
+        token: RBToken,
     ):
-        await self._chanmngr.add_channel(name, must_exist=must_exist)
+        await self._chanmngr.add_channel(token)
 
-    def remove_channel(self, name: str):
-        self._chanmngr.remove_channel(name)
+    async def remove_channel(self, name: str):
+        await self._chanmngr.remove_channel(name)
 
     @acm
     async def _open_channel(
 
         self,
-        name: str,
-        must_exist: bool = False
+        token: RBToken
 
     ) -> AsyncContextManager[RingBufferSendChannel]:
-        '''
-        Open a ringbuf through `ringd` and attach as send side
-        '''
-        if must_exist:
-            ringd_fn = ringd.attach_ringbuf
-            kwargs = {}
-
-        else:
-            ringd_fn = ringd.open_ringbuf
-            kwargs = {'buf_size': self._buf_size}
-
-        async with (
-            ringd_fn(
-                name=name,
-                **kwargs
-            ) as token,
-
-            attach_to_ringbuf_sender(
-                token,
-                batch_size=self._batch_size
-            ) as ring,
-        ):
+        async with attach_to_ringbuf_sender(
+            token,
+            batch_size=self._batch_size
+        ) as ring:
             yield ring
-            # try:
-            #     # ensure all messages are sent
-            #     await ring.flush()
-
-            # except Exception as e:
-            #     e.add_note(f'while closing ringbuf send channel {name}')
-            #     log.exception(e)
 
     async def _channel_task(self, info: ChannelInfo) -> None:
         '''
         Wait forever until channel cancellation
 
         '''
-        try:
-            await trio.sleep_forever()
-
-        except trio.Cancelled:
-            ...
+        await trio.sleep_forever()
 
     async def send(self, msg: bytes):
         '''
@@ -441,8 +415,7 @@ class RingBufferPublisher(trio.abc.SendChannel[bytes]):
             log.warning('tried to close RingBufferPublisher but its already closed...')
             return
 
-        with trio.CancelScope(shield=True):
-            await self._chanmngr.close()
+        await self._chanmngr.close()
 
         self._is_closed = True
 
@@ -467,15 +440,10 @@ class RingBufferSubscriber(trio.abc.ReceiveChannel[bytes]):
         self,
         n: trio.Nursery,
 
-        # new ringbufs created will have this buf_size
-        buf_size: int = 10 * 1024,
-
         # if connecting to a publisher that has already sent messages set 
         # to the next expected payload index this subscriber will receive
         start_index: int = 0
     ):
-        self._buf_size = buf_size
-
         self._chanmngr = ChannelManager[RingBufferReceiveChannel](
             n,
             self._open_channel,
@@ -499,40 +467,24 @@ class RingBufferSubscriber(trio.abc.ReceiveChannel[bytes]):
     def get_channel(self, name: str):
         return self._chanmngr[name]
 
-    async def add_channel(self, name: str, must_exist: bool = False):
-        await self._chanmngr.add_channel(name, must_exist=must_exist)
+    async def add_channel(
+        self,
+        token: RBToken
+    ):
+        await self._chanmngr.add_channel(token)
 
-    def remove_channel(self, name: str):
-        self._chanmngr.remove_channel(name)
+    async def remove_channel(self, name: str):
+        await self._chanmngr.remove_channel(name)
 
     @acm
     async def _open_channel(
 
         self,
-        name: str,
-        must_exist: bool = False
+        token: RBToken
 
-    ) -> AsyncContextManager[RingBufferReceiveChannel]:
-        '''
-        Open a ringbuf through `ringd` and attach as receiver side
-        '''
-        if must_exist:
-            ringd_fn = ringd.attach_ringbuf
-            kwargs = {}
-
-        else:
-            ringd_fn = ringd.open_ringbuf
-            kwargs = {'buf_size': self._buf_size}
-
-        async with (
-            ringd_fn(
-                name=name,
-                **kwargs
-            ) as token,
-
-            attach_to_ringbuf_receiver(token) as chan
-        ):
-            yield chan
+    ) -> AsyncContextManager[RingBufferSendChannel]:
+        async with attach_to_ringbuf_receiver(token) as ring:
+            yield ring
 
     async def _channel_task(self, info: ChannelInfo) -> None:
         '''
@@ -582,6 +534,7 @@ class RingBufferSubscriber(trio.abc.ReceiveChannel[bytes]):
         await self._chanmngr.close()
         await self._schan.aclose()
         await self._rchan.aclose()
+
         self._is_closed = True
 
 
@@ -641,89 +594,128 @@ def get_subscriber() -> RingBufferSubscriber:
 
 
 @tractor.context
-async def open_pub_channel(
+async def _add_pub_channel(
     ctx: tractor.Context,
-    ring_name: str,
-    must_exist: bool = False
+    token: RBToken
 ):
     publisher = get_publisher()
-    await publisher.add_channel(
-        ring_name,
-        must_exist=must_exist
-    )
-
     await ctx.started()
+    await publisher.add_channel(token)
 
-    try:
-        await trio.sleep_forever()
 
-    finally:
-        try:
-            publisher.remove_channel(ring_name)
-
-        except trio.ClosedResourceError:
-            ...
+@tractor.context
+async def _remove_pub_channel(
+    ctx: tractor.Context,
+    ring_name: str
+):
+    publisher = get_publisher()
+    await ctx.started()
+    maybe_token = fdshare.maybe_get_fds(ring_name)
+    if maybe_token:
+        await publisher.remove_channel(ring_name)
 
 
 @acm
 async def open_pub_channel_at(
     actor_name: str,
-    ring_name: str,
-    must_exist: bool = False
+    token: RBToken,
+    cleanup: bool = True,
 ):
     async with (
         tractor.find_actor(actor_name) as portal,
+
         portal.open_context(
-            open_pub_channel,
-            ring_name=ring_name,
-            must_exist=must_exist
+            _add_pub_channel,
+            token=token
         ) as (ctx, _)
     ):
+        ...
+
+    try:
         yield
-        await ctx.cancel()
+
+    except trio.Cancelled:
+        log.exception(
+            'open_pub_channel_at got cancelled!\n'
+            f'\tactor_name = {actor_name}\n'
+            f'\ttoken = {token}\n'
+        )
+        raise
+
+    finally:
+        if not cleanup:
+            return
+
+        async with tractor.find_actor(actor_name) as portal:
+            if portal:
+                async with portal.open_context(
+                    _remove_pub_channel,
+                    ring_name=token.shm_name
+                ) as (ctx, _):
+                    ...
 
 
 @tractor.context
-async def open_sub_channel(
+async def _add_sub_channel(
     ctx: tractor.Context,
-    ring_name: str,
-    must_exist: bool = False
+    token: RBToken
 ):
     subscriber = get_subscriber()
-    await subscriber.add_channel(
-        ring_name,
-        must_exist=must_exist
-    )
-
     await ctx.started()
+    await subscriber.add_channel(token)
 
-    try:
-        await trio.sleep_forever()
 
-    finally:
-        try:
-            subscriber.remove_channel(ring_name)
-
-        except trio.ClosedResourceError:
-            ...
+@tractor.context
+async def _remove_sub_channel(
+    ctx: tractor.Context,
+    ring_name: str
+):
+    subscriber = get_subscriber()
+    await ctx.started()
+    maybe_token = fdshare.maybe_get_fds(ring_name)
+    if maybe_token:
+        await subscriber.remove_channel(ring_name)
 
 
 @acm
 async def open_sub_channel_at(
     actor_name: str,
-    ring_name: str,
-    must_exist: bool = False
+    token: RBToken,
+    cleanup: bool = True,
 ):
     async with (
         tractor.find_actor(actor_name) as portal,
+
         portal.open_context(
-            open_sub_channel,
-            ring_name=ring_name,
-            must_exist=must_exist
+            _add_sub_channel,
+            token=token
         ) as (ctx, _)
     ):
+        ...
+
+    try:
         yield
-        await ctx.cancel()
+
+    except trio.Cancelled:
+        log.exception(
+            'open_sub_channel_at got cancelled!\n'
+            f'\tactor_name = {actor_name}\n'
+            f'\ttoken = {token}\n'
+        )
+        raise
+
+    finally:
+        if not cleanup:
+            return
+
+        async with tractor.find_actor(actor_name) as portal:
+            if portal:
+                async with portal.open_context(
+                    _remove_sub_channel,
+                    ring_name=token.shm_name
+                ) as (ctx, _):
+                    ...
+
 
 
 '''
@@ -733,9 +725,6 @@ High level helpers to open publisher & subscriber
 
 @acm
 async def open_ringbuf_publisher(
-    # buf size for created rings
-    buf_size: int = 10 * 1024,
-
     # global batch size for channels
     batch_size: int = 1,
 
@@ -746,9 +735,6 @@ async def open_ringbuf_publisher(
     # causes it to use wrapped payloads which contain the og
     # index
     guarantee_order: bool = False,
-
-    # explicit nursery cancel call on cleanup
-    force_cancel: bool = False,
 
     # on creation, set the `_publisher` global in order to use the provided
     # tractor.context & helper utils for adding and removing new channels from
@@ -764,7 +750,6 @@ async def open_ringbuf_publisher(
         trio.open_nursery(strict_exception_groups=False) as n,
         RingBufferPublisher(
             n,
-            buf_size=buf_size,
             batch_size=batch_size
         ) as publisher
     ):
@@ -777,22 +762,16 @@ async def open_ringbuf_publisher(
         try:
             yield publisher
 
-        finally:
-            if force_cancel:
-                # implicitly cancel any running channel handler task
-                n.cancel_scope.cancel()
+        except trio.Cancelled:
+            with trio.CancelScope(shield=True):
+                await publisher.aclose()
+            raise
 
 
 @acm
 async def open_ringbuf_subscriber(
-    # buf size for created rings
-    buf_size: int = 10 * 1024,
-
     # expect indexed payloads and unwrap them in order
     guarantee_order: bool = False,
-
-    # explicit nursery cancel call on cleanup
-    force_cancel: bool = False,
 
     # on creation, set the `_subscriber` global in order to use the provided
     # tractor.context & helper utils for adding and removing new channels from
@@ -805,10 +784,7 @@ async def open_ringbuf_subscriber(
     '''
     async with (
         trio.open_nursery(strict_exception_groups=False) as n,
-        RingBufferSubscriber(
-            n,
-            buf_size=buf_size
-        ) as subscriber
+        RingBufferSubscriber(n) as subscriber
     ):
         # maybe monkey patch `.receive` to use indexed payloads
         if guarantee_order:
@@ -819,8 +795,10 @@ async def open_ringbuf_subscriber(
             global _subscriber
             set_subscriber(subscriber)
 
-        yield subscriber
+        try:
+            yield subscriber
 
-        if force_cancel:
-            # implicitly cancel any running channel handler task
-            n.cancel_scope.cancel()
+        except trio.Cancelled:
+            with trio.CancelScope(shield=True):
+                await subscriber.aclose()
+            raise
