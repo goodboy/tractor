@@ -242,7 +242,7 @@ class ChannelManager(Generic[ChannelType]):
             if info.channel.closed:
                 continue
 
-            await self.remove_channel(info.name)
+            await self.remove_channel(info.token.shm_name)
 
         self._is_closed = True
 
