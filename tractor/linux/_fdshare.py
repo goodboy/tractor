@@ -21,11 +21,17 @@ https://github.com/python/cpython/blob/275056a7fdcbe36aaac494b4183ae59943a338eb/
 '''
 import os
 import array
+import tempfile
+from pathlib import Path
 from typing import AsyncContextManager
 from contextlib import asynccontextmanager as acm
 
 import trio
+import tractor
 from trio import socket
+
+
+log = tractor.log.get_logger(__name__)
 
 
 class FDSharingError(Exception):
@@ -157,3 +163,126 @@ async def recv_fds(sock_path: str, amount: int) -> tuple:
         )
 
     return tuple(a)
+
+
+'''
+Share FD actor module
+
+Add "tractor.linux._fdshare" to enabled modules on actors to allow sharing of
+FDs with other actors.
+
+Use `share_fds` function to register a set of fds with a name, then other
+actors can use `request_fds_from` function to retrieve the fds.
+
+Use `unshare_fds` to disable sharing of  a set of FDs.
+
+'''
+
+FDType = tuple[int]
+
+_fds: dict[str, FDType] = {}
+
+
+def maybe_get_fds(name: str) -> FDType | None:
+    '''
+    Get registered FDs with a given name or return None
+
+    '''
+    return _fds.get(name, None)
+
+
+def get_fds(name: str) -> FDType:
+    '''
+    Get registered FDs with a given name or raise
+    '''
+    fds = maybe_get_fds(name)
+
+    if not fds:
+        raise RuntimeError(f'No FDs with name {name} found!')
+
+    return fds
+
+
+def share_fds(
+    name: str,
+    fds: tuple[int],
+) -> None:
+    '''
+    Register a set of fds to be shared under a given name.
+
+    '''
+    maybe_fds = maybe_get_fds(name)
+    if maybe_fds:
+        raise RuntimeError(f'share FDs: {maybe_fds} already tied to name {name}')
+
+    _fds[name] = fds
+
+
+def unshare_fds(name: str) -> None:
+    '''
+    Unregister a set of fds to disable sharing them.
+
+    '''
+    get_fds(name)  # raise if not exists
+
+    del _fds[name]
+
+
+@tractor.context
+async def _pass_fds(
+    ctx: tractor.Context,
+    name: str,
+    sock_path: str
+) -> None:
+    '''
+    Endpoint to request a set of FDs from current actor, will use `ctx.started`
+    to send original FDs, then `send_fds` will block until remote side finishes
+    the `recv_fds` call.
+
+    '''
+    # get fds or raise error
+    fds = get_fds(name)
+
+    # start fd passing context using socket on `sock_path`
+    async with send_fds(fds, sock_path):
+        # send original fds through ctx.started
+        await ctx.started(fds)
+
+
+async def request_fds_from(
+    actor_name: str,
+    fds_name: str
+) -> FDType:
+    '''
+    Use this function to retreive shared FDs from `actor_name`.
+
+    '''
+    this_actor = tractor.current_actor()
+
+    # create a temporary path for the UDS sock
+    sock_path = str(
+        Path(tempfile.gettempdir())
+        /
+        f'{fds_name}-from-{actor_name}-to-{this_actor.name}.sock'
+    )
+
+    async with (
+        tractor.find_actor(actor_name) as portal,
+
+        portal.open_context(
+            _pass_fds,
+            name=fds_name,
+            sock_path=sock_path
+        ) as (ctx, fds_info),
+    ):
+        # get original FDs
+        og_fds = fds_info
+
+        # retrieve copies of FDs
+        fds = await recv_fds(sock_path, len(og_fds))
+
+        log.info(
+            f'{this_actor.name} received fds: {og_fds} -> {fds}'
+        )
+
+        return fds

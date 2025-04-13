@@ -35,16 +35,22 @@ from msgspec import (
     to_builtins
 )
 
-from ...log import get_logger
-from ..._exceptions import (
+from tractor.log import get_logger
+from tractor._exceptions import (
     InternalError
 )
-from .._mp_bs import disable_mantracker
-from ...linux.eventfd import (
+from tractor.ipc._mp_bs import disable_mantracker
+from tractor.linux._fdshare import (
+    share_fds,
+    unshare_fds,
+    request_fds_from
+)
+from tractor.linux.eventfd import (
     open_eventfd,
     EFDReadCancelled,
     EventFD
 )
+from tractor._state import current_actor
 
 
 log = get_logger(__name__)
@@ -57,17 +63,19 @@ _DEFAULT_RB_SIZE = 10 * 1024
 
 class RBToken(Struct, frozen=True):
     '''
-    RingBuffer token contains necesary info to open the three
-    eventfds and the shared memory
+    RingBuffer token contains necesary info to open resources of a ringbuf,
+    even in the case that ringbuf was not allocated by current actor.
 
     '''
+    owner: str  # if owner != `current_actor().name` we must use fdshare
+
     shm_name: str
 
     write_eventfd: int  # used to signal writer ptr advance
     wrap_eventfd: int  # used to signal reader ready after wrap around
     eof_eventfd: int  # used to signal writer closed
 
-    buf_size: int
+    buf_size: int  # size in bytes of underlying shared memory buffer
 
     def as_msg(self):
         return to_builtins(self)
@@ -81,10 +89,6 @@ class RBToken(Struct, frozen=True):
 
     @property
     def fds(self) -> tuple[int, int, int]:
-        '''
-        Useful for `pass_fds` params
-
-        '''
         return (
             self.write_eventfd,
             self.wrap_eventfd,
@@ -92,38 +96,137 @@ class RBToken(Struct, frozen=True):
         )
 
 
-@cm
-def open_ringbuf(
+def alloc_ringbuf(
     shm_name: str,
     buf_size: int = _DEFAULT_RB_SIZE,
-) -> ContextManager[RBToken]:
+) -> tuple[SharedMemory, RBToken]:
     '''
-    Handle resources for a ringbuf (shm, eventfd), yield `RBToken` to
-    be used with `attach_to_ringbuf_sender` and `attach_to_ringbuf_receiver`
-
+    Allocate OS resources for a ringbuf.
     '''
     shm = SharedMemory(
         name=shm_name,
         size=buf_size,
         create=True
     )
-    try:
-        token = RBToken(
-            shm_name=shm_name,
-            write_eventfd=open_eventfd(),
-            wrap_eventfd=open_eventfd(),
-            eof_eventfd=open_eventfd(),
-            buf_size=buf_size
-        )
-        yield token
-
-    finally:
-        shm.unlink()
+    token = RBToken(
+        owner=current_actor().name,
+        shm_name=shm_name,
+        write_eventfd=open_eventfd(),
+        wrap_eventfd=open_eventfd(),
+        eof_eventfd=open_eventfd(),
+        buf_size=buf_size
+    )
+    # register fds for sharing
+    share_fds(
+        shm_name,
+        token.fds,
+    )
+    return shm, token
 
 
 @cm
-def open_ringbuf_pair(
-    name: str,
+def open_ringbuf_sync(
+    shm_name: str,
+    buf_size: int = _DEFAULT_RB_SIZE,
+) -> ContextManager[RBToken]:
+    '''
+    Handle resources for a ringbuf (shm, eventfd), yield `RBToken` to
+    be used with `attach_to_ringbuf_sender` and `attach_to_ringbuf_receiver`,
+    post yield maybe unshare fds and unlink shared memory
+
+    '''
+    shm: SharedMemory | None = None
+    token: RBToken | None = None
+    try:
+        shm, token = alloc_ringbuf(shm_name, buf_size=buf_size)
+        yield token
+
+    finally:
+        if token:
+            unshare_fds(shm_name)
+
+        if shm:
+            shm.unlink()
+
+@acm
+async def open_ringbuf(
+    shm_name: str,
+    buf_size: int = _DEFAULT_RB_SIZE,
+) -> AsyncContextManager[RBToken]:
+    '''
+    Helper to use `open_ringbuf_sync` inside an async with block.
+
+    '''
+    with open_ringbuf_sync(
+        shm_name,
+        buf_size=buf_size
+    ) as token:
+        yield token
+
+
+@cm
+def open_ringbufs_sync(
+    shm_names: list[str],
+    buf_sizes: int | list[str] = _DEFAULT_RB_SIZE,
+) -> ContextManager[tuple[RBToken]]:
+    '''
+    Handle resources for multiple ringbufs at once.
+
+    '''
+    # maybe convert single int into list
+    if isinstance(buf_sizes, int):
+        buf_size = [buf_sizes] * len(shm_names)
+
+    # ensure len(shm_names) == len(buf_sizes)
+    if (
+        isinstance(buf_sizes, list)
+        and
+        len(buf_sizes) != len(shm_names)
+    ):
+        raise ValueError(
+            'Expected buf_size list to be same length as shm_names'
+        )
+
+    # allocate resources
+    rings: list[tuple[SharedMemory, RBToken]] = [
+        alloc_ringbuf(shm_name, buf_size=buf_size)
+        for shm_name, buf_size in zip(shm_names, buf_size)
+    ]
+
+    try:
+        yield tuple([token for _, token in rings])
+
+    finally:
+        # attempt fd unshare and shm unlink for each
+        for shm, token in rings:
+            try:
+                unshare_fds(token.shm_name)
+
+            except RuntimeError:
+                log.exception(f'while unsharing fds of {token}')
+
+            shm.unlink()
+
+
+@acm
+async def open_ringbufs(
+    shm_names: list[str],
+    buf_sizes: int | list[str] = _DEFAULT_RB_SIZE,
+) -> AsyncContextManager[tuple[RBToken]]:
+    '''
+    Helper to use `open_ringbufs_sync` inside an async with block.
+
+    '''
+    with open_ringbufs_sync(
+        shm_names,
+        buf_sizes=buf_sizes
+    ) as tokens:
+        yield tokens
+
+
+@cm
+def open_ringbuf_pair_sync(
+    shm_name: str,
     buf_size: int = _DEFAULT_RB_SIZE
 ) -> ContextManager[tuple(RBToken, RBToken)]:
     '''
@@ -131,18 +234,30 @@ def open_ringbuf_pair(
     bidirectional messaging.
 
     '''
-    with (
-        open_ringbuf(
-            name + '.send',
-            buf_size=buf_size
-        ) as send_token,
+    with open_ringbufs_sync(
+        [
+            f'{shm_name}.send',
+            f'{shm_name}.recv'
+        ],
+        buf_sizes=buf_size
+    ) as tokens:
+        yield tokens
 
-        open_ringbuf(
-            name + '.recv',
-            buf_size=buf_size
-        ) as recv_token
-    ):
-        yield send_token, recv_token
+
+@acm
+async def open_ringbuf_pair(
+    shm_name: str,
+    buf_size: int = _DEFAULT_RB_SIZE
+) -> AsyncContextManager[tuple[RBToken, RBToken]]:
+    '''
+    Helper to use `open_ringbuf_pair_sync` inside an async with block.
+
+    '''
+    with open_ringbuf_pair_sync(
+        shm_name,
+        buf_size=buf_size
+    ) as tokens:
+        yield tokens
 
 
 Buffer = bytes | bytearray | memoryview
@@ -640,6 +755,29 @@ class RingBufferReceiveChannel(trio.abc.ReceiveChannel[bytes]):
         return self
 
 
+async def _maybe_obtain_shared_resources(token: RBToken):
+    token = RBToken.from_msg(token)
+
+    # maybe token wasn't allocated by current actor
+    if token.owner != current_actor().name:
+        # use fdshare module to retrieve a copy of the FDs
+        fds = await request_fds_from(
+            token.owner,
+            token.shm_name
+        )
+        write, wrap, eof = fds
+        # rebuild token using FDs copies
+        token = RBToken(
+            owner=token.owner,
+            shm_name=token.shm_name,
+            write_eventfd=write,
+            wrap_eventfd=wrap,
+            eof_eventfd=eof,
+            buf_size=token.buf_size
+        )
+
+    return token
+
 @acm
 async def attach_to_ringbuf_receiver(
 
@@ -651,8 +789,13 @@ async def attach_to_ringbuf_receiver(
     Attach a RingBufferReceiveChannel from a previously opened
     RBToken.
 
+    Requires tractor runtime to be up in order to support opening a ringbuf
+    originally allocated by a different actor.
+
     Launches `receiver._eof_monitor_task` in a `trio.Nursery`.
     '''
+    token = await _maybe_obtain_shared_resources(token)
+
     async with (
         trio.open_nursery(strict_exception_groups=False) as n,
         RingBufferReceiveChannel(
@@ -676,7 +819,12 @@ async def attach_to_ringbuf_sender(
     Attach a RingBufferSendChannel from a previously opened
     RBToken.
 
+    Requires tractor runtime to be up in order to support opening a ringbuf
+    originally allocated by a different actor.
+
     '''
+    token = await _maybe_obtain_shared_resources(token)
+
     async with RingBufferSendChannel(
         token,
         batch_size=batch_size,

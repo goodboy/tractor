@@ -17,26 +17,7 @@
 A modular IPC layer supporting the power of cross-process SC!
 
 '''
-import platform
-
 from ._chan import (
     _connect_chan as _connect_chan,
     Channel as Channel
 )
-
-if platform.system() == 'Linux':
-    from ._ringbuf import (
-        RBToken as RBToken,
-
-        open_ringbuf as open_ringbuf,
-        open_ringbuf_pair as open_ringbuf_pair,
-
-        RingBufferSendChannel as RingBufferSendChannel,
-        attach_to_ringbuf_sender as attach_to_ringbuf_sender,
-
-        RingBufferReceiveChannel as RingBufferReceiveChannel,
-        attach_to_ringbuf_receiver as attach_to_ringbuf_receiver,
-
-        RingBufferChannel as RingBufferChannel,
-        attach_to_ringbuf_channel as attach_to_ringbuf_channel,
-    )

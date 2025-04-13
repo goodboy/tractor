@@ -7,6 +7,7 @@ import pytest
 import tractor
 from tractor.ipc._ringbuf import (
     open_ringbuf,
+    open_ringbuf_pair,
     attach_to_ringbuf_receiver,
     attach_to_ringbuf_sender,
     attach_to_ringbuf_channel,
@@ -68,7 +69,7 @@ async def child_write_shm(
     msg_amount: int,
     rand_min: int,
     rand_max: int,
-    token: RBToken,
+    buf_size: int
 ) -> None:
     '''
     Sub-actor used in `test_ringbuf`
@@ -85,9 +86,12 @@ async def child_write_shm(
         rand_min=rand_min,
         rand_max=rand_max,
     )
-    await ctx.started()
-    print('writer started')
-    async with attach_to_ringbuf_sender(token, cleanup=False) as sender:
+    async with (
+        open_ringbuf('test_ringbuf', buf_size=buf_size) as token,
+        attach_to_ringbuf_sender(token) as sender
+    ):
+        await ctx.started(token)
+        print('writer started')
         for msg in rng:
             await sender.send(msg)
 
@@ -133,55 +137,53 @@ def test_ringbuf(
 
     '''
     async def main():
-        with open_ringbuf(
-            'test_ringbuf',
-            buf_size=buf_size
-        ) as token:
-            proc_kwargs = {'pass_fds': token.fds}
+        async with tractor.open_nursery() as an:
+            send_p = await an.start_actor(
+                'ring_sender',
+                enable_modules=[
+                    __name__,
+                    'tractor.linux._fdshare'
+                ],
+            )
+            recv_p = await an.start_actor(
+                'ring_receiver',
+                enable_modules=[
+                    __name__,
+                    'tractor.linux._fdshare'
+                ],
+            )
+            async with (
+                send_p.open_context(
+                    child_write_shm,
+                    msg_amount=msg_amount,
+                    rand_min=rand_min,
+                    rand_max=rand_max,
+                    buf_size=buf_size
+                ) as (sctx, token),
 
-            async with tractor.open_nursery() as an:
-                send_p = await an.start_actor(
-                    'ring_sender',
-                    enable_modules=[__name__],
-                    proc_kwargs=proc_kwargs
-                )
-                recv_p = await an.start_actor(
-                    'ring_receiver',
-                    enable_modules=[__name__],
-                    proc_kwargs=proc_kwargs
-                )
-                async with (
-                    send_p.open_context(
-                        child_write_shm,
-                        token=token,
-                        msg_amount=msg_amount,
-                        rand_min=rand_min,
-                        rand_max=rand_max,
-                    ) as (sctx, _),
+                recv_p.open_context(
+                    child_read_shm,
+                    token=token,
+                ) as (rctx, _),
+            ):
+                sent_hash = await sctx.result()
+                recvd_hash = await rctx.result()
 
-                    recv_p.open_context(
-                        child_read_shm,
-                        token=token,
-                    ) as (rctx, _),
-                ):
-                    sent_hash = await sctx.result()
-                    recvd_hash = await rctx.result()
+                assert sent_hash == recvd_hash
 
-                    assert sent_hash == recvd_hash
-
-                await send_p.cancel_actor()
-                await recv_p.cancel_actor()
+            await an.cancel()
 
     trio.run(main)
 
 
 @tractor.context
-async def child_blocked_receiver(
-    ctx: tractor.Context,
-    token: RBToken
-):
-    async with attach_to_ringbuf_receiver(token) as receiver:
-        await ctx.started()
+async def child_blocked_receiver(ctx: tractor.Context):
+    async with (
+        open_ringbuf('test_ring_cancel_reader') as token,
+
+        attach_to_ringbuf_receiver(token) as receiver
+    ):
+        await ctx.started(token)
         await receiver.receive_some()
 
 
@@ -192,26 +194,23 @@ def test_reader_cancel():
 
     '''
     async def main():
-        with open_ringbuf('test_ring_cancel_reader') as token:
+        async with tractor.open_nursery() as an:
+            recv_p = await an.start_actor(
+                'ring_blocked_receiver',
+                enable_modules=[
+                    __name__,
+                    'tractor.linux._fdshare'
+                ],
+            )
             async with (
-                tractor.open_nursery() as an,
-                attach_to_ringbuf_sender(token) as _sender,
+                recv_p.open_context(
+                    child_blocked_receiver,
+                ) as (sctx, token),
+
+                attach_to_ringbuf_sender(token),
             ):
-                recv_p = await an.start_actor(
-                    'ring_blocked_receiver',
-                    enable_modules=[__name__],
-                    proc_kwargs={
-                        'pass_fds': token.fds
-                    }
-                )
-                async with (
-                    recv_p.open_context(
-                        child_blocked_receiver,
-                        token=token
-                    ) as (sctx, _sent),
-                ):
-                    await trio.sleep(1)
-                    await an.cancel()
+                await trio.sleep(.1)
+                await an.cancel()
 
 
     with pytest.raises(tractor._exceptions.ContextCancelled):
@@ -219,12 +218,16 @@ def test_reader_cancel():
 
 
 @tractor.context
-async def child_blocked_sender(
-    ctx: tractor.Context,
-    token: RBToken
-):
-    async with attach_to_ringbuf_sender(token) as sender:
-        await ctx.started()
+async def child_blocked_sender(ctx: tractor.Context):
+    async with (
+        open_ringbuf(
+            'test_ring_cancel_sender',
+            buf_size=1
+        ) as token,
+
+        attach_to_ringbuf_sender(token) as sender
+    ):
+        await ctx.started(token)
         await sender.send_all(b'this will wrap')
 
 
@@ -235,26 +238,23 @@ def test_sender_cancel():
 
     '''
     async def main():
-        with open_ringbuf(
-            'test_ring_cancel_sender',
-            buf_size=1
-        ) as token:
-            async with tractor.open_nursery() as an:
-                recv_p = await an.start_actor(
-                    'ring_blocked_sender',
-                    enable_modules=[__name__],
-                    proc_kwargs={
-                        'pass_fds': token.fds
-                    }
-                )
-                async with (
-                    recv_p.open_context(
-                        child_blocked_sender,
-                        token=token
-                    ) as (sctx, _sent),
-                ):
-                    await trio.sleep(1)
-                    await an.cancel()
+        async with tractor.open_nursery() as an:
+            recv_p = await an.start_actor(
+                'ring_blocked_sender',
+                enable_modules=[
+                    __name__,
+                    'tractor.linux._fdshare'
+                ],
+            )
+            async with (
+                recv_p.open_context(
+                    child_blocked_sender,
+                ) as (sctx, token),
+
+                attach_to_ringbuf_receiver(token)
+            ):
+                await trio.sleep(.1)
+                await an.cancel()
 
 
     with pytest.raises(tractor._exceptions.ContextCancelled):
@@ -274,24 +274,28 @@ def test_receiver_max_bytes():
     msgs = []
 
     async def main():
-        with open_ringbuf(
-            'test_ringbuf_max_bytes',
-            buf_size=10
-        ) as token:
-            async with (
-                trio.open_nursery() as n,
-                attach_to_ringbuf_sender(token, cleanup=False) as sender,
-                attach_to_ringbuf_receiver(token, cleanup=False) as receiver
-            ):
-                async def _send_and_close():
-                    await sender.send_all(msg)
-                    await sender.aclose()
+        async with (
+            tractor.open_nursery(),
+            open_ringbuf(
+                'test_ringbuf_max_bytes',
+                buf_size=10
+            ) as token,
 
-                n.start_soon(_send_and_close)
-                while len(msgs) < len(msg):
-                    msg_part = await receiver.receive_some(max_bytes=1)
-                    assert len(msg_part) == 1
-                    msgs.append(msg_part)
+            trio.open_nursery() as n,
+
+            attach_to_ringbuf_sender(token, cleanup=False) as sender,
+
+            attach_to_ringbuf_receiver(token, cleanup=False) as receiver
+        ):
+            async def _send_and_close():
+                await sender.send_all(msg)
+                await sender.aclose()
+
+            n.start_soon(_send_and_close)
+            while len(msgs) < len(msg):
+                msg_part = await receiver.receive_some(max_bytes=1)
+                assert len(msg_part) == 1
+                msgs.append(msg_part)
 
     trio.run(main)
     assert msg == b''.join(msgs)
@@ -329,42 +333,46 @@ def test_channel():
     msg_amount_min = 100
     msg_amount_max = 1000
 
+    mods = [
+        __name__,
+        'tractor.linux._fdshare'
+    ]
+
     async def main():
-        with tractor.ipc.open_ringbuf_pair(
-            'test_ringbuf_transport'
-        ) as (send_token, recv_token):
+        async with (
+            tractor.open_nursery(enable_modules=mods) as an,
+
+            open_ringbuf_pair(
+                'test_ringbuf_transport'
+            ) as (send_token, recv_token),
+
+            attach_to_ringbuf_channel(send_token, recv_token) as chan,
+        ):
+            sender = await an.start_actor(
+                'test_ringbuf_transport_sender',
+                enable_modules=mods,
+            )
             async with (
-                attach_to_ringbuf_channel(send_token, recv_token) as chan,
-                tractor.open_nursery() as an
+                sender.open_context(
+                    child_channel_sender,
+                    msg_amount_min=msg_amount_min,
+                    msg_amount_max=msg_amount_max,
+                    token_in=recv_token,
+                    token_out=send_token
+                ) as (ctx, _),
             ):
-                sender = await an.start_actor(
-                    'test_ringbuf_transport_sender',
-                    enable_modules=[__name__],
-                    proc_kwargs={
-                        'pass_fds': send_token.fds + recv_token.fds
-                    }
-                )
-                async with (
-                    sender.open_context(
-                        child_channel_sender,
-                        msg_amount_min=msg_amount_min,
-                        msg_amount_max=msg_amount_max,
-                        token_in=recv_token,
-                        token_out=send_token
-                    ) as (ctx, _),
-                ):
-                    recvd_hash = hashlib.sha256()
-                    async for msg in chan:
-                        if msg == b'bye':
-                            await chan.send(b'bye')
-                            break
+                recvd_hash = hashlib.sha256()
+                async for msg in chan:
+                    if msg == b'bye':
+                        await chan.send(b'bye')
+                        break
 
-                        recvd_hash.update(msg)
+                    recvd_hash.update(msg)
 
-                    sent_hash = await ctx.result()
+                sent_hash = await ctx.result()
 
-                    assert recvd_hash.hexdigest() == sent_hash
+                assert recvd_hash.hexdigest() == sent_hash
 
-                await an.cancel()
+            await an.cancel()
 
     trio.run(main)
