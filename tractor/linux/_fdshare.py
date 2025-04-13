@@ -211,6 +211,13 @@ def share_fds(
     Register a set of fds to be shared under a given name.
 
     '''
+    this_actor = tractor.current_actor()
+    if __name__ not in this_actor.enable_modules:
+        raise RuntimeError(
+            f'Tried to share FDs {fds} with name {name}, but '
+            f'module {__name__} is not enabled in actor {this_actor.name}!'
+        )
+
     maybe_fds = maybe_get_fds(name)
     if maybe_fds:
         raise RuntimeError(f'share FDs: {maybe_fds} already tied to name {name}')
