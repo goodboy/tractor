@@ -70,7 +70,8 @@ async def maybe_open_nursery(
         yield nursery
     else:
         async with lib.open_nursery(**kwargs) as nursery:
-            nursery.cancel_scope.shield = shield
+            if lib == trio:
+                nursery.cancel_scope.shield = shield
             yield nursery
 
 
