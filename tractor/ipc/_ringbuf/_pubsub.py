@@ -635,7 +635,7 @@ async def open_pub_channel_at(
         yield
 
     except trio.Cancelled:
-        log.exception(
+        log.warning(
             'open_pub_channel_at got cancelled!\n'
             f'\tactor_name = {actor_name}\n'
             f'\ttoken = {token}\n'
@@ -697,7 +697,7 @@ async def open_sub_channel_at(
         yield
 
     except trio.Cancelled:
-        log.exception(
+        log.warning(
             'open_sub_channel_at got cancelled!\n'
             f'\tactor_name = {actor_name}\n'
             f'\ttoken = {token}\n'
