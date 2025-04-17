@@ -22,6 +22,7 @@ https://github.com/python/cpython/blob/275056a7fdcbe36aaac494b4183ae59943a338eb/
 import os
 import array
 import tempfile
+from uuid import uuid4
 from pathlib import Path
 from typing import AsyncContextManager
 from contextlib import asynccontextmanager as acm
@@ -272,6 +273,26 @@ async def request_fds_from(
         /
         f'{fds_name}-from-{actor_name}-to-{this_actor.name}.sock'
     )
+
+    # having a socket path length > 100 aprox can cause:
+    # OSError: AF_UNIX path too long
+    # https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/sys_un.h.html#tag_13_67_04
+
+    # attempt sock path creation with smaller names
+    if len(sock_path) > 100:
+        sock_path = str(
+            Path(tempfile.gettempdir())
+            /
+            f'{fds_name}-to-{this_actor.name}.sock'
+        )
+
+        if len(sock_path) > 100:
+            # just use uuid4
+            sock_path = str(
+                Path(tempfile.gettempdir())
+                /
+                f'pass-fds-{uuid4()}.sock'
+            )
 
     async with (
         tractor.find_actor(actor_name) as portal,
