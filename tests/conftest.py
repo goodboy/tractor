@@ -6,21 +6,22 @@ from __future__ import annotations
 import sys
 import subprocess
 import os
-import random
 import signal
 import platform
 import time
 
 import pytest
-import tractor
 from tractor._testing import (
     examples_dir as examples_dir,
     tractor_test as tractor_test,
     expect_ctxc as expect_ctxc,
 )
 
-# TODO: include wtv plugin(s) we build in `._testing.pytest`?
-pytest_plugins = ['pytester']
+pytest_plugins: list[str] = [
+    'pytester',
+    'tractor._testing.pytest',
+]
+
 
 # Sending signal.SIGINT on subprocess fails on windows. Use CTRL_* alternatives
 if platform.system() == 'Windows':
@@ -48,6 +49,9 @@ no_windows = pytest.mark.skipif(
 def pytest_addoption(
     parser: pytest.Parser,
 ):
+    # ?TODO? should this be exposed from our `._testing.pytest`
+    # plugin or should we make it more explicit with `--tl` for
+    # tractor logging like we do in other client projects?
     parser.addoption(
         "--ll",
         action="store",
@@ -55,102 +59,15 @@ def pytest_addoption(
         default='ERROR', help="logging level to set when testing"
     )
 
-    parser.addoption(
-        "--spawn-backend",
-        action="store",
-        dest='spawn_backend',
-        default='trio',
-        help="Processing spawning backend to use for test run",
-    )
-
-    parser.addoption(
-        "--tpdb",
-        "--debug-mode",
-        action="store_true",
-        dest='tractor_debug_mode',
-        # default=False,
-        help=(
-            'Enable a flag that can be used by tests to to set the '
-            '`debug_mode: bool` for engaging the internal '
-            'multi-proc debugger sys.'
-        ),
-    )
-
-    # provide which IPC transport protocols opting-in test suites
-    # should accumulatively run against.
-    parser.addoption(
-        "--tpt-proto",
-        nargs='+',  # accumulate-multiple-args
-        action="store",
-        dest='tpt_protos',
-        default=['tcp'],
-        help="Transport protocol to use under the `tractor.ipc.Channel`",
-    )
-
-
-def pytest_configure(config):
-    backend = config.option.spawn_backend
-    tractor._spawn.try_set_start_method(backend)
-
-
-@pytest.fixture(scope='session')
-def debug_mode(request) -> bool:
-    debug_mode: bool = request.config.option.tractor_debug_mode
-    # if debug_mode:
-    #     breakpoint()
-    return debug_mode
-
 
 @pytest.fixture(scope='session', autouse=True)
 def loglevel(request):
+    import tractor
     orig = tractor.log._default_loglevel
     level = tractor.log._default_loglevel = request.config.option.loglevel
     tractor.log.get_console_log(level)
     yield level
     tractor.log._default_loglevel = orig
-
-
-@pytest.fixture(scope='session')
-def spawn_backend(request) -> str:
-    return request.config.option.spawn_backend
-
-
-@pytest.fixture(scope='session')
-def tpt_protos(request) -> list[str]:
-
-    # allow quoting on CLI
-    proto_keys: list[str] = [
-        proto_key.replace('"', '').replace("'", "")
-        for proto_key in request.config.option.tpt_protos
-    ]
-
-    # ?TODO, eventually support multiple protos per test-sesh?
-    if len(proto_keys) > 1:
-        pytest.fail(
-            'We only support one `--tpt-proto <key>` atm!\n'
-        )
-
-    # XXX ensure we support the protocol by name via lookup!
-    for proto_key in proto_keys:
-        addr_type = tractor._addr._address_types[proto_key]
-        assert addr_type.proto_key == proto_key
-
-    yield proto_keys
-
-
-@pytest.fixture(
-    scope='session',
-    autouse=True,
-)
-def tpt_proto(
-    tpt_protos: list[str],
-) -> str:
-    proto_key: str = tpt_protos[0]
-    from tractor import _state
-    if _state._def_tpt_proto != proto_key:
-        _state._def_tpt_proto = proto_key
-    # breakpoint()
-    yield proto_key
 
 
 _ci_env: bool = os.environ.get('CI', False)
@@ -163,80 +80,6 @@ def ci_env() -> bool:
 
     '''
     return _ci_env
-
-
-# TODO: also move this to `._testing` for now?
-# -[ ] possibly generalize and re-use for multi-tree spawning
-#    along with the new stuff for multi-addrs?
-#
-# choose random port at import time
-_rando_port: str = random.randint(1000, 9999)
-
-
-@pytest.fixture(scope='session')
-def reg_addr(
-    tpt_proto: str,
-) -> tuple[str, int|str]:
-
-    # globally override the runtime to the per-test-session-dynamic
-    # addr so that all tests never conflict with any other actor
-    # tree using the default.
-    from tractor import (
-        _addr,
-    )
-    addr_type = _addr._address_types[tpt_proto]
-    def_reg_addr: tuple[str, int] = _addr._default_lo_addrs[tpt_proto]
-
-    testrun_reg_addr: tuple[str, int]
-    match tpt_proto:
-        case 'tcp':
-            testrun_reg_addr = (
-                addr_type.def_bindspace,
-                _rando_port,
-            )
-
-        # NOTE, file-name uniqueness (no-collisions) will be based on
-        # the runtime-directory and root (pytest-proc's) pid.
-        case 'uds':
-            testrun_reg_addr = addr_type.get_random().unwrap()
-
-    assert def_reg_addr != testrun_reg_addr
-    return testrun_reg_addr
-
-
-def pytest_generate_tests(metafunc):
-    spawn_backend: str = metafunc.config.option.spawn_backend
-
-    if not spawn_backend:
-        # XXX some weird windows bug with `pytest`?
-        spawn_backend = 'trio'
-
-    # TODO: maybe just use the literal `._spawn.SpawnMethodKey`?
-    assert spawn_backend in (
-        'mp_spawn',
-        'mp_forkserver',
-        'trio',
-    )
-
-    # NOTE: used-to-be-used-to dyanmically parametrize tests for when
-    # you just passed --spawn-backend=`mp` on the cli, but now we expect
-    # that cli input to be manually specified, BUT, maybe we'll do
-    # something like this again in the future?
-    if 'start_method' in metafunc.fixturenames:
-        metafunc.parametrize(
-            "start_method",
-            [spawn_backend],
-            scope='module',
-        )
-
-    # TODO, parametrize any `tpt_proto: str` declaring tests!
-    # proto_tpts: list[str] = metafunc.config.option.proto_tpts
-    # if 'tpt_proto' in metafunc.fixturenames:
-    #     metafunc.parametrize(
-    #         'tpt_proto',
-    #         proto_tpts,  # TODO, double check this list usage!
-    #         scope='module',
-    #     )
 
 
 def sig_prog(
