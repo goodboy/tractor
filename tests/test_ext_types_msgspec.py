@@ -759,37 +759,37 @@ Create a codec which will work for:
 '''
 
 
-class TestBytesClass(Struct, tag=True):
+class BytesTestClass(Struct, tag=True):
     raw: bytes
 
     def encode(self) -> bytes:
         return self.raw
 
     @classmethod
-    def from_bytes(self, raw: bytes) -> TestBytesClass:
-        return TestBytesClass(raw=raw)
+    def from_bytes(self, raw: bytes) -> BytesTestClass:
+        return BytesTestClass(raw=raw)
 
 
-class TestStrClass(Struct, tag=True):
+class StrTestClass(Struct, tag=True):
     s: str
 
     def encode(self) -> str:
         return self.s
 
     @classmethod
-    def from_str(self, s: str) -> TestStrClass:
-        return TestStrClass(s=s)
+    def from_str(self, s: str) -> StrTestClass:
+        return StrTestClass(s=s)
 
 
-class TestIntClass(Struct, tag=True):
+class IntTestClass(Struct, tag=True):
     num: int
 
     def encode(self) -> int:
         return self.num
 
     @classmethod
-    def from_int(self, num: int) -> TestIntClass:
-        return TestIntClass(num=num)
+    def from_int(self, num: int) -> IntTestClass:
+        return IntTestClass(num=num)
 
 
 builtins = tuple((
@@ -798,7 +798,7 @@ builtins = tuple((
     if builtin is not list
 ))
 
-TestClasses = (TestBytesClass, TestStrClass, TestIntClass)
+TestClasses = (BytesTestClass, StrTestClass, IntTestClass)
 
 
 TestSpec = (
@@ -846,13 +846,13 @@ def test_multi_custom_codec():
         0xdeadbeef,
         .42069,
         b'deadbeef',
-        TestBytesClass(raw=b'deadbeef'),
-        TestStrClass(s='deadbeef'),
-        TestIntClass(num=0xdeadbeef),
+        BytesTestClass(raw=b'deadbeef'),
+        StrTestClass(s='deadbeef'),
+        IntTestClass(num=0xdeadbeef),
         [
-            TestBytesClass(raw=b'deadbeef'),
-            TestStrClass(s='deadbeef'),
-            TestIntClass(num=0xdeadbeef),
+            BytesTestClass(raw=b'deadbeef'),
+            StrTestClass(s='deadbeef'),
+            IntTestClass(num=0xdeadbeef),
         ]
     ]
 
