@@ -163,10 +163,17 @@ class EventFD:
         async with self._read_lock:
             self._cscope = trio.CancelScope()
             with self._cscope:
-                return await trio.to_thread.run_sync(
-                    read_eventfd, self._fd,
-                    abandon_on_cancel=True
-                )
+                try:
+                    return await trio.to_thread.run_sync(
+                        read_eventfd, self._fd,
+                        abandon_on_cancel=True
+                    )
+
+                except OSError as e:
+                    if e.errno != errno.EBADF:
+                        raise
+
+                    raise trio.BrokenResourceError
 
             if self._cscope.cancelled_caught:
                 raise EFDReadCancelled
