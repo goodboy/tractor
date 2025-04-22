@@ -835,6 +835,14 @@ class TypeCodec:
         self._decode_fn: str = decode_fn
         self._wire_type: Type = wire_type
 
+    def __repr__(self) -> str:
+        return (
+            f'{type(self).__name__}('
+            f'{self._encode_fn}, '
+            f'{self._decode_fn}) '
+            f'-> {self._wire_type}'
+        )
+
     @property
     def encode_fn(self) -> str:
         return self._encode_fn
@@ -855,7 +863,7 @@ class TypeCodec:
         )
 
     def encode(self, obj: any) -> any:
-        return getattr(obj, self._encode_fn)(obj)
+        return getattr(obj, self._encode_fn)()
 
     def decode(self, cls: Type, raw: any) -> any:
         return getattr(cls, self._decode_fn)(raw)
@@ -923,13 +931,6 @@ def mk_spec_set(
                     for t in spec_info.types
                 ))
 
-            case (
-                SetType() |
-                ListType() |
-                TupleType()
-            ):
-                return set((spec_info.item_type, ))
-
             case _:
                 return set((spec, ))
 
@@ -944,14 +945,18 @@ def mk_codec_map_from_spec(
     Generate a map of spec type -> supported codec
 
     '''
-
     spec: set[Type] = mk_spec_set(spec)
 
     spec_codecs: dict[Type, TypeCodec] = {}
     for t in spec:
-        for codec in codecs.values():
+        if t in spec_codecs:
+            continue
+
+        for codec_type in (int, bytes, str):
+            codec = codecs[codec_type]
             if codec.is_type_compat(t):
                 spec_codecs[t] = codec
+                break
 
     return spec_codecs
 
@@ -969,18 +974,23 @@ def mk_enc_hook(
     spec_codecs = mk_codec_map_from_spec(spec)
 
     def enc_hook(obj: any) -> any:
-        t = type(obj)
-        maybe_codec = spec_codecs.get(t, None)
-        if maybe_codec:
-            return maybe_codec.encode(obj)
+        try:
+            t = type(obj)
+            maybe_codec = spec_codecs.get(t, None)
+            if maybe_codec:
+                return maybe_codec.encode(obj)
 
-        # passthrough built ins
-        if builtins and t in builtins:
-            return obj
+            # passthrough builtins
+            if builtins and t in builtins:
+                return obj
 
-        raise NotImplementedError(
-            f"Objects of type {type(obj)} are not supported:\n{obj}"
-        )
+            raise NotImplementedError(
+                f"Objects of type {type(obj)} are not supported:\n{obj}"
+            )
+
+        except* Exception as e:
+            e.add_note(f'enc_hook: {t}, {type(obj)} {obj}')
+            raise
 
     return enc_hook
 
@@ -998,17 +1008,25 @@ def mk_dec_hook(
     spec_codecs = mk_codec_map_from_spec(spec)
 
     def dec_hook(t: Type, obj: any) -> any:
-        maybe_codec = spec_codecs.get(t, None)
-        if maybe_codec:
-            return maybe_codec.decode(t, obj)
+        try:
+            if t is type(obj):
+                return obj
 
-        # passthrough builtins
-        if builtins and type in builtins:
-            return obj
+            maybe_codec = spec_codecs.get(t, None)
+            if maybe_codec:
+                return maybe_codec.decode(t, obj)
 
-        raise NotImplementedError(
-            f"Objects of type {type} are not supported from {obj}"
-        )
+            # passthrough builtins
+            if builtins and type(obj) in builtins:
+                return obj
+
+            raise NotImplementedError(
+                f"Objects of type {type} are not supported from {obj}"
+            )
+
+        except* Exception as e:
+            e.add_note(f'dec_hook: {t}, {type(obj)} {obj}')
+            raise
 
     return dec_hook
 
@@ -1058,8 +1076,6 @@ def mk_msgpack_codec(
     Get a msgpack Encoder, Decoder pair for a given type spec
 
     '''
-    spec: set[Type] = mk_spec_set(spec)
-
     enc_hook, dec_hook = mk_codec_hooks(
         spec,
         with_builtins=with_builtins,
