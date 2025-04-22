@@ -5,6 +5,7 @@ Low-level functional audits for our
 B~)
 
 '''
+from __future__ import annotations
 from contextlib import (
     contextmanager as cm,
     # nullcontext,
@@ -20,7 +21,7 @@ from msgspec import (
     # structs,
     # msgpack,
     Raw,
-    # Struct,
+    Struct,
     ValidationError,
 )
 import pytest
@@ -45,6 +46,11 @@ from tractor.msg import (
     mk_dec,
     apply_codec,
     current_codec,
+)
+from tractor.msg._codec import (
+    default_builtins,
+    mk_dec_hook,
+    mk_codec_from_spec,
 )
 from tractor.msg.types import (
     log,
@@ -741,6 +747,143 @@ def test_ext_types_over_ipc(
         exc = excinfo.value
         # bc `.started(nsp: NamespacePath)` will raise
         assert exc.boxed_type is TypeError
+
+
+'''
+Test the auto enc & dec hooks
+
+Create a codec which will work for:
+    - builtins
+    - custom types
+    - lists of custom types
+'''
+
+
+class TestBytesClass(Struct, tag=True):
+    raw: bytes
+
+    def encode(self) -> bytes:
+        return self.raw
+
+    @classmethod
+    def from_bytes(self, raw: bytes) -> TestBytesClass:
+        return TestBytesClass(raw=raw)
+
+
+class TestStrClass(Struct, tag=True):
+    s: str
+
+    def encode(self) -> str:
+        return self.s
+
+    @classmethod
+    def from_str(self, s: str) -> TestStrClass:
+        return TestStrClass(s=s)
+
+
+class TestIntClass(Struct, tag=True):
+    num: int
+
+    def encode(self) -> int:
+        return self.num
+
+    @classmethod
+    def from_int(self, num: int) -> TestIntClass:
+        return TestIntClass(num=num)
+
+
+builtins = tuple((
+    builtin
+    for builtin in default_builtins
+    if builtin is not list
+))
+
+TestClasses = (TestBytesClass, TestStrClass, TestIntClass)
+
+
+TestSpec = (
+    *TestClasses, list[Union[*TestClasses]]
+)
+
+
+test_codec = mk_codec_from_spec(
+    spec=TestSpec
+)
+
+
+@tractor.context
+async def child_custom_codec(
+    ctx: tractor.Context,
+    msgs: list[Union[*TestSpec]],
+):
+    '''
+    Apply codec and send all msgs passed through stream
+
+    '''
+    with (
+        apply_codec(test_codec),
+        limit_plds(
+            test_codec.pld_spec,
+            dec_hook=mk_dec_hook(TestSpec),
+            ext_types=TestSpec + builtins
+        ),
+    ):
+        await ctx.started(None)
+        async with ctx.open_stream() as stream:
+            for msg in msgs:
+                await stream.send(msg)
+
+
+def test_multi_custom_codec():
+    '''
+    Open subactor setup codec and pld_rx and wait to receive & assert from
+    stream
+
+    '''
+    msgs = [
+        None,
+        True, False,
+        0xdeadbeef,
+        .42069,
+        b'deadbeef',
+        TestBytesClass(raw=b'deadbeef'),
+        TestStrClass(s='deadbeef'),
+        TestIntClass(num=0xdeadbeef),
+        [
+            TestBytesClass(raw=b'deadbeef'),
+            TestStrClass(s='deadbeef'),
+            TestIntClass(num=0xdeadbeef),
+        ]
+    ]
+
+    async def main():
+        async with tractor.open_nursery() as an:
+            p: tractor.Portal = await an.start_actor(
+                'child',
+                enable_modules=[__name__],
+            )
+            async with (
+                p.open_context(
+                    child_custom_codec,
+                    msgs=msgs,
+                ) as (ctx, _),
+                ctx.open_stream() as ipc
+            ):
+                with (
+                    apply_codec(test_codec),
+                    limit_plds(
+                        test_codec.pld_spec,
+                        dec_hook=mk_dec_hook(TestSpec),
+                        ext_types=TestSpec + builtins
+                    )
+                ):
+                    msg_iter = iter(msgs)
+                    async for recv_msg in ipc:
+                        assert recv_msg == next(msg_iter)
+
+            await p.cancel_actor()
+
+    trio.run(main)
 
 
 # def chk_pld_type(
