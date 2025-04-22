@@ -590,7 +590,7 @@ def set_publisher(topic: str, pub: RingBufferPublisher):
     entry.is_set.set()
 
 
-def get_publisher(topic: str) -> RingBufferPublisher:
+def get_publisher(topic: str = 'default') -> RingBufferPublisher:
     entry = _publishers.get(topic, None)
     if not entry or not entry.publisher:
         raise RuntimeError(
@@ -685,7 +685,7 @@ def set_subscriber(topic: str, sub: RingBufferSubscriber):
     entry.is_set.set()
 
 
-def get_subscriber(topic: str) -> RingBufferSubscriber:
+def get_subscriber(topic: str = 'default') -> RingBufferSubscriber:
     entry = _subscribers.get(topic, None)
     if not entry or not entry.subscriber:
         raise RuntimeError(

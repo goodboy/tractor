@@ -120,21 +120,24 @@ async def open_pubsub_test_actors(
                     publisher_child,
                     batch_size=batch_size
                 ) as (long_sctx, _),
+
+                open_ringbufs(ring_names) as tokens,
+
+                gather_contexts([
+                    open_sub_channel_at('sub', ring)
+                    for ring in tokens
+                ]),
+                gather_contexts([
+                    open_pub_channel_at('pub', ring)
+                    for ring in tokens
+                ]),
+                sub_portal.open_context(subscribe_range, size=size) as (rctx, _),
+                pub_portal.open_context(publish_range, size=size) as (sctx, _)
             ):
-                with open_ringbufs(ring_names) as tokens:
-                    async with (
-                        gather_contexts([
-                            open_sub_channel_at('sub', ring)
-                            for ring in tokens
-                        ]),
-                        gather_contexts([
-                            open_pub_channel_at('pub', ring)
-                            for ring in tokens
-                        ]),
-                        sub_portal.open_context(subscribe_range, size=size) as (rctx, _),
-                        pub_portal.open_context(publish_range, size=size) as (sctx, _)
-                    ):
-                        yield
+                yield
+
+                await rctx.wait_for_result()
+                await sctx.wait_for_result()
 
                 await long_sctx.cancel()
                 await long_rctx.cancel()

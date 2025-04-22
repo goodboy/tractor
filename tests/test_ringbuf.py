@@ -18,9 +18,6 @@ from tractor._testing.samples import (
     RandomBytesGenerator
 )
 
-# in case you don't want to melt your cores, uncomment dis!
-pytestmark = pytest.mark.skip
-
 
 @tractor.context
 async def child_read_shm(
@@ -273,19 +270,24 @@ def test_receiver_max_bytes():
     msg = generate_single_byte_msgs(100)
     msgs = []
 
+    rb_common = {
+        'cleanup': False,
+        'is_ipc': False
+    }
+
     async def main():
         async with (
-            tractor.open_nursery(),
             open_ringbuf(
                 'test_ringbuf_max_bytes',
-                buf_size=10
+                buf_size=10,
+                is_ipc=False
             ) as token,
 
             trio.open_nursery() as n,
 
-            attach_to_ringbuf_sender(token, cleanup=False) as sender,
+            attach_to_ringbuf_sender(token, **rb_common) as sender,
 
-            attach_to_ringbuf_receiver(token, cleanup=False) as receiver
+            attach_to_ringbuf_receiver(token, **rb_common) as receiver
         ):
             async def _send_and_close():
                 await sender.send_all(msg)
