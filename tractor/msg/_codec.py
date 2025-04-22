@@ -266,7 +266,7 @@ def mk_dec(
 
 def mk_boxed_ext_structs(
     ext_types: list[Type],
-) -> Struct:
+) -> dict[Type, Struct]:
     box_types: dict[Type, Struct] = {}
     for ext_type in ext_types:
         info = msgspec.inspect.type_info(ext_type)
