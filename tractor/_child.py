@@ -31,8 +31,12 @@ def parse_uid(arg):
     return str(name), str(uuid)  # ensures str encoding
 
 def parse_ipaddr(arg):
-    host, port = literal_eval(arg)
-    return (str(host), int(port))
+    try:
+        return literal_eval(arg)
+
+    except (ValueError, SyntaxError):
+        # UDS: try to interpret as a straight up str
+        return arg
 
 
 if __name__ == "__main__":
@@ -46,8 +50,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     subactor = Actor(
-        args.uid[0],
-        uid=args.uid[1],
+        name=args.uid[0],
+        uuid=args.uid[1],
         loglevel=args.loglevel,
         spawn_method="trio"
     )

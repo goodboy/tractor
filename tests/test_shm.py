@@ -8,7 +8,7 @@ import uuid
 import pytest
 import trio
 import tractor
-from tractor._shm import (
+from tractor.ipc._shm import (
     open_shm_list,
     attach_shm_list,
 )

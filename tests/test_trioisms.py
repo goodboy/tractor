@@ -180,7 +180,8 @@ def test_acm_embedded_nursery_propagates_enter_err(
         with tractor.devx.maybe_open_crash_handler(
             pdb=debug_mode,
         ) as bxerr:
-            assert not bxerr.value
+            if bxerr:
+                assert not bxerr.value
 
             async with (
                 wraps_tn_that_always_cancels() as tn,

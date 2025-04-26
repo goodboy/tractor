@@ -46,18 +46,22 @@ from tractor._state import (
     _runtime_vars,
 )
 from tractor.log import get_logger
+from tractor._addr import UnwrappedAddress
 from tractor._portal import Portal
 from tractor._runtime import Actor
 from tractor._entry import _mp_main
 from tractor._exceptions import ActorFailure
 from tractor.msg.types import (
+    Aid,
     SpawnSpec,
 )
 
 
 if TYPE_CHECKING:
+    from ipc import IPCServer
     from ._supervise import ActorNursery
     ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
+
 
 log = get_logger('tractor')
 
@@ -163,7 +167,7 @@ async def exhaust_portal(
         # TODO: merge with above?
         log.warning(
             'Cancelled portal result waiter task:\n'
-            f'uid: {portal.channel.uid}\n'
+            f'uid: {portal.channel.aid}\n'
             f'error: {err}\n'
         )
         return err
@@ -171,7 +175,7 @@ async def exhaust_portal(
     else:
         log.debug(
             f'Returning final result from portal:\n'
-            f'uid: {portal.channel.uid}\n'
+            f'uid: {portal.channel.aid}\n'
             f'result: {final}\n'
         )
         return final
@@ -324,12 +328,12 @@ async def soft_kill(
     see `.hard_kill()`).
 
     '''
-    uid: tuple[str, str] = portal.channel.uid
+    peer_aid: Aid = portal.channel.aid
     try:
         log.cancel(
             f'Soft killing sub-actor via portal request\n'
             f'\n'
-            f'(c=> {portal.chan.uid}\n'
+            f'(c=> {peer_aid}\n'
             f'  |_{proc}\n'
         )
         # wait on sub-proc to signal termination
@@ -378,7 +382,7 @@ async def soft_kill(
             if proc.poll() is None:  # type: ignore
                 log.warning(
                     'Subactor still alive after cancel request?\n\n'
-                    f'uid: {uid}\n'
+                    f'uid: {peer_aid}\n'
                     f'|_{proc}\n'
                 )
                 n.cancel_scope.cancel()
@@ -392,14 +396,15 @@ async def new_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addrs: list[tuple[str, int]],
-    parent_addr: tuple[str, int],
+    bind_addrs: list[UnwrappedAddress],
+    parent_addr: UnwrappedAddress,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
 
     *,
 
     infect_asyncio: bool = False,
-    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
+    proc_kwargs: dict[str, any] = {}
 
 ) -> None:
 
@@ -419,6 +424,7 @@ async def new_proc(
         _runtime_vars,  # run time vars
         infect_asyncio=infect_asyncio,
         task_status=task_status,
+        proc_kwargs=proc_kwargs
     )
 
 
@@ -429,12 +435,13 @@ async def trio_proc(
     errors: dict[tuple[str, str], Exception],
 
     # passed through to actor main
-    bind_addrs: list[tuple[str, int]],
-    parent_addr: tuple[str, int],
+    bind_addrs: list[UnwrappedAddress],
+    parent_addr: UnwrappedAddress,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
-    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
+    proc_kwargs: dict[str, any] = {}
 
 ) -> None:
     '''
@@ -456,6 +463,9 @@ async def trio_proc(
         # the OS; it otherwise can be passed via the parent channel if
         # we prefer in the future (for privacy).
         "--uid",
+        # TODO, how to pass this over "wire" encodings like
+        # cmdline args?
+        # -[ ] maybe we can add an `Aid.min_tuple()` ?
         str(subactor.uid),
         # Address the child must connect to on startup
         "--parent_addr",
@@ -473,9 +483,10 @@ async def trio_proc(
 
     cancelled_during_spawn: bool = False
     proc: trio.Process|None = None
+    ipc_server: IPCServer = actor_nursery._actor.ipc_server
     try:
         try:
-            proc: trio.Process = await trio.lowlevel.open_process(spawn_cmd)
+            proc: trio.Process = await trio.lowlevel.open_process(spawn_cmd, **proc_kwargs)
             log.runtime(
                 'Started new child\n'
                 f'|_{proc}\n'
@@ -484,7 +495,7 @@ async def trio_proc(
             # wait for actor to spawn and connect back to us
             # channel should have handshake completed by the
             # local actor by the time we get a ref to it
-            event, chan = await actor_nursery._actor.wait_for_peer(
+            event, chan = await ipc_server.wait_for_peer(
                 subactor.uid
             )
 
@@ -517,15 +528,15 @@ async def trio_proc(
 
         # send a "spawning specification" which configures the
         # initial runtime state of the child.
-        await chan.send(
-            SpawnSpec(
-                _parent_main_data=subactor._parent_main_data,
-                enable_modules=subactor.enable_modules,
-                reg_addrs=subactor.reg_addrs,
-                bind_addrs=bind_addrs,
-                _runtime_vars=_runtime_vars,
-            )
+        sspec = SpawnSpec(
+            _parent_main_data=subactor._parent_main_data,
+            enable_modules=subactor.enable_modules,
+            reg_addrs=subactor.reg_addrs,
+            bind_addrs=bind_addrs,
+            _runtime_vars=_runtime_vars,
         )
+        log.runtime(f'Sending spawn spec: {str(sspec)}')
+        await chan.send(sspec)
 
         # track subactor in current nursery
         curr_actor: Actor = current_actor()
@@ -635,12 +646,13 @@ async def mp_proc(
     subactor: Actor,
     errors: dict[tuple[str, str], Exception],
     # passed through to actor main
-    bind_addrs: list[tuple[str, int]],
-    parent_addr: tuple[str, int],
+    bind_addrs: list[UnwrappedAddress],
+    parent_addr: UnwrappedAddress,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
-    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
+    proc_kwargs: dict[str, any] = {}
 
 ) -> None:
 
@@ -715,12 +727,14 @@ async def mp_proc(
 
     log.runtime(f"Started {proc}")
 
+    ipc_server: IPCServer = actor_nursery._actor.ipc_server
     try:
         # wait for actor to spawn and connect back to us
         # channel should have handshake completed by the
         # local actor by the time we get a ref to it
-        event, chan = await actor_nursery._actor.wait_for_peer(
-            subactor.uid)
+        event, chan = await ipc_server.wait_for_peer(
+            subactor.uid,
+        )
 
         # XXX: monkey patch poll API to match the ``subprocess`` API..
         # not sure why they don't expose this but kk.

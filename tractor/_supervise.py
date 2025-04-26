@@ -22,13 +22,20 @@ from contextlib import asynccontextmanager as acm
 from functools import partial
 import inspect
 from pprint import pformat
-from typing import TYPE_CHECKING
+from typing import (
+    TYPE_CHECKING,
+)
 import typing
 import warnings
 
 import trio
 
+
 from .devx._debug import maybe_wait_for_debugger
+from ._addr import (
+    UnwrappedAddress,
+    mk_uuid,
+)
 from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
 from ._runtime import Actor
@@ -37,17 +44,20 @@ from ._exceptions import (
     is_multi_cancelled,
     ContextCancelled,
 )
-from ._root import open_root_actor
+from ._root import (
+    open_root_actor,
+)
 from . import _state
 from . import _spawn
 
 
 if TYPE_CHECKING:
     import multiprocessing as mp
+    # from .ipc._server import IPCServer
+    from .ipc import IPCServer
+
 
 log = get_logger(__name__)
-
-_default_bind_addr: tuple[str, int] = ('127.0.0.1', 0)
 
 
 class ActorNursery:
@@ -130,8 +140,9 @@ class ActorNursery:
 
         *,
 
-        bind_addrs: list[tuple[str, int]] = [_default_bind_addr],
+        bind_addrs: list[UnwrappedAddress]|None = None,
         rpc_module_paths: list[str]|None = None,
+        enable_transports: list[str] = [_state._def_tpt_proto],
         enable_modules: list[str]|None = None,
         loglevel: str|None = None,  # set log level per subactor
         debug_mode: bool|None = None,
@@ -141,6 +152,7 @@ class ActorNursery:
         # a `._ria_nursery` since the dependent APIs have been
         # removed!
         nursery: trio.Nursery|None = None,
+        proc_kwargs: dict[str, any] = {}
 
     ) -> Portal:
         '''
@@ -177,7 +189,9 @@ class ActorNursery:
             enable_modules.extend(rpc_module_paths)
 
         subactor = Actor(
-            name,
+            name=name,
+            uuid=mk_uuid(),
+
             # modules allowed to invoked funcs from
             enable_modules=enable_modules,
             loglevel=loglevel,
@@ -185,7 +199,7 @@ class ActorNursery:
             # verbatim relay this actor's registrar addresses
             registry_addrs=current_actor().reg_addrs,
         )
-        parent_addr = self._actor.accept_addr
+        parent_addr: UnwrappedAddress = self._actor.accept_addr
         assert parent_addr
 
         # start a task to spawn a process
@@ -204,6 +218,7 @@ class ActorNursery:
                 parent_addr,
                 _rtv,  # run time vars
                 infect_asyncio=infect_asyncio,
+                proc_kwargs=proc_kwargs
             )
         )
 
@@ -222,11 +237,12 @@ class ActorNursery:
         *,
 
         name: str | None = None,
-        bind_addrs: tuple[str, int] = [_default_bind_addr],
+        bind_addrs: UnwrappedAddress|None = None,
         rpc_module_paths: list[str] | None = None,
         enable_modules: list[str] | None = None,
         loglevel: str | None = None,  # set log level per subactor
         infect_asyncio: bool = False,
+        proc_kwargs: dict[str, any] = {},
 
         **kwargs,  # explicit args to ``fn``
 
@@ -257,6 +273,7 @@ class ActorNursery:
             # use the run_in_actor nursery
             nursery=self._ria_nursery,
             infect_asyncio=infect_asyncio,
+            proc_kwargs=proc_kwargs
         )
 
         # XXX: don't allow stream funcs
@@ -301,8 +318,13 @@ class ActorNursery:
         children: dict = self._children
         child_count: int = len(children)
         msg: str = f'Cancelling actor nursery with {child_count} children\n'
+
+        server: IPCServer = self._actor.ipc_server
+
         with trio.move_on_after(3) as cs:
-            async with trio.open_nursery() as tn:
+            async with trio.open_nursery(
+                strict_exception_groups=False,
+            ) as tn:
 
                 subactor: Actor
                 proc: trio.Process
@@ -321,7 +343,7 @@ class ActorNursery:
 
                     else:
                         if portal is None:  # actor hasn't fully spawned yet
-                            event = self._actor._peer_connected[subactor.uid]
+                            event: trio.Event = server._peer_connected[subactor.uid]
                             log.warning(
                                 f"{subactor.uid} never 't finished spawning?"
                             )
@@ -337,7 +359,7 @@ class ActorNursery:
                             if portal is None:
                                 # cancelled while waiting on the event
                                 # to arrive
-                                chan = self._actor._peers[subactor.uid][-1]
+                                chan = server._peers[subactor.uid][-1]
                                 if chan:
                                     portal = Portal(chan)
                                 else:  # there's no other choice left
