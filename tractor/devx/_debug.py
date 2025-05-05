@@ -3280,7 +3280,7 @@ def open_crash_handler(
 
 @cm
 def maybe_open_crash_handler(
-    pdb: bool = False,
+    pdb: bool|None = None,
     tb_hide: bool = True,
 
     **kwargs,
@@ -3291,7 +3291,11 @@ def maybe_open_crash_handler(
 
     Normally this is used with CLI endpoints such that if the --pdb
     flag is passed the pdb REPL is engaed on any crashes B)
+
     '''
+    if pdb is None:
+        pdb: bool = _state.is_debug_mode()
+
     __tracebackhide__: bool = tb_hide
 
     rtctx = nullcontext(
