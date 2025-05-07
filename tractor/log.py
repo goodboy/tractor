@@ -270,7 +270,9 @@ def get_logger(
     subsys_spec: str|None = None,
 
 ) -> StackLevelAdapter:
-    '''Return the package log or a sub-logger for ``name`` if provided.
+    '''
+    Return the `tractor`-library root logger or a sub-logger for
+    `name` if provided.
 
     '''
     log: Logger
@@ -282,7 +284,7 @@ def get_logger(
         name != _proj_name
     ):
 
-        # NOTE: for handling for modules that use ``get_logger(__name__)``
+        # NOTE: for handling for modules that use `get_logger(__name__)`
         # we make the following stylistic choice:
         # - always avoid duplicate project-package token
         #   in msg output: i.e. tractor.tractor.ipc._chan.py in header
@@ -331,7 +333,7 @@ def get_logger(
 
 def get_console_log(
     level: str|None = None,
-    logger: Logger|None = None,
+    logger: Logger|StackLevelAdapter|None = None,
     **kwargs,
 
 ) -> LoggerAdapter:
@@ -344,12 +346,23 @@ def get_console_log(
     Yeah yeah, i know we can use `logging.config.dictConfig()`. You do it.
 
     '''
-    log = get_logger(
-        logger=logger,
-        **kwargs
-    )  # set a root logger
-    logger: Logger = log.logger
+    # get/create a stack-aware-adapter
+    if (
+        logger
+        and
+        isinstance(logger, StackLevelAdapter)
+    ):
+        # XXX, for ex. when passed in by a caller wrapping some
+        # other lib's logger instance with our level-adapter.
+        log = logger
 
+    else:
+        log: StackLevelAdapter = get_logger(
+            logger=logger,
+            **kwargs
+        )
+
+    logger: Logger|StackLevelAdapter = log.logger
     if not level:
         return log
 
@@ -367,10 +380,7 @@ def get_console_log(
             None,
         )
     ):
-        fmt = LOG_FORMAT
-        # if logger:
-        #     fmt = None
-
+        fmt: str = LOG_FORMAT  # always apply our format?
         handler = StreamHandler()
         formatter = colorlog.ColoredFormatter(
             fmt=fmt,
