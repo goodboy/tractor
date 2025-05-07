@@ -281,7 +281,8 @@ async def open_root_actor(
 
         if (
             debug_mode
-            and _spawn._spawn_method == 'trio'
+            and
+            _spawn._spawn_method == 'trio'
         ):
             _state._runtime_vars['_debug_mode'] = True
 
@@ -517,8 +518,17 @@ async def open_root_actor(
                     )
                     await actor.cancel(None)  # self cancel
         finally:
+            # revert all process-global runtime state
+            if (
+                debug_mode
+                and
+                _spawn._spawn_method == 'trio'
+            ):
+                _state._runtime_vars['_debug_mode'] = False
+
             _state._current_actor = None
             _state._last_actor_terminated = actor
+
             logger.runtime(
                 f'Root actor terminated\n'
                 f')>\n'
