@@ -21,7 +21,6 @@ Sugary patterns for trio + tractor designs.
 from ._mngrs import (
     gather_contexts as gather_contexts,
     maybe_open_context as maybe_open_context,
-    maybe_open_nursery as maybe_open_nursery,
 )
 from ._broadcast import (
     AsyncReceiver as AsyncReceiver,
@@ -36,4 +35,7 @@ from ._beg import (
 )
 from ._taskc import (
     maybe_raise_from_masking_exc as maybe_raise_from_masking_exc,
+)
+from ._tn import (
+    maybe_open_nursery as maybe_open_nursery,
 )

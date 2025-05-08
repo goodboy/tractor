@@ -23,7 +23,6 @@ from contextlib import (
     asynccontextmanager as acm,
 )
 import inspect
-from types import ModuleType
 from typing import (
     Any,
     AsyncContextManager,
@@ -33,50 +32,23 @@ from typing import (
     Hashable,
     Sequence,
     TypeVar,
-    TYPE_CHECKING,
 )
 
 import trio
 from tractor._state import current_actor
 from tractor.log import get_logger
+from ._tn import maybe_open_nursery
 # from ._beg import collapse_eg
 # from ._taskc import (
 #     maybe_raise_from_masking_exc,
 # )
 
 
-if TYPE_CHECKING:
-    from tractor import ActorNursery
-
 
 log = get_logger(__name__)
 
 # A regular invariant generic type
 T = TypeVar("T")
-
-
-@acm
-async def maybe_open_nursery(
-    nursery: trio.Nursery|ActorNursery|None = None,
-    shield: bool = False,
-    lib: ModuleType = trio,
-
-    **kwargs,  # proxy thru
-
-) -> AsyncGenerator[trio.Nursery, Any]:
-    '''
-    Create a new nursery if None provided.
-
-    Blocks on exit as expected if no input nursery is provided.
-
-    '''
-    if nursery is not None:
-        yield nursery
-    else:
-        async with lib.open_nursery(**kwargs) as nursery:
-            if lib == trio:
-                nursery.cancel_scope.shield = shield
-            yield nursery
 
 
 async def _enter_and_wait(
