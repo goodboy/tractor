@@ -41,16 +41,24 @@ _current_actor: Actor|None = None  # type: ignore # noqa
 _last_actor_terminated: Actor|None = None
 
 # TODO: mk this a `msgspec.Struct`!
+# -[ ] type out all fields obvi!
+# -[ ] (eventually) mk wire-ready for monitoring?
 _runtime_vars: dict[str, Any] = {
-    '_debug_mode': False,
-    '_is_root': False,
-    '_root_mailbox': (None, None),
+    # root of actor-process tree info
+    '_is_root': False,  # bool
+    '_root_mailbox': (None, None),  # tuple[str|None, str|None]
+
+    # registrar info
     '_registry_addrs': [],
 
-    '_is_infected_aio': False,
-
+    # `debug_mode: bool` settings
+    '_debug_mode': False,  # bool
+    'repl_fixture': False,  # |AbstractContextManager[bool]
     # for `tractor.pause_from_sync()` & `breakpoint()` support
     'use_greenback': False,
+
+    # infected-`asyncio`-mode: `trio` running as guest.
+    '_is_infected_aio': False,
 }
 
 
