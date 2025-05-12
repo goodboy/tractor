@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import bdb
 from contextlib import (
+    AbstractContextManager,
     asynccontextmanager as acm,
     contextmanager as cm,
     nullcontext,
@@ -1774,6 +1775,13 @@ async def _pause(
         tuple[Task, PdbREPL],
         trio.Event
     ] = trio.TASK_STATUS_IGNORED,
+
+    # maybe pre/post REPL entry
+    repl_fixture: (
+        AbstractContextManager[bool]
+        |None
+    ) = None,
+
     **debug_func_kwargs,
 
 ) -> tuple[Task, PdbREPL]|None:
@@ -1836,76 +1844,103 @@ async def _pause(
         debug_func: partial[None],
     ) -> None:
         __tracebackhide__: bool = hide_tb
-        debug_func_name: str = (
-            debug_func.func.__name__ if debug_func else 'None'
-        )
 
-        # TODO: do we want to support using this **just** for the
-        # locking / common code (prolly to help address #320)?
-        task_status.started((task, repl))
-        try:
-            if debug_func:
-                # block here one (at the appropriate frame *up*) where
-                # ``breakpoint()`` was awaited and begin handling stdio.
-                log.devx(
-                    'Entering sync world of the `pdb` REPL for task..\n'
-                    f'{repl}\n'
-                    f'  |_{task}\n'
-                 )
+        # TODO, support @acm?
+        # -[ ] what about a return-proto for determining
+        #     whether the REPL should be allowed to enage?
+        nonlocal repl_fixture
+        if not (
+            repl_fixture
+            or
+            (rt_repl_fixture := _state._runtime_vars.get('repl_fixture'))
+        ):
+            repl_fixture = nullcontext(
+                enter_result=True,
+            )
 
-                # set local task on process-global state to avoid
-                # recurrent entries/requests from the same
-                # actor-local task.
-                DebugStatus.repl_task = task
-                if repl:
-                    DebugStatus.repl = repl
-                else:
-                    log.error(
-                        'No REPl instance set before entering `debug_func`?\n'
-                        f'{debug_func}\n'
+        _repl_fixture = repl_fixture or rt_repl_fixture
+        with _repl_fixture(maybe_bxerr=None) as enter_repl:
+
+            # XXX when the fixture doesn't allow it, skip
+            # the crash-handler REPL and raise now!
+            if not enter_repl:
+                log.pdb(
+                    f'pdbp-REPL blocked by a `repl_fixture()` which yielded `False` !\n'
+                    f'repl_fixture: {repl_fixture}\n'
+                    f'rt_repl_fixture: {rt_repl_fixture}\n'
+                )
+                return
+
+            debug_func_name: str = (
+                debug_func.func.__name__ if debug_func else 'None'
+            )
+
+            # TODO: do we want to support using this **just** for the
+            # locking / common code (prolly to help address #320)?
+            task_status.started((task, repl))
+            try:
+                if debug_func:
+                    # block here one (at the appropriate frame *up*) where
+                    # ``breakpoint()`` was awaited and begin handling stdio.
+                    log.devx(
+                        'Entering sync world of the `pdb` REPL for task..\n'
+                        f'{repl}\n'
+                        f'  |_{task}\n'
+                     )
+
+                    # set local task on process-global state to avoid
+                    # recurrent entries/requests from the same
+                    # actor-local task.
+                    DebugStatus.repl_task = task
+                    if repl:
+                        DebugStatus.repl = repl
+                    else:
+                        log.error(
+                            'No REPl instance set before entering `debug_func`?\n'
+                            f'{debug_func}\n'
+                        )
+
+                    # invoke the low-level REPL activation routine which itself
+                    # should call into a `Pdb.set_trace()` of some sort.
+                    debug_func(
+                        repl=repl,
+                        hide_tb=hide_tb,
+                        **debug_func_kwargs,
                     )
 
-                # invoke the low-level REPL activation routine which itself
-                # should call into a `Pdb.set_trace()` of some sort.
-                debug_func(
-                    repl=repl,
-                    hide_tb=hide_tb,
-                    **debug_func_kwargs,
+                # TODO: maybe invert this logic and instead
+                # do `assert debug_func is None` when
+                # `called_from_sync`?
+                else:
+                    if (
+                        called_from_sync
+                        and
+                        not DebugStatus.is_main_trio_thread()
+                    ):
+                        assert called_from_bg_thread
+                        assert DebugStatus.repl_task is not task
+
+                    return (task, repl)
+
+            except trio.Cancelled:
+                log.exception(
+                    'Cancelled during invoke of internal\n\n'
+                    f'`debug_func = {debug_func_name}`\n'
                 )
+                # XXX NOTE: DON'T release lock yet
+                raise
 
-            # TODO: maybe invert this logic and instead
-            # do `assert debug_func is None` when
-            # `called_from_sync`?
-            else:
-                if (
-                    called_from_sync
-                    and
-                    not DebugStatus.is_main_trio_thread()
-                ):
-                    assert called_from_bg_thread
-                    assert DebugStatus.repl_task is not task
+            except BaseException:
+                __tracebackhide__: bool = False
+                log.exception(
+                    'Failed to invoke internal\n\n'
+                    f'`debug_func = {debug_func_name}`\n'
+                )
+                # NOTE: OW this is ONLY called from the
+                # `.set_continue/next` hooks!
+                DebugStatus.release(cancel_req_task=True)
 
-                return (task, repl)
-
-        except trio.Cancelled:
-            log.exception(
-                'Cancelled during invoke of internal\n\n'
-                f'`debug_func = {debug_func_name}`\n'
-            )
-            # XXX NOTE: DON'T release lock yet
-            raise
-
-        except BaseException:
-            __tracebackhide__: bool = False
-            log.exception(
-                'Failed to invoke internal\n\n'
-                f'`debug_func = {debug_func_name}`\n'
-            )
-            # NOTE: OW this is ONLY called from the
-            # `.set_continue/next` hooks!
-            DebugStatus.release(cancel_req_task=True)
-
-            raise
+                raise
 
     log.devx(
         'Entering `._pause()` for requesting task\n'
@@ -2899,6 +2934,14 @@ def _post_mortem(
     shield: bool = False,
     hide_tb: bool = False,
 
+    # maybe pre/post REPL entry
+    repl_fixture: (
+        AbstractContextManager[bool]
+        |None
+    ) = None,
+
+    boxed_maybe_exc: BoxedMaybeException|None = None,
+
 ) -> None:
     '''
     Enter the ``pdbpp`` port mortem entrypoint using our custom
@@ -2906,55 +2949,81 @@ def _post_mortem(
 
     '''
     __tracebackhide__: bool = hide_tb
-    try:
-        actor: tractor.Actor = current_actor()
-        actor_repr: str = str(actor.uid)
-        # ^TODO, instead a nice runtime-info + maddr + uid?
-        # -[ ] impl a `Actor.__repr()__`??
-        #  |_ <task>:<thread> @ <actor>
-        # no_runtime: bool = False
 
-    except NoRuntime:
-        actor_repr: str = '<no-actor-runtime?>'
-        # no_runtime: bool = True
+    # TODO, support @acm?
+    # -[ ] what about a return-proto for determining
+    #     whether the REPL should be allowed to enage?
+    if not (
+        repl_fixture
+        or
+        (rt_repl_fixture := _state._runtime_vars.get('repl_fixture'))
+    ):
+        _repl_fixture = nullcontext(
+            enter_result=True,
+        )
+    else:
+        _repl_fixture = (repl_fixture or rt_repl_fixture)(maybe_bxerr=boxed_maybe_exc)
 
-    try:
-        task_repr: Task = current_task()
-    except RuntimeError:
-        task_repr: str = '<unknown-Task>'
+    with _repl_fixture as enter_repl:
 
-    # TODO: print the actor supervion tree up to the root
-    # here! Bo
-    log.pdb(
-        f'{_crash_msg}\n'
-        f'x>(\n'
-        f' |_ {task_repr} @ {actor_repr}\n'
+        # XXX when the fixture doesn't allow it, skip
+        # the crash-handler REPL and raise now!
+        if not enter_repl:
+            log.pdb(
+                f'pdbp-REPL blocked by a `repl_fixture()` which yielded `False` !\n'
+                f'repl_fixture: {repl_fixture}\n'
+                f'rt_repl_fixture: {rt_repl_fixture}\n'
+            )
+            return
 
-    )
+        try:
+            actor: tractor.Actor = current_actor()
+            actor_repr: str = str(actor.uid)
+            # ^TODO, instead a nice runtime-info + maddr + uid?
+            # -[ ] impl a `Actor.__repr()__`??
+            #  |_ <task>:<thread> @ <actor>
+            # no_runtime: bool = False
 
-    # NOTE only replacing this from `pdbp.xpm()` to add the
-    # `end=''` to the print XD
-    print(traceback.format_exc(), end='')
+        except NoRuntime:
+            actor_repr: str = '<no-actor-runtime?>'
+            # no_runtime: bool = True
 
-    caller_frame: FrameType = api_frame.f_back
+        try:
+            task_repr: Task = current_task()
+        except RuntimeError:
+            task_repr: str = '<unknown-Task>'
 
-    # NOTE: see the impl details of followings to understand usage:
-    # - `pdbp.post_mortem()`
-    # - `pdbp.xps()`
-    # - `bdb.interaction()`
-    repl.reset()
-    repl.interaction(
-        frame=caller_frame,
-        # frame=None,
-        traceback=tb,
-    )
-    # XXX NOTE XXX: absolutely required to avoid hangs!
-    # Since we presume the post-mortem was enaged to a task-ending
-    # error, we MUST release the local REPL request so that not other
-    # local task nor the root remains blocked!
-    # if not no_runtime:
-    #     DebugStatus.release()
-    DebugStatus.release()
+        # TODO: print the actor supervion tree up to the root
+        # here! Bo
+        log.pdb(
+            f'{_crash_msg}\n'
+            f'x>(\n'
+            f' |_ {task_repr} @ {actor_repr}\n'
+
+        )
+
+        # NOTE only replacing this from `pdbp.xpm()` to add the
+        # `end=''` to the print XD
+        print(traceback.format_exc(), end='')
+        caller_frame: FrameType = api_frame.f_back
+
+        # NOTE: see the impl details of followings to understand usage:
+        # - `pdbp.post_mortem()`
+        # - `pdbp.xps()`
+        # - `bdb.interaction()`
+        repl.reset()
+        repl.interaction(
+            frame=caller_frame,
+            # frame=None,
+            traceback=tb,
+        )
+        # XXX NOTE XXX: absolutely required to avoid hangs!
+        # Since we presume the post-mortem was enaged to a task-ending
+        # error, we MUST release the local REPL request so that not other
+        # local task nor the root remains blocked!
+        # if not no_runtime:
+        #     DebugStatus.release()
+        DebugStatus.release()
 
 
 async def post_mortem(
@@ -3210,6 +3279,23 @@ class BoxedMaybeException(Struct):
     '''
     value: BaseException|None = None
 
+    def pformat(self) -> str:
+        '''
+        Repr the boxed `.value` error in more-than-string
+        repr form.
+
+        '''
+        if not self.value:
+            return f'<{type(self).__name__}( .value=None )>\n'
+
+        return (
+            f'<{type(self.value).__name__}(\n'
+            f' |_.value = {self.value}\n'
+            f')>\n'
+        )
+
+    __repr__ = pformat
+
 
 # TODO: better naming and what additionals?
 # - [ ] optional runtime plugging?
@@ -3226,7 +3312,12 @@ def open_crash_handler(
         KeyboardInterrupt,
         trio.Cancelled,
     },
-    tb_hide: bool = True,
+    tb_hide: bool = False,
+
+    repl_fixture: (
+        AbstractContextManager[bool]  # pre/post REPL entry
+        |None
+    ) = None,
 ):
     '''
     Generic "post mortem" crash handler using `pdbp` REPL debugger.
@@ -3266,6 +3357,9 @@ def open_crash_handler(
                     repl=mk_pdb(),
                     tb=sys.exc_info()[2],
                     api_frame=inspect.currentframe().f_back,
+
+                    repl_fixture=repl_fixture,
+                    boxed_maybe_exc=boxed_maybe_exc,
                 )
             except bdb.BdbQuit:
                 __tracebackhide__: bool = False
@@ -3281,7 +3375,7 @@ def open_crash_handler(
 @cm
 def maybe_open_crash_handler(
     pdb: bool|None = None,
-    tb_hide: bool = True,
+    tb_hide: bool = False,
 
     **kwargs,
 ):
@@ -3293,10 +3387,10 @@ def maybe_open_crash_handler(
     flag is passed the pdb REPL is engaed on any crashes B)
 
     '''
+    __tracebackhide__: bool = tb_hide
+
     if pdb is None:
         pdb: bool = _state.is_debug_mode()
-
-    __tracebackhide__: bool = tb_hide
 
     rtctx = nullcontext(
         enter_result=BoxedMaybeException()
