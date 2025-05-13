@@ -6,7 +6,7 @@ import tractor
 
 # TODO: only import these when not running from test harness?
 # can we detect `pexpect` usage maybe?
-# from tractor.devx._debug import (
+# from tractor.devx.debug import (
 #     get_lock,
 #     get_debug_req,
 # )

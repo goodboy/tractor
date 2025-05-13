@@ -26,7 +26,7 @@ import os
 import pathlib
 
 import tractor
-from tractor.devx._debug import (
+from tractor.devx.debug import (
     BoxedMaybeException,
 )
 from .pytest import (

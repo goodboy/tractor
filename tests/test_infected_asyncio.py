@@ -889,7 +889,7 @@ async def manage_file(
 
         # NOTE: turns out you don't even need to sched an aio task
         # since the original issue, even though seemingly was due to
-        # the guest-run being abandoned + a `._debug.pause()` inside
+        # the guest-run being abandoned + a `.debug.pause()` inside
         # `._runtime._async_main()` (which was originally trying to
         # debug the `.lifetime_stack` not closing), IS NOT actually
         # the core issue?
@@ -1101,7 +1101,7 @@ def test_sigint_closes_lifetime_stack(
 #    => completed using `.bestow_portal(task)` inside
 #     `.to_asyncio._run_asyncio_task()` right?
 #   -[ ] translation func to get from `asyncio` task calling to 
-#     `._debug.wait_for_parent_stdin_hijack()` which does root
+#     `.debug.wait_for_parent_stdin_hijack()` which does root
 #     call to do TTY locking.
 #
 def test_sync_breakpoint():

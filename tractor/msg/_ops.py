@@ -608,7 +608,7 @@ async def drain_to_final_msg(
             #
             # -[ ] make sure pause points work here for REPLing
             #   the runtime itself; i.e. ensure there's no hangs!
-            # |_from tractor.devx._debug import pause
+            # |_from tractor.devx.debug import pause
             #   await pause()
 
         # NOTE: we get here if the far end was

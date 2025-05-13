@@ -16,7 +16,7 @@ from pexpect.spawnbase import SpawnBase
 from tractor._testing import (
     mk_cmd,
 )
-from tractor.devx._debug import (
+from tractor.devx.debug import (
     _pause_msg as _pause_msg,
     _crash_msg as _crash_msg,
     _repl_fail_msg as _repl_fail_msg,
@@ -111,7 +111,7 @@ def ctlc(
         # XXX: disable pygments highlighting for auto-tests
         # since some envs (like actions CI) will struggle
         # the the added color-char encoding..
-        from tractor.devx._debug import TractorConfig
+        from tractor.devx.debug import TractorConfig
         TractorConfig.use_pygements = False
 
     yield use_ctlc

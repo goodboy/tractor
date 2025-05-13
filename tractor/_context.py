@@ -292,7 +292,7 @@ class Context:
     # - `._runtime._invoke()` will check this flag before engaging
     #   the crash handler REPL in such cases where the "callee"
     #   raises the cancellation,
-    # - `.devx._debug.lock_stdio_for_peer()` will set it to `False` if
+    # - `.devx.debug.lock_stdio_for_peer()` will set it to `False` if
     #   the global tty-lock has been configured to filter out some
     #   actors from being able to acquire the debugger lock.
     _enter_debugger_on_cancel: bool = True
@@ -1251,8 +1251,8 @@ class Context:
 
             # ?XXX, should already be set in `._deliver_msg()` right?
             if self._outcome_msg is not Unresolved:
-                # from .devx import _debug
-                # await _debug.pause()
+                # from .devx import debug
+                # await debug.pause()
                 assert self._outcome_msg is outcome_msg
             else:
                 self._outcome_msg = outcome_msg
@@ -2187,7 +2187,7 @@ async def open_context_from_portal(
         #   debugging the tractor-runtime itself using it's
         #   own `.devx.` tooling!
         # 
-        # await _debug.pause()
+        # await debug.pause()
 
         # CASE 2: context was cancelled by local task calling
         # `.cancel()`, we don't raise and the exit block should
@@ -2254,7 +2254,7 @@ async def open_context_from_portal(
         # NOTE: `Context.cancel()` is conversely NEVER CALLED in
         # the `ContextCancelled` "self cancellation absorbed" case
         # handled in the block above ^^^ !!
-        # await _debug.pause()
+        # await debug.pause()
         # log.cancel(
         match scope_err:
             case trio.Cancelled:
@@ -2269,11 +2269,11 @@ async def open_context_from_portal(
         )
 
         if debug_mode():
-            # async with _debug.acquire_debug_lock(portal.actor.uid):
+            # async with debug.acquire_debug_lock(portal.actor.uid):
             #     pass
             # TODO: factor ^ into below for non-root cases?
             #
-            from .devx._debug import maybe_wait_for_debugger
+            from .devx.debug import maybe_wait_for_debugger
             was_acquired: bool = await maybe_wait_for_debugger(
                 # header_msg=(
                 #     'Delaying `ctx.cancel()` until debug lock '
@@ -2336,8 +2336,8 @@ async def open_context_from_portal(
                 raise
 
             # yes this worx!
-            # from .devx import _debug
-            # await _debug.pause()
+            # from .devx import debug
+            # await debug.pause()
 
             # an exception type boxed in a `RemoteActorError`
             # is returned (meaning it was obvi not raised)
@@ -2372,7 +2372,7 @@ async def open_context_from_portal(
         # where the root is waiting on the lock to clear but the
         # child has already cleared it and clobbered IPC.
         if debug_mode():
-            from .devx._debug import maybe_wait_for_debugger
+            from .devx.debug import maybe_wait_for_debugger
             await maybe_wait_for_debugger()
 
         # though it should be impossible for any tasks
