@@ -35,7 +35,7 @@ from .log import (
 )
 from . import _state
 from .devx import (
-    _debug,
+    debug,
     pformat,
 )
 from .to_asyncio import run_as_asyncio_guest
@@ -116,7 +116,7 @@ def _trio_main(
     Entry point for a `trio_run_in_process` subactor.
 
     '''
-    _debug.hide_runtime_frames()
+    debug.hide_runtime_frames()
 
     _state._current_actor = actor
     trio_main = partial(

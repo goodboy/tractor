@@ -29,7 +29,7 @@ async def bp_then_error(
     to_trio.send_nowait('start')
 
     # NOTE: what happens here inside the hook needs some refinement..
-    # => seems like it's still `._debug._set_trace()` but
+    # => seems like it's still `.debug._set_trace()` but
     #    we set `Lock.local_task_in_debug = 'sync'`, we probably want
     #    some further, at least, meta-data about the task/actor in debug
     #    in terms of making it clear it's `asyncio` mucking about.

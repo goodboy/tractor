@@ -528,7 +528,7 @@ def test_multi_daemon_subactors(
     # now the root actor won't clobber the bp_forever child
     # during it's first access to the debug lock, but will instead
     # wait for the lock to release, by the edge triggered
-    # ``devx._debug.Lock.no_remote_has_tty`` event before sending cancel messages
+    # ``devx.debug.Lock.no_remote_has_tty`` event before sending cancel messages
     # (via portals) to its underlings B)
 
     # at some point here there should have been some warning msg from

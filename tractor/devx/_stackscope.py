@@ -49,7 +49,7 @@ from tractor import (
     _state,
     log as logmod,
 )
-from tractor.devx import _debug
+from tractor.devx import debug
 
 log = logmod.get_logger(__name__)
 
@@ -82,7 +82,7 @@ def dump_task_tree() -> None:
     if (
         current_sigint_handler
         is not
-        _debug.DebugStatus._trio_handler
+        debug.DebugStatus._trio_handler
     ):
         sigint_handler_report: str = (
             'The default `trio` SIGINT handler was replaced?!'

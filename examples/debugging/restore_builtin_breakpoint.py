@@ -18,14 +18,14 @@ async def main() -> None:
         assert (
             (pybp_var := os.environ['PYTHONBREAKPOINT'])
             ==
-            'tractor.devx._debug._sync_pause_from_builtin'
+            'tractor.devx.debug._sync_pause_from_builtin'
         )
 
         # TODO: an assert that verifies the hook has indeed been, hooked
         # XD
         assert (
             (pybp_hook := sys.breakpointhook)
-            is not tractor.devx._debug._set_trace
+            is not tractor.devx.debug._set_trace
         )
 
         print(

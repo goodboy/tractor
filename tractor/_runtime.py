@@ -96,7 +96,7 @@ from ._exceptions import (
     MsgTypeError,
     unpack_error,
 )
-from .devx import _debug
+from .devx import debug
 from ._discovery import get_registry
 from ._portal import Portal
 from . import _state
@@ -220,7 +220,7 @@ class Actor:
         self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
 
         # always include debugging tools module
-        enable_modules.append('tractor.devx._debug')
+        enable_modules.append('tractor.devx.debug')
 
         self.enable_modules: dict[str, str] = {}
         for name in enable_modules:
@@ -930,7 +930,7 @@ class Actor:
 
             # kill any debugger request task to avoid deadlock
             # with the root actor in this tree
-            debug_req = _debug.DebugStatus
+            debug_req = debug.DebugStatus
             lock_req_ctx: Context = debug_req.req_ctx
             if (
                 lock_req_ctx
@@ -940,7 +940,7 @@ class Actor:
                 msg += (
                     f'\n'
                     f'-> Cancelling active debugger request..\n'
-                    f'|_{_debug.Lock.repr()}\n\n'
+                    f'|_{debug.Lock.repr()}\n\n'
                     f'|_{lock_req_ctx}\n\n'
                 )
                 # lock_req_ctx._scope.cancel()
@@ -1270,7 +1270,7 @@ async def async_main(
 
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger state.
-    _debug.DebugStatus._trio_handler = signal.getsignal(signal.SIGINT)
+    debug.DebugStatus._trio_handler = signal.getsignal(signal.SIGINT)
 
     is_registered: bool = False
     try:
@@ -1363,7 +1363,7 @@ async def async_main(
                 # try:
                 #     actor.load_modules()
                 # except ModuleNotFoundError as err:
-                #     _debug.pause_from_sync()
+                #     debug.pause_from_sync()
                 #     import pdbp; pdbp.set_trace()
                 #     raise
 
@@ -1395,7 +1395,7 @@ async def async_main(
                     # tranport address bind errors - normally it's
                     # something silly like the wrong socket-address
                     # passed via a config or CLI Bo
-                    entered_debug: bool = await _debug._maybe_enter_pm(
+                    entered_debug: bool = await debug._maybe_enter_pm(
                         oserr,
                     )
                     if not entered_debug:
@@ -1433,7 +1433,7 @@ async def async_main(
                         waddr = wrap_address(addr)
                         assert waddr.is_valid
                     except AssertionError:
-                        await _debug.pause()
+                        await debug.pause()
 
                     async with get_registry(addr) as reg_portal:
                         for accept_addr in accept_addrs:
@@ -1550,7 +1550,7 @@ async def async_main(
             # prevents any `infected_aio` actor from continuing
             # and any callbacks in the `ls` here WILL NOT be
             # called!!
-            # await _debug.pause(shield=True)
+            # await debug.pause(shield=True)
 
         ls.close()
 
@@ -1563,7 +1563,7 @@ async def async_main(
         #
         # if actor.name == 'brokerd.ib':
         #     with CancelScope(shield=True):
-        #         await _debug.breakpoint()
+        #         await debug.breakpoint()
 
         # Unregister actor from the registry-sys / registrar.
         if (
@@ -1752,7 +1752,7 @@ class Arbiter(Actor):
         waddr: Address = wrap_address(addr)
         if not waddr.is_valid:
             # should never be 0-dynamic-os-alloc
-            await _debug.pause()
+            await debug.pause()
 
         self._registry[uid] = addr
 
