@@ -46,6 +46,8 @@ from typing import (
     Callable,
     AsyncIterator,
     AsyncGenerator,
+    Sequence,
+    Type,
     TypeAlias,
     TYPE_CHECKING,
 )
@@ -2932,7 +2934,7 @@ def _post_mortem(
     api_frame: FrameType,
 
     shield: bool = False,
-    hide_tb: bool = False,
+    hide_tb: bool = True,
 
     # maybe pre/post REPL entry
     repl_fixture: (
@@ -2953,6 +2955,12 @@ def _post_mortem(
     # TODO, support @acm?
     # -[ ] what about a return-proto for determining
     #     whether the REPL should be allowed to enage?
+    # -[ ] consider factoring this `_repl_fixture` block into
+    #    a common @cm somehow so it can be repurposed both here and
+    #    in `._pause()`??
+    #   -[ ] we could also use the `ContextDecorator`-type in that
+    #       case to simply decorate the `_enter_repl_sync()` closure?
+    #     |_https://docs.python.org/3/library/contextlib.html#using-a-context-manager-as-a-function-decorator
     if not (
         repl_fixture
         or
@@ -2962,7 +2970,11 @@ def _post_mortem(
             enter_result=True,
         )
     else:
-        _repl_fixture = (repl_fixture or rt_repl_fixture)(maybe_bxerr=boxed_maybe_exc)
+        _repl_fixture = (
+            repl_fixture
+            or
+            rt_repl_fixture
+        )(maybe_bxerr=boxed_maybe_exc)
 
     with _repl_fixture as enter_repl:
 
@@ -2982,11 +2994,9 @@ def _post_mortem(
             # ^TODO, instead a nice runtime-info + maddr + uid?
             # -[ ] impl a `Actor.__repr()__`??
             #  |_ <task>:<thread> @ <actor>
-            # no_runtime: bool = False
 
         except NoRuntime:
             actor_repr: str = '<no-actor-runtime?>'
-            # no_runtime: bool = True
 
         try:
             task_repr: Task = current_task()
@@ -3002,12 +3012,17 @@ def _post_mortem(
 
         )
 
-        # NOTE only replacing this from `pdbp.xpm()` to add the
-        # `end=''` to the print XD
+        # XXX NOTE(s) on `pdbp.xpm()` version..
+        #
+        # - seems to lose the up-stack tb-info?
+        # - currently we're (only) replacing this from `pdbp.xpm()`
+        #   to add the `end=''` to the print XD
+        #
         print(traceback.format_exc(), end='')
         caller_frame: FrameType = api_frame.f_back
 
-        # NOTE: see the impl details of followings to understand usage:
+        # NOTE, see the impl details of these in the lib to
+        # understand usage:
         # - `pdbp.post_mortem()`
         # - `pdbp.xps()`
         # - `bdb.interaction()`
@@ -3017,12 +3032,12 @@ def _post_mortem(
             # frame=None,
             traceback=tb,
         )
-        # XXX NOTE XXX: absolutely required to avoid hangs!
-        # Since we presume the post-mortem was enaged to a task-ending
-        # error, we MUST release the local REPL request so that not other
-        # local task nor the root remains blocked!
-        # if not no_runtime:
-        #     DebugStatus.release()
+
+        # XXX NOTE XXX: this is abs required to avoid hangs!
+        #
+        # Since we presume the post-mortem was enaged to
+        # a task-ending error, we MUST release the local REPL request
+        # so that not other local task nor the root remains blocked!
         DebugStatus.release()
 
 
@@ -3279,6 +3294,9 @@ class BoxedMaybeException(Struct):
     '''
     value: BaseException|None = None
 
+    # handler can suppress crashes dynamically
+    raise_on_exit: bool|Sequence[Type[BaseException]] = True
+
     def pformat(self) -> str:
         '''
         Repr the boxed `.value` error in more-than-string
@@ -3312,12 +3330,13 @@ def open_crash_handler(
         KeyboardInterrupt,
         trio.Cancelled,
     },
-    tb_hide: bool = False,
+    hide_tb: bool = True,
 
     repl_fixture: (
         AbstractContextManager[bool]  # pre/post REPL entry
         |None
     ) = None,
+    raise_on_exit: bool|Sequence[Type[BaseException]] = True,
 ):
     '''
     Generic "post mortem" crash handler using `pdbp` REPL debugger.
@@ -3330,14 +3349,16 @@ def open_crash_handler(
       `trio.run()`.
 
     '''
-    __tracebackhide__: bool = tb_hide
+    __tracebackhide__: bool = hide_tb
 
     # TODO, yield a `outcome.Error`-like boxed type?
     # -[~] use `outcome.Value/Error` X-> frozen!
     # -[x] write our own..?
     # -[ ] consider just wtv is used by `pytest.raises()`?
     #
-    boxed_maybe_exc = BoxedMaybeException()
+    boxed_maybe_exc = BoxedMaybeException(
+        raise_on_exit=raise_on_exit,
+    )
     err: BaseException
     try:
         yield boxed_maybe_exc
@@ -3352,11 +3373,12 @@ def open_crash_handler(
             )
         ):
             try:
-                # use our re-impl-ed version
+                # use our re-impl-ed version of `pdbp.xpm()`
                 _post_mortem(
                     repl=mk_pdb(),
                     tb=sys.exc_info()[2],
                     api_frame=inspect.currentframe().f_back,
+                    hide_tb=hide_tb,
 
                     repl_fixture=repl_fixture,
                     boxed_maybe_exc=boxed_maybe_exc,
@@ -3365,17 +3387,26 @@ def open_crash_handler(
                 __tracebackhide__: bool = False
                 raise err
 
-            # XXX NOTE, `pdbp`'s version seems to lose the up-stack
-            # tb-info?
-            # pdbp.xpm()
-
-        raise err
+        if (
+            raise_on_exit is True
+            or (
+                raise_on_exit is not False
+                and (
+                    set(raise_on_exit)
+                    and
+                    type(err) in raise_on_exit
+                )
+            )
+            and
+            boxed_maybe_exc.raise_on_exit == raise_on_exit
+        ):
+            raise err
 
 
 @cm
 def maybe_open_crash_handler(
     pdb: bool|None = None,
-    tb_hide: bool = False,
+    hide_tb: bool = True,
 
     **kwargs,
 ):
@@ -3387,7 +3418,7 @@ def maybe_open_crash_handler(
     flag is passed the pdb REPL is engaed on any crashes B)
 
     '''
-    __tracebackhide__: bool = tb_hide
+    __tracebackhide__: bool = hide_tb
 
     if pdb is None:
         pdb: bool = _state.is_debug_mode()
@@ -3396,7 +3427,10 @@ def maybe_open_crash_handler(
         enter_result=BoxedMaybeException()
     )
     if pdb:
-        rtctx = open_crash_handler(**kwargs)
+        rtctx = open_crash_handler(
+            hide_tb=hide_tb,
+            **kwargs,
+        )
 
     with rtctx as boxed_maybe_exc:
         yield boxed_maybe_exc
