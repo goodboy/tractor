@@ -237,7 +237,7 @@ class Actor:
         # TODO? only add this when `is_debug_mode() == True` no?
         # always include debugging tools module
         if _state.is_root_process():
-            enable_modules.append('tractor.devx.debug')
+            enable_modules.append('tractor.devx.debug._tty_lock')
 
         self.enable_modules: dict[str, str] = get_mod_nsps2fps(
             mod_ns_paths=enable_modules,
