@@ -115,6 +115,20 @@ def _get_mod_abspath(module):
     return os.path.abspath(module.__file__)
 
 
+def get_mod_nsps2fps(mod_ns_paths: list[str]) -> dict[str, str]:
+    '''
+    Deliver a table of py module namespace-path-`str`s mapped to
+    their "physical" `.py` file paths in the file-sys.
+
+    '''
+    nsp2fp: dict[str, str] = {}
+    for nsp in mod_ns_paths:
+        mod: ModuleType = importlib.import_module(nsp)
+        nsp2fp[nsp] = _get_mod_abspath(mod)
+
+    return nsp2fp
+
+
 class Actor:
     '''
     The fundamental "runtime" concurrency primitive.
@@ -219,13 +233,14 @@ class Actor:
         # will be passed to children
         self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
 
+        # TODO? only add this when `is_debug_mode() == True` no?
         # always include debugging tools module
-        enable_modules.append('tractor.devx.debug')
+        if _state.is_root_process():
+            enable_modules.append('tractor.devx.debug._tty_lock')
 
-        self.enable_modules: dict[str, str] = {}
-        for name in enable_modules:
-            mod: ModuleType = importlib.import_module(name)
-            self.enable_modules[name] = _get_mod_abspath(mod)
+        self.enable_modules: dict[str, str] = get_mod_nsps2fps(
+            mod_ns_paths=enable_modules,
+        )
 
         self._mods: dict[str, ModuleType] = {}
         self.loglevel: str = loglevel
@@ -729,25 +744,33 @@ class Actor:
                             f'Received invalid non-`SpawnSpec` payload !?\n'
                             f'{spawnspec}\n'
                         )
-
-                # ^^TODO XXX!! when the `SpawnSpec` fails to decode
-                # the above will raise a `MsgTypeError` which if we
-                # do NOT ALSO RAISE it will tried to be pprinted in
-                # the log.runtime() below..
+                # ^^XXX TODO XXX^^^
+                # when the `SpawnSpec` fails to decode the above will
+                # raise a `MsgTypeError` which if we do NOT ALSO
+                # RAISE it will tried to be pprinted in the
+                # log.runtime() below..
                 #
                 # SO we gotta look at how other `chan.recv()` calls
                 # are wrapped and do the same for this spec receive!
                 # -[ ] see `._rpc` likely has the answer?
+
+                # ^^^XXX NOTE XXX^^^, can't be called here!
                 #
-                # XXX NOTE, can't be called here in subactor
-                # bc we haven't yet received the
-                # `SpawnSpec._runtime_vars: dict` which would
-                # declare whether `debug_mode` is set!
                 # breakpoint()
                 # import pdbp; pdbp.set_trace()
+                #
+                # => bc we haven't yet received the
+                # `spawnspec._runtime_vars` which contains
+                # `debug_mode: bool`..
+
+                # `SpawnSpec.bind_addrs`
+                #  ---------------------
                 accept_addrs: list[UnwrappedAddress] = spawnspec.bind_addrs
 
-                # TODO: another `Struct` for rtvs..
+                # `SpawnSpec._runtime_vars`
+                # -------------------------
+                # => update process-wide globals
+                # TODO! -[ ] another `Struct` for rtvs..
                 rvs: dict[str, Any] = spawnspec._runtime_vars
                 if rvs['_debug_mode']:
                     from .devx import (
@@ -805,18 +828,20 @@ class Actor:
                         f'self._infected_aio = {aio_attr}\n'
                     )
                 if aio_rtv:
-                    assert trio_runtime.GLOBAL_RUN_CONTEXT.runner.is_guest
-                    # ^TODO^ possibly add a `sniffio` or
-                    # `trio` pub-API for `is_guest_mode()`?
+                    assert (
+                        trio_runtime.GLOBAL_RUN_CONTEXT.runner.is_guest
+                        # and
+                        # ^TODO^ possibly add a `sniffio` or
+                        # `trio` pub-API for `is_guest_mode()`?
+                    )
 
                 rvs['_is_root'] = False  # obvi XD
 
-                # update process-wide globals
                 _state._runtime_vars.update(rvs)
 
-                # XXX: ``msgspec`` doesn't support serializing tuples
-                # so just cash manually here since it's what our
-                # internals expect.
+                # `SpawnSpec.reg_addrs`
+                # ---------------------
+                # => update parent provided registrar contact info
                 #
                 self.reg_addrs = [
                     # TODO: we don't really NEED these as tuples?
@@ -827,12 +852,24 @@ class Actor:
                     for val in spawnspec.reg_addrs
                 ]
 
-                # TODO: better then monkey patching..
-                # -[ ] maybe read the actual f#$-in `._spawn_spec` XD
-                for _, attr, value in pretty_struct.iter_fields(
-                    spawnspec,
-                ):
-                    setattr(self, attr, value)
+                # `SpawnSpec.enable_modules`
+                # ---------------------
+                # => extend RPC-python-module (capabilities) with
+                #   those permitted by parent.
+                #
+                # NOTE, only the root actor should have
+                # a pre-permitted entry for `.devx.debug._tty_lock`.
+                assert not self.enable_modules
+                self.enable_modules.update(
+                    spawnspec.enable_modules
+                )
+
+                self._parent_main_data = spawnspec._parent_main_data
+                # XXX QUESTION(s)^^^
+                # -[ ] already set in `.__init__()` right, but how is
+                #      it diff from this blatant parent copy?
+                #    -[ ] do we need/want the .__init__() value in
+                #       just the root case orr?
 
             return (
                 chan,
