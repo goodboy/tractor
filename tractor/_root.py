@@ -288,7 +288,7 @@ async def open_root_actor(
 
             # expose internal debug module to every actor allowing for
             # use of ``await tractor.pause()``
-            enable_modules.append('tractor.devx.debug')
+            enable_modules.append('tractor.devx.debug._tty_lock')
 
             # if debug mode get's enabled *at least* use that level of
             # logging for some informative console prompts.
