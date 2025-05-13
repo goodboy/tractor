@@ -43,9 +43,10 @@ import threading
 import traceback
 from typing import (
     Any,
-    Callable,
     AsyncIterator,
     AsyncGenerator,
+    Callable,
+    Iterator,
     Sequence,
     Type,
     TypeAlias,
@@ -1850,27 +1851,12 @@ async def _pause(
         # TODO, support @acm?
         # -[ ] what about a return-proto for determining
         #     whether the REPL should be allowed to enage?
-        nonlocal repl_fixture
-        if not (
-            repl_fixture
-            or
-            (rt_repl_fixture := _state._runtime_vars.get('repl_fixture'))
-        ):
-            repl_fixture = nullcontext(
-                enter_result=True,
-            )
+        # nonlocal repl_fixture
 
-        _repl_fixture = repl_fixture or rt_repl_fixture
-        with _repl_fixture(maybe_bxerr=None) as enter_repl:
-
-            # XXX when the fixture doesn't allow it, skip
-            # the crash-handler REPL and raise now!
+        with _maybe_open_repl_fixture(
+            repl_fixture=repl_fixture,
+        ) as enter_repl:
             if not enter_repl:
-                log.pdb(
-                    f'pdbp-REPL blocked by a `repl_fixture()` which yielded `False` !\n'
-                    f'repl_fixture: {repl_fixture}\n'
-                    f'rt_repl_fixture: {rt_repl_fixture}\n'
-                )
                 return
 
             debug_func_name: str = (
@@ -2926,6 +2912,60 @@ _crash_msg: str = (
 )
 
 
+# TODO, support @acm?
+# -[ ] what about a return-proto for determining
+#     whether the REPL should be allowed to enage?
+# -[ ] consider factoring this `_repl_fixture` block into
+#    a common @cm somehow so it can be repurposed both here and
+#    in `._pause()`??
+#   -[ ] we could also use the `ContextDecorator`-type in that
+#       case to simply decorate the `_enter_repl_sync()` closure?
+#     |_https://docs.python.org/3/library/contextlib.html#using-a-context-manager-as-a-function-decorator
+@cm
+def _maybe_open_repl_fixture(
+    repl_fixture: (
+        AbstractContextManager[bool]
+        |None
+    ) = None,
+    boxed_maybe_exc: BoxedMaybeException|None = None,
+) -> Iterator[bool]:
+    '''
+    Maybe open a pre/post REPL entry "fixture" `@cm` provided by the
+    user, the caller should use the delivered `bool` to determine
+    whether to engage the `PdbREPL`.
+
+    '''
+    if not (
+        repl_fixture
+        or
+        (rt_repl_fixture := _state._runtime_vars.get('repl_fixture'))
+    ):
+        _repl_fixture = nullcontext(
+            enter_result=True,
+        )
+    else:
+        _repl_fixture = (
+            repl_fixture
+            or
+            rt_repl_fixture
+        )(maybe_bxerr=boxed_maybe_exc)
+
+    with _repl_fixture as enter_repl:
+
+        # XXX when the fixture doesn't allow it, skip
+        # the crash-handler REPL and raise now!
+        if not enter_repl:
+            log.pdb(
+                f'pdbp-REPL blocked by a `repl_fixture()` which yielded `False` !\n'
+                f'repl_fixture: {repl_fixture}\n'
+                f'rt_repl_fixture: {rt_repl_fixture}\n'
+            )
+            yield False  # no don't enter REPL
+            return
+
+        yield True  # yes enter REPL
+
+
 def _post_mortem(
     repl: PdbREPL,  # normally passed by `_pause()`
 
@@ -2952,40 +2992,11 @@ def _post_mortem(
     '''
     __tracebackhide__: bool = hide_tb
 
-    # TODO, support @acm?
-    # -[ ] what about a return-proto for determining
-    #     whether the REPL should be allowed to enage?
-    # -[ ] consider factoring this `_repl_fixture` block into
-    #    a common @cm somehow so it can be repurposed both here and
-    #    in `._pause()`??
-    #   -[ ] we could also use the `ContextDecorator`-type in that
-    #       case to simply decorate the `_enter_repl_sync()` closure?
-    #     |_https://docs.python.org/3/library/contextlib.html#using-a-context-manager-as-a-function-decorator
-    if not (
-        repl_fixture
-        or
-        (rt_repl_fixture := _state._runtime_vars.get('repl_fixture'))
-    ):
-        _repl_fixture = nullcontext(
-            enter_result=True,
-        )
-    else:
-        _repl_fixture = (
-            repl_fixture
-            or
-            rt_repl_fixture
-        )(maybe_bxerr=boxed_maybe_exc)
-
-    with _repl_fixture as enter_repl:
-
-        # XXX when the fixture doesn't allow it, skip
-        # the crash-handler REPL and raise now!
+    with _maybe_open_repl_fixture(
+        repl_fixture=repl_fixture,
+        boxed_maybe_exc=boxed_maybe_exc,
+    ) as enter_repl:
         if not enter_repl:
-            log.pdb(
-                f'pdbp-REPL blocked by a `repl_fixture()` which yielded `False` !\n'
-                f'repl_fixture: {repl_fixture}\n'
-                f'rt_repl_fixture: {rt_repl_fixture}\n'
-            )
             return
 
         try:
