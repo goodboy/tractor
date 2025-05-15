@@ -44,7 +44,10 @@ from ._runtime import (
     # Arbiter as Registry,
     async_main,
 )
-from .devx import debug
+from .devx import (
+    debug,
+    _frame_stack,
+)
 from . import _spawn
 from . import _state
 from . import log
@@ -223,7 +226,7 @@ async def open_root_actor(
                 len(enable_transports) == 1
             ), 'No multi-tpt support yet!'
 
-        debug.hide_runtime_frames()
+        _frame_stack.hide_runtime_frames()
         __tracebackhide__: bool = hide_tb
 
         # attempt to retreive ``trio``'s sigint handler and stash it
