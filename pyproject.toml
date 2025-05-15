@@ -61,6 +61,7 @@ dev = [
   # `tractor.devx` tooling
   "greenback>=1.2.1,<2",
   "stackscope>=0.2.2,<0.3",
+  "typing-extensions>=4.13.2",  # needed for stackscope
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
   "xonsh>=0.19.2",

@@ -237,7 +237,7 @@ def enable_stack_on_sig(
     try:
         import stackscope
     except ImportError:
-        log.warning(
+        log.error(
             '`stackscope` not installed for use in debug mode!'
         )
         return None
@@ -255,8 +255,8 @@ def enable_stack_on_sig(
         dump_tree_on_sig,
     )
     log.devx(
-        'Enabling trace-trees on `SIGUSR1` '
-        'since `stackscope` is installed @ \n'
+        f'Enabling trace-trees on `SIGUSR1` '
+        f'since `stackscope` is installed @ \n'
         f'{stackscope!r}\n\n'
         f'With `SIGUSR1` handler\n'
         f'|_{dump_tree_on_sig}\n'
