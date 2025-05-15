@@ -44,6 +44,7 @@ from functools import partial
 import importlib
 import importlib.util
 import os
+from pathlib import Path
 from pprint import pformat
 import signal
 import sys
@@ -111,8 +112,8 @@ if TYPE_CHECKING:
 log = get_logger('tractor')
 
 
-def _get_mod_abspath(module):
-    return os.path.abspath(module.__file__)
+def _get_mod_abspath(module: ModuleType) -> Path:
+    return Path(module.__file__).absolute()
 
 
 def get_mod_nsps2fps(mod_ns_paths: list[str]) -> dict[str, str]:
@@ -124,7 +125,7 @@ def get_mod_nsps2fps(mod_ns_paths: list[str]) -> dict[str, str]:
     nsp2fp: dict[str, str] = {}
     for nsp in mod_ns_paths:
         mod: ModuleType = importlib.import_module(nsp)
-        nsp2fp[nsp] = _get_mod_abspath(mod)
+        nsp2fp[nsp] = str(_get_mod_abspath(mod))
 
     return nsp2fp
 
@@ -406,7 +407,6 @@ class Actor:
 
     def load_modules(
         self,
-        # debug_mode: bool = False,
     ) -> None:
         '''
         Load explicitly enabled python modules from local fs after
@@ -428,6 +428,9 @@ class Actor:
                         parent_data['init_main_from_path'])
 
             status: str = 'Attempting to import enabled modules:\n'
+
+            modpath: str
+            filepath: str
             for modpath, filepath in self.enable_modules.items():
                 # XXX append the allowed module to the python path which
                 # should allow for relative (at least downward) imports.
