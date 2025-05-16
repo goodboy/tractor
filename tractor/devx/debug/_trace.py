@@ -90,6 +90,7 @@ if TYPE_CHECKING:
         Actor,
     )
     from ._post_mortem import BoxedMaybeException
+    from ._repl import PdbREPL
 
 log = get_logger(__package__)
 
@@ -109,6 +110,11 @@ _repl_fail_msg: str|None = (
 #     |_https://docs.python.org/3/library/contextlib.html#using-a-context-manager-as-a-function-decorator
 @cm
 def _maybe_open_repl_fixture(
+    repl: PdbREPL,
+    # ^XXX **always provided** by the low-level REPL-invoker,
+    # - _post_mortem()
+    # - _pause()
+
     repl_fixture: (
         AbstractContextManager[bool]
         |None
@@ -134,7 +140,10 @@ def _maybe_open_repl_fixture(
             repl_fixture
             or
             rt_repl_fixture
-        )(maybe_bxerr=boxed_maybe_exc)
+        )(
+            repl=repl,
+            maybe_bxerr=boxed_maybe_exc
+        )
 
     with _repl_fixture as enter_repl:
 
@@ -252,6 +261,7 @@ async def _pause(
         # nonlocal repl_fixture
 
         with _maybe_open_repl_fixture(
+            repl=repl,
             repl_fixture=repl_fixture,
         ) as enter_repl:
             if not enter_repl:

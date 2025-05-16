@@ -144,6 +144,7 @@ def _post_mortem(
     __tracebackhide__: bool = hide_tb
 
     with _maybe_open_repl_fixture(
+        repl=repl,
         repl_fixture=repl_fixture,
         boxed_maybe_exc=boxed_maybe_exc,
     ) as enter_repl:
