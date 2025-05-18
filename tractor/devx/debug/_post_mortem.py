@@ -64,7 +64,6 @@ from tractor._exceptions import (
 )
 from ._trace import (
     _pause,
-    _maybe_open_repl_fixture,
 )
 from ._tty_lock import (
     DebugStatus,
@@ -143,65 +142,65 @@ def _post_mortem(
     '''
     __tracebackhide__: bool = hide_tb
 
-    with _maybe_open_repl_fixture(
+    # maybe enter any user fixture
+    enter_repl: bool = DebugStatus.maybe_enter_repl_fixture(
         repl=repl,
         repl_fixture=repl_fixture,
         boxed_maybe_exc=boxed_maybe_exc,
-    ) as enter_repl:
-        if not enter_repl:
-            return
+    )
+    if not enter_repl:
+        return
+    try:
+        actor: Actor = current_actor()
+        actor_repr: str = str(actor.uid)
+        # ^TODO, instead a nice runtime-info + maddr + uid?
+        # -[ ] impl a `Actor.__repr()__`??
+        #  |_ <task>:<thread> @ <actor>
 
-        try:
-            actor: Actor = current_actor()
-            actor_repr: str = str(actor.uid)
-            # ^TODO, instead a nice runtime-info + maddr + uid?
-            # -[ ] impl a `Actor.__repr()__`??
-            #  |_ <task>:<thread> @ <actor>
+    except NoRuntime:
+        actor_repr: str = '<no-actor-runtime?>'
 
-        except NoRuntime:
-            actor_repr: str = '<no-actor-runtime?>'
+    try:
+        task_repr: Task = trio.lowlevel.current_task()
+    except RuntimeError:
+        task_repr: str = '<unknown-Task>'
 
-        try:
-            task_repr: Task = trio.lowlevel.current_task()
-        except RuntimeError:
-            task_repr: str = '<unknown-Task>'
+    # TODO: print the actor supervion tree up to the root
+    # here! Bo
+    log.pdb(
+        f'{_crash_msg}\n'
+        f'x>(\n'
+        f' |_ {task_repr} @ {actor_repr}\n'
 
-        # TODO: print the actor supervion tree up to the root
-        # here! Bo
-        log.pdb(
-            f'{_crash_msg}\n'
-            f'x>(\n'
-            f' |_ {task_repr} @ {actor_repr}\n'
+    )
 
-        )
+    # XXX NOTE(s) on `pdbp.xpm()` version..
+    #
+    # - seems to lose the up-stack tb-info?
+    # - currently we're (only) replacing this from `pdbp.xpm()`
+    #   to add the `end=''` to the print XD
+    #
+    print(traceback.format_exc(), end='')
+    caller_frame: FrameType = api_frame.f_back
 
-        # XXX NOTE(s) on `pdbp.xpm()` version..
-        #
-        # - seems to lose the up-stack tb-info?
-        # - currently we're (only) replacing this from `pdbp.xpm()`
-        #   to add the `end=''` to the print XD
-        #
-        print(traceback.format_exc(), end='')
-        caller_frame: FrameType = api_frame.f_back
+    # NOTE, see the impl details of these in the lib to
+    # understand usage:
+    # - `pdbp.post_mortem()`
+    # - `pdbp.xps()`
+    # - `bdb.interaction()`
+    repl.reset()
+    repl.interaction(
+        frame=caller_frame,
+        # frame=None,
+        traceback=tb,
+    )
 
-        # NOTE, see the impl details of these in the lib to
-        # understand usage:
-        # - `pdbp.post_mortem()`
-        # - `pdbp.xps()`
-        # - `bdb.interaction()`
-        repl.reset()
-        repl.interaction(
-            frame=caller_frame,
-            # frame=None,
-            traceback=tb,
-        )
-
-        # XXX NOTE XXX: this is abs required to avoid hangs!
-        #
-        # Since we presume the post-mortem was enaged to
-        # a task-ending error, we MUST release the local REPL request
-        # so that not other local task nor the root remains blocked!
-        DebugStatus.release()
+    # XXX NOTE XXX: this is abs required to avoid hangs!
+    #
+    # Since we presume the post-mortem was enaged to
+    # a task-ending error, we MUST release the local REPL request
+    # so that not other local task nor the root remains blocked!
+    DebugStatus.release()
 
 
 async def post_mortem(

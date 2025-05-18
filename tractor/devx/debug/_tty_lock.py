@@ -22,7 +22,9 @@ Root-actor TTY mutex-locking machinery.
 from __future__ import annotations
 import asyncio
 from contextlib import (
+    AbstractContextManager,
     asynccontextmanager as acm,
+    ExitStack,
 )
 import textwrap
 import threading
@@ -74,6 +76,9 @@ if TYPE_CHECKING:
     )
     from ._repl import (
         PdbREPL,
+    )
+    from ._post_mortem import (
+        BoxedMaybeException,
     )
 
 log = get_logger(__name__)
@@ -601,6 +606,10 @@ class DebugStatus:
     # request.
     repl: PdbREPL|None = None
 
+    # any `repl_fixture` provided by user are entered and
+    # latered closed on `.release()`
+    _fixture_stack = ExitStack()
+
     # TODO: yet again this looks like a task outcome where we need
     # to sync to the completion of one task (and get its result)
     # being used everywhere for syncing..
@@ -803,6 +812,70 @@ class DebugStatus:
 
         return False
 
+    # TODO, support @acm?
+    # -[ ] what about a return-proto for determining
+    #     whether the REPL should be allowed to enage?
+    # -[x] consider factoring this `_repl_fixture` block into
+    #    a common @cm somehow so it can be repurposed both here and
+    #    in `._pause()`??
+    #   -[ ] we could also use the `ContextDecorator`-type in that
+    #       case to simply decorate the `_enter_repl_sync()` closure?
+    #     |_https://docs.python.org/3/library/contextlib.html#using-a-context-manager-as-a-function-decorator
+    @classmethod
+    def maybe_enter_repl_fixture(
+        cls,
+        # ^XXX **always provided** by the low-level REPL-invoker,
+        # - _post_mortem()
+        # - _pause()
+        repl: PdbREPL,
+
+        # maybe pre/post REPL entry
+        repl_fixture: (
+            AbstractContextManager[bool]
+            |None
+        ) = None,
+
+        # if called from crashed context, provided by
+        # `open_crash_handler()`
+        boxed_maybe_exc: BoxedMaybeException|None = None,
+    ) -> bool:
+        '''
+        Maybe open a pre/post REPL entry "fixture" `@cm` provided by the
+        user, the caller should use the delivered `bool` to determine
+        whether to engage the `PdbREPL`.
+
+        '''
+        if not (
+            repl_fixture
+            or
+            (rt_repl_fixture := _state._runtime_vars.get('repl_fixture'))
+        ):
+            return True  # YES always enter
+
+        _repl_fixture = (
+            repl_fixture
+            or
+            rt_repl_fixture
+        )
+        enter_repl: bool = DebugStatus._fixture_stack.enter_context(
+            _repl_fixture(
+                repl=repl,
+                maybe_bxerr=boxed_maybe_exc,
+            )
+        )
+        if not enter_repl:
+            log.pdb(
+                f'pdbp-REPL blocked by a `repl_fixture()` which yielded `False` !\n'
+                f'repl_fixture: {repl_fixture}\n'
+                f'rt_repl_fixture: {rt_repl_fixture}\n'
+            )
+
+        log.devx(
+            f'User provided `repl_fixture` entered with,\n'
+            f'{repl_fixture!r} -> {enter_repl!r}\n'
+        )
+        return enter_repl
+
     @classmethod
     # @pdbp.hideframe
     def release(
@@ -889,6 +962,8 @@ class DebugStatus:
             # XXX requires runtime check to avoid crash!
             if current_actor(err_on_no_runtime=False):
                 cls.unshield_sigint()
+
+            cls._fixture_stack.close()
 
 
 # TODO: use the new `@lowlevel.singleton` for this!
