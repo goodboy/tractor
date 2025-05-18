@@ -28,8 +28,6 @@ import asyncio
 import bdb
 from contextlib import (
     AbstractContextManager,
-    contextmanager as cm,
-    nullcontext,
 )
 from functools import (
     partial,
@@ -37,7 +35,6 @@ from functools import (
 import inspect
 import threading
 from typing import (
-    Iterator,
     Callable,
     TYPE_CHECKING,
 )
@@ -89,7 +86,7 @@ if TYPE_CHECKING:
     from tractor._runtime import (
         Actor,
     )
-    from ._post_mortem import BoxedMaybeException
+    # from ._post_mortem import BoxedMaybeException
     from ._repl import PdbREPL
 
 log = get_logger(__package__)
@@ -98,69 +95,6 @@ _pause_msg: str = 'Opening a pdb REPL in paused actor'
 _repl_fail_msg: str|None = (
     'Failed to REPl via `_pause()` '
 )
-
-# TODO, support @acm?
-# -[ ] what about a return-proto for determining
-#     whether the REPL should be allowed to enage?
-# -[ ] consider factoring this `_repl_fixture` block into
-#    a common @cm somehow so it can be repurposed both here and
-#    in `._pause()`??
-#   -[ ] we could also use the `ContextDecorator`-type in that
-#       case to simply decorate the `_enter_repl_sync()` closure?
-#     |_https://docs.python.org/3/library/contextlib.html#using-a-context-manager-as-a-function-decorator
-@cm
-def _maybe_open_repl_fixture(
-    repl: PdbREPL,
-    # ^XXX **always provided** by the low-level REPL-invoker,
-    # - _post_mortem()
-    # - _pause()
-
-    repl_fixture: (
-        AbstractContextManager[bool]
-        |None
-    ) = None,
-    boxed_maybe_exc: BoxedMaybeException|None = None,
-) -> Iterator[bool]:
-    '''
-    Maybe open a pre/post REPL entry "fixture" `@cm` provided by the
-    user, the caller should use the delivered `bool` to determine
-    whether to engage the `PdbREPL`.
-
-    '''
-    if not (
-        repl_fixture
-        or
-        (rt_repl_fixture := _state._runtime_vars.get('repl_fixture'))
-    ):
-        _repl_fixture = nullcontext(
-            enter_result=True,
-        )
-    else:
-        _repl_fixture = (
-            repl_fixture
-            or
-            rt_repl_fixture
-        )(
-            repl=repl,
-            maybe_bxerr=boxed_maybe_exc
-        )
-
-    with _repl_fixture as enter_repl:
-
-        # XXX when the fixture doesn't allow it, skip
-        # the crash-handler REPL and raise now!
-        if not enter_repl:
-            log.pdb(
-                f'pdbp-REPL blocked by a `repl_fixture()` which yielded `False` !\n'
-                f'repl_fixture: {repl_fixture}\n'
-                f'rt_repl_fixture: {rt_repl_fixture}\n'
-            )
-            yield False  # no don't enter REPL
-            return
-
-        yield True  # yes enter REPL
-
-
 
 async def _pause(
 
@@ -255,90 +189,86 @@ async def _pause(
     ) -> None:
         __tracebackhide__: bool = hide_tb
 
-        # TODO, support @acm?
-        # -[ ] what about a return-proto for determining
-        #     whether the REPL should be allowed to enage?
-        # nonlocal repl_fixture
-
-        with _maybe_open_repl_fixture(
+        # maybe enter any user fixture
+        enter_repl: bool = DebugStatus.maybe_enter_repl_fixture(
             repl=repl,
             repl_fixture=repl_fixture,
-        ) as enter_repl:
-            if not enter_repl:
-                return
+        )
+        if not enter_repl:
+            return
 
-            debug_func_name: str = (
-                debug_func.func.__name__ if debug_func else 'None'
-            )
+        debug_func_name: str = (
+            debug_func.func.__name__ if debug_func else 'None'
+        )
 
-            # TODO: do we want to support using this **just** for the
-            # locking / common code (prolly to help address #320)?
-            task_status.started((task, repl))
-            try:
-                if debug_func:
-                    # block here one (at the appropriate frame *up*) where
-                    # ``breakpoint()`` was awaited and begin handling stdio.
-                    log.devx(
-                        'Entering sync world of the `pdb` REPL for task..\n'
-                        f'{repl}\n'
-                        f'  |_{task}\n'
-                     )
+        # TODO: do we want to support using this **just** for the
+        # locking / common code (prolly to help address #320)?
+        task_status.started((task, repl))
+        try:
+            if debug_func:
+                # block here one (at the appropriate frame *up*) where
+                # ``breakpoint()`` was awaited and begin handling stdio.
+                log.devx(
+                    'Entering sync world of the `pdb` REPL for task..\n'
+                    f'{repl}\n'
+                    f'  |_{task}\n'
+                 )
 
-                    # set local task on process-global state to avoid
-                    # recurrent entries/requests from the same
-                    # actor-local task.
-                    DebugStatus.repl_task = task
-                    if repl:
-                        DebugStatus.repl = repl
-                    else:
-                        log.error(
-                            'No REPl instance set before entering `debug_func`?\n'
-                            f'{debug_func}\n'
-                        )
-
-                    # invoke the low-level REPL activation routine which itself
-                    # should call into a `Pdb.set_trace()` of some sort.
-                    debug_func(
-                        repl=repl,
-                        hide_tb=hide_tb,
-                        **debug_func_kwargs,
+                # set local task on process-global state to avoid
+                # recurrent entries/requests from the same
+                # actor-local task.
+                DebugStatus.repl_task = task
+                if repl:
+                    DebugStatus.repl = repl
+                else:
+                    log.error(
+                        'No REPl instance set before entering `debug_func`?\n'
+                        f'{debug_func}\n'
                     )
 
-                # TODO: maybe invert this logic and instead
-                # do `assert debug_func is None` when
-                # `called_from_sync`?
-                else:
-                    if (
-                        called_from_sync
-                        and
-                        not DebugStatus.is_main_trio_thread()
-                    ):
-                        assert called_from_bg_thread
-                        assert DebugStatus.repl_task is not task
-
-                    return (task, repl)
-
-            except trio.Cancelled:
-                log.exception(
-                    'Cancelled during invoke of internal\n\n'
-                    f'`debug_func = {debug_func_name}`\n'
+                # invoke the low-level REPL activation routine which itself
+                # should call into a `Pdb.set_trace()` of some sort.
+                debug_func(
+                    repl=repl,
+                    hide_tb=hide_tb,
+                    **debug_func_kwargs,
                 )
-                # XXX NOTE: DON'T release lock yet
-                raise
 
-            except BaseException:
-                __tracebackhide__: bool = False
-                log.exception(
-                    'Failed to invoke internal\n\n'
-                    f'`debug_func = {debug_func_name}`\n'
-                )
-                # NOTE: OW this is ONLY called from the
-                # `.set_continue/next` hooks!
-                DebugStatus.release(cancel_req_task=True)
+            # TODO: maybe invert this logic and instead
+            # do `assert debug_func is None` when
+            # `called_from_sync`?
+            else:
+                if (
+                    called_from_sync
+                    and
+                    not DebugStatus.is_main_trio_thread()
+                ):
+                    assert called_from_bg_thread
+                    assert DebugStatus.repl_task is not task
 
-                raise
+                return (task, repl)
 
-    log.devx(
+        except trio.Cancelled:
+            log.exception(
+                'Cancelled during invoke of internal\n\n'
+                f'`debug_func = {debug_func_name}`\n'
+            )
+            # XXX NOTE: DON'T release lock yet
+            raise
+
+        except BaseException:
+            __tracebackhide__: bool = False
+            log.exception(
+                'Failed to invoke internal\n\n'
+                f'`debug_func = {debug_func_name}`\n'
+            )
+            # NOTE: OW this is ONLY called from the
+            # `.set_continue/next` hooks!
+            DebugStatus.release(cancel_req_task=True)
+
+            raise
+
+    log.debug(
         'Entering `._pause()` for requesting task\n'
         f'|_{task}\n'
     )
@@ -352,7 +282,7 @@ async def _pause(
         or
         DebugStatus.repl_release.is_set()
     ):
-        log.devx(
+        log.debug(
             'Setting new `DebugStatus.repl_release: trio.Event` for requesting task\n'
             f'|_{task}\n'
         )
@@ -431,7 +361,7 @@ async def _pause(
                             'with no request ctx !?!?'
                         )
 
-                log.devx(
+                log.debug(
                     f'attempting to {acq_prefix}acquire '
                     f'{ctx_line}'
                 )
@@ -1022,6 +952,8 @@ def pause_from_sync(
         # noop: non-cancelled `.to_thread`
         # `trio.Cancelled`: cancelled `.to_thread`
 
+        # CASE: bg-thread spawned via `trio.to_thread`
+        # -----
         # when called from a (bg) thread, run an async task in a new
         # thread which will call `._pause()` manually with special
         # handling for root-actor caller usage.
@@ -1107,6 +1039,9 @@ def pause_from_sync(
         #         '`tractor.pause[_from_sync]()` not yet supported '
         #         'for infected `asyncio` mode!'
         #     )
+        #
+        # CASE: bg-thread running `asyncio.Task`
+        # -----
         elif (
             not is_trio_thread
             and
@@ -1184,7 +1119,9 @@ def pause_from_sync(
                     f'- greenback.bestow_portal(<task>)\n'
                 )
 
-        else:  # we are presumably the `trio.run()` + main thread
+        # CASE: `trio.run()` + "main thread"
+        # -----
+        else:
             # raises on not-found by default
             greenback: ModuleType = maybe_import_greenback()
 
@@ -1286,7 +1223,9 @@ def _sync_pause_from_builtin(
     Proxy call `.pause_from_sync()` but indicate the caller is the
     `breakpoint()` built-in.
 
-    Note: this assigned to `os.environ['PYTHONBREAKPOINT']` inside `._root`
+    Note: this always assigned to `os.environ['PYTHONBREAKPOINT']`
+    inside `._root.open_root_actor()` whenever `debug_mode=True` is
+    set.
 
     '''
     pause_from_sync(
