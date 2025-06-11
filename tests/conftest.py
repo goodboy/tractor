@@ -103,7 +103,7 @@ def sig_prog(
 def daemon(
     debug_mode: bool,
     loglevel: str,
-    testdir,
+    testdir: pytest.Pytester,
     reg_addr: tuple[str, int],
     tpt_proto: str,
 
