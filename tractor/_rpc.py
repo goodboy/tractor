@@ -869,7 +869,6 @@ async def try_ship_error_to_remote(
 
 
 async def process_messages(
-    actor: Actor,
     chan: Channel,
     shield: bool = False,
     task_status: TaskStatus[CancelScope] = trio.TASK_STATUS_IGNORED,
@@ -907,6 +906,7 @@ async def process_messages(
       (as utilized inside `Portal.cancel_actor()` ).
 
     '''
+    actor: Actor = _state.current_actor()
     assert actor._service_n  # runtime state sanity
 
     # TODO: once `trio` get's an "obvious way" for req/resp we
