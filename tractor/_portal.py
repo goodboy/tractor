@@ -582,8 +582,7 @@ async def open_portal(
             msg_loop_cs = await tn.start(
                 partial(
                     _rpc.process_messages,
-                    actor,
-                    channel,
+                    chan=channel,
                     # if the local task is cancelled we want to keep
                     # the msg loop running until our block ends
                     shield=True,

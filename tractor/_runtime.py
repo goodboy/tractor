@@ -1262,6 +1262,10 @@ async def async_main(
     the actor's "runtime" and all thus all ongoing RPC tasks.
 
     '''
+    # XXX NOTE, `_state._current_actor` **must** be set prior to
+    # calling this core runtime entrypoint!
+    assert actor is _state.current_actor()
+
     actor._task: trio.Task = trio.lowlevel.current_task()
 
     # attempt to retreive ``trio``'s sigint handler and stash it
@@ -1321,7 +1325,6 @@ async def async_main(
                 ) as service_nursery,
 
                 _server.open_ipc_server(
-                    actor=actor,
                     parent_tn=service_nursery,
                     stream_handler_tn=service_nursery,
                 ) as ipc_server,
@@ -1375,7 +1378,6 @@ async def async_main(
                         'Booting IPC server'
                     )
                     eps: list = await ipc_server.listen_on(
-                        actor=actor,
                         accept_addrs=accept_addrs,
                         stream_handler_nursery=service_nursery,
                     )
@@ -1460,8 +1462,7 @@ async def async_main(
                     await root_nursery.start(
                         partial(
                             _rpc.process_messages,
-                            actor,
-                            actor._parent_chan,
+                            chan=actor._parent_chan,
                             shield=True,
                         )
                     )
