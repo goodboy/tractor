@@ -5,6 +5,7 @@
 import time
 from typing import (
     Callable,
+    TYPE_CHECKING,
 )
 
 import pytest
@@ -26,14 +27,22 @@ from ..conftest import (
     _ci_env,
 )
 
+if TYPE_CHECKING:
+    from pexpect import pty_spawn
+
+
+# a fn that sub-instantiates a `pexpect.spawn()`
+# and returns it.
+type PexpectSpawner = Callable[[str], pty_spawn.spawn]
+
 
 @pytest.fixture
 def spawn(
-    start_method,
+    start_method: str,
     testdir: pytest.Pytester,
     reg_addr: tuple[str, int],
 
-) -> Callable[[str], None]:
+) -> PexpectSpawner:
     '''
     Use the `pexpect` module shipped via `testdir.spawn()` to
     run an `./examples/..` script by name.
@@ -59,7 +68,7 @@ def spawn(
     def _spawn(
         cmd: str,
         **mkcmd_kwargs,
-    ):
+    ) -> pty_spawn.spawn:
         unset_colors()
         return testdir.spawn(
             cmd=mk_cmd(
@@ -73,7 +82,7 @@ def spawn(
         )
 
     # such that test-dep can pass input script name.
-    return _spawn
+    return _spawn  # the `PexpectSpawner`, type alias.
 
 
 @pytest.fixture(
