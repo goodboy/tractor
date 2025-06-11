@@ -13,9 +13,13 @@ TODO:
   when debugging a problem inside the stack vs. in their app.
 
 '''
+from __future__ import annotations
 import os
 import signal
 import time
+from typing import (
+    TYPE_CHECKING,
+)
 
 from .conftest import (
     expect,
@@ -29,9 +33,12 @@ from pexpect.exceptions import (
     EOF,
 )
 
+if TYPE_CHECKING:
+    from ..conftest import PexpectSpawner
+
 
 def test_shield_pause(
-    spawn,
+    spawn: PexpectSpawner,
 ):
     '''
     Verify the `tractor.pause()/.post_mortem()` API works inside an
@@ -126,7 +133,7 @@ def test_shield_pause(
 
 
 def test_breakpoint_hook_restored(
-    spawn,
+    spawn: PexpectSpawner,
 ):
     '''
     Ensures our actor runtime sets a custom `breakpoint()` hook
@@ -140,16 +147,22 @@ def test_breakpoint_hook_restored(
     child = spawn('restore_builtin_breakpoint')
 
     child.expect(PROMPT)
-    assert_before(
-        child,
-        [
-            _pause_msg,
-            "<Task '__main__.main'",
-            "('root'",
-            "first bp, tractor hook set",
-        ]
-    )
-    child.sendline('c')
+    try:
+        assert_before(
+            child,
+            [
+                _pause_msg,
+                "<Task '__main__.main'",
+                "('root'",
+                "first bp, tractor hook set",
+            ]
+        )
+    # XXX if the above raises `AssertionError`, without sending
+    # the final 'continue' cmd to the REPL-active sub-process,
+    # we'll hang waiting for that pexpect instance to terminate..
+    finally:
+        child.sendline('c')
+
     child.expect(PROMPT)
     assert_before(
         child,
