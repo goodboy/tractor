@@ -19,8 +19,11 @@ async def main() -> None:
     async with tractor.open_nursery(
         debug_mode=True,
         loglevel='devx',
-    ) as an:
-        assert an
+        maybe_enable_greenback=True,
+        # ^XXX REQUIRED to enable `breakpoint()` support (from sync
+        # fns) and thus required here to avoid an assertion err
+        # on the next line
+    ):
         assert (
             (pybp_var := os.environ['PYTHONBREAKPOINT'])
             ==
