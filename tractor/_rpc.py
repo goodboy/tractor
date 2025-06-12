@@ -42,7 +42,7 @@ from trio import (
     TaskStatus,
 )
 
-from ._ipc import Channel
+from .ipc import Channel
 from ._context import (
     Context,
 )
@@ -869,7 +869,6 @@ async def try_ship_error_to_remote(
 
 
 async def process_messages(
-    actor: Actor,
     chan: Channel,
     shield: bool = False,
     task_status: TaskStatus[CancelScope] = trio.TASK_STATUS_IGNORED,
@@ -907,6 +906,7 @@ async def process_messages(
       (as utilized inside `Portal.cancel_actor()` ).
 
     '''
+    actor: Actor = _state.current_actor()
     assert actor._service_n  # runtime state sanity
 
     # TODO: once `trio` get's an "obvious way" for req/resp we
@@ -1156,7 +1156,7 @@ async def process_messages(
                                 trio.Event(),
                             )
 
-                    # runtime-scoped remote (internal) error
+                    # XXX RUNTIME-SCOPED! remote (likely internal) error
                     # (^- bc no `Error.cid` -^)
                     #
                     # NOTE: this is the non-rpc error case, that
@@ -1219,8 +1219,10 @@ async def process_messages(
         # -[ ] figure out how this will break with other transports?
         tc.report_n_maybe_raise(
             message=(
-                f'peer IPC channel closed abruptly?\n\n'
-                f'<=x {chan}\n'
+                f'peer IPC channel closed abruptly?\n'
+                f'\n'
+                f'<=x[\n'
+                f'  {chan}\n'
                 f'  |_{chan.raddr}\n\n'
             )
             +

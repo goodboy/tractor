@@ -92,7 +92,7 @@ class StackLevelAdapter(LoggerAdapter):
     ) -> None:
         '''
         IPC transport level msg IO; generally anything below
-        `._ipc.Channel` and friends.
+        `.ipc.Channel` and friends.
 
         '''
         return self.log(5, msg)
@@ -285,7 +285,7 @@ def get_logger(
         # NOTE: for handling for modules that use ``get_logger(__name__)``
         # we make the following stylistic choice:
         # - always avoid duplicate project-package token
-        #   in msg output: i.e. tractor.tractor _ipc.py in header
+        #   in msg output: i.e. tractor.tractor.ipc._chan.py in header
         #   looks ridiculous XD
         # - never show the leaf module name in the {name} part
         #   since in python the {filename} is always this same

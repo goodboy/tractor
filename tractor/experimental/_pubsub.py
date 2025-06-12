@@ -45,6 +45,8 @@ __all__ = ['pub']
 log = get_logger('messaging')
 
 
+# TODO! this needs to reworked to use the modern
+# `Context`/`MsgStream` APIs!!
 async def fan_out_to_ctxs(
     pub_async_gen_func: typing.Callable,  # it's an async gen ... gd mypy
     topics2ctxs: dict[str, list],
