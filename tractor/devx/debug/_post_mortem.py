@@ -105,7 +105,7 @@ class BoxedMaybeException(Struct):
 
         '''
         if not self.value:
-            return f'<{type(self).__name__}( .value=None )>\n'
+            return f'<{type(self).__name__}( .value=None )>'
 
         return (
             f'<{type(self.value).__name__}(\n'
@@ -256,7 +256,6 @@ async def _maybe_enter_pm(
         bool,
     ] = lambda err: not is_multi_cancelled(err),
     **_pause_kws,
-
 ):
     if (
         debug_mode()
