@@ -43,7 +43,7 @@ from trio import (
     SocketListener,
 )
 
-# from ..devx import _debug
+# from ..devx import debug
 from .._exceptions import (
     TransportClosed,
 )
@@ -318,7 +318,7 @@ async def handle_stream_from_peer(
     server._no_more_peers = trio.Event()  # unset by making new
 
     # TODO, debug_mode tooling for when hackin this lower layer?
-    # with _debug.maybe_open_crash_handler(
+    # with debug.maybe_open_crash_handler(
     #     pdb=True,
     # ) as boxerr:
 
@@ -504,8 +504,8 @@ async def handle_stream_from_peer(
                 and
                 _state.is_debug_mode()
             ):
-                from ..devx import _debug
-                pdb_lock = _debug.Lock
+                from ..devx import debug
+                pdb_lock = debug.Lock
                 pdb_lock._blocked.add(uid)
 
                 # TODO: NEEEDS TO BE TESTED!
@@ -540,7 +540,7 @@ async def handle_stream_from_peer(
                                 f'last disconnected child uid: {uid}\n'
                                 f'locking child uid: {pdb_user_uid}\n'
                             )
-                            await _debug.maybe_wait_for_debugger(
+                            await debug.maybe_wait_for_debugger(
                                 child_in_debug=True
                             )
 
