@@ -328,6 +328,8 @@ def nest_from_op(
     # NOTE: so move back-from-the-left of the `input_op` by
     # this amount.
     back_from_op: int = 0,
+    nest_prefix: str = ''
+
 ) -> str:
     '''
     Depth-increment the input (presumably hierarchy/supervision)
@@ -336,15 +338,22 @@ def nest_from_op(
     `tree_str` to nest content aligned with the ops last char.
 
     '''
+    indented_tree_str: str = textwrap.indent(
+        tree_str,
+        prefix=' ' *(
+            len(input_op)
+            -
+            (back_from_op + 1)
+        ),
+    )
+    # inject any provided nesting-prefix chars
+    # into the head of the first line.
+    if nest_prefix:
+        indented_tree_str: str = (
+            f'{nest_prefix}'
+            f'{indented_tree_str[len(nest_prefix):]}'
+        )
     return (
         f'{input_op}\n'
-        +
-        textwrap.indent(
-            tree_str,
-            prefix=(
-                len(input_op)
-                -
-                (back_from_op + 1)
-            ) * ' ',
-        )
+        f'{indented_tree_str}'
     )
