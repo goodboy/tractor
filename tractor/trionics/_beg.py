@@ -22,6 +22,11 @@ first-class-`trio` from a historical perspective B)
 from contextlib import (
     asynccontextmanager as acm,
 )
+from typing import (
+    Literal,
+)
+
+import trio
 
 
 def maybe_collapse_eg(
@@ -56,3 +61,62 @@ async def collapse_eg():
             raise exc
 
         raise beg
+
+
+def is_multi_cancelled(
+    beg: BaseException|BaseExceptionGroup,
+
+    ignore_nested: set[BaseException] = set(),
+
+) -> Literal[False]|BaseExceptionGroup:
+    '''
+    Predicate to determine if an `BaseExceptionGroup` only contains
+    some (maybe nested) set of sub-grouped exceptions (like only
+    `trio.Cancelled`s which get swallowed silently by default) and is
+    thus the result of "gracefully cancelling" a collection of
+    sub-tasks (or other conc primitives) and receiving a "cancelled
+    ACK" from each after termination.
+
+    Docs:
+    ----
+    - https://docs.python.org/3/library/exceptions.html#exception-groups
+    - https://docs.python.org/3/library/exceptions.html#BaseExceptionGroup.subgroup
+
+    '''
+
+    if (
+        not ignore_nested
+        or
+        trio.Cancelled not in ignore_nested
+        # XXX always count-in `trio`'s native signal
+    ):
+        ignore_nested.update({trio.Cancelled})
+
+    if isinstance(beg, BaseExceptionGroup):
+        # https://docs.python.org/3/library/exceptions.html#BaseExceptionGroup.subgroup
+        # |_ "The condition can be an exception type or tuple of
+        #   exception types, in which case each exception is checked
+        #   for a match using the same check that is used in an
+        #   except clause. The condition can also be a callable
+        #   (other than a type object) that accepts an exception as
+        #   its single argument and returns true for the exceptions
+        #   that should be in the subgroup."
+        matched_exc: BaseExceptionGroup|None = beg.subgroup(
+            tuple(ignore_nested),
+
+            # ??TODO, complain about why not allowed to use
+            # named arg style calling???
+            # XD .. wtf?
+            # condition=tuple(ignore_nested),
+        )
+        if matched_exc is not None:
+            return matched_exc
+
+    # NOTE, IFF no excs types match (throughout the error-tree)
+    # -> return `False`, OW return the matched sub-eg.
+    #
+    # IOW, for the inverse of ^ for the purpose of
+    # maybe-enter-REPL--logic: "only debug when the err-tree contains
+    # at least one exc-type NOT in `ignore_nested`" ; i.e. the case where
+    # we fallthrough and return `False` here.
+    return False
