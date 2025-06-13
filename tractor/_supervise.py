@@ -40,8 +40,10 @@ from ._state import current_actor, is_main_process
 from .log import get_logger, get_loglevel
 from ._runtime import Actor
 from ._portal import Portal
-from ._exceptions import (
+from .trionics import (
     is_multi_cancelled,
+)
+from ._exceptions import (
     ContextCancelled,
 )
 from ._root import (

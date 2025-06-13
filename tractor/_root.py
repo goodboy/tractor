@@ -61,9 +61,11 @@ from ._addr import (
     mk_uuid,
     wrap_address,
 )
+from .trionics import (
+    is_multi_cancelled,
+)
 from ._exceptions import (
     RuntimeFailure,
-    is_multi_cancelled,
 )
 
 
