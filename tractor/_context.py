@@ -1069,9 +1069,25 @@ class Context:
         |RemoteActorError  # stream overrun caused and ignored by us
     ):
         '''
-        Maybe raise a remote error depending on the type of error
-        and *who* (i.e. which task from which actor) requested
-        a  cancellation (if any).
+        Maybe raise a remote error depending on the type of error and
+        *who*, i.e. which side of the task pair across actors,
+        requested a cancellation (if any).
+
+        Depending on the input config-params suppress raising
+        certain remote excs:
+
+        - if `remote_error: ContextCancelled` (ctxc) AND this side's
+          task is the "requester", it at somem point called
+          `Context.cancel()`, then the peer's ctxc is treated
+          as a "cancel ack".
+
+         |_ this behaves exactly like how `trio.Nursery.cancel_scope`
+            absorbs any `BaseExceptionGroup[trio.Cancelled]` wherein the
+            owning parent task never will raise a `trio.Cancelled`
+            if `CancelScope.cancel_called == True`.
+
+        - `remote_error: StreamOverrrun` (overrun) AND
+           `raise_overrun_from_self` is set.
 
         '''
         __tracebackhide__: bool = hide_tb
@@ -1113,18 +1129,19 @@ class Context:
             # for this ^, NO right?
 
         ) or (
-            # NOTE: whenever this context is the cause of an
-            # overrun on the remote side (aka we sent msgs too
-            # fast that the remote task was overrun according
-            # to `MsgStream` buffer settings) AND the caller
-            # has requested to not raise overruns this side
-            # caused, we also silently absorb any remotely
-            # boxed `StreamOverrun`. This is mostly useful for
-            # supressing such faults during
-            # cancellation/error/final-result handling inside
-            # `msg._ops.drain_to_final_msg()` such that we do not
-            # raise such errors particularly in the case where
+            # NOTE: whenever this side is the cause of an
+            # overrun on the peer side, i.e. we sent msgs too
+            # fast and the peer task was overrun according
+            # to `MsgStream` buffer settings, AND this was
+            # called with `raise_overrun_from_self=True` (the
+            # default), silently absorb any `StreamOverrun`.
+            #
+            # XXX, this is namely useful for supressing such faults
+            # during cancellation/error/final-result handling inside
+            # `.msg._ops.drain_to_final_msg()` such that we do not
+            # raise during a cancellation-request, i.e. when
             # `._cancel_called == True`.
+            #
             not raise_overrun_from_self
             and isinstance(remote_error, RemoteActorError)
             and remote_error.boxed_type is StreamOverrun
