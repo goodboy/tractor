@@ -55,6 +55,7 @@ from typing import (
     TYPE_CHECKING,
 )
 import uuid
+import textwrap
 from types import ModuleType
 import warnings
 
@@ -97,7 +98,10 @@ from ._exceptions import (
     MsgTypeError,
     unpack_error,
 )
-from .devx import debug
+from .devx import (
+    debug,
+    pformat as _pformat
+)
 from ._discovery import get_registry
 from ._portal import Portal
 from . import _state
@@ -339,46 +343,76 @@ class Actor:
     def pid(self) -> int:
         return self._aid.pid
 
-    def pformat(self) -> str:
-        ds: str = '='
+    def pformat(
+        self,
+        ds: str = ':',
+        indent: int = 0,
+    ) -> str:
+        fields_sect_prefix: str = ' |_'
         parent_uid: tuple|None = None
         if rent_chan := self._parent_chan:
             parent_uid = rent_chan.uid
 
         peers: list = []
         server: _server.IPCServer = self.ipc_server
+        ipc_server_sect: str = ''
         if server:
             peers: list[tuple] = list(server._peer_connected)
+
+            # create field ln as a key-header indented under
+            # and up to the section's key prefix.
+            # field_ln_header: str = textwrap.indent(
+            #     text=f"ipc_server{ds}",
+            #     prefix=' '*len(fields_sect_prefix),
+            # )
+            # ^XXX if we were to indent `repr(Server)` to
+            # '<key>: '
+            #  _here_^
+            server_repr: str = textwrap.indent(
+                text=self._ipc_server.pformat(),
+                # prefix=' '*len(field_ln_header),
+                prefix=' '*len(fields_sect_prefix),
+            )
+            ipc_server_sect: str = (
+                # f'{field_ln_header}\n'
+                f'{server_repr}'
+            )
 
         fmtstr: str = (
             f' |_id: {self.aid!r}\n'
             # f"   aid{ds}{self.aid!r}\n"
             f"   parent{ds}{parent_uid}\n"
-            f'\n'
+            # f'\n'
             f' |_ipc: {len(peers)!r} connected peers\n'
             f"   peers{ds}{peers!r}\n"
-            f"   ipc_server{ds}{self._ipc_server}\n"
-            f'\n'
+            f"{ipc_server_sect}"
+            # f'\n'
             f' |_rpc: {len(self._rpc_tasks)} tasks\n'
             f"   ctxs{ds}{len(self._contexts)}\n"
-            f'\n'
+            # f'\n'
             f' |_runtime: ._task{ds}{self._task!r}\n'
             f'   _spawn_method{ds}{self._spawn_method}\n'
             f'   _actoruid2nursery{ds}{self._actoruid2nursery}\n'
             f'   _forkserver_info{ds}{self._forkserver_info}\n'
-            f'\n'
+            # f'\n'
             f' |_state: "TODO: .repr_state()"\n'
             f'   _cancel_complete{ds}{self._cancel_complete}\n'
             f'   _cancel_called_by_remote{ds}{self._cancel_called_by_remote}\n'
             f'   _cancel_called{ds}{self._cancel_called}\n'
         )
-        return (
+        _repr: str = (
             '<Actor(\n'
             +
             fmtstr
             +
             ')>\n'
         )
+        if indent:
+            _repr: str = textwrap.indent(
+                text=_repr,
+                prefix=' '*indent,
+            )
+        return _repr
 
     __repr__ = pformat
 
@@ -1654,10 +1688,15 @@ async def async_main(
             '-> All peer channels are complete\n'
         )
 
+    op_nested_actor_repr: str = _pformat.nest_from_op(
+        input_op=')> ',
+        tree_str=actor.pformat(),
+        nest_prefix='|_',
+        back_from_op=2,
+    )
     teardown_report += (
-        'Actor runtime exiting\n'
-        f'>)\n'
-        f'|_{actor}\n'
+        'Actor runtime exited\n'
+        f'{op_nested_actor_repr}\n'
     )
     log.info(teardown_report)
 
