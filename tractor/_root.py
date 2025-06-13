@@ -47,6 +47,7 @@ from ._runtime import (
 from .devx import (
     debug,
     _frame_stack,
+    pformat as _pformat,
 )
 from . import _spawn
 from . import _state
@@ -518,10 +519,14 @@ async def open_root_actor(
                     #     for an in nurseries:
                     #         tempn.start_soon(an.exited.wait)
 
+                    op_nested_actor_repr: str = _pformat.nest_from_op(
+                        input_op='>) ',
+                        tree_str=actor.pformat(),
+                        nest_prefix='|_',
+                    )
                     logger.info(
                         f'Closing down root actor\n'
-                        f'>)\n'
-                        f'|_{actor}\n'
+                        f'{op_nested_actor_repr}\n'
                     )
                     await actor.cancel(None)  # self cancel
         finally:
