@@ -38,7 +38,6 @@ from typing import (
 import tractor
 from tractor._exceptions import (
     InternalError,
-    is_multi_cancelled,
     TrioTaskExited,
     TrioCancelled,
     AsyncioTaskExited,
@@ -59,6 +58,9 @@ from tractor.log import (
 # from tractor.msg import (
 #     pretty_struct,
 # )
+from tractor.trionics import (
+    is_multi_cancelled,
+)
 from tractor.trionics._broadcast import (
     broadcast_receiver,
     BroadcastReceiver,

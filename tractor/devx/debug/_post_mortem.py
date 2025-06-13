@@ -59,7 +59,7 @@ from tractor._state import (
     debug_mode,
 )
 from tractor.log import get_logger
-from tractor._exceptions import (
+from tractor.trionics import (
     is_multi_cancelled,
 )
 from ._trace import (

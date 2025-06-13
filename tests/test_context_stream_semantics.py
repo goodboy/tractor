@@ -252,7 +252,7 @@ def test_simple_context(
             pass
         except BaseExceptionGroup as beg:
             # XXX: on windows it seems we may have to expect the group error
-            from tractor._exceptions import is_multi_cancelled
+            from tractor.trionics import is_multi_cancelled
             assert is_multi_cancelled(beg)
     else:
         trio.run(main)

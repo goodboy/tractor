@@ -1246,55 +1246,6 @@ def unpack_error(
     return exc
 
 
-def is_multi_cancelled(
-    exc: BaseException|BaseExceptionGroup,
-
-    ignore_nested: set[BaseException] = set(),
-
-) -> bool|BaseExceptionGroup:
-    '''
-    Predicate to determine if an `BaseExceptionGroup` only contains
-    some (maybe nested) set of sub-grouped exceptions (like only
-    `trio.Cancelled`s which get swallowed silently by default) and is
-    thus the result of "gracefully cancelling" a collection of
-    sub-tasks (or other conc primitives) and receiving a "cancelled
-    ACK" from each after termination.
-
-    Docs:
-    ----
-    - https://docs.python.org/3/library/exceptions.html#exception-groups
-    - https://docs.python.org/3/library/exceptions.html#BaseExceptionGroup.subgroup
-
-    '''
-
-    if (
-        not ignore_nested
-        or
-        trio.Cancelled in ignore_nested
-        # XXX always count-in `trio`'s native signal
-    ):
-        ignore_nested.update({trio.Cancelled})
-
-    if isinstance(exc, BaseExceptionGroup):
-        matched_exc: BaseExceptionGroup|None = exc.subgroup(
-            tuple(ignore_nested),
-
-            # TODO, complain about why not allowed XD
-            # condition=tuple(ignore_nested),
-        )
-        if matched_exc is not None:
-            return matched_exc
-
-    # NOTE, IFF no excs types match (throughout the error-tree)
-    # -> return `False`, OW return the matched sub-eg.
-    #
-    # IOW, for the inverse of ^ for the purpose of
-    # maybe-enter-REPL--logic: "only debug when the err-tree contains
-    # at least one exc-type NOT in `ignore_nested`" ; i.e. the case where
-    # we fallthrough and return `False` here.
-    return False
-
-
 def _raise_from_unexpected_msg(
     ctx: Context,
     msg: MsgType,
