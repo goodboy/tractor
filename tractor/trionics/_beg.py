@@ -44,7 +44,10 @@ def maybe_collapse_eg(
 
 
 @acm
-async def collapse_eg():
+async def collapse_eg(
+    hide_tb: bool = True,
+    raise_from_src: bool = False,
+):
     '''
     If `BaseExceptionGroup` raised in the body scope is
     "collapse-able" (in the same way that
@@ -52,13 +55,15 @@ async def collapse_eg():
     only raise the lone emedded non-eg in in place.
 
     '''
+    __tracebackhide__: bool = hide_tb
     try:
         yield
     except* BaseException as beg:
         if (
             exc := maybe_collapse_eg(beg)
         ) is not beg:
-            raise exc
+            from_exc = beg if raise_from_src else None
+            raise exc from from_exc
 
         raise beg
 
