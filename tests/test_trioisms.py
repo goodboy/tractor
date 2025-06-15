@@ -113,54 +113,10 @@ def test_acm_embedded_nursery_propagates_enter_err(
     import tractor
 
     @acm
-    async def maybe_raise_from_masking_exc(
-        tn: trio.Nursery,
-        unmask_from: BaseException|None = trio.Cancelled
-
-        # TODO, maybe offer a collection?
-        # unmask_from: set[BaseException] = {
-        #     trio.Cancelled,
-        # },
-    ):
-        if not unmask_from:
-            yield
-            return
-
-        try:
-            yield
-        except* unmask_from as be_eg:
-
-            # TODO, if we offer `unmask_from: set`
-            # for masker_exc_type in unmask_from:
-
-            matches, rest = be_eg.split(unmask_from)
-            if not matches:
-                raise
-
-            for exc_match in be_eg.exceptions:
-                if (
-                    (exc_ctx := exc_match.__context__)
-                    and
-                    type(exc_ctx) not in {
-                        # trio.Cancelled,  # always by default?
-                        unmask_from,
-                    }
-                ):
-                    exc_ctx.add_note(
-                        f'\n'
-                        f'WARNING: the above error was masked by a {unmask_from!r} !?!\n'
-                        f'Are you always cancelling? Say from a `finally:` ?\n\n'
-
-                        f'{tn!r}'
-                    )
-                    raise exc_ctx from exc_match
-
-
-    @acm
     async def wraps_tn_that_always_cancels():
         async with (
             trio.open_nursery() as tn,
-            maybe_raise_from_masking_exc(
+            tractor.trionics.maybe_raise_from_masking_exc(
                 tn=tn,
                 unmask_from=(
                     trio.Cancelled
@@ -202,3 +158,60 @@ def test_acm_embedded_nursery_propagates_enter_err(
     assert_eg, rest_eg = eg.split(AssertionError)
 
     assert len(assert_eg.exceptions) == 1
+
+
+
+def test_gatherctxs_with_memchan_breaks_multicancelled(
+    debug_mode: bool,
+):
+    '''
+    Demo how a using an `async with sndchan` inside a `.trionics.gather_contexts()` task
+    will break a strict-eg-tn's multi-cancelled absorption..
+
+    '''
+    from tractor import (
+        trionics,
+    )
+
+    @acm
+    async def open_memchan() -> trio.abc.ReceiveChannel:
+
+        task: trio.Task = trio.lowlevel.current_task()
+        print(
+            f'Opening {task!r}\n'
+        )
+
+        # 1 to force eager sending
+        send, recv = trio.open_memory_channel(16)
+
+        try:
+            async with send:
+                yield recv
+        finally:
+            print(
+                f'Closed {task!r}\n'
+            )
+
+
+    async def main():
+        async with (
+            # XXX should ensure ONLY the KBI
+            # is relayed upward
+            trionics.collapse_eg(),
+            trio.open_nursery(
+                # strict_exception_groups=False,
+            ), # as tn,
+
+            trionics.gather_contexts([
+                open_memchan(),
+                open_memchan(),
+            ]) as recv_chans,
+        ):
+            assert len(recv_chans) == 2
+
+            await trio.sleep(1)
+            raise KeyboardInterrupt
+            # tn.cancel_scope.cancel()
+
+    with pytest.raises(KeyboardInterrupt):
+        trio.run(main)
