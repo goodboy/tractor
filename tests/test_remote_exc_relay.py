@@ -33,10 +33,6 @@ including,
   whether a `Context` task should raise `ContextCancelled` (ctx).
 
 '''
-# from contextlib import (
-#     asynccontextmanager as acm,
-# )
-
 import pytest
 import trio
 import tractor
@@ -46,23 +42,19 @@ from tractor import (  # typing
     Context,
     ContextCancelled,
 )
-# from tractor._testing import (
-#     tractor_test,
-#     expect_ctxc,
-# )
 
 
 @tractor.context
 async def sleep_n_chkpt_in_finally(
     ctx: Context,
     sleep_n_raise: bool,
+
     chld_raise_delay: float,
     chld_finally_delay: float,
+
     rent_cancels: bool,
     rent_ctxc_delay: float,
-    gto_task: bool = False,
 
-    tn_cancels: bool = False,
     expect_exc: str|None = None,
 
 ) -> None:
@@ -82,10 +74,10 @@ async def sleep_n_chkpt_in_finally(
     `trio.Cancelled` to signal cancellation on each side of an IPC `Context`,
     the footgun issue can compound itself as demonstrated in this suite..
 
-    Here are some edge cases codified with "sclang" syntax.
-    Note that the parent/child relationship is just a pragmatic
-    choice, these cases can occurr regardless of the supervision
-    hiearchy,
+    Here are some edge cases codified with our WIP "sclang" syntax
+    (note the parent(rent)/child(chld) naming here is just
+    pragmatism, generally these most of these cases can occurr
+    regardless of the distributed-task's supervision hiearchy),
 
     - rent c)=> chld.raises-then-taskc-in-finally
      |_ chld's body raises an `exc: BaseException`.
@@ -105,79 +97,67 @@ async def sleep_n_chkpt_in_finally(
         )
 
     berr: BaseException|None = None
-    async with (
-        tractor.trionics.collapse_eg(
-            # raise_from_src=True,  # to show orig eg
-        ),
-        trio.open_nursery() as tn
-    ):
-        if gto_task:
-            tn.start_soon(trio.sleep_forever())
+    try:
+        if not sleep_n_raise:
+            await trio.sleep_forever()
+        elif sleep_n_raise:
 
+            # XXX this sleep is less then the sleep the parent
+            # does before calling `ctx.cancel()`
+            await trio.sleep(chld_raise_delay)
+
+            # XXX this will be masked by a taskc raised in
+            # the `finally:` if this fn doesn't terminate
+            # before any ctxc-req arrives AND a checkpoint is hit
+            # in that `finally:`.
+            raise RuntimeError('my app krurshed..')
+
+    except BaseException as _berr:
+        berr = _berr
+
+        # TODO: it'd sure be nice to be able to inject our own
+        # `ContextCancelled` here instead of of `trio.Cancelled`
+        # so that our runtime can expect it and this "user code"
+        # would be able to tell the diff between a generic trio
+        # cancel and a tractor runtime-IPC cancel.
+        if expect_exc:
+            if not isinstance(
+                berr,
+                expect_exc,
+            ):
+                raise ValueError(
+                    f'Unexpected exc type ??\n'
+                    f'{berr!r}\n'
+                    f'\n'
+                    f'Expected a {expect_exc!r}\n'
+                )
+
+        raise berr
+
+    # simulate what user code might try even though
+    # it's a known boo-boo..
+    finally:
+        # maybe wait for rent ctxc to arrive
+        with trio.CancelScope(shield=True):
+            await trio.sleep(chld_finally_delay)
+
+        # !!XXX this will raise `trio.Cancelled` which
+        # will mask the RTE from above!!!
+        #
+        # YES, it's the same case as our extant
+        # `test_trioisms::test_acm_embedded_nursery_propagates_enter_err`
         try:
-            if not sleep_n_raise:
-                await trio.sleep_forever()
-            elif sleep_n_raise:
+            await trio.lowlevel.checkpoint()
+        except trio.Cancelled as taskc:
+            if (scope_err := taskc.__context__):
+                print(
+                    f'XXX MASKED REMOTE ERROR XXX\n'
+                    f'ENDPOINT exception -> {scope_err!r}\n'
+                    f'will be masked by -> {taskc!r}\n'
+                )
+                # await tractor.pause(shield=True)
 
-                # XXX this sleep is less then the sleep the parent
-                # does before calling `ctx.cancel()`
-                await trio.sleep(chld_raise_delay)
-
-                # XXX this will be masked by a taskc raised in
-                # the `finally:` if this fn doesn't terminate
-                # before any ctxc-req arrives AND a checkpoint is hit
-                # in that `finally:`.
-                raise RuntimeError('my app krurshed..')
-
-        except BaseException as _berr:
-            berr = _berr
-
-            # TODO: it'd sure be nice to be able to inject our own
-            # `ContextCancelled` here instead of of `trio.Cancelled`
-            # so that our runtime can expect it and this "user code"
-            # would be able to tell the diff between a generic trio
-            # cancel and a tractor runtime-IPC cancel.
-            if expect_exc:
-                if not isinstance(
-                    berr,
-                    expect_exc,
-                ):
-                    raise ValueError(
-                        f'Unexpected exc type ??\n'
-                        f'{berr!r}\n'
-                        f'\n'
-                        f'Expected a {expect_exc!r}\n'
-                    )
-
-            raise berr
-
-        # simulate what user code might try even though
-        # it's a known boo-boo..
-        finally:
-            # maybe wait for rent ctxc to arrive
-            with trio.CancelScope(shield=True):
-                await trio.sleep(chld_finally_delay)
-
-            if tn_cancels:
-                tn.cancel_scope.cancel()
-
-            # !!XXX this will raise `trio.Cancelled` which
-            # will mask the RTE from above!!!
-            #
-            # YES, it's the same case as our extant
-            # `test_trioisms::test_acm_embedded_nursery_propagates_enter_err`
-            try:
-                await trio.lowlevel.checkpoint()
-            except trio.Cancelled as taskc:
-                if (scope_err := taskc.__context__):
-                    print(
-                        f'XXX MASKED REMOTE ERROR XXX\n'
-                        f'ENDPOINT exception -> {scope_err!r}\n'
-                        f'will be masked by -> {taskc!r}\n'
-                    )
-                    # await tractor.pause(shield=True)
-
-                raise taskc
+            raise taskc
 
 
 @pytest.mark.parametrize(
@@ -190,7 +170,6 @@ async def sleep_n_chkpt_in_finally(
             expect_exc='Cancelled',
             rent_cancels=True,
             rent_ctxc_delay=0.1,
-            tn_cancels=True,
         ),
         dict(
             sleep_n_raise='RuntimeError',
@@ -199,12 +178,11 @@ async def sleep_n_chkpt_in_finally(
             expect_exc='RuntimeError',
             rent_cancels=False,
             rent_ctxc_delay=0.1,
-            tn_cancels=False,
         ),
     ],
     ids=lambda item: f'chld_callspec={item!r}'
 )
-def test_masked_taskc_with_taskc_still_is_contx(
+def test_unmasked_remote_exc(
     debug_mode: bool,
     chld_callspec: dict,
     tpt_proto: str,
