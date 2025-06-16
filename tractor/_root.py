@@ -64,6 +64,7 @@ from ._addr import (
 )
 from .trionics import (
     is_multi_cancelled,
+    collapse_eg,
 )
 from ._exceptions import (
     RuntimeFailure,
@@ -199,7 +200,11 @@ async def open_root_actor(
 
 ) -> Actor:
     '''
-    Runtime init entry point for ``tractor``.
+    Initialize the `tractor` runtime by starting a "root actor" in
+    a parent-most Python process.
+
+    All (disjoint) actor-process-trees-as-programs are created via
+    this entrypoint.
 
     '''
     # XXX NEVER allow nested actor-trees!
@@ -447,10 +452,17 @@ async def open_root_actor(
             )
 
             # start the actor runtime in a new task
-            async with trio.open_nursery(
-                strict_exception_groups=False,
-                # ^XXX^ TODO? instead unpack any RAE as per "loose" style?
-            ) as nursery:
+            async with (
+
+                # ?? TODO, causes test failures..
+                # - advanced_faults
+                # - cancellation
+                # - clustering
+                #
+                collapse_eg(),
+                trio.open_nursery() as root_tn,
+                # trio.open_nursery(strict_exception_groups=False) as root_tn,
+            ):
 
                 # ``_runtime.async_main()`` creates an internal nursery
                 # and blocks here until any underlying actor(-process)
@@ -460,7 +472,7 @@ async def open_root_actor(
                 # "actor runtime" primitives are SC-compat and thus all
                 # transitively spawned actors/processes must be as
                 # well.
-                await nursery.start(
+                await root_tn.start(
                     partial(
                         async_main,
                         actor,
