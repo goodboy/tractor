@@ -143,7 +143,7 @@ async def maybe_wait_on_canced_subs(
         log.cancel(
             'Waiting on cancel request to peer..\n'
             f'c)=>\n'
-            f'  |_{chan.uid}\n'
+            f'  |_{chan.aid}\n'
         )
 
         # XXX: this is a soft wait on the channel (and its
@@ -156,7 +156,7 @@ async def maybe_wait_on_canced_subs(
         # local runtime here is now cancelled while
         # (presumably) in the middle of msg loop processing.
         chan_info: str = (
-            f'{chan.uid}\n'
+            f'{chan.aid}\n'
             f'|_{chan}\n'
             f'  |_{chan.transport}\n\n'
         )
@@ -279,7 +279,7 @@ async def maybe_wait_on_canced_subs(
                     log.runtime(
                         f'Peer IPC broke but subproc is alive?\n\n'
 
-                        f'<=x {chan.uid}@{chan.raddr}\n'
+                        f'<=x {chan.aid}@{chan.raddr}\n'
                         f'   |_{proc}\n'
                     )
 
@@ -460,7 +460,7 @@ async def handle_stream_from_peer(
         # drop ref to channel so it can be gc-ed and disconnected
         con_teardown_status: str = (
             f'IPC channel disconnected:\n'
-            f'<=x uid: {chan.uid}\n'
+            f'<=x uid: {chan.aid}\n'
             f'   |_{pformat(chan)}\n\n'
         )
         chans.remove(chan)
@@ -468,7 +468,7 @@ async def handle_stream_from_peer(
         # TODO: do we need to be this pedantic?
         if not chans:
             con_teardown_status += (
-                f'-> No more channels with {chan.uid}'
+                f'-> No more channels with {chan.aid}'
             )
             server._peers.pop(uid, None)
 
@@ -519,7 +519,7 @@ async def handle_stream_from_peer(
                     and
                     (ctx_in_debug := pdb_lock.ctx_in_debug)
                     and
-                    (pdb_user_uid := ctx_in_debug.chan.uid)
+                    (pdb_user_uid := ctx_in_debug.chan.aid)
                 ):
                     entry: tuple|None = local_nursery._children.get(
                         tuple(pdb_user_uid)
