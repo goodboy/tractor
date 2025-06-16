@@ -74,6 +74,9 @@ from tractor.msg import (
     pretty_struct,
     types as msgtypes,
 )
+from .trionics import (
+    collapse_eg,
+)
 from .ipc import (
     Channel,
     # IPCServer,  # causes cycles atm..
@@ -345,7 +348,7 @@ class Actor:
 
     def pformat(
         self,
-        ds: str = ':',
+        ds: str = ': ',
         indent: int = 0,
     ) -> str:
         fields_sect_prefix: str = ' |_'
@@ -1054,6 +1057,7 @@ class Actor:
         cid: str,
         parent_chan: Channel,
         requesting_uid: tuple[str, str]|None,
+        # ^^TODO! use the `Aid` directly here!
 
         ipc_msg: dict|None|bool = False,
 
@@ -1099,9 +1103,12 @@ class Actor:
 
         log.cancel(
             'Rxed cancel request for RPC task\n'
-            f'<=c) {requesting_uid}\n'
-            f' |_{ctx._task}\n'
-            f'    >> {ctx.repr_rpc}\n'
+            f'{ctx._task!r} <=c) {requesting_uid}\n'
+            f'|_>> {ctx.repr_rpc}\n'
+
+            # f'|_{ctx._task}\n'
+            # f'   >> {ctx.repr_rpc}\n'
+
             # f'=> {ctx._task}\n'
             # f'  >> Actor._cancel_task() => {ctx._task}\n'
             # f'  |_ {ctx._task}\n\n'
@@ -1386,10 +1393,12 @@ async def async_main(
         # parent is kept alive as a resilient service until
         # cancellation steps have (mostly) occurred in
         # a deterministic way.
-        async with trio.open_nursery(
-            strict_exception_groups=False,
-        ) as root_nursery:
-            actor._root_n = root_nursery
+        root_tn: trio.Nursery
+        async with (
+            collapse_eg(),
+            trio.open_nursery() as root_tn,
+        ):
+            actor._root_n = root_tn
             assert actor._root_n
 
             ipc_server: _server.IPCServer
@@ -1488,7 +1497,7 @@ async def async_main(
                 # their root actor over that channel.
                 if _state._runtime_vars['_is_root']:
                     for addr in accept_addrs:
-                        waddr = wrap_address(addr)
+                        waddr: Address = wrap_address(addr)
                         if waddr == waddr.get_root():
                             _state._runtime_vars['_root_mailbox'] = addr
 
@@ -1533,7 +1542,7 @@ async def async_main(
                 # start processing parent requests until our channel
                 # server is 100% up and running.
                 if actor._parent_chan:
-                    await root_nursery.start(
+                    await root_tn.start(
                         partial(
                             _rpc.process_messages,
                             chan=actor._parent_chan,
