@@ -28,7 +28,10 @@ from typing import (
 from contextlib import asynccontextmanager as acm
 
 from tractor.log import get_logger
-from .trionics import gather_contexts
+from .trionics import (
+    gather_contexts,
+    collapse_eg,
+)
 from .ipc import _connect_chan, Channel
 from ._addr import (
     UnwrappedAddress,
@@ -85,7 +88,6 @@ async def get_registry(
             open_portal(chan) as regstr_ptl,
         ):
             yield regstr_ptl
-
 
 
 @acm
@@ -253,9 +255,12 @@ async def find_actor(
         for addr in registry_addrs
     )
     portals: list[Portal]
-    async with gather_contexts(
-        mngrs=maybe_portals,
-    ) as portals:
+    async with (
+        collapse_eg(),
+        gather_contexts(
+            mngrs=maybe_portals,
+        ) as portals,
+    ):
         # log.runtime(
         #     'Gathered portals:\n'
         #     f'{portals}'
