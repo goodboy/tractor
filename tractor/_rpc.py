@@ -756,7 +756,6 @@ async def _invoke(
             BaseExceptionGroup,
             BaseException,
             trio.Cancelled,
-
         ) as _scope_err:
             scope_err = _scope_err
             if (
