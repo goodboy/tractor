@@ -40,7 +40,7 @@ from typing import (
 import trio
 from tractor._state import current_actor
 from tractor.log import get_logger
-# from ._beg import collapse_eg
+from ._beg import collapse_eg
 
 
 if TYPE_CHECKING:
@@ -152,13 +152,8 @@ async def gather_contexts(
         )
 
     async with (
-        # collapse_eg(),
-        trio.open_nursery(
-            # strict_exception_groups=False,
-            # ^XXX^ TODO? soo roll our own then ??
-            # -> since we kinda want the "if only one `.exception` then
-            # just raise that" interface?
-        ) as tn,
+        collapse_eg(),
+        trio.open_nursery() as tn,
     ):
         for mngr in mngrs:
             tn.start_soon(
