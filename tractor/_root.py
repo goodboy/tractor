@@ -37,13 +37,7 @@ import warnings
 
 import trio
 
-from ._runtime import (
-    Actor,
-    Arbiter,
-    # TODO: rename and make a non-actor subtype?
-    # Arbiter as Registry,
-    async_main,
-)
+from . import _runtime
 from .devx import (
     debug,
     _frame_stack,
@@ -198,7 +192,7 @@ async def open_root_actor(
     # read-only state to sublayers?
     # extra_rt_vars: dict|None = None,
 
-) -> Actor:
+) -> _runtime.Actor:
     '''
     Initialize the `tractor` runtime by starting a "root actor" in
     a parent-most Python process.
@@ -402,7 +396,7 @@ async def open_root_actor(
                 f'Registry(s) seem(s) to exist @ {ponged_addrs}'
             )
 
-            actor = Actor(
+            actor = _runtime.Actor(
                 name=name or 'anonymous',
                 uuid=mk_uuid(),
                 registry_addrs=ponged_addrs,
@@ -441,7 +435,8 @@ async def open_root_actor(
             # https://github.com/goodboy/tractor/pull/348
             # https://github.com/goodboy/tractor/issues/296
 
-            actor = Arbiter(
+            # TODO: rename as `RootActor` or is that even necessary?
+            actor = _runtime.Arbiter(
                 name=name or 'registrar',
                 uuid=mk_uuid(),
                 registry_addrs=registry_addrs,
@@ -481,20 +476,13 @@ async def open_root_actor(
                 )
             logger.info(f'{report}\n')
 
-            # start the actor runtime in a new task
+            # start runtime in a bg sub-task, yield to caller.
             async with (
-
-                # ?? TODO, causes test failures..
-                # - advanced_faults
-                # - cancellation
-                # - clustering
-                #
                 collapse_eg(),
                 trio.open_nursery() as root_tn,
-                # trio.open_nursery(strict_exception_groups=False) as root_tn,
             ):
 
-                # ``_runtime.async_main()`` creates an internal nursery
+                # `_runtime.async_main()` creates an internal nursery
                 # and blocks here until any underlying actor(-process)
                 # tree has terminated thereby conducting so called
                 # "end-to-end" structured concurrency throughout an
@@ -504,7 +492,7 @@ async def open_root_actor(
                 # well.
                 await root_tn.start(
                     partial(
-                        async_main,
+                        _runtime.async_main,
                         actor,
                         accept_addrs=trans_bind_addrs,
                         parent_addr=None
