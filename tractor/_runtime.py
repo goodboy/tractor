@@ -74,6 +74,9 @@ from tractor.msg import (
     pretty_struct,
     types as msgtypes,
 )
+from .trionics import (
+    collapse_eg,
+)
 from .ipc import (
     Channel,
     # IPCServer,  # causes cycles atm..
@@ -359,7 +362,7 @@ class Actor:
 
     def pformat(
         self,
-        ds: str = ':',
+        ds: str = ': ',
         indent: int = 0,
         privates: bool = False,
     ) -> str:
@@ -1471,10 +1474,12 @@ async def async_main(
         # parent is kept alive as a resilient service until
         # cancellation steps have (mostly) occurred in
         # a deterministic way.
-        async with trio.open_nursery(
-            strict_exception_groups=False,
-        ) as root_nursery:
-            actor._root_n = root_nursery
+        root_tn: trio.Nursery
+        async with (
+            collapse_eg(),
+            trio.open_nursery() as root_tn,
+        ):
+            actor._root_n = root_tn
             assert actor._root_n
 
             ipc_server: _server.IPCServer
@@ -1605,7 +1610,7 @@ async def async_main(
                 # start processing parent requests until our channel
                 # server is 100% up and running.
                 if actor._parent_chan:
-                    await root_nursery.start(
+                    await root_tn.start(
                         partial(
                             _rpc.process_messages,
                             chan=actor._parent_chan,
