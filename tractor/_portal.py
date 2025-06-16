@@ -39,7 +39,10 @@ import warnings
 
 import trio
 
-from .trionics import maybe_open_nursery
+from .trionics import (
+    maybe_open_nursery,
+    collapse_eg,
+)
 from ._state import (
     current_actor,
 )
@@ -558,14 +561,13 @@ async def open_portal(
     assert actor
     was_connected: bool = False
 
-    async with maybe_open_nursery(
-        tn,
-        shield=shield,
-        strict_exception_groups=False,
-        # ^XXX^ TODO? soo roll our own then ??
-        # -> since we kinda want the "if only one `.exception` then
-        # just raise that" interface?
-    ) as tn:
+    async with (
+        collapse_eg(),
+        maybe_open_nursery(
+            tn,
+            shield=shield,
+        ) as tn,
+    ):
 
         if not channel.connected():
             await channel.connect()
