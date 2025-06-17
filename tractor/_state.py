@@ -37,6 +37,13 @@ if TYPE_CHECKING:
     from ._context import Context
 
 
+# default IPC transport protocol settings
+TransportProtocolKey = Literal[
+    'tcp',
+    'uds',
+]
+_def_tpt_proto: TransportProtocolKey = 'tcp'
+
 _current_actor: Actor|None = None  # type: ignore # noqa
 _last_actor_terminated: Actor|None = None
 
@@ -47,6 +54,10 @@ _runtime_vars: dict[str, Any] = {
     # root of actor-process tree info
     '_is_root': False,  # bool
     '_root_mailbox': (None, None),  # tuple[str|None, str|None]
+    '_root_addrs': [],  # tuple[str|None, str|None]
+
+    # parent->chld ipc protocol caps
+    '_enable_tpts': [_def_tpt_proto],
 
     # registrar info
     '_registry_addrs': [],
@@ -180,14 +191,6 @@ def get_rt_dir(
     return rtdir
 
 
-# default IPC transport protocol settings
-TransportProtocolKey = Literal[
-    'tcp',
-    'uds',
-]
-_def_tpt_proto: TransportProtocolKey = 'tcp'
-
-
 def current_ipc_protos() -> list[str]:
     '''
     Return the list of IPC transport protocol keys currently
@@ -197,4 +200,4 @@ def current_ipc_protos() -> list[str]:
     concrete-backend sub-types defined throughout `tractor.ipc`.
 
     '''
-    return [_def_tpt_proto]
+    return _runtime_vars['_enable_tpts']
