@@ -603,6 +603,7 @@ _shutdown_msg: str = (
 @acm
 # @api_frame
 async def open_nursery(
+    *,  # named params only!
     hide_tb: bool = True,
     **kwargs,
     # ^TODO, paramspec for `open_root_actor()`
