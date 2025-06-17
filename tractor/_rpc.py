@@ -255,7 +255,7 @@ async def _errors_relayed_via_ipc(
     ctx: Context,
     is_rpc: bool,
 
-    hide_tb: bool = False,
+    hide_tb: bool = True,
     debug_kbis: bool = False,
     task_status: TaskStatus[
         Context | BaseException
@@ -380,9 +380,9 @@ async def _errors_relayed_via_ipc(
     # they can be individually ccancelled.
     finally:
 
-        # if the error is not from user code and instead a failure
-        # of a runtime RPC or transport failure we do prolly want to
-        # show this frame
+        # if the error is not from user code and instead a failure of
+        # an internal-runtime-RPC or IPC-connection, we do (prolly) want
+        # to show this frame!
         if (
             rpc_err
             and (
