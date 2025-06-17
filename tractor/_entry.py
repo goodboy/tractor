@@ -135,7 +135,7 @@ def _trio_main(
             f'  loglevel: {actor.loglevel}\n'
         )
         log.info(
-            'Starting new `trio` subactor:\n'
+            'Starting new `trio` subactor\n'
             +
             pformat.nest_from_op(
                 input_op='>(',  # see syntax ideas above

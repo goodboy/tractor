@@ -249,8 +249,6 @@ def pformat_cs(
     )
 
 
-# TODO: move this func to some kinda `.devx.pformat.py` eventually
-# as we work out our multi-domain state-flow-syntax!
 def nest_from_op(
     input_op: str,
     #
@@ -328,7 +326,8 @@ def nest_from_op(
     # NOTE: so move back-from-the-left of the `input_op` by
     # this amount.
     back_from_op: int = 0,
-    nest_prefix: str = ''
+    nest_prefix: str = '|_',
+    nest_indent: int = 0,
 
 ) -> str:
     '''
@@ -338,21 +337,29 @@ def nest_from_op(
     `tree_str` to nest content aligned with the ops last char.
 
     '''
+    nest_indent = nest_indent or back_from_op  # <- rm latter!
+    if (
+        nest_prefix
+        and
+        nest_indent
+    ):
+        nest_prefix: str = textwrap.indent(
+            nest_prefix,
+            prefix=nest_indent*' ',
+        )
+
+    tree_str_indent: int = len(nest_prefix)
     indented_tree_str: str = textwrap.indent(
         tree_str,
-        prefix=' ' *(
-            len(input_op)
-            -
-            (back_from_op + 1)
-        ),
+        prefix=' '*tree_str_indent
     )
     # inject any provided nesting-prefix chars
     # into the head of the first line.
     if nest_prefix:
         indented_tree_str: str = (
-            f'{nest_prefix}'
-            f'{indented_tree_str[len(nest_prefix):]}'
+            f'{nest_prefix}{indented_tree_str[tree_str_indent:]}'
         )
+
     return (
         f'{input_op}\n'
         f'{indented_tree_str}'
