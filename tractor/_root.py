@@ -217,11 +217,16 @@ async def open_root_actor(
     ):
         if enable_transports is None:
             enable_transports: list[str] = _state.current_ipc_protos()
+        else:
+            _state._runtime_vars['_enable_tpts'] = enable_transports
 
-            # TODO! support multi-tpts per actor! Bo
-            assert (
-                len(enable_transports) == 1
-            ), 'No multi-tpt support yet!'
+        # TODO! support multi-tpts per actor!
+        # Bo
+        if not len(enable_transports) == 1:
+            raise RuntimeError(
+                f'No multi-tpt support yet!\n'
+                f'enable_transports={enable_transports!r}\n'
+            )
 
         _debug.hide_runtime_frames()
         __tracebackhide__: bool = hide_tb

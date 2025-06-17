@@ -170,6 +170,7 @@ class SpawnSpec(
     # a hard `Struct` def for all of these fields!
     _parent_main_data: dict
     _runtime_vars: dict[str, Any]
+    # ^NOTE see `._state._runtime_vars: dict`
 
     # module import capability
     enable_modules: dict[str, str]

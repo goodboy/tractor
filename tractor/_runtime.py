@@ -877,9 +877,7 @@ class Actor:
             return (
                 chan,
                 accept_addrs,
-                None,
-                # ^TODO, preferred tpts list from rent!
-                # -[ ] need to extend the `SpawnSpec` tho!
+                _state._runtime_vars['_enable_tpts']
             )
 
         # failed to connect back?
@@ -1453,10 +1451,12 @@ async def async_main(
                 # all sub-actors should be able to speak to
                 # their root actor over that channel.
                 if _state._runtime_vars['_is_root']:
+                    raddrs: list[Address] = _state._runtime_vars['_root_addrs']
                     for addr in accept_addrs:
-                        waddr = wrap_address(addr)
-                        if waddr == waddr.get_root():
-                            _state._runtime_vars['_root_mailbox'] = addr
+                        waddr: Address = wrap_address(addr)
+                        raddrs.append(addr)
+                    else:
+                        _state._runtime_vars['_root_mailbox'] = raddrs[0]
 
                 # Register with the arbiter if we're told its addr
                 log.runtime(
