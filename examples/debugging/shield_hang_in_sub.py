@@ -37,6 +37,7 @@ async def main(
             enable_stack_on_sig=True,
             # maybe_enable_greenback=False,
             loglevel='devx',
+            enable_transports=['uds'],
         ) as an,
     ):
         ptl: tractor.Portal  = await an.start_actor(
