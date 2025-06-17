@@ -250,11 +250,28 @@ def pformat_cs(
 
 
 def nest_from_op(
-    input_op: str,
+    input_op: str,  # TODO, Literal of all op-"symbols" from below?
+    text: str,
+
+    nest_prefix: str = '|_',
+    nest_indent: int = 0,
+    # XXX indent `next_prefix` "to-the-right-of" `input_op`
+    # by this count of whitespaces (' ').
+
+) -> str:
+    '''
+    Depth-increment the input (presumably hierarchy/supervision)
+    input "tree string" below the provided `input_op` execution
+    operator, so injecting a `"\n|_{input_op}\n"`and indenting the
+    `tree_str` to nest content aligned with the ops last char.
+
+    '''
+    # `sclang` "structurred-concurrency-language": an ascii-encoded
+    # symbolic alphabet to describe concurrent systems.
     #
-    # ?TODO? an idea for a syntax to the state of concurrent systems
-    # as a "3-domain" (execution, scope, storage) model and using
-    # a minimal ascii/utf-8 operator-set.
+    # ?TODO? aa more fomal idea for a syntax to the state of
+    # concurrent systems as a "3-domain" (execution, scope, storage)
+    # model and using a minimal ascii/utf-8 operator-set.
     #
     # try not to take any of this seriously yet XD
     #
@@ -320,24 +337,7 @@ def nest_from_op(
     #
     # =>{  recv-req to open
     # <={  send-status that it closed
-
-    tree_str: str,
-
-    # NOTE: so move back-from-the-left of the `input_op` by
-    # this amount.
-    back_from_op: int = 0,
-    nest_prefix: str = '|_',
-    nest_indent: int = 0,
-
-) -> str:
-    '''
-    Depth-increment the input (presumably hierarchy/supervision)
-    input "tree string" below the provided `input_op` execution
-    operator, so injecting a `"\n|_{input_op}\n"`and indenting the
-    `tree_str` to nest content aligned with the ops last char.
-
-    '''
-    nest_indent = nest_indent or back_from_op  # <- rm latter!
+    #
     if (
         nest_prefix
         and
@@ -350,7 +350,7 @@ def nest_from_op(
 
     tree_str_indent: int = len(nest_prefix)
     indented_tree_str: str = textwrap.indent(
-        tree_str,
+        text,
         prefix=' '*tree_str_indent
     )
     # inject any provided nesting-prefix chars
