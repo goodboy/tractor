@@ -49,7 +49,7 @@ def test_basic_ipc_server(
             )
             assert server._no_more_peers.is_set()
 
-            eps: list[ipc.IPCEndpoint] = await server.listen_on(
+            eps: list[ipc._server.Endpoint] = await server.listen_on(
                 accept_addrs=[rando_addr],
                 stream_handler_nursery=None,
             )
