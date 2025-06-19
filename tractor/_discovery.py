@@ -114,9 +114,15 @@ def get_peer_by_name(
     '''
     actor: Actor = current_actor()
     to_scan: dict[tuple, list[Channel]] = actor._peers.copy()
-    pchan: Channel|None = actor._parent_chan
-    if pchan:
-        to_scan[pchan.uid].append(pchan)
+
+    # TODO: is this ever needed? creates a duplicate channel on actor._peers
+    # when multiple find_actor calls are made to same actor from a single ctx
+    # which causes actor exit to hang waiting forever on
+    # `actor._no_more_peers.wait()` in `_runtime.async_main`
+
+    # pchan: Channel|None = actor._parent_chan
+    # if pchan and pchan.uid not in to_scan:
+    #     to_scan[pchan.uid].append(pchan)
 
     for aid, chans in to_scan.items():
         _, peer_name = aid
