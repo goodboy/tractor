@@ -15,8 +15,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Pretty formatters for use throughout the code base.
-Mostly handy for logging and exception message content.
+Pretty formatters for use throughout our internals.
+
+Handy for logging and exception message content but also for `repr()`
+in REPL(s).
 
 '''
 import sys
@@ -224,8 +226,8 @@ def pformat_cs(
     field_prefix: str = ' |_',
 ) -> str:
     '''
-    Pretty format info about a `trio.CancelScope` including most
-    of its public state and `._cancel_status`.
+    Pretty format info about a `trio.CancelScope` including most of
+    its public state and `._cancel_status`.
 
     The output can be modified to show a "var name" for the
     instance as a field prefix, just a simple str before each
@@ -252,9 +254,12 @@ def pformat_cs(
 def nest_from_op(
     input_op: str,  # TODO, Literal of all op-"symbols" from below?
     text: str,
+    prefix_op: bool = True,  # unset is to suffix the first line
+    # optionally suffix `text`, by def on a newline
+    op_suffix='\n',
 
     nest_prefix: str = '|_',
-    nest_indent: int = 0,
+    nest_indent: int|None = None,
     # XXX indent `next_prefix` "to-the-right-of" `input_op`
     # by this count of whitespaces (' ').
 
@@ -348,11 +353,15 @@ def nest_from_op(
             prefix=nest_indent*' ',
         )
 
-    tree_str_indent: int = len(nest_prefix)
-    indented_tree_str: str = textwrap.indent(
-        text,
-        prefix=' '*tree_str_indent
-    )
+    indented_tree_str: str = text
+    tree_str_indent: int = 0
+    if nest_indent != 0:
+        tree_str_indent: int = len(nest_prefix)
+        indented_tree_str: str = textwrap.indent(
+            text,
+            prefix=' '*tree_str_indent
+        )
+
     # inject any provided nesting-prefix chars
     # into the head of the first line.
     if nest_prefix:
@@ -360,7 +369,126 @@ def nest_from_op(
             f'{nest_prefix}{indented_tree_str[tree_str_indent:]}'
         )
 
-    return (
-        f'{input_op}\n'
-        f'{indented_tree_str}'
+    if prefix_op:
+        return (
+            f'{input_op}{op_suffix}'
+            f'{indented_tree_str}'
+        )
+    else:
+        tree_lns: list[str] = indented_tree_str.splitlines()
+        first: str = tree_lns[0]
+        rest: str = '\n'.join(tree_lns[1:])
+        return (
+            f'{first}{input_op}{op_suffix}'
+            f'{rest}'
+        )
+
+
+# ------ modden.repr ------
+# XXX originally taken verbaatim from `modden.repr`
+'''
+More "multi-line" representation then the stdlib's `pprint` equivs.
+
+'''
+from inspect import (
+    FrameInfo,
+    stack,
+)
+import pprint
+import reprlib
+from typing import (
+    Callable,
+)
+
+
+def mk_repr(
+    **repr_kws,
+) -> Callable[[str], str]:
+    '''
+    Allocate and deliver a `repr.Repr` instance with provided input
+    settings using the std-lib's `reprlib` mod,
+     * https://docs.python.org/3/library/reprlib.html
+
+    ------ Ex. ------
+    An up to 6-layer-nested `dict` as multi-line:
+    - https://stackoverflow.com/a/79102479
+    - https://docs.python.org/3/library/reprlib.html#reprlib.Repr.maxlevel
+
+    '''
+    def_kws: dict[str, int] = dict(
+        indent=3,  # indent used for repr of recursive objects
+        maxlevel=616,  # recursion levels
+        maxdict=616,  # max items shown for `dict`
+        maxlist=616,  # max items shown for `dict`
+        maxstring=616,  # match editor line-len limit
+        maxtuple=616,  # match editor line-len limit
+        maxother=616,  # match editor line-len limit
     )
+    def_kws |= repr_kws
+    reprr = reprlib.Repr(**def_kws)
+    return reprr.repr
+
+
+def ppfmt(
+    obj: object,
+    do_print: bool = False,
+) -> str:
+    '''
+    The `pprint.pformat()` version of `pprint.pp()`, namely
+    a default `sort_dicts=False`.. (which i think should be
+    the normal default in the stdlib).
+
+    '''
+    pprepr: Callable = mk_repr()
+    repr_str: str = pprepr(obj)
+
+    if do_print:
+        return pprint.pp(repr_str)
+
+    return repr_str
+
+
+pformat = ppfmt
+
+
+def pfmt_frame_info(fi: FrameInfo) -> str:
+    '''
+    Like a std `inspect.FrameInfo.__repr__()` but multi-line..
+
+    '''
+    return (
+        'FrameInfo(\n'
+        '  frame={!r},\n'
+        '  filename={!r},\n'
+        '  lineno={!r},\n'
+        '  function={!r},\n'
+        '  code_context={!r},\n'
+        '  index={!r},\n'
+        '  positions={!r})'
+        ).format(
+            fi.frame,
+            fi.filename,
+            fi.lineno,
+            fi.function,
+            fi.code_context,
+            fi.index,
+            fi.positions
+        )
+
+
+def pfmt_callstack(frames: int = 1) -> str:
+    '''
+    Generate a string of nested `inspect.FrameInfo` objects returned
+    from a `inspect.stack()` call such that only the `.frame` field
+    for each  layer is pprinted.
+
+    '''
+    caller_frames: list[FrameInfo] =  stack()[1:1+frames]
+    frames_str: str = ''
+    for i, frame_info in enumerate(caller_frames):
+        frames_str += textwrap.indent(
+            f'{frame_info.frame!r}\n',
+            prefix=' '*i,
+
+        )
+    return frames_str
