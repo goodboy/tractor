@@ -154,6 +154,29 @@ class Aid(
     #     should also include at least `.pid` (equiv to port for tcp)
     #     and/or host-part always?
 
+    @property
+    def uid(self) -> tuple[str, str]:
+        '''
+        Legacy actor "unique-id" pair format.
+
+        '''
+        return (
+            self.name,
+            self.uuid,
+        )
+
+    def reprol(
+        self,
+        sin_uuid: bool = True,
+    ) -> str:
+        if not sin_uuid:
+            return (
+                f'{self.name}[{self.uuid[:6]}]@{self.pid!r}'
+            )
+        return (
+            f'{self.name}@{self.pid!r}'
+        )
+
 
 class SpawnSpec(
     pretty_struct.Struct,
