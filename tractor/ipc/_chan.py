@@ -196,9 +196,12 @@ class Channel:
             self._transport.codec = orig
 
     # TODO: do a .src/.dst: str for maddrs?
-    def pformat(self) -> str:
+    def pformat(
+        self,
+        privates: bool = False,
+    ) -> str:
         if not self._transport:
-            return '<Channel with inactive transport?>'
+            return '<Channel( with inactive transport? )>'
 
         tpt: MsgTransport = self._transport
         tpt_name: str = type(tpt).__name__
@@ -206,14 +209,17 @@ class Channel:
             'connected' if self.connected()
             else 'closed'
         )
-        return (
+        repr_str: str = (
             f'<Channel(\n'
             f' |_status: {tpt_status!r}\n'
+        ) + (
             f'   _closed={self._closed}\n'
             f'   _cancel_called={self._cancel_called}\n'
-            f'\n'
-            f' |_peer: {self.aid}\n'
-            f'\n'
+            if privates else ''
+        ) + (  # peer-actor (processs) section
+            f' |_peer: {self.aid.reprol()!r}\n'
+           if self.aid else '<unknown>'
+        ) + (
             f' |_msgstream: {tpt_name}\n'
             f'   proto={tpt.laddr.proto_key!r}\n'
             f'   layer={tpt.layer_key!r}\n'
@@ -223,9 +229,13 @@ class Channel:
             f'   stream={tpt.stream}\n'
             f'   maddr={tpt.maddr!r}\n'
             f'   drained={tpt.drained}\n'
+        ) + (
             f'   _send_lock={tpt._send_lock.statistics()}\n'
-            f')>\n'
+            if privates else ''
+        ) + (
+            ')>\n'
         )
+        return repr_str
 
     # NOTE: making this return a value that can be passed to
     # `eval()` is entirely **optional** FYI!
