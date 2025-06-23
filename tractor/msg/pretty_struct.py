@@ -20,6 +20,7 @@ Prettified version of `msgspec.Struct` for easier console grokin.
 '''
 from __future__ import annotations
 from collections import UserList
+import textwrap
 from typing import (
     Any,
     Iterator,
@@ -105,27 +106,11 @@ def iter_fields(struct: Struct) -> Iterator[
         )
 
 
-def pformat(
+def iter_struct_ppfmt_lines(
     struct: Struct,
-    field_indent: int = 2,
-    indent: int = 0,
+    field_indent: int = 0,
+) -> Iterator[tuple[str, str]]:
 
-) -> str:
-    '''
-    Recursion-safe `pprint.pformat()` style formatting of
-    a `msgspec.Struct` for sane reading by a human using a REPL.
-
-    '''
-    # global whitespace indent
-    ws: str = ' '*indent
-
-    # field whitespace indent
-    field_ws: str = ' '*(field_indent + indent)
-
-    # qtn: str = ws + struct.__class__.__qualname__
-    qtn: str = struct.__class__.__qualname__
-
-    obj_str: str = ''  # accumulator
     fi: structs.FieldInfo
     k: str
     v: Any
@@ -135,15 +120,18 @@ def pformat(
         # ..]` over .__name__ == `Literal` but still get only the
         # latter for simple types like `str | int | None` etc..?
         ft: type = fi.type
-        typ_name: str = getattr(ft, '__name__', str(ft))
+        typ_name: str = getattr(
+            ft,
+            '__name__',
+            str(ft)
+        ).replace(' ', '')
 
         # recurse to get sub-struct's `.pformat()` output Bo
         if isinstance(v, Struct):
-            val_str: str =  v.pformat(
-                indent=field_indent + indent,
-                field_indent=indent + field_indent,
+            yield from iter_struct_ppfmt_lines(
+                struct=v,
+                field_indent=field_indent+field_indent,
             )
-
         else:
             val_str: str = repr(v)
 
@@ -161,8 +149,39 @@ def pformat(
                 # raise
                 # return _Struct.__repr__(struct)
 
-        # TODO: LOLOL use `textwrap.indent()` instead dawwwwwg!
-        obj_str += (field_ws + f'{k}: {typ_name} = {val_str},\n')
+        yield (
+            ' '*field_indent,  # indented ws prefix
+            f'{k}: {typ_name} = {val_str},',  # field's repr line content
+        )
+
+
+def pformat(
+    struct: Struct,
+    field_indent: int = 2,
+    indent: int = 0,
+) -> str:
+    '''
+    Recursion-safe `pprint.pformat()` style formatting of
+    a `msgspec.Struct` for sane reading by a human using a REPL.
+
+    '''
+    obj_str: str = ''  # accumulator
+    for prefix, field_repr, in iter_struct_ppfmt_lines(
+        struct,
+        field_indent=field_indent,
+    ):
+        obj_str += f'{prefix}{field_repr}\n'
+
+    # global whitespace indent
+    ws: str = ' '*indent
+    if indent:
+        obj_str: str = textwrap.indent(
+            text=obj_str,
+            prefix=ws,
+        )
+
+    # qtn: str = ws + struct.__class__.__qualname__
+    qtn: str = struct.__class__.__qualname__
 
     return (
         f'{qtn}(\n'
