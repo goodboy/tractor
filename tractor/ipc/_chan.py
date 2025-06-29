@@ -171,11 +171,23 @@ class Channel:
         )
         assert transport.raddr == addr
         chan = Channel(transport=transport)
-        log.runtime(
-            f'Connected channel IPC transport\n'
-            f'[>\n'
-            f' |_{chan}\n'
-        )
+
+        # ?TODO, compact this into adapter level-methods?
+        # -[ ] would avoid extra repr-calcs if level not active?
+        #   |_ how would the `calc_if_level` look though? func?
+        if log.at_least_level('runtime'):
+            from tractor.devx import (
+                pformat as _pformat,
+            )
+            chan_repr: str = _pformat.nest_from_op(
+                input_op='[>',
+                text=chan.pformat(),
+                nest_indent=1,
+            )
+            log.runtime(
+                f'Connected channel IPC transport\n'
+                f'{chan_repr}'
+            )
         return chan
 
     @cm
@@ -218,7 +230,7 @@ class Channel:
             if privates else ''
         ) + (  # peer-actor (processs) section
             f' |_peer: {self.aid.reprol()!r}\n'
-           if self.aid else '<unknown>'
+            if self.aid else ' |_peer: <unknown>\n'
         ) + (
             f' |_msgstream: {tpt_name}\n'
             f'   maddr: {tpt.maddr!r}\n'
@@ -258,6 +270,10 @@ class Channel:
     @property
     def raddr(self) -> Address|None:
         return self._transport.raddr if self._transport else None
+
+    @property
+    def maddr(self) -> str:
+        return self._transport.maddr if self._transport else '<no-tpt>'
 
     # TODO: something like,
     # `pdbp.hideframe_on(errors=[MsgTypeError])`
