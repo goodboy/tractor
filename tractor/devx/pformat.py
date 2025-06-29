@@ -262,6 +262,7 @@ def nest_from_op(
     nest_indent: int|None = None,
     # XXX indent `next_prefix` "to-the-right-of" `input_op`
     # by this count of whitespaces (' ').
+    rm_from_first_ln: str|None = None,
 
 ) -> str:
     '''
@@ -346,20 +347,35 @@ def nest_from_op(
     if (
         nest_prefix
         and
-        nest_indent
+        nest_indent != 0
     ):
-        nest_prefix: str = textwrap.indent(
-            nest_prefix,
-            prefix=nest_indent*' ',
-        )
+        if nest_indent is not None:
+            nest_prefix: str = textwrap.indent(
+                nest_prefix,
+                prefix=nest_indent*' ',
+            )
+        nest_indent: int = len(nest_prefix)
+
+    # determine body-text indent either by,
+    # - using wtv explicit indent value is provided,
+    # OR
+    # - auto-calcing the indent to embed `text` under
+    #   the `nest_prefix` if provided, **IFF** `nest_indent=None`.
+    tree_str_indent: int = 0
+    if nest_indent not in {0, None}:
+        tree_str_indent = nest_indent
+    elif (
+        nest_prefix
+        and
+        nest_indent != 0
+    ):
+        tree_str_indent = len(nest_prefix)
 
     indented_tree_str: str = text
-    tree_str_indent: int = 0
-    if nest_indent != 0:
-        tree_str_indent: int = len(nest_prefix)
+    if tree_str_indent:
         indented_tree_str: str = textwrap.indent(
             text,
-            prefix=' '*tree_str_indent
+            prefix=' '*tree_str_indent,
         )
 
     # inject any provided nesting-prefix chars
@@ -369,18 +385,35 @@ def nest_from_op(
             f'{nest_prefix}{indented_tree_str[tree_str_indent:]}'
         )
 
+    if (
+        not prefix_op
+        or
+        rm_from_first_ln
+    ):
+        tree_lns: list[str] = indented_tree_str.splitlines()
+        first: str = tree_lns[0]
+        if rm_from_first_ln:
+            first = first.strip().replace(
+                rm_from_first_ln,
+                '',
+            )
+        indented_tree_str: str = '\n'.join(tree_lns[1:])
+
+        if prefix_op:
+            indented_tree_str = (
+                f'{first}\n'
+                f'{indented_tree_str}'
+            )
+
     if prefix_op:
         return (
             f'{input_op}{op_suffix}'
             f'{indented_tree_str}'
         )
     else:
-        tree_lns: list[str] = indented_tree_str.splitlines()
-        first: str = tree_lns[0]
-        rest: str = '\n'.join(tree_lns[1:])
         return (
             f'{first}{input_op}{op_suffix}'
-            f'{rest}'
+            f'{indented_tree_str}'
         )
 
 
