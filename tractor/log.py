@@ -81,9 +81,34 @@ BOLD_PALETTE = {
 }
 
 
+def at_least_level(
+    log: Logger|LoggerAdapter,
+    level: int|str,
+) -> bool:
+    '''
+    Predicate to test if a given level is active.
+
+    '''
+    if isinstance(level, str):
+        level: int = CUSTOM_LEVELS[level.upper()]
+
+    if log.getEffectiveLevel() <= level:
+        return True
+    return False
+
+
 # TODO: this isn't showing the correct '{filename}'
 # as it did before..
 class StackLevelAdapter(LoggerAdapter):
+
+    def at_least_level(
+        self,
+        level: str,
+    ) -> bool:
+        return at_least_level(
+            log=self,
+            level=level,
+        )
 
     def transport(
         self,
@@ -401,19 +426,3 @@ def get_loglevel() -> str:
 
 # global module logger for tractor itself
 log: StackLevelAdapter = get_logger('tractor')
-
-
-def at_least_level(
-    log: Logger|LoggerAdapter,
-    level: int|str,
-) -> bool:
-    '''
-    Predicate to test if a given level is active.
-
-    '''
-    if isinstance(level, str):
-        level: int = CUSTOM_LEVELS[level.upper()]
-
-    if log.getEffectiveLevel() <= level:
-        return True
-    return False
