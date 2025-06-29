@@ -21,7 +21,7 @@ Sub-process entry points.
 from __future__ import annotations
 from functools import partial
 import multiprocessing as mp
-import os
+# import os
 from typing import (
     Any,
     TYPE_CHECKING,
@@ -38,6 +38,7 @@ from .devx import (
     _frame_stack,
     pformat,
 )
+# from .msg import pretty_struct
 from .to_asyncio import run_as_asyncio_guest
 from ._addr import UnwrappedAddress
 from ._runtime import (
@@ -127,20 +128,13 @@ def _trio_main(
 
     if actor.loglevel is not None:
         get_console_log(actor.loglevel)
-        actor_info: str = (
-            f'|_{actor}\n'
-            f'  uid: {actor.uid}\n'
-            f'  pid: {os.getpid()}\n'
-            f'  parent_addr: {parent_addr}\n'
-            f'  loglevel: {actor.loglevel}\n'
-        )
         log.info(
-            'Starting new `trio` subactor\n'
+            f'Starting `trio` subactor from parent @ '
+            f'{parent_addr}\n'
             +
             pformat.nest_from_op(
                 input_op='>(',  # see syntax ideas above
-                text=actor_info,
-                nest_indent=2,  # since "complete"
+                text=f'{actor}',
             )
         )
     logmeth = log.info
@@ -149,7 +143,7 @@ def _trio_main(
         +
         pformat.nest_from_op(
             input_op=')>',  # like a "closed-to-play"-icon from super perspective
-            text=actor_info,
+            text=f'{actor}',
             nest_indent=1,
         )
     )
@@ -167,7 +161,7 @@ def _trio_main(
             +
             pformat.nest_from_op(
                 input_op='c)>',  # closed due to cancel (see above)
-                text=actor_info,
+                text=f'{actor}',
             )
         )
     except BaseException as err:
@@ -177,7 +171,7 @@ def _trio_main(
             +
             pformat.nest_from_op(
                 input_op='x)>',  # closed by error
-                text=actor_info,
+                text=f'{actor}',
             )
         )
         # NOTE since we raise a tb will already be shown on the
