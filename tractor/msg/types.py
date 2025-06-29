@@ -177,6 +177,16 @@ class Aid(
             f'{self.name}@{self.pid!r}'
         )
 
+    # mk hashable via `.uuid`
+    def __hash__(self) -> int:
+        return hash(self.uuid)
+
+    def __eq__(self, other: Aid) -> bool:
+        return self.uuid == other.uuid
+
+    # use pretty fmt since often repr-ed for console/log
+    __repr__ = pretty_struct.Struct.__repr__
+
 
 class SpawnSpec(
     pretty_struct.Struct,
