@@ -60,6 +60,9 @@ def find_masked_excs(
     return None
 
 
+# XXX, relevant ish discussion @ `trio`-core,
+# https://github.com/python-trio/trio/issues/455#issuecomment-2785122216
+#
 @acm
 async def maybe_raise_from_masking_exc(
     tn: trio.Nursery|None = None,
