@@ -221,14 +221,16 @@ class Channel:
            if self.aid else '<unknown>'
         ) + (
             f' |_msgstream: {tpt_name}\n'
-            f'   proto={tpt.laddr.proto_key!r}\n'
-            f'   layer={tpt.layer_key!r}\n'
-            f'   laddr={tpt.laddr}\n'
-            f'   raddr={tpt.raddr}\n'
-            f'   codec={tpt.codec_key!r}\n'
-            f'   stream={tpt.stream}\n'
-            f'   maddr={tpt.maddr!r}\n'
-            f'   drained={tpt.drained}\n'
+            f'   maddr: {tpt.maddr!r}\n'
+            f'   proto: {tpt.laddr.proto_key!r}\n'
+            f'   layer: {tpt.layer_key!r}\n'
+            f'   codec: {tpt.codec_key!r}\n'
+            f'   .laddr={tpt.laddr}\n'
+            f'   .raddr={tpt.raddr}\n'
+        ) + (
+            f'   ._transport.stream={tpt.stream}\n'
+            f'   ._transport.drained={tpt.drained}\n'
+            if privates else ''
         ) + (
             f'   _send_lock={tpt._send_lock.statistics()}\n'
             if privates else ''
@@ -444,8 +446,8 @@ class Channel:
         await self.send(aid)
         peer_aid: Aid = await self.recv()
         log.runtime(
-            f'Received hanshake with peer actor,\n'
-            f'{peer_aid}\n'
+            f'Received hanshake with peer '
+            f'{peer_aid.reprol(sin_uuid=False)}\n'
         )
         # NOTE, we always are referencing the remote peer!
         self.aid = peer_aid
