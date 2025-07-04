@@ -17,9 +17,16 @@
 Utils to tame mp non-SC madeness
 
 '''
+
+# !TODO! in 3.13 this can be disabled (the-same/similarly) using
+# a flag,
+# - [ ] soo if it works like this, drop this module entirely for
+#   3.13+ B)
+#  |_https://docs.python.org/3/library/multiprocessing.shared_memory.html
+#
 def disable_mantracker():
     '''
-    Disable all ``multiprocessing``` "resource tracking" machinery since
+    Disable all `multiprocessing` "resource tracking" machinery since
     it's an absolute multi-threaded mess of non-SC madness.
 
     '''
