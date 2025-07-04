@@ -462,8 +462,8 @@ class Channel:
         await self.send(aid)
         peer_aid: Aid = await self.recv()
         log.runtime(
-            f'Received hanshake with peer '
-            f'{peer_aid.reprol(sin_uuid=False)}\n'
+            f'Received hanshake with peer\n'
+            f'<= {peer_aid.reprol(sin_uuid=False)}\n'
         )
         # NOTE, we always are referencing the remote peer!
         self.aid = peer_aid
