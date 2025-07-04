@@ -740,6 +740,8 @@ class Context:
             # cancelled, NOT their reported canceller. IOW in the
             # latter case we're cancelled by someone else getting
             # cancelled.
+            #
+            # !TODO, switching to `Actor.aid` here!
             if (canc := error.canceller) == self._actor.uid:
                 whom: str = 'us'
                 self._canceller = canc
