@@ -160,10 +160,9 @@ async def start_listener(
     Start a TCP socket listener on the given `TCPAddress`.
 
     '''
-    log.info(
-        f'Attempting to bind TCP socket\n'
-        f'>[\n'
-        f'|_{addr}\n'
+    log.runtime(
+        f'Trying socket bind\n'
+        f'>[ {addr}\n'
     )
     # ?TODO, maybe we should just change the lower-level call this is
     # using internall per-listener?
@@ -178,11 +177,10 @@ async def start_listener(
     assert len(listeners) == 1
     listener = listeners[0]
     host, port = listener.socket.getsockname()[:2]
-
+    bound_addr: TCPAddress = type(addr).from_addr((host, port))
     log.info(
         f'Listening on TCP socket\n'
-        f'[>\n'
-        f' |_{addr}\n'
+        f'[> {bound_addr}\n'
     )
     return listener
 
