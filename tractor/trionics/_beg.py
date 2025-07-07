@@ -31,7 +31,7 @@ import trio
 
 def maybe_collapse_eg(
     beg: BaseExceptionGroup,
-) -> BaseException:
+) -> BaseException|bool:
     '''
     If the input beg can collapse to a single non-eg sub-exception,
     return it instead.
@@ -40,13 +40,12 @@ def maybe_collapse_eg(
     if len(excs := beg.exceptions) == 1:
         return excs[0]
 
-    return beg
+    return False
 
 
 @acm
 async def collapse_eg(
     hide_tb: bool = True,
-    raise_from_src: bool = False,
 ):
     '''
     If `BaseExceptionGroup` raised in the body scope is
@@ -61,9 +60,11 @@ async def collapse_eg(
     except* BaseException as beg:
         if (
             exc := maybe_collapse_eg(beg)
-        ) is not beg:
-            from_exc = beg if raise_from_src else None
-            raise exc from from_exc
+        ):
+            if cause := exc.__cause__:
+                raise exc from cause
+
+            raise exc
 
         raise beg
 
