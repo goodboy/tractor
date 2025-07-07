@@ -672,7 +672,8 @@ async def _invoke(
                 ctx._result = res
                 log.runtime(
                     f'Sending result msg and exiting {ctx.side!r}\n'
-                    f'{return_msg}\n'
+                    f'\n'
+                    f'{pretty_struct.pformat(return_msg)}\n'
                 )
                 await chan.send(return_msg)
 
@@ -840,12 +841,12 @@ async def _invoke(
                 else:
                     descr_str += f'\n{merr!r}\n'
             else:
-                descr_str += f'\nand final result {ctx.outcome!r}\n'
+                descr_str += f'\nwith final result {ctx.outcome!r}\n'
 
             logmeth(
-                message
-                +
-                descr_str
+                f'{message}\n'
+                f'\n'
+                f'{descr_str}\n'
             )
 
 
@@ -1012,8 +1013,6 @@ async def process_messages(
                         cid=cid,
                         kwargs=kwargs,
                     ):
-                        kwargs |= {'req_chan': chan}
-
                         # XXX NOTE XXX don't start entire actor
                         # runtime cancellation if this actor is
                         # currently in debug mode!
@@ -1032,14 +1031,14 @@ async def process_messages(
                                 cid,
                                 chan,
                                 actor.cancel,
-                                kwargs,
+                                kwargs | {'req_chan': chan},
                                 is_rpc=False,
                                 return_msg_type=CancelAck,
                             )
 
                         log.runtime(
-                            'Cancelling IPC transport msg-loop with peer:\n'
-                            f'|_{chan}\n'
+                            'Cancelling RPC-msg-loop with peer\n'
+                            f'->c}} {chan.aid.reprol()}@[{chan.maddr}]\n'
                         )
                         loop_cs.cancel()
                         break
@@ -1235,9 +1234,21 @@ async def process_messages(
             # END-OF `async for`:
             # IPC disconnected via `trio.EndOfChannel`, likely
             # due to a (graceful) `Channel.aclose()`.
+
+            chan_op_repr: str = '<=x] '
+            chan_repr: str = _pformat.nest_from_op(
+                input_op=chan_op_repr,
+                op_suffix='',
+                nest_prefix='',
+                text=chan.pformat(),
+                nest_indent=len(chan_op_repr)-1,
+                rm_from_first_ln='<',
+            )
             log.runtime(
-                f'channel for {chan.uid} disconnected, cancelling RPC tasks\n'
-                f'|_{chan}\n'
+                f'IPC channel disconnected\n'
+                f'{chan_repr}\n'
+                f'\n'
+                f'->c) cancelling RPC tasks.\n'
             )
             await actor.cancel_rpc_tasks(
                 req_aid=actor.aid,
