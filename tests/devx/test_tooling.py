@@ -116,9 +116,11 @@ def test_shield_pause(
         child.pid,
         signal.SIGINT,
     )
+    from tractor._supervise import _shutdown_msg
     expect(
         child,
-        'Shutting down actor runtime',
+        # 'Shutting down actor runtime',
+        _shutdown_msg,
         timeout=6,
     )
     assert_before(
