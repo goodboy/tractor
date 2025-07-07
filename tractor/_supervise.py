@@ -21,7 +21,6 @@
 from contextlib import asynccontextmanager as acm
 from functools import partial
 import inspect
-from pprint import pformat
 from typing import (
     TYPE_CHECKING,
 )
@@ -31,7 +30,10 @@ import warnings
 import trio
 
 
-from .devx.debug import maybe_wait_for_debugger
+from .devx import (
+    debug,
+    pformat as _pformat,
+)
 from ._addr import (
     UnwrappedAddress,
     mk_uuid,
@@ -200,7 +202,7 @@ class ActorNursery:
             loglevel=loglevel,
 
             # verbatim relay this actor's registrar addresses
-            registry_addrs=current_actor().reg_addrs,
+            registry_addrs=current_actor().registry_addrs,
         )
         parent_addr: UnwrappedAddress = self._actor.accept_addr
         assert parent_addr
@@ -454,7 +456,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # the "hard join phase".
                     log.runtime(
                         'Waiting on subactors to complete:\n'
-                        f'{pformat(an._children)}\n'
+                        f'>}} {len(an._children)}\n'
                     )
                     an._join_procs.set()
 
@@ -468,7 +470,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # will make the pdb repl unusable.
                     # Instead try to wait for pdb to be released before
                     # tearing down.
-                    await maybe_wait_for_debugger(
+                    await debug.maybe_wait_for_debugger(
                         child_in_debug=an._at_least_one_child_in_debug
                     )
 
@@ -544,7 +546,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
             # XXX: yet another guard before allowing the cancel
             # sequence in case a (single) child is in debug.
-            await maybe_wait_for_debugger(
+            await debug.maybe_wait_for_debugger(
                 child_in_debug=an._at_least_one_child_in_debug
             )
 
@@ -592,6 +594,10 @@ async def _open_and_supervise_one_cancels_all_nursery(
         # da_nursery scope end - nursery checkpoint
     # final exit
 
+
+_shutdown_msg: str = (
+    'Actor-runtime-shutdown'
+)
 
 # @api_frame
 @acm
@@ -681,17 +687,26 @@ async def open_nursery(
         ):
             __tracebackhide__: bool = False
 
-        msg: str = (
-            'Actor-nursery exited\n'
-            f'|_{an}\n'
+
+        op_nested_an_repr: str = _pformat.nest_from_op(
+            input_op=')>',
+            text=f'{an}',
+            # nest_prefix='|_',
+            nest_indent=1,  # under >
         )
+        an_msg: str = (
+            f'Actor-nursery exited\n'
+            f'{op_nested_an_repr}\n'
+        )
+        # keep noise low during std operation.
+        log.runtime(an_msg)
 
         if implicit_runtime:
             # shutdown runtime if it was started and report noisly
             # that we're did so.
-            msg += '=> Shutting down actor runtime <=\n'
+            msg: str = (
+                '\n'
+                '\n'
+                f'{_shutdown_msg} )>\n'
+            )
             log.info(msg)
-
-        else:
-            # keep noise low during std operation.
-            log.runtime(msg)
