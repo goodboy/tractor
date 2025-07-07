@@ -118,6 +118,10 @@ class Portal:
 
     @property
     def chan(self) -> Channel:
+        '''
+        Ref to this ctx's underlying `tractor.ipc.Channel`.
+
+        '''
         return self._chan
 
     @property
@@ -177,10 +181,17 @@ class Portal:
 
         # not expecting a "main" result
         if self._expect_result_ctx is None:
+            peer_id: str = f'{self.channel.aid.reprol()!r}'
             log.warning(
-                f"Portal for {self.channel.aid} not expecting a final"
-                " result?\nresult() should only be called if subactor"
-                " was spawned with `ActorNursery.run_in_actor()`")
+                f'Portal to peer {peer_id} will not deliver a final result?\n'
+                f'\n'
+                f'Context.result() can only be called by the parent of '
+                f'a sub-actor when it was spawned with '
+                f'`ActorNursery.run_in_actor()`'
+                f'\n'
+                f'Further this `ActorNursery`-method-API will deprecated in the'
+                f'near fututre!\n'
+            )
             return NoResult
 
         # expecting a "main" result
@@ -213,6 +224,7 @@ class Portal:
         typname: str = type(self).__name__
         log.warning(
             f'`{typname}.result()` is DEPRECATED!\n'
+            f'\n'
             f'Use `{typname}.wait_for_result()` instead!\n'
         )
         return await self.wait_for_result(
@@ -224,8 +236,10 @@ class Portal:
         # terminate all locally running async generator
         # IPC calls
         if self._streams:
-            log.cancel(
-                f"Cancelling all streams with {self.channel.aid}")
+            peer_id: str = f'{self.channel.aid.reprol()!r}'
+            report: str = (
+                f'Cancelling all msg-streams with {peer_id}\n'
+            )
             for stream in self._streams.copy():
                 try:
                     await stream.aclose()
@@ -234,10 +248,18 @@ class Portal:
                     # (unless of course at some point down the road we
                     # won't expect this to always be the case or need to
                     # detect it for respawning purposes?)
-                    log.debug(f"{stream} was already closed.")
+                    report += (
+                        f'->) {stream!r} already closed\n'
+                    )
+
+            log.cancel(report)
 
     async def aclose(self):
-        log.debug(f"Closing {self}")
+        log.debug(
+            f'Closing portal\n'
+            f'>}}\n'
+            f'|_{self}\n'
+        )
         # TODO: once we move to implementing our own `ReceiveChannel`
         # (including remote task cancellation inside its `.aclose()`)
         # we'll need to .aclose all those channels here
@@ -263,19 +285,18 @@ class Portal:
         __runtimeframe__: int = 1  # noqa
 
         chan: Channel = self.channel
+        peer_id: str = f'{self.channel.aid.reprol()!r}'
         if not chan.connected():
             log.runtime(
-                'This channel is already closed, skipping cancel request..'
+                'Peer {peer_id} is already disconnected\n'
+                '-> skipping cancel request..\n'
             )
             return False
 
-        reminfo: str = (
-            f'c)=> {self.channel.aid}\n'
-            f'  |_{chan}\n'
-        )
         log.cancel(
-            f'Requesting actor-runtime cancel for peer\n\n'
-            f'{reminfo}'
+            f'Sending actor-runtime-cancel-req to peer\n'
+            f'\n'
+            f'c)=> {peer_id}\n'
         )
 
         # XXX the one spot we set it?
@@ -300,8 +321,9 @@ class Portal:
                 # may timeout and we never get an ack (obvi racy)
                 # but that doesn't mean it wasn't cancelled.
                 log.debug(
-                    'May have failed to cancel peer?\n'
-                    f'{reminfo}'
+                    f'May have failed to cancel peer?\n'
+                    f'\n'
+                    f'c)=?> {peer_id}\n'
                 )
 
             # if we get here some weird cancellation case happened
@@ -319,22 +341,22 @@ class Portal:
 
             TransportClosed,
         ) as tpt_err:
-            report: str = (
-                f'IPC chan for actor already closed or broken?\n\n'
-                f'{self.channel.aid}\n'
-                f' |_{self.channel}\n'
+            ipc_borked_report: str = (
+                f'IPC for actor already closed/broken?\n\n'
+                f'\n'
+                f'c)=x> {peer_id}\n'
             )
             match tpt_err:
                 case TransportClosed():
-                    log.debug(report)
+                    log.debug(ipc_borked_report)
                 case _:
-                    report += (
+                    ipc_borked_report += (
                         f'\n'
                         f'Unhandled low-level transport-closed/error during\n'
                         f'Portal.cancel_actor()` request?\n'
                         f'<{type(tpt_err).__name__}( {tpt_err} )>\n'
                     )
-                    log.warning(report)
+                    log.warning(ipc_borked_report)
 
             return False
 
@@ -491,10 +513,13 @@ class Portal:
                 with trio.CancelScope(shield=True):
                     await ctx.cancel()
 
-            except trio.ClosedResourceError:
+            except trio.ClosedResourceError as cre:
                 # if the far end terminates before we send a cancel the
                 # underlying transport-channel may already be closed.
-                log.cancel(f'Context {ctx} was already closed?')
+                log.cancel(
+                    f'Context.cancel() -> {cre!r}\n'
+                    f'cid: {ctx.cid!r} already closed?\n'
+                )
 
             # XXX: should this always be done?
             # await recv_chan.aclose()
