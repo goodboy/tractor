@@ -1484,9 +1484,8 @@ async def async_main(
 
             ipc_server: _server.IPCServer
             async with (
-                trio.open_nursery(
-                    strict_exception_groups=False,
-                ) as service_nursery,
+                collapse_eg(),
+                trio.open_nursery() as service_nursery,
                 _server.open_ipc_server(
                     parent_tn=service_nursery,
                     stream_handler_tn=service_nursery,

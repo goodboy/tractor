@@ -480,8 +480,11 @@ async def open_root_actor(
             async with (
                 collapse_eg(),
                 trio.open_nursery() as root_tn,
-            ):
 
+                # XXX, finally-footgun below?
+                # -> see note on why shielding.
+                # maybe_raise_from_masking_exc(),
+            ):
                 # `_runtime.async_main()` creates an internal nursery
                 # and blocks here until any underlying actor(-process)
                 # tree has terminated thereby conducting so called
