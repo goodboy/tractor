@@ -549,6 +549,14 @@ class Actor:
             )
             raise
 
+    # ?TODO, factor this meth-iface into a new `.rpc` subsys primitive?
+    # - _get_rpc_func(),
+    # - _deliver_ctx_payload(),
+    # - get_context(),
+    # - start_remote_task(),
+    # - cancel_rpc_tasks(),
+    # - _cancel_task(),
+    #
     def _get_rpc_func(self, ns, funcname):
         '''
         Try to lookup and return a target RPC func from the
@@ -1116,14 +1124,6 @@ class Actor:
         self._cancel_complete.set()
         return True
 
-    # XXX: hard kill logic if needed?
-    # def _hard_mofo_kill(self):
-    #     # If we're the root actor or zombied kill everything
-    #     if self._parent_chan is None:  # TODO: more robust check
-    #         root = trio.lowlevel.current_root_task()
-    #         for n in root.child_nurseries:
-    #             n.cancel_scope.cancel()
-
     async def _cancel_task(
         self,
         cid: str,
@@ -1358,25 +1358,13 @@ class Actor:
         '''
         return self.accept_addrs[0]
 
-    def get_parent(self) -> Portal:
-        '''
-        Return a `Portal` to our parent.
-
-        '''
-        assert self._parent_chan, "No parent channel for this actor?"
-        return Portal(self._parent_chan)
-
-    def get_chans(
-        self,
-        uid: tuple[str, str],
-
-    ) -> list[Channel]:
-        '''
-        Return all IPC channels to the actor with provided `uid`.
-
-        '''
-        return self._ipc_server._peers[uid]
-
+    # TODO, this should delegate ONLY to the
+    # `._spawn_spec._runtime_vars: dict` / `._state` APIs?
+    #
+    # XXX, AH RIGHT that's why..
+    #   it's bc we pass this as a CLI flag to the child.py precisely
+    #   bc we need the bootstrapping pre `async_main()`.. but maybe
+    #   keep this as an impl deat and not part of the pub iface impl?
     def is_infected_aio(self) -> bool:
         '''
         If `True`, this actor is running `trio` in guest mode on
@@ -1386,6 +1374,23 @@ class Actor:
 
         '''
         return self._infected_aio
+
+    # ?TODO, is this the right type for this method?
+    def get_parent(self) -> Portal:
+        '''
+        Return a `Portal` to our parent.
+
+        '''
+        assert self._parent_chan, "No parent channel for this actor?"
+        return Portal(self._parent_chan)
+
+    # XXX: hard kill logic if needed?
+    # def _hard_mofo_kill(self):
+    #     # If we're the root actor or zombied kill everything
+    #     if self._parent_chan is None:  # TODO: more robust check
+    #         root = trio.lowlevel.current_root_task()
+    #         for n in root.child_nurseries:
+    #             n.cancel_scope.cancel()
 
 
 async def async_main(
