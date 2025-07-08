@@ -18,6 +18,7 @@ TCP implementation of tractor.ipc._transport.MsgTransport protocol
 
 '''
 from __future__ import annotations
+import ipaddress
 from typing import (
     ClassVar,
 )
@@ -50,13 +51,45 @@ class TCPAddress(
     _host: str
     _port: int
 
+    def __post_init__(self):
+        try:
+            ipaddress.ip_address(self._host)
+        except ValueError as valerr:
+            raise ValueError(
+                'Invalid {type(self).__name__}._host = {self._host!r}\n'
+            ) from valerr
+
     proto_key: ClassVar[str] = 'tcp'
     unwrapped_type: ClassVar[type] = tuple[str, int]
     def_bindspace: ClassVar[str] = '127.0.0.1'
 
+    # ?TODO, actually validate ipv4/6 with stdlib's `ipaddress`
     @property
     def is_valid(self) -> bool:
-        return self._port != 0
+        '''
+        Predicate to ensure a valid socket-address pair.
+
+        '''
+        return (
+            self._port != 0
+            and
+            (ipaddr := ipaddress.ip_address(self._host))
+            and not (
+                ipaddr.is_reserved
+                or
+                ipaddr.is_unspecified
+                or
+                ipaddr.is_link_local
+                or
+                ipaddr.is_link_local
+                or
+                ipaddr.is_multicast
+                or
+                ipaddr.is_global
+            )
+        )
+        # ^XXX^ see various properties of invalid addrs here,
+        # https://docs.python.org/3/library/ipaddress.html#ipaddress.IPv4Address
 
     @property
     def bindspace(self) -> str:
