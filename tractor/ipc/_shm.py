@@ -789,6 +789,11 @@ def open_shm_list(
         readonly=readonly,
     )
 
+    # TODO, factor into a @actor_fixture acm-API?
+    # -[ ] also `@maybe_actor_fixture()` which inludes
+    #     the .current_actor() convenience check?
+    #   |_ orr can that just be in the sin-maybe-version?
+    #
     # "close" attached shm on actor teardown
     try:
         actor = tractor.current_actor()
