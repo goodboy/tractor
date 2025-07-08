@@ -210,12 +210,14 @@ class PldRx(Struct):
         match msg:
             case Return()|Error():
                 log.runtime(
-                    f'Rxed final outcome msg\n'
+                    f'Rxed final-outcome msg\n'
+                    f'\n'
                     f'{msg}\n'
                 )
             case Stop():
                 log.runtime(
                     f'Rxed stream stopped msg\n'
+                    f'\n'
                     f'{msg}\n'
                 )
                 if passthrough_non_pld_msgs:
@@ -261,8 +263,9 @@ class PldRx(Struct):
         if (
             type(msg) is Return
         ):
-            log.info(
+            log.runtime(
                 f'Rxed final result msg\n'
+                f'\n'
                 f'{msg}\n'
             )
         return self.decode_pld(
@@ -304,10 +307,13 @@ class PldRx(Struct):
                 try:
                     pld: PayloadT = self._pld_dec.decode(pld)
                     log.runtime(
-                        'Decoded msg payload\n\n'
+                        f'Decoded payload for\n'
+                        # f'\n'
                         f'{msg}\n'
-                        f'where payload decoded as\n'
-                        f'|_pld={pld!r}\n'
+                        # ^TODO?, ideally just render with `,
+                        # pld={decode}` in the `msg.pformat()`??
+                        f'where, '
+                        f'{type(msg).__name__}.pld={pld!r}\n'
                     )
                     return pld
                 except TypeError as typerr:
@@ -494,7 +500,8 @@ def limit_plds(
 
     finally:
         log.runtime(
-            'Reverted to previous payload-decoder\n\n'
+            f'Reverted to previous payload-decoder\n'
+            f'\n'
             f'{orig_pldec}\n'
         )
         # sanity on orig settings
@@ -629,7 +636,8 @@ async def drain_to_final_msg(
                     (local_cs := rent_n.cancel_scope).cancel_called
                 ):
                     log.cancel(
-                        'RPC-ctx cancelled by local-parent scope during drain!\n\n'
+                        f'RPC-ctx cancelled by local-parent scope during drain!\n'
+                        f'\n'
                         f'c}}>\n'
                         f' |_{rent_n}\n'
                         f'   |_.cancel_scope = {local_cs}\n'
@@ -663,7 +671,8 @@ async def drain_to_final_msg(
             # final result arrived!
             case Return():
                 log.runtime(
-                    'Context delivered final draining msg:\n'
+                    f'Context delivered final draining msg\n'
+                    f'\n'
                     f'{pretty_struct.pformat(msg)}'
                 )
                 ctx._result: Any = pld
@@ -697,12 +706,14 @@ async def drain_to_final_msg(
                 ):
                     log.cancel(
                         'Cancelling `MsgStream` drain since '
-                        f'{reason}\n\n'
+                        f'{reason}\n'
+                        f'\n'
                         f'<= {ctx.chan.uid}\n'
-                        f'  |_{ctx._nsf}()\n\n'
+                        f'  |_{ctx._nsf}()\n'
+                        f'\n'
                         f'=> {ctx._task}\n'
-                        f'  |_{ctx._stream}\n\n'
-
+                        f'  |_{ctx._stream}\n'
+                        f'\n'
                         f'{pretty_struct.pformat(msg)}\n'
                     )
                     break
@@ -739,7 +750,8 @@ async def drain_to_final_msg(
             case Stop():
                 pre_result_drained.append(msg)
                 log.runtime(  # normal/expected shutdown transaction
-                    'Remote stream terminated due to "stop" msg:\n\n'
+                    f'Remote stream terminated due to "stop" msg\n'
+                    f'\n'
                     f'{pretty_struct.pformat(msg)}\n'
                 )
                 continue
@@ -814,7 +826,8 @@ async def drain_to_final_msg(
 
     else:
         log.cancel(
-            'Skipping `MsgStream` drain since final outcome is set\n\n'
+            f'Skipping `MsgStream` drain since final outcome is set\n'
+            f'\n'
             f'{ctx.outcome}\n'
         )
 
