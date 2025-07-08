@@ -25,14 +25,17 @@ def test_empty_mngrs_input_raises() -> None:
                 ) as portals,
 
                 gather_contexts(
-                    # NOTE: it's the use of inline-generator syntax
-                    # here that causes the empty input.
                     mngrs=(
                         p.open_context(worker) for p in portals.values()
                     ),
+                  # ^^NOTE XXX ^^^
+                    # it's the use of inline-generator syntax here
+                    # that causes the "empty input" -> ValueError,
+                    # see `._clustering` impl.
                 ),
             ):
-                assert 0
+                # test should fail if we mk it here!
+                assert 0, 'Should have raised val-err !?'
 
     with pytest.raises(ValueError):
         trio.run(main)
