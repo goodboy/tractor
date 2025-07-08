@@ -97,7 +97,7 @@ async def maybe_block_bp(
     ):
         logger.info(
             f'Found `greenback` installed @ {maybe_mod}\n'
-            'Enabling `tractor.pause_from_sync()` support!\n'
+            f'Enabling `tractor.pause_from_sync()` support!\n'
         )
         os.environ['PYTHONBREAKPOINT'] = (
             'tractor.devx.debug._sync_pause_from_builtin'
@@ -471,7 +471,7 @@ async def open_root_actor(
                     '-> Opening new registry @ '
                     +
                     '\n'.join(
-                        f'@{addr}' for addr in reg_addrs
+                        f'{addr}' for addr in reg_addrs
                     )
                 )
             logger.info(f'{report}\n')
@@ -543,7 +543,7 @@ async def open_root_actor(
                     raise
 
                 finally:
-                    # NOTE: not sure if we'll ever need this but it's
+                    # NOTE/TODO?, not sure if we'll ever need this but it's
                     # possibly better for even more determinism?
                     # logger.cancel(
                     #     f'Waiting on {len(nurseries)} nurseries in root..')
