@@ -26,8 +26,9 @@ from logging import (
     Logger,
     StreamHandler,
 )
-import colorlog  # type: ignore
+import threading
 
+import colorlog  # type: ignore
 import trio
 
 from ._state import current_actor
@@ -44,7 +45,7 @@ LOG_FORMAT = (
     "{log_color}{asctime}{reset}"
     " {bold_white}{thin_white}({reset}"
     "{thin_white}{actor_name}[{actor_uid}], "
-    "{process}, {task}){reset}{bold_white}{thin_white})"
+    "{process}, {thread_uid}, {task_uid}){reset}{bold_white}{thin_white})"
     " {reset}{log_color}[{reset}{bold_log_color}{levelname}{reset}{log_color}]"
     " {log_color}{name}"
     " {thin_white}{filename}{log_color}:{reset}{thin_white}{lineno}{log_color}"
@@ -248,11 +249,19 @@ def pformat_task_uid(
     return f'{task.name}[{tid_part}]'
 
 
+def pformat_thread_uid() -> str:
+    curr_thr: threading.Thread = threading.current_thread()
+    return (
+        f'{curr_thr.name}@{curr_thr.ident}'
+    )
+
+
 _conc_name_getters = {
-    'task': pformat_task_uid,
+    'task_uid': pformat_task_uid,
     'actor': lambda: current_actor(),
     'actor_name': lambda: current_actor().name,
     'actor_uid': lambda: current_actor().uid[1][:6],
+    'thread_uid': pformat_thread_uid,
 }
 
 
@@ -262,10 +271,11 @@ class ActorContextInfo(Mapping):
 
     '''
     _context_keys = (
-        'task',
+        'task_uid',
         'actor',
         'actor_name',
         'actor_uid',
+        'thread_uid',
     )
 
     def __len__(self):
