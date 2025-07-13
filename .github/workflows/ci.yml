@@ -109,7 +109,7 @@ jobs:
       # https://docs.astral.sh/uv/guides/integration/github/#caching
 
       - name: Install the project w uv
-        run: uv sync --locked --all-extras --dev
+        run: uv sync --all-extras --dev
 
       # - name: Install dependencies
       #   run: pip install -U . -r requirements-test.txt -r requirements-docs.txt --upgrade-strategy eager
