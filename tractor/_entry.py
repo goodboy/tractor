@@ -139,8 +139,8 @@ def _trio_main(
             +
             pformat.nest_from_op(
                 input_op='>(',  # see syntax ideas above
-                tree_str=actor_info,
-                back_from_op=2,  # since "complete"
+                text=actor_info,
+                nest_indent=2,  # since "complete"
             )
         )
     logmeth = log.info
@@ -149,8 +149,8 @@ def _trio_main(
         +
         pformat.nest_from_op(
             input_op=')>',  # like a "closed-to-play"-icon from super perspective
-            tree_str=actor_info,
-            back_from_op=1,
+            text=actor_info,
+            nest_indent=1,
         )
     )
     try:
@@ -167,7 +167,7 @@ def _trio_main(
             +
             pformat.nest_from_op(
                 input_op='c)>',  # closed due to cancel (see above)
-                tree_str=actor_info,
+                text=actor_info,
             )
         )
     except BaseException as err:
@@ -177,7 +177,7 @@ def _trio_main(
             +
             pformat.nest_from_op(
                 input_op='x)>',  # closed by error
-                tree_str=actor_info,
+                text=actor_info,
             )
         )
         # NOTE since we raise a tb will already be shown on the
