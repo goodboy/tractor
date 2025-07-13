@@ -43,7 +43,7 @@ from .trionics import maybe_open_nursery
 from ._state import (
     current_actor,
 )
-from ._ipc import Channel
+from .ipc import Channel
 from .log import get_logger
 from .msg import (
     # Error,
@@ -52,8 +52,8 @@ from .msg import (
     Return,
 )
 from ._exceptions import (
-    # unpack_error,
     NoResult,
+    TransportClosed,
 )
 from ._context import (
     Context,
@@ -107,6 +107,10 @@ class Portal:
         # point.
         self._expect_result_ctx: Context|None = None
         self._streams: set[MsgStream] = set()
+
+        # TODO, this should be PRIVATE (and never used publicly)! since it's just
+        # a cached ref to the local runtime instead of calling
+        # `current_actor()` everywhere.. XD
         self.actor: Actor = current_actor()
 
     @property
@@ -171,7 +175,7 @@ class Portal:
         # not expecting a "main" result
         if self._expect_result_ctx is None:
             log.warning(
-                f"Portal for {self.channel.uid} not expecting a final"
+                f"Portal for {self.channel.aid} not expecting a final"
                 " result?\nresult() should only be called if subactor"
                 " was spawned with `ActorNursery.run_in_actor()`")
             return NoResult
@@ -218,7 +222,7 @@ class Portal:
         # IPC calls
         if self._streams:
             log.cancel(
-                f"Cancelling all streams with {self.channel.uid}")
+                f"Cancelling all streams with {self.channel.aid}")
             for stream in self._streams.copy():
                 try:
                     await stream.aclose()
@@ -263,7 +267,7 @@ class Portal:
             return False
 
         reminfo: str = (
-            f'c)=> {self.channel.uid}\n'
+            f'c)=> {self.channel.aid}\n'
             f'  |_{chan}\n'
         )
         log.cancel(
@@ -301,14 +305,34 @@ class Portal:
             return False
 
         except (
+            # XXX, should never really get raised unless we aren't
+            # wrapping them in the below type by mistake?
+            #
+            # Leaving the catch here for now until we're very sure
+            # all the cases (for various tpt protos) have indeed been
+            # re-wrapped ;p
             trio.ClosedResourceError,
             trio.BrokenResourceError,
-        ):
-            log.debug(
-                'IPC chan for actor already closed or broken?\n\n'
-                f'{self.channel.uid}\n'
+
+            TransportClosed,
+        ) as tpt_err:
+            report: str = (
+                f'IPC chan for actor already closed or broken?\n\n'
+                f'{self.channel.aid}\n'
                 f' |_{self.channel}\n'
             )
+            match tpt_err:
+                case TransportClosed():
+                    log.debug(report)
+                case _:
+                    report += (
+                        f'\n'
+                        f'Unhandled low-level transport-closed/error during\n'
+                        f'Portal.cancel_actor()` request?\n'
+                        f'<{type(tpt_err).__name__}( {tpt_err} )>\n'
+                    )
+                    log.warning(report)
+
             return False
 
     # TODO: do we still need this for low level `Actor`-runtime
@@ -504,8 +528,12 @@ class LocalPortal:
         return it's result.
 
         '''
-        obj = self.actor if ns == 'self' else importlib.import_module(ns)
-        func = getattr(obj, func_name)
+        obj = (
+            self.actor
+            if ns == 'self'
+            else importlib.import_module(ns)
+        )
+        func: Callable = getattr(obj, func_name)
         return await func(**kwargs)
 
 
@@ -543,17 +571,18 @@ async def open_portal(
             await channel.connect()
             was_connected = True
 
-        if channel.uid is None:
-            await actor._do_handshake(channel)
+        if channel.aid is None:
+            await channel._do_handshake(
+                aid=actor.aid,
+            )
 
         msg_loop_cs: trio.CancelScope|None = None
         if start_msg_loop:
-            from ._runtime import process_messages
+            from . import _rpc
             msg_loop_cs = await tn.start(
                 partial(
-                    process_messages,
-                    actor,
-                    channel,
+                    _rpc.process_messages,
+                    chan=channel,
                     # if the local task is cancelled we want to keep
                     # the msg loop running until our block ends
                     shield=True,

@@ -689,9 +689,11 @@ channel`_!
 .. _msgspec: https://jcristharif.com/msgspec/
 .. _guest: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
 
-
-.. |gh_actions| image:: https://img.shields.io/endpoint.svg?url=https%3A%2F%2Factions-badge.atrox.dev%2Fgoodboy%2Ftractor%2Fbadge&style=popout-square
-    :target: https://actions-badge.atrox.dev/goodboy/tractor/goto
+..
+   NOTE, on generating badge links from the UI
+   https://docs.github.com/en/actions/how-tos/monitoring-and-troubleshooting-workflows/monitoring-workflows/adding-a-workflow-status-badge?ref=gitguardian-blog-automated-secrets-detection#using-the-ui
+.. |gh_actions| image:: https://github.com/goodboy/tractor/actions/workflows/ci.yml/badge.svg?branch=main
+    :target: https://github.com/goodboy/tractor/actions/workflows/ci.yml
 
 .. |docs| image:: https://readthedocs.org/projects/tractor/badge/?version=latest
     :target: https://tractor.readthedocs.io/en/latest/?badge=latest

@@ -66,6 +66,9 @@ def run_example_in_subproc(
         # due to backpressure!!!
         proc = testdir.popen(
             cmdargs,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             **kwargs,
         )
         assert not proc.returncode
@@ -119,10 +122,14 @@ def test_example(
         code = ex.read()
 
         with run_example_in_subproc(code) as proc:
-            proc.wait()
-            err, _ = proc.stderr.read(), proc.stdout.read()
-            # print(f'STDERR: {err}')
-            # print(f'STDOUT: {out}')
+            err = None
+            try:
+                if not proc.poll():
+                    _, err = proc.communicate(timeout=15)
+
+            except subprocess.TimeoutExpired as e:
+                proc.kill()
+                err = e.stderr
 
             # if we get some gnarly output let's aggregate and raise
             if err:

@@ -14,16 +14,19 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""
-Per process state
+'''
+Per actor-process runtime state mgmt APIs.
 
-"""
+'''
 from __future__ import annotations
 from contextvars import (
     ContextVar,
 )
+import os
+from pathlib import Path
 from typing import (
     Any,
+    Literal,
     TYPE_CHECKING,
 )
 
@@ -34,14 +37,28 @@ if TYPE_CHECKING:
     from ._context import Context
 
 
+# default IPC transport protocol settings
+TransportProtocolKey = Literal[
+    'tcp',
+    'uds',
+]
+_def_tpt_proto: TransportProtocolKey = 'tcp'
+
 _current_actor: Actor|None = None  # type: ignore # noqa
 _last_actor_terminated: Actor|None = None
 
 # TODO: mk this a `msgspec.Struct`!
 _runtime_vars: dict[str, Any] = {
     '_debug_mode': False,
-    '_is_root': False,
-    '_root_mailbox': (None, None),
+    # root of actor-process tree info
+    '_is_root': False,  # bool
+    '_root_mailbox': (None, None),  # tuple[str|None, str|None]
+    '_root_addrs': [],  # tuple[str|None, str|None]
+
+    # parent->chld ipc protocol caps
+    '_enable_tpts': [_def_tpt_proto],
+
+    # registrar info
     '_registry_addrs': [],
 
     '_is_infected_aio': False,
@@ -99,7 +116,7 @@ def current_actor(
     return _current_actor
 
 
-def is_main_process() -> bool:
+def is_root_process() -> bool:
     '''
     Bool determining if this actor is running in the top-most process.
 
@@ -108,14 +125,19 @@ def is_main_process() -> bool:
     return mp.current_process().name == 'MainProcess'
 
 
-# TODO, more verby name?
-def debug_mode() -> bool:
+is_main_process = is_root_process
+
+
+def is_debug_mode() -> bool:
     '''
     Bool determining if "debug mode" is on which enables
     remote subactor pdb entry on crashes.
 
     '''
     return bool(_runtime_vars['_debug_mode'])
+
+
+debug_mode = is_debug_mode
 
 
 def is_root_process() -> bool:
@@ -143,3 +165,34 @@ def current_ipc_ctx(
             f'|_{current_task()}\n'
         )
     return ctx
+
+
+# std ODE (mutable) app state location
+_rtdir: Path = Path(os.environ['XDG_RUNTIME_DIR'])
+
+
+def get_rt_dir(
+    subdir: str = 'tractor'
+) -> Path:
+    '''
+    Return the user "runtime dir" where most userspace apps stick
+    their IPC and cache related system util-files; we take hold
+    of a `'XDG_RUNTIME_DIR'/tractor/` subdir by default.
+
+    '''
+    rtdir: Path = _rtdir / subdir
+    if not rtdir.is_dir():
+        rtdir.mkdir()
+    return rtdir
+
+
+def current_ipc_protos() -> list[str]:
+    '''
+    Return the list of IPC transport protocol keys currently
+    in use by this actor.
+
+    The keys are as declared by `MsgTransport` and `Address`
+    concrete-backend sub-types defined throughout `tractor.ipc`.
+
+    '''
+    return _runtime_vars['_enable_tpts']

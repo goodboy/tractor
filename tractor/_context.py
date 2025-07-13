@@ -89,7 +89,7 @@ from .msg import (
     pretty_struct,
     _ops as msgops,
 )
-from ._ipc import (
+from .ipc import (
     Channel,
 )
 from ._streaming import (
@@ -105,7 +105,7 @@ from ._state import (
 if TYPE_CHECKING:
     from ._portal import Portal
     from ._runtime import Actor
-    from ._ipc import MsgTransport
+    from .ipc._transport import MsgTransport
     from .devx._frame_stack import (
         CallerInfo,
     )
@@ -366,7 +366,7 @@ class Context:
             # f'   ---\n'
             f' |_ipc: {self.dst_maddr}\n'
             # f'   dst_maddr{ds}{self.dst_maddr}\n'
-            f"   uid{ds}'{self.chan.uid}'\n"
+            f"   uid{ds}'{self.chan.aid}'\n"
             f"   cid{ds}'{self.cid}'\n"
             # f'   ---\n'
             f'\n'
@@ -859,19 +859,10 @@ class Context:
     @property
     def dst_maddr(self) -> str:
         chan: Channel = self.chan
-        dst_addr, dst_port = chan.raddr
         trans: MsgTransport = chan.transport
         # cid: str = self.cid
         # cid_head, cid_tail = cid[:6], cid[-6:]
-        return (
-            f'/ipv4/{dst_addr}'
-            f'/{trans.name_key}/{dst_port}'
-            # f'/{self.chan.uid[0]}'
-            # f'/{self.cid}'
-
-            # f'/cid={cid_head}..{cid_tail}'
-            # TODO: ? not use this ^ right ?
-        )
+        return trans.maddr
 
     dmaddr = dst_maddr
 
@@ -954,10 +945,10 @@ class Context:
         reminfo: str = (
             # ' =>\n'
             # f'Context.cancel() => {self.chan.uid}\n'
+            f'\n'
             f'c)=> {self.chan.uid}\n'
-            # f'{self.chan.uid}\n'
-            f'  |_ @{self.dst_maddr}\n'
-            f'    >> {self.repr_rpc}\n'
+            f'   |_[{self.dst_maddr}\n'
+            f'     >>{self.repr_rpc}\n'
             # f'    >> {self._nsf}() -> {codec}[dict]:\n\n'
             # TODO: pull msg-type from spec re #320
         )
@@ -1078,9 +1069,25 @@ class Context:
         |RemoteActorError  # stream overrun caused and ignored by us
     ):
         '''
-        Maybe raise a remote error depending on the type of error
-        and *who* (i.e. which task from which actor) requested
-        a  cancellation (if any).
+        Maybe raise a remote error depending on the type of error and
+        *who*, i.e. which side of the task pair across actors,
+        requested a cancellation (if any).
+
+        Depending on the input config-params suppress raising
+        certain remote excs:
+
+        - if `remote_error: ContextCancelled` (ctxc) AND this side's
+          task is the "requester", it at somem point called
+          `Context.cancel()`, then the peer's ctxc is treated
+          as a "cancel ack".
+
+         |_ this behaves exactly like how `trio.Nursery.cancel_scope`
+            absorbs any `BaseExceptionGroup[trio.Cancelled]` wherein the
+            owning parent task never will raise a `trio.Cancelled`
+            if `CancelScope.cancel_called == True`.
+
+        - `remote_error: StreamOverrrun` (overrun) AND
+           `raise_overrun_from_self` is set.
 
         '''
         __tracebackhide__: bool = hide_tb
@@ -1122,18 +1129,19 @@ class Context:
             # for this ^, NO right?
 
         ) or (
-            # NOTE: whenever this context is the cause of an
-            # overrun on the remote side (aka we sent msgs too
-            # fast that the remote task was overrun according
-            # to `MsgStream` buffer settings) AND the caller
-            # has requested to not raise overruns this side
-            # caused, we also silently absorb any remotely
-            # boxed `StreamOverrun`. This is mostly useful for
-            # supressing such faults during
-            # cancellation/error/final-result handling inside
-            # `msg._ops.drain_to_final_msg()` such that we do not
-            # raise such errors particularly in the case where
+            # NOTE: whenever this side is the cause of an
+            # overrun on the peer side, i.e. we sent msgs too
+            # fast and the peer task was overrun according
+            # to `MsgStream` buffer settings, AND this was
+            # called with `raise_overrun_from_self=True` (the
+            # default), silently absorb any `StreamOverrun`.
+            #
+            # XXX, this is namely useful for supressing such faults
+            # during cancellation/error/final-result handling inside
+            # `.msg._ops.drain_to_final_msg()` such that we do not
+            # raise during a cancellation-request, i.e. when
             # `._cancel_called == True`.
+            #
             not raise_overrun_from_self
             and isinstance(remote_error, RemoteActorError)
             and remote_error.boxed_type is StreamOverrun

@@ -40,18 +40,18 @@ from __future__ import annotations
 from contextlib import (
     ExitStack,
 )
-from collections import defaultdict
 from functools import partial
-from itertools import chain
 import importlib
 import importlib.util
 import os
+from pathlib import Path
 from pprint import pformat
 import signal
 import sys
 from typing import (
     Any,
     Callable,
+    Type,
     TYPE_CHECKING,
 )
 import uuid
@@ -73,7 +73,18 @@ from tractor.msg import (
     pretty_struct,
     types as msgtypes,
 )
-from ._ipc import Channel
+from .ipc import (
+    Channel,
+    # IPCServer,  # causes cycles atm..
+    _server,
+)
+from ._addr import (
+    UnwrappedAddress,
+    Address,
+    # default_lo_addrs,
+    get_address_cls,
+    wrap_address,
+)
 from ._context import (
     mk_context,
     Context,
@@ -85,18 +96,13 @@ from ._exceptions import (
     ModuleNotExposed,
     MsgTypeError,
     unpack_error,
-    TransportClosed,
 )
 from .devx import _debug
 from ._discovery import get_registry
 from ._portal import Portal
 from . import _state
 from . import _mp_fixup_main
-from ._rpc import (
-    process_messages,
-    try_ship_error_to_remote,
-)
-
+from . import _rpc
 
 if TYPE_CHECKING:
     from ._supervise import ActorNursery
@@ -106,8 +112,22 @@ if TYPE_CHECKING:
 log = get_logger('tractor')
 
 
-def _get_mod_abspath(module):
-    return os.path.abspath(module.__file__)
+def _get_mod_abspath(module: ModuleType) -> Path:
+    return Path(module.__file__).absolute()
+
+
+def get_mod_nsps2fps(mod_ns_paths: list[str]) -> dict[str, str]:
+    '''
+    Deliver a table of py module namespace-path-`str`s mapped to
+    their "physical" `.py` file paths in the file-sys.
+
+    '''
+    nsp2fp: dict[str, str] = {}
+    for nsp in mod_ns_paths:
+        mod: ModuleType = importlib.import_module(nsp)
+        nsp2fp[nsp] = str(_get_mod_abspath(mod))
+
+    return nsp2fp
 
 
 class Actor:
@@ -149,15 +169,22 @@ class Actor:
     # nursery placeholders filled in by `async_main()` after fork
     _root_n: Nursery|None = None
     _service_n: Nursery|None = None
-    _server_n: Nursery|None = None
+
+    _ipc_server: _server.IPCServer|None = None
+
+    @property
+    def ipc_server(self) -> _server.IPCServer:
+        '''
+        The IPC transport-server for this actor; normally
+        a process-singleton.
+
+        '''
+        return self._ipc_server
 
     # Information about `__main__` from parent
     _parent_main_data: dict[str, str]
     _parent_chan_cs: CancelScope|None = None
     _spawn_spec: msgtypes.SpawnSpec|None = None
-
-    # syncs for setup/teardown sequences
-    _server_down: trio.Event|None = None
 
     # if started on ``asycio`` running ``trio`` in guest mode
     _infected_aio: bool = False
@@ -175,15 +202,15 @@ class Actor:
     def __init__(
         self,
         name: str,
+        uuid: str,
         *,
         enable_modules: list[str] = [],
-        uid: str|None = None,
         loglevel: str|None = None,
-        registry_addrs: list[tuple[str, int]]|None = None,
+        registry_addrs: list[UnwrappedAddress]|None = None,
         spawn_method: str|None = None,
 
         # TODO: remove!
-        arbiter_addr: tuple[str, int]|None = None,
+        arbiter_addr: UnwrappedAddress|None = None,
 
     ) -> None:
         '''
@@ -191,12 +218,14 @@ class Actor:
         phase (aka before a new process is executed).
 
         '''
-        self.name = name
-        self.uid = (
-            name,
-            uid or str(uuid.uuid4())
+        self._aid = msgtypes.Aid(
+            name=name,
+            uuid=uuid,
+            pid=os.getpid(),
         )
+        self._task: trio.Task|None = None
 
+        # state
         self._cancel_complete = trio.Event()
         self._cancel_called_by_remote: tuple[str, tuple]|None = None
         self._cancel_called: bool = False
@@ -205,13 +234,14 @@ class Actor:
         # will be passed to children
         self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
 
+        # TODO? only add this when `is_debug_mode() == True` no?
         # always include debugging tools module
-        enable_modules.append('tractor.devx._debug')
+        if _state.is_root_process():
+            enable_modules.append('tractor.devx._debug')
 
-        self.enable_modules: dict[str, str] = {}
-        for name in enable_modules:
-            mod: ModuleType = importlib.import_module(name)
-            self.enable_modules[name] = _get_mod_abspath(mod)
+        self.enable_modules: dict[str, str] = get_mod_nsps2fps(
+            mod_ns_paths=enable_modules,
+        )
 
         self._mods: dict[str, ModuleType] = {}
         self.loglevel: str = loglevel
@@ -223,20 +253,12 @@ class Actor:
                 DeprecationWarning,
                 stacklevel=2,
             )
-            registry_addrs: list[tuple[str, int]] = [arbiter_addr]
+            registry_addrs: list[UnwrappedAddress] = [arbiter_addr]
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
         # by the user (currently called the "arbiter")
         self._spawn_method: str = spawn_method
-
-        self._peers: defaultdict[
-            str,  # uaid
-            list[Channel],  # IPC conns from peer
-        ] = defaultdict(list)
-        self._peer_connected: dict[tuple[str, str], trio.Event] = {}
-        self._no_more_peers = trio.Event()
-        self._no_more_peers.set()
 
         # RPC state
         self._ongoing_rpc_tasks = trio.Event()
@@ -256,7 +278,6 @@ class Actor:
             Context
         ] = {}
 
-        self._listeners: list[trio.abc.Listener] = []
         self._parent_chan: Channel|None = None
         self._forkserver_info: tuple|None = None
 
@@ -269,13 +290,100 @@ class Actor:
 
         # when provided, init the registry addresses property from
         # input via the validator.
-        self._reg_addrs: list[tuple[str, int]] = []
+        self._reg_addrs: list[UnwrappedAddress] = []
         if registry_addrs:
-            self.reg_addrs: list[tuple[str, int]] = registry_addrs
+            self.reg_addrs: list[UnwrappedAddress] = registry_addrs
             _state._runtime_vars['_registry_addrs'] = registry_addrs
 
     @property
-    def reg_addrs(self) -> list[tuple[str, int]]:
+    def aid(self) -> msgtypes.Aid:
+        '''
+        This process-singleton-actor's "unique actor ID" in struct form.
+
+        See the `tractor.msg.Aid` struct for details.
+
+        '''
+        return self._aid
+
+    @property
+    def name(self) -> str:
+        return self._aid.name
+
+    @property
+    def uid(self) -> tuple[str, str]:
+        '''
+        This process-singleton's "unique (cross-host) ID".
+
+        Delivered from the `.Aid.name/.uuid` fields as a `tuple` pair
+        and should be multi-host unique despite a large distributed
+        process plane.
+
+        '''
+        msg: str = (
+            f'`{type(self).__name__}.uid` is now deprecated.\n'
+            'Use the new `.aid: tractor.msg.Aid` (struct) instead '
+            'which also provides additional named (optional) fields '
+            'beyond just the `.name` and `.uuid`.'
+        )
+        warnings.warn(
+            msg,
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return (
+            self._aid.name,
+            self._aid.uuid,
+        )
+
+    @property
+    def pid(self) -> int:
+        return self._aid.pid
+
+    def pformat(self) -> str:
+        ds: str = '='
+        parent_uid: tuple|None = None
+        if rent_chan := self._parent_chan:
+            parent_uid = rent_chan.uid
+
+        peers: list = []
+        server: _server.IPCServer = self.ipc_server
+        if server:
+            peers: list[tuple] = list(server._peer_connected)
+
+        fmtstr: str = (
+            f' |_id: {self.aid!r}\n'
+            # f"   aid{ds}{self.aid!r}\n"
+            f"   parent{ds}{parent_uid}\n"
+            f'\n'
+            f' |_ipc: {len(peers)!r} connected peers\n'
+            f"   peers{ds}{peers!r}\n"
+            f"   ipc_server{ds}{self._ipc_server}\n"
+            f'\n'
+            f' |_rpc: {len(self._rpc_tasks)} tasks\n'
+            f"   ctxs{ds}{len(self._contexts)}\n"
+            f'\n'
+            f' |_runtime: ._task{ds}{self._task!r}\n'
+            f'   _spawn_method{ds}{self._spawn_method}\n'
+            f'   _actoruid2nursery{ds}{self._actoruid2nursery}\n'
+            f'   _forkserver_info{ds}{self._forkserver_info}\n'
+            f'\n'
+            f' |_state: "TODO: .repr_state()"\n'
+            f'   _cancel_complete{ds}{self._cancel_complete}\n'
+            f'   _cancel_called_by_remote{ds}{self._cancel_called_by_remote}\n'
+            f'   _cancel_called{ds}{self._cancel_called}\n'
+        )
+        return (
+            '<Actor(\n'
+            +
+            fmtstr
+            +
+            ')>\n'
+        )
+
+    __repr__ = pformat
+
+    @property
+    def reg_addrs(self) -> list[UnwrappedAddress]:
         '''
         List of (socket) addresses for all known (and contactable)
         registry actors.
@@ -286,7 +394,7 @@ class Actor:
     @reg_addrs.setter
     def reg_addrs(
         self,
-        addrs: list[tuple[str, int]],
+        addrs: list[UnwrappedAddress],
     ) -> None:
         if not addrs:
             log.warning(
@@ -295,39 +403,10 @@ class Actor:
             )
             return
 
-        # always sanity check the input list since it's critical
-        # that addrs are correct for discovery sys operation.
-        for addr in addrs:
-            if not isinstance(addr, tuple):
-                raise ValueError(
-                    'Expected `Actor.reg_addrs: list[tuple[str, int]]`\n'
-                    f'Got {addrs}'
-                )
-
-            self._reg_addrs = addrs
-
-    async def wait_for_peer(
-        self,
-        uid: tuple[str, str],
-
-    ) -> tuple[trio.Event, Channel]:
-        '''
-        Wait for a connection back from a (spawned sub-)actor with
-        a `uid` using a `trio.Event` for sync.
-
-        '''
-        log.debug(f'Waiting for peer {uid!r} to connect')
-        event = self._peer_connected.setdefault(uid, trio.Event())
-        await event.wait()
-        log.debug(f'{uid!r} successfully connected back to us')
-        return (
-            event,
-            self._peers[uid][-1],
-        )
+        self._reg_addrs = addrs
 
     def load_modules(
         self,
-        # debug_mode: bool = False,
     ) -> None:
         '''
         Load explicitly enabled python modules from local fs after
@@ -349,6 +428,9 @@ class Actor:
                         parent_data['init_main_from_path'])
 
             status: str = 'Attempting to import enabled modules:\n'
+
+            modpath: str
+            filepath: str
             for modpath, filepath in self.enable_modules.items():
                 # XXX append the allowed module to the python path which
                 # should allow for relative (at least downward) imports.
@@ -399,416 +481,6 @@ class Actor:
             mne.msg += msg
 
             raise mne
-
-    # TODO: maybe change to mod-func and rename for implied
-    # multi-transport semantics?
-    async def _stream_handler(
-        self,
-        stream: trio.SocketStream,
-
-    ) -> None:
-        '''
-        Entry point for new inbound IPC connections on a specific
-        transport server.
-
-        '''
-        self._no_more_peers = trio.Event()  # unset by making new
-        chan = Channel.from_stream(stream)
-        con_status: str = (
-            'New inbound IPC connection <=\n'
-            f'|_{chan}\n'
-        )
-
-        # send/receive initial handshake response
-        try:
-            uid: tuple|None = await self._do_handshake(chan)
-        except (
-            # we need this for ``msgspec`` for some reason?
-            # for now, it's been put in the stream backend.
-            # trio.BrokenResourceError,
-            # trio.ClosedResourceError,
-
-            TransportClosed,
-        ):
-            # XXX: This may propagate up from `Channel._aiter_recv()`
-            # and `MsgpackStream._inter_packets()` on a read from the
-            # stream particularly when the runtime is first starting up
-            # inside `open_root_actor()` where there is a check for
-            # a bound listener on the "arbiter" addr.  the reset will be
-            # because the handshake was never meant took place.
-            log.runtime(
-                con_status
-                +
-                ' -> But failed to handshake? Ignoring..\n'
-            )
-            return
-
-        familiar: str = 'new-peer'
-        if _pre_chan := self._peers.get(uid):
-            familiar: str = 'pre-existing-peer'
-        uid_short: str = f'{uid[0]}[{uid[1][-6:]}]'
-        con_status += (
-            f' -> Handshake with {familiar} `{uid_short}` complete\n'
-        )
-
-        if _pre_chan:
-            # con_status += (
-            # ^TODO^ swap once we minimize conn duplication
-            # -[ ] last thing might be reg/unreg runtime reqs?
-            # log.warning(
-            log.debug(
-                f'?Wait?\n'
-                f'We already have IPC with peer {uid_short!r}\n'
-                f'|_{_pre_chan}\n'
-            )
-
-        # IPC connection tracking for both peers and new children:
-        # - if this is a new channel to a locally spawned
-        #   sub-actor there will be a spawn wait even registered
-        #   by a call to `.wait_for_peer()`.
-        # - if a peer is connecting no such event will exit.
-        event: trio.Event|None = self._peer_connected.pop(
-            uid,
-            None,
-        )
-        if event:
-            con_status += (
-                ' -> Waking subactor spawn waiters: '
-                f'{event.statistics().tasks_waiting}\n'
-                f' -> Registered IPC chan for child actor {uid}@{chan.raddr}\n'
-                # f'    {event}\n'
-                # f'    |{event.statistics()}\n'
-            )
-            # wake tasks waiting on this IPC-transport "connect-back"
-            event.set()
-
-        else:
-            con_status += (
-                f' -> Registered IPC chan for peer actor {uid}@{chan.raddr}\n'
-            )  # type: ignore
-
-        chans: list[Channel] = self._peers[uid]
-        # if chans:
-        #     # TODO: re-use channels for new connections instead
-        #     # of always new ones?
-        #     # => will require changing all the discovery funcs..
-
-        # append new channel
-        # TODO: can we just use list-ref directly?
-        chans.append(chan)
-
-        con_status += ' -> Entering RPC msg loop..\n'
-        log.runtime(con_status)
-
-        # Begin channel management - respond to remote requests and
-        # process received reponses.
-        disconnected: bool = False
-        last_msg: MsgType
-        try:
-            (
-                disconnected,
-                last_msg,
-            ) = await process_messages(
-                self,
-                chan,
-            )
-        except trio.Cancelled:
-            log.cancel(
-                'IPC transport msg loop was cancelled\n'
-                f'c)>\n'
-                f' |_{chan}\n'
-            )
-            raise
-
-        finally:
-            local_nursery: (
-                ActorNursery|None
-            ) = self._actoruid2nursery.get(uid)
-
-            # This is set in ``Portal.cancel_actor()``. So if
-            # the peer was cancelled we try to wait for them
-            # to tear down their side of the connection before
-            # moving on with closing our own side.
-            if (
-                local_nursery
-                and (
-                    self._cancel_called
-                    or
-                    chan._cancel_called
-                )
-                #
-                # ^-TODO-^ along with this is there another condition
-                # that we should filter with to avoid entering this
-                # waiting block needlessly?
-                # -[ ] maybe `and local_nursery.cancelled` and/or
-                #     only if the `._children` table is empty or has
-                #     only `Portal`s with .chan._cancel_called ==
-                #     True` as per what we had below; the MAIN DIFF
-                #     BEING that just bc one `Portal.cancel_actor()`
-                #     was called, doesn't mean the whole actor-nurse
-                #     is gonna exit any time soon right!?
-                #
-                # or
-                # all(chan._cancel_called for chan in chans)
-
-            ):
-                log.cancel(
-                    'Waiting on cancel request to peer..\n'
-                    f'c)=>\n'
-                    f'  |_{chan.uid}\n'
-                )
-
-                # XXX: this is a soft wait on the channel (and its
-                # underlying transport protocol) to close from the
-                # remote peer side since we presume that any channel
-                # which is mapped to a sub-actor (i.e. it's managed
-                # by local actor-nursery) has a message that is sent
-                # to the peer likely by this actor (which may be in
-                # a shutdown sequence due to cancellation) when the
-                # local runtime here is now cancelled while
-                # (presumably) in the middle of msg loop processing.
-                chan_info: str = (
-                    f'{chan.uid}\n'
-                    f'|_{chan}\n'
-                    f'  |_{chan.transport}\n\n'
-                )
-                with trio.move_on_after(0.5) as drain_cs:
-                    drain_cs.shield = True
-
-                    # attempt to wait for the far end to close the
-                    # channel and bail after timeout (a 2-generals
-                    # problem on closure).
-                    assert chan.transport
-                    async for msg in chan.transport.drain():
-
-                        # try to deliver any lingering msgs
-                        # before we destroy the channel.
-                        # This accomplishes deterministic
-                        # ``Portal.cancel_actor()`` cancellation by
-                        # making sure any RPC response to that call is
-                        # delivered the local calling task.
-                        # TODO: factor this into a helper?
-                        log.warning(
-                            'Draining msg from disconnected peer\n'
-                            f'{chan_info}'
-                            f'{pformat(msg)}\n'
-                        )
-                        # cid: str|None = msg.get('cid')
-                        cid: str|None = msg.cid
-                        if cid:
-                            # deliver response to local caller/waiter
-                            await self._deliver_ctx_payload(
-                                chan,
-                                cid,
-                                msg,
-                            )
-                if drain_cs.cancelled_caught:
-                    log.warning(
-                        'Timed out waiting on IPC transport channel to drain?\n'
-                        f'{chan_info}'
-                    )
-
-                # XXX NOTE XXX when no explicit call to
-                # `open_root_actor()` was made by the application
-                # (normally we implicitly make that call inside
-                # the first `.open_nursery()` in root-actor
-                # user/app code), we can assume that either we
-                # are NOT the root actor or are root but the
-                # runtime was started manually. and thus DO have
-                # to wait for the nursery-enterer to exit before
-                # shutting down the local runtime to avoid
-                # clobbering any ongoing subactor
-                # teardown/debugging/graceful-cancel.
-                #
-                # see matching  note inside `._supervise.open_nursery()`
-                #
-                # TODO: should we have a separate cs + timeout
-                # block here?
-                if (
-                    # XXX SO either,
-                    #  - not root OR,
-                    #  - is root but `open_root_actor()` was
-                    #    entered manually (in which case we do
-                    #    the equiv wait there using the
-                    #    `devx._debug` sub-sys APIs).
-                    not local_nursery._implicit_runtime_started
-                ):
-                    log.runtime(
-                        'Waiting on local actor nursery to exit..\n'
-                        f'|_{local_nursery}\n'
-                    )
-                    with trio.move_on_after(0.5) as an_exit_cs:
-                        an_exit_cs.shield = True
-                        await local_nursery.exited.wait()
-
-                    # TODO: currently this is always triggering for every
-                    # sub-daemon spawned from the `piker.services._mngr`?
-                    # -[ ] how do we ensure that the IPC is supposed to
-                    #      be long lived and isn't just a register?
-                    # |_ in the register case how can we signal that the
-                    #    ephemeral msg loop was intentional?
-                    if (
-                        # not local_nursery._implicit_runtime_started
-                        # and
-                        an_exit_cs.cancelled_caught
-                    ):
-                        report: str = (
-                            'Timed out waiting on local actor-nursery to exit?\n'
-                            f'c)>\n'
-                            f' |_{local_nursery}\n'
-                        )
-                        if children := local_nursery._children:
-                            # indent from above local-nurse repr
-                            report += (
-                                f'   |_{pformat(children)}\n'
-                            )
-
-                        log.warning(report)
-
-                if disconnected:
-                    # if the transport died and this actor is still
-                    # registered within a local nursery, we report
-                    # that the IPC layer may have failed
-                    # unexpectedly since it may be the cause of
-                    # other downstream errors.
-                    entry: tuple|None = local_nursery._children.get(uid)
-                    if entry:
-                        proc: trio.Process
-                        _, proc, _ = entry
-
-                        if (
-                            (poll := getattr(proc, 'poll', None))
-                            and
-                            poll() is None  # proc still alive
-                        ):
-                            # TODO: change log level based on
-                            # detecting whether chan was created for
-                            # ephemeral `.register_actor()` request!
-                            # -[ ] also, that should be avoidable by
-                            #   re-using any existing chan from the
-                            #   `._discovery.get_registry()` call as
-                            #   well..
-                            log.runtime(
-                                f'Peer IPC broke but subproc is alive?\n\n'
-
-                                f'<=x {chan.uid}@{chan.raddr}\n'
-                                f'   |_{proc}\n'
-                            )
-
-            # ``Channel`` teardown and closure sequence
-            # drop ref to channel so it can be gc-ed and disconnected
-            con_teardown_status: str = (
-                f'IPC channel disconnected:\n'
-                f'<=x uid: {chan.uid}\n'
-                f'   |_{pformat(chan)}\n\n'
-            )
-            chans.remove(chan)
-
-            # TODO: do we need to be this pedantic?
-            if not chans:
-                con_teardown_status += (
-                    f'-> No more channels with {chan.uid}'
-                )
-                self._peers.pop(uid, None)
-
-            peers_str: str = ''
-            for uid, chans in self._peers.items():
-                peers_str += (
-                    f'uid: {uid}\n'
-                )
-                for i, chan in enumerate(chans):
-                    peers_str += (
-                        f' |_[{i}] {pformat(chan)}\n'
-                    )
-
-            con_teardown_status += (
-                f'-> Remaining IPC {len(self._peers)} peers: {peers_str}\n'
-            )
-
-            # No more channels to other actors (at all) registered
-            # as connected.
-            if not self._peers:
-                con_teardown_status += (
-                    'Signalling no more peer channel connections'
-                )
-                self._no_more_peers.set()
-
-                # NOTE: block this actor from acquiring the
-                # debugger-TTY-lock since we have no way to know if we
-                # cancelled it and further there is no way to ensure the
-                # lock will be released if acquired due to having no
-                # more active IPC channels.
-                if _state.is_root_process():
-                    pdb_lock = _debug.Lock
-                    pdb_lock._blocked.add(uid)
-
-                    # TODO: NEEEDS TO BE TESTED!
-                    # actually, no idea if this ever even enters.. XD
-                    #
-                    # XXX => YES IT DOES, when i was testing ctl-c
-                    # from broken debug TTY locking due to
-                    # msg-spec races on application using RunVar...
-                    if (
-                        (ctx_in_debug := pdb_lock.ctx_in_debug)
-                        and
-                        (pdb_user_uid := ctx_in_debug.chan.uid)
-                        and
-                        local_nursery
-                    ):
-                        entry: tuple|None = local_nursery._children.get(
-                            tuple(pdb_user_uid)
-                        )
-                        if entry:
-                            proc: trio.Process
-                            _, proc, _ = entry
-
-                            if (
-                                (poll := getattr(proc, 'poll', None))
-                                and poll() is None
-                            ):
-                                log.cancel(
-                                    'Root actor reports no-more-peers, BUT\n'
-                                    'a DISCONNECTED child still has the debug '
-                                    'lock!\n\n'
-                                    # f'root uid: {self.uid}\n'
-                                    f'last disconnected child uid: {uid}\n'
-                                    f'locking child uid: {pdb_user_uid}\n'
-                                )
-                                await _debug.maybe_wait_for_debugger(
-                                    child_in_debug=True
-                                )
-
-                    # TODO: just bc a child's transport dropped
-                    # doesn't mean it's not still using the pdb
-                    # REPL! so,
-                    # -[ ] ideally we can check out child proc
-                    #  tree to ensure that its alive (and
-                    #  actually using the REPL) before we cancel
-                    #  it's lock acquire by doing the below!
-                    # -[ ] create a way to read the tree of each actor's
-                    #  grandchildren such that when an
-                    #  intermediary parent is cancelled but their
-                    #  child has locked the tty, the grandparent
-                    #  will not allow the parent to cancel or
-                    #  zombie reap the child! see open issue:
-                    #  - https://github.com/goodboy/tractor/issues/320
-                    # ------ - ------
-                    # if a now stale local task has the TTY lock still
-                    # we cancel it to allow servicing other requests for
-                    # the lock.
-                    if (
-                        (db_cs := pdb_lock.get_locking_task_cs())
-                        and not db_cs.cancel_called
-                        and uid == pdb_user_uid
-                    ):
-                        log.critical(
-                            f'STALE DEBUG LOCK DETECTED FOR {uid}'
-                        )
-                        # TODO: figure out why this breaks tests..
-                        db_cs.cancel()
-
-            log.runtime(con_teardown_status)
-        # finally block closure
 
     # TODO: rename to `._deliver_payload()` since this handles
     # more then just `result` msgs now obvi XD
@@ -1024,11 +696,12 @@ class Actor:
 
     async def _from_parent(
         self,
-        parent_addr: tuple[str, int]|None,
+        parent_addr: UnwrappedAddress|None,
 
     ) -> tuple[
         Channel,
-        list[tuple[str, int]]|None,
+        list[UnwrappedAddress]|None,
+        list[str]|None,  # preferred tpts
     ]:
         '''
         Bootstrap this local actor's runtime config from its parent by
@@ -1040,35 +713,67 @@ class Actor:
             # Connect back to the parent actor and conduct initial
             # handshake. From this point on if we error, we
             # attempt to ship the exception back to the parent.
-            chan = Channel(
-                destaddr=parent_addr,
+            chan = await Channel.from_addr(
+                addr=wrap_address(parent_addr)
             )
-            await chan.connect()
+            assert isinstance(chan, Channel)
 
-            # TODO: move this into a `Channel.handshake()`?
-            # Initial handshake: swap names.
-            await self._do_handshake(chan)
+            # init handshake: swap actor-IDs.
+            await chan._do_handshake(aid=self.aid)
 
-            accept_addrs: list[tuple[str, int]]|None = None
+            accept_addrs: list[UnwrappedAddress]|None = None
 
             if self._spawn_method == "trio":
 
                 # Receive post-spawn runtime state from our parent.
                 spawnspec: msgtypes.SpawnSpec = await chan.recv()
-                self._spawn_spec = spawnspec
+                match spawnspec:
+                    case MsgTypeError():
+                        raise spawnspec
+                    case msgtypes.SpawnSpec():
+                        self._spawn_spec = spawnspec
+                        log.runtime(
+                            'Received runtime spec from parent:\n\n'
 
-                log.runtime(
-                    'Received runtime spec from parent:\n\n'
+                            # TODO: eventually all these msgs as
+                            # `msgspec.Struct` with a special mode that
+                            # pformats them in multi-line mode, BUT only
+                            # if "trace"/"util" mode is enabled?
+                            f'{pretty_struct.pformat(spawnspec)}\n'
+                        )
 
-                    # TODO: eventually all these msgs as
-                    # `msgspec.Struct` with a special mode that
-                    # pformats them in multi-line mode, BUT only
-                    # if "trace"/"util" mode is enabled?
-                    f'{pretty_struct.pformat(spawnspec)}\n'
-                )
-                accept_addrs: list[tuple[str, int]] = spawnspec.bind_addrs
+                    case _:
+                        raise InternalError(
+                            f'Received invalid non-`SpawnSpec` payload !?\n'
+                            f'{spawnspec}\n'
+                        )
+                # ^^XXX TODO XXX^^^
+                # when the `SpawnSpec` fails to decode the above will
+                # raise a `MsgTypeError` which if we do NOT ALSO
+                # RAISE it will tried to be pprinted in the
+                # log.runtime() below..
+                #
+                # SO we gotta look at how other `chan.recv()` calls
+                # are wrapped and do the same for this spec receive!
+                # -[ ] see `._rpc` likely has the answer?
 
-                # TODO: another `Struct` for rtvs..
+                # ^^^XXX NOTE XXX^^^, can't be called here!
+                #
+                # breakpoint()
+                # import pdbp; pdbp.set_trace()
+                #
+                # => bc we haven't yet received the
+                # `spawnspec._runtime_vars` which contains
+                # `debug_mode: bool`..
+
+                # `SpawnSpec.bind_addrs`
+                #  ---------------------
+                accept_addrs: list[UnwrappedAddress] = spawnspec.bind_addrs
+
+                # `SpawnSpec._runtime_vars`
+                # -------------------------
+                # => update process-wide globals
+                # TODO! -[ ] another `Struct` for rtvs..
                 rvs: dict[str, Any] = spawnspec._runtime_vars
                 if rvs['_debug_mode']:
                     from .devx import (
@@ -1126,18 +831,20 @@ class Actor:
                         f'self._infected_aio = {aio_attr}\n'
                     )
                 if aio_rtv:
-                    assert trio_runtime.GLOBAL_RUN_CONTEXT.runner.is_guest
-                    # ^TODO^ possibly add a `sniffio` or
-                    # `trio` pub-API for `is_guest_mode()`?
+                    assert (
+                        trio_runtime.GLOBAL_RUN_CONTEXT.runner.is_guest
+                        # and
+                        # ^TODO^ possibly add a `sniffio` or
+                        # `trio` pub-API for `is_guest_mode()`?
+                    )
 
                 rvs['_is_root'] = False  # obvi XD
 
-                # update process-wide globals
                 _state._runtime_vars.update(rvs)
 
-                # XXX: ``msgspec`` doesn't support serializing tuples
-                # so just cash manually here since it's what our
-                # internals expect.
+                # `SpawnSpec.reg_addrs`
+                # ---------------------
+                # => update parent provided registrar contact info
                 #
                 self.reg_addrs = [
                     # TODO: we don't really NEED these as tuples?
@@ -1148,81 +855,44 @@ class Actor:
                     for val in spawnspec.reg_addrs
                 ]
 
-                # TODO: better then monkey patching..
-                # -[ ] maybe read the actual f#$-in `._spawn_spec` XD
-                for _, attr, value in pretty_struct.iter_fields(
-                    spawnspec,
-                ):
-                    setattr(self, attr, value)
+                # `SpawnSpec.enable_modules`
+                # ---------------------
+                # => extend RPC-python-module (capabilities) with
+                #   those permitted by parent.
+                #
+                # NOTE, only the root actor should have
+                # a pre-permitted entry for `.devx.debug._tty_lock`.
+                assert not self.enable_modules
+                self.enable_modules.update(
+                    spawnspec.enable_modules
+                )
+
+                self._parent_main_data = spawnspec._parent_main_data
+                # XXX QUESTION(s)^^^
+                # -[ ] already set in `.__init__()` right, but how is
+                #      it diff from this blatant parent copy?
+                #    -[ ] do we need/want the .__init__() value in
+                #       just the root case orr?
 
             return (
                 chan,
                 accept_addrs,
+                _state._runtime_vars['_enable_tpts']
             )
 
-        except OSError:  # failed to connect
+        # failed to connect back?
+        except (
+            OSError,
+            ConnectionError,
+        ):
             log.warning(
                 f'Failed to connect to spawning parent actor!?\n'
+                f'\n'
                 f'x=> {parent_addr}\n'
-                f'|_{self}\n\n'
+                f'  |_{self}\n\n'
             )
             await self.cancel(req_chan=None)  # self cancel
             raise
-
-    async def _serve_forever(
-        self,
-        handler_nursery: Nursery,
-        *,
-        # (host, port) to bind for channel server
-        listen_sockaddrs: list[tuple[str, int]]|None = None,
-
-        task_status: TaskStatus[Nursery] = trio.TASK_STATUS_IGNORED,
-    ) -> None:
-        '''
-        Start the IPC transport server, begin listening for new connections.
-
-        This will cause an actor to continue living (and thus
-        blocking at the process/OS-thread level) until
-        `.cancel_server()` is called.
-
-        '''
-        if listen_sockaddrs is None:
-            listen_sockaddrs = [(None, 0)]
-
-        self._server_down = trio.Event()
-        try:
-            async with trio.open_nursery() as server_n:
-
-                for host, port in listen_sockaddrs:
-                    listeners: list[trio.abc.Listener] = await server_n.start(
-                        partial(
-                            trio.serve_tcp,
-
-                            handler=self._stream_handler,
-                            port=port,
-                            host=host,
-
-                            # NOTE: configured such that new
-                            # connections will stay alive even if
-                            # this server is cancelled!
-                            handler_nursery=handler_nursery,
-                        )
-                    )
-                    sockets: list[trio.socket] = [
-                        getattr(listener, 'socket', 'unknown socket')
-                        for listener in listeners
-                    ]
-                    log.runtime(
-                        'Started TCP server(s)\n'
-                        f'|_{sockets}\n'
-                    )
-                    self._listeners.extend(listeners)
-
-                task_status.started(server_n)
-
-        finally:
-            # signal the server is down since nursery above terminated
-            self._server_down.set()
 
     def cancel_soon(self) -> None:
         '''
@@ -1323,13 +993,9 @@ class Actor:
             )
 
             # stop channel server
-            self.cancel_server()
-            if self._server_down is not None:
-                await self._server_down.wait()
-            else:
-                log.warning(
-                    'Transport[TCP] server was cancelled start?'
-                )
+            if ipc_server := self.ipc_server:
+                ipc_server.cancel()
+                await ipc_server.wait_for_shutdown()
 
             # cancel all rpc tasks permanently
             if self._service_n:
@@ -1560,45 +1226,22 @@ class Actor:
             )
         await self._ongoing_rpc_tasks.wait()
 
-    def cancel_server(self) -> bool:
-        '''
-        Cancel the internal IPC transport server nursery thereby
-        preventing any new inbound IPC connections establishing.
-
-        '''
-        if self._server_n:
-            # TODO: obvi a different server type when we eventually
-            # support some others XD
-            server_prot: str = 'TCP'
-            log.runtime(
-                f'Cancelling {server_prot} server'
-            )
-            self._server_n.cancel_scope.cancel()
-            return True
-
-        return False
-
     @property
-    def accept_addrs(self) -> list[tuple[str, int]]:
+    def accept_addrs(self) -> list[UnwrappedAddress]:
         '''
         All addresses to which the transport-channel server binds
         and listens for new connections.
 
         '''
-        # throws OSError on failure
-        return [
-            listener.socket.getsockname() 
-            for listener in self._listeners
-        ]  # type: ignore
+        return self._ipc_server.accept_addrs
 
     @property
-    def accept_addr(self) -> tuple[str, int]:
+    def accept_addr(self) -> UnwrappedAddress:
         '''
         Primary address to which the IPC transport server is
         bound and listening for new connections.
 
         '''
-        # throws OSError on failure
         return self.accept_addrs[0]
 
     def get_parent(self) -> Portal:
@@ -1620,43 +1263,6 @@ class Actor:
         '''
         return self._peers[uid]
 
-    # TODO: move to `Channel.handshake(uid)`
-    async def _do_handshake(
-        self,
-        chan: Channel
-
-    ) -> msgtypes.Aid:
-        '''
-        Exchange `(name, UUIDs)` identifiers as the first
-        communication step with any (peer) remote `Actor`.
-
-        These are essentially the "mailbox addresses" found in
-        "actor model" parlance.
-
-        '''
-        name, uuid = self.uid
-        await chan.send(
-            msgtypes.Aid(
-                name=name,
-                uuid=uuid,
-            )
-        )
-        aid: msgtypes.Aid = await chan.recv()
-        chan.aid = aid
-
-        uid: tuple[str, str] = (
-            # str(value[0]),
-            # str(value[1])
-            aid.name,
-            aid.uuid,
-        )
-
-        if not isinstance(uid, tuple):
-            raise ValueError(f"{uid} is not a valid uid?!")
-
-        chan.uid = uid
-        return uid
-
     def is_infected_aio(self) -> bool:
         '''
         If `True`, this actor is running `trio` in guest mode on
@@ -1670,7 +1276,7 @@ class Actor:
 
 async def async_main(
     actor: Actor,
-    accept_addrs: tuple[str, int]|None = None,
+    accept_addrs: UnwrappedAddress|None = None,
 
     # XXX: currently ``parent_addr`` is only needed for the
     # ``multiprocessing`` backend (which pickles state sent to
@@ -1679,7 +1285,7 @@ async def async_main(
     # change this to a simple ``is_subactor: bool`` which will
     # be False when running as root actor and True when as
     # a subactor.
-    parent_addr: tuple[str, int]|None = None,
+    parent_addr: UnwrappedAddress|None = None,
     task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
 
 ) -> None:
@@ -1694,6 +1300,12 @@ async def async_main(
     the actor's "runtime" and all thus all ongoing RPC tasks.
 
     '''
+    # XXX NOTE, `_state._current_actor` **must** be set prior to
+    # calling this core runtime entrypoint!
+    assert actor is _state.current_actor()
+
+    actor._task: trio.Task = trio.lowlevel.current_task()
+
     # attempt to retreive ``trio``'s sigint handler and stash it
     # on our debugger state.
     _debug.DebugStatus._trio_handler = signal.getsignal(signal.SIGINT)
@@ -1703,13 +1315,15 @@ async def async_main(
 
         # establish primary connection with immediate parent
         actor._parent_chan: Channel|None = None
-        if parent_addr is not None:
 
+        if parent_addr is not None:
             (
                 actor._parent_chan,
                 set_accept_addr_says_rent,
+                maybe_preferred_transports_says_rent,
             ) = await actor._from_parent(parent_addr)
 
+            accept_addrs: list[UnwrappedAddress] = []
             # either it's passed in because we're not a child or
             # because we're running in mp mode
             if (
@@ -1718,7 +1332,20 @@ async def async_main(
                 set_accept_addr_says_rent is not None
             ):
                 accept_addrs = set_accept_addr_says_rent
+            else:
+                enable_transports: list[str] = (
+                    maybe_preferred_transports_says_rent
+                    or
+                    [_state._def_tpt_proto]
+                )
+                for transport_key in enable_transports:
+                    transport_cls: Type[Address] = get_address_cls(
+                        transport_key
+                    )
+                    addr: Address = transport_cls.get_random()
+                    accept_addrs.append(addr.unwrap())
 
+        assert accept_addrs
         # The "root" nursery ensures the channel with the immediate
         # parent is kept alive as a resilient service until
         # cancellation steps have (mostly) occurred in
@@ -1729,15 +1356,36 @@ async def async_main(
             actor._root_n = root_nursery
             assert actor._root_n
 
-            async with trio.open_nursery(
-                strict_exception_groups=False,
-            ) as service_nursery:
+            ipc_server: _server.IPCServer
+            async with (
+                trio.open_nursery(
+                    strict_exception_groups=False,
+                ) as service_nursery,
+
+                _server.open_ipc_server(
+                    parent_tn=service_nursery,
+                    stream_handler_tn=service_nursery,
+                ) as ipc_server,
+                # ) as actor._ipc_server,
+                # ^TODO? prettier?
+
+            ):
                 # This nursery is used to handle all inbound
                 # connections to us such that if the TCP server
                 # is killed, connections can continue to process
                 # in the background until this nursery is cancelled.
                 actor._service_n = service_nursery
-                assert actor._service_n
+                actor._ipc_server = ipc_server
+                assert (
+                    actor._service_n
+                    and (
+                        actor._service_n
+                        is
+                        actor._ipc_server._parent_tn
+                        is
+                        ipc_server._stream_handler_tn
+                    )
+                )
 
                 # load exposed/allowed RPC modules
                 # XXX: do this **after** establishing a channel to the parent
@@ -1761,42 +1409,54 @@ async def async_main(
                 # - subactor: the bind address is sent by our parent
                 #   over our established channel
                 # - root actor: the ``accept_addr`` passed to this method
-                assert accept_addrs
 
+                # TODO: why is this not with the root nursery?
                 try:
-                    # TODO: why is this not with the root nursery?
-                    actor._server_n = await service_nursery.start(
-                        partial(
-                            actor._serve_forever,
-                            service_nursery,
-                            listen_sockaddrs=accept_addrs,
-                        )
+                    log.runtime(
+                        'Booting IPC server'
                     )
+                    eps: list = await ipc_server.listen_on(
+                        accept_addrs=accept_addrs,
+                        stream_handler_nursery=service_nursery,
+                    )
+                    log.runtime(
+                        f'Booted IPC server\n'
+                        f'{ipc_server}\n'
+                    )
+                    assert (
+                        (eps[0].listen_tn)
+                        is not service_nursery
+                    )
+
                 except OSError as oserr:
                     # NOTE: always allow runtime hackers to debug
                     # tranport address bind errors - normally it's
                     # something silly like the wrong socket-address
                     # passed via a config or CLI Bo
-                    entered_debug: bool = await _debug._maybe_enter_pm(oserr)
+                    entered_debug: bool = await _debug._maybe_enter_pm(
+                        oserr,
+                    )
                     if not entered_debug:
-                        log.exception('Failed to init IPC channel server !?\n')
+                        log.exception('Failed to init IPC server !?\n')
                     else:
                         log.runtime('Exited debug REPL..')
 
                     raise
 
-                accept_addrs: list[tuple[str, int]] = actor.accept_addrs
+                # TODO, just read direct from ipc_server?
+                accept_addrs: list[UnwrappedAddress] = actor.accept_addrs
 
                 # NOTE: only set the loopback addr for the 
                 # process-tree-global "root" mailbox since
                 # all sub-actors should be able to speak to
                 # their root actor over that channel.
                 if _state._runtime_vars['_is_root']:
+                    raddrs: list[Address] = _state._runtime_vars['_root_addrs']
                     for addr in accept_addrs:
-                        host, _ = addr
-                        # TODO: generic 'lo' detector predicate
-                        if '127.0.0.1' in host:
-                            _state._runtime_vars['_root_mailbox'] = addr
+                        waddr: Address = wrap_address(addr)
+                        raddrs.append(addr)
+                    else:
+                        _state._runtime_vars['_root_mailbox'] = raddrs[0]
 
                 # Register with the arbiter if we're told its addr
                 log.runtime(
@@ -1810,24 +1470,23 @@ async def async_main(
                 # only on unique actor uids?
                 for addr in actor.reg_addrs:
                     try:
-                        assert isinstance(addr, tuple)
-                        assert addr[1]  # non-zero after bind
+                        waddr = wrap_address(addr)
+                        assert waddr.is_valid
                     except AssertionError:
                         await _debug.pause()
 
-                    async with get_registry(*addr) as reg_portal:
+                    async with get_registry(addr) as reg_portal:
                         for accept_addr in accept_addrs:
+                            accept_addr = wrap_address(accept_addr)
 
-                            if not accept_addr[1]:
-                                await _debug.pause()
-
-                            assert accept_addr[1]
+                            if not accept_addr.is_valid:
+                                breakpoint()
 
                             await reg_portal.run_from_ns(
                                 'self',
                                 'register_actor',
                                 uid=actor.uid,
-                                sockaddr=accept_addr,
+                                addr=accept_addr.unwrap(),
                             )
 
                     is_registered: bool = True
@@ -1842,9 +1501,8 @@ async def async_main(
                 if actor._parent_chan:
                     await root_nursery.start(
                         partial(
-                            process_messages,
-                            actor,
-                            actor._parent_chan,
+                            _rpc.process_messages,
+                            chan=actor._parent_chan,
                             shield=True,
                         )
                     )
@@ -1885,7 +1543,7 @@ async def async_main(
             log.exception(err_report)
 
         if actor._parent_chan:
-            await try_ship_error_to_remote(
+            await _rpc.try_ship_error_to_remote(
                 actor._parent_chan,
                 internal_err,
             )
@@ -1954,12 +1612,13 @@ async def async_main(
         ):
             failed: bool = False
             for addr in actor.reg_addrs:
-                assert isinstance(addr, tuple)
+                waddr = wrap_address(addr)
+                assert waddr.is_valid
                 with trio.move_on_after(0.5) as cs:
                     cs.shield = True
                     try:
                         async with get_registry(
-                            *addr,
+                            addr,
                         ) as reg_portal:
                             await reg_portal.run_from_ns(
                                 'self',
@@ -1978,16 +1637,18 @@ async def async_main(
                     )
 
         # Ensure all peers (actors connected to us as clients) are finished
-        if not actor._no_more_peers.is_set():
-            if any(
-                chan.connected() for chan in chain(*actor._peers.values())
-            ):
-                teardown_report += (
-                    f'-> Waiting for remaining peers {actor._peers} to clear..\n'
-                )
-                log.runtime(teardown_report)
-                with CancelScope(shield=True):
-                    await actor._no_more_peers.wait()
+        if (
+            (ipc_server := actor.ipc_server)
+            and
+            ipc_server.has_peers(check_chans=True)
+        ):
+            teardown_report += (
+                f'-> Waiting for remaining peers {ipc_server._peers} to clear..\n'
+            )
+            log.runtime(teardown_report)
+            await ipc_server.wait_for_no_more_peers(
+                shield=True,
+            )
 
         teardown_report += (
             '-> All peer channels are complete\n'
@@ -2001,15 +1662,15 @@ async def async_main(
     log.info(teardown_report)
 
 
-# TODO: rename to `Registry` and move to `._discovery`!
+# TODO: rename to `Registry` and move to `.discovery._registry`!
 class Arbiter(Actor):
     '''
-    A special registrar actor who can contact all other actors
-    within its immediate process tree and possibly keeps a registry
-    of others meant to be discoverable in a distributed
-    application. Normally the registrar is also the "root actor"
-    and thus always has access to the top-most-level actor
-    (process) nursery.
+    A special registrar (and for now..) `Actor` who can contact all
+    other actors within its immediate process tree and possibly keeps
+    a registry of others meant to be discoverable in a distributed
+    application. Normally the registrar is also the "root actor" and
+    thus always has access to the top-most-level actor (process)
+    nursery.
 
     By default, the registrar is always initialized when and if no
     other registrar socket addrs have been specified to runtime
@@ -2029,6 +1690,12 @@ class Arbiter(Actor):
     '''
     is_arbiter = True
 
+    # TODO, implement this as a read on there existing a `._state` of
+    # some sort setup by whenever we impl this all as
+    # a `.discovery._registry.open_registry()` API
+    def is_registry(self) -> bool:
+        return self.is_arbiter
+
     def __init__(
         self,
         *args,
@@ -2037,7 +1704,7 @@ class Arbiter(Actor):
 
         self._registry: dict[
             tuple[str, str],
-            tuple[str, int],
+            UnwrappedAddress,
         ] = {}
         self._waiters: dict[
             str,
@@ -2053,18 +1720,18 @@ class Arbiter(Actor):
         self,
         name: str,
 
-    ) -> tuple[str, int]|None:
+    ) -> UnwrappedAddress|None:
 
-        for uid, sockaddr in self._registry.items():
+        for uid, addr in self._registry.items():
             if name in uid:
-                return sockaddr
+                return addr
 
         return None
 
     async def get_registry(
         self
 
-    ) -> dict[str, tuple[str, int]]:
+    ) -> dict[str, UnwrappedAddress]:
         '''
         Return current name registry.
 
@@ -2084,7 +1751,7 @@ class Arbiter(Actor):
         self,
         name: str,
 
-    ) -> list[tuple[str, int]]:
+    ) -> list[UnwrappedAddress]:
         '''
         Wait for a particular actor to register.
 
@@ -2092,44 +1759,41 @@ class Arbiter(Actor):
         registered.
 
         '''
-        sockaddrs: list[tuple[str, int]] = []
-        sockaddr: tuple[str, int]
+        addrs: list[UnwrappedAddress] = []
+        addr: UnwrappedAddress
 
         mailbox_info: str = 'Actor registry contact infos:\n'
-        for uid, sockaddr in self._registry.items():
+        for uid, addr in self._registry.items():
             mailbox_info += (
                 f'|_uid: {uid}\n'
-                f'|_sockaddr: {sockaddr}\n\n'
+                f'|_addr: {addr}\n\n'
             )
             if name == uid[0]:
-                sockaddrs.append(sockaddr)
+                addrs.append(addr)
 
-        if not sockaddrs:
+        if not addrs:
             waiter = trio.Event()
             self._waiters.setdefault(name, []).append(waiter)
             await waiter.wait()
 
             for uid in self._waiters[name]:
                 if not isinstance(uid, trio.Event):
-                    sockaddrs.append(self._registry[uid])
+                    addrs.append(self._registry[uid])
 
         log.runtime(mailbox_info)
-        return sockaddrs
+        return addrs
 
     async def register_actor(
         self,
         uid: tuple[str, str],
-        sockaddr: tuple[str, int]
-
+        addr: UnwrappedAddress
     ) -> None:
         uid = name, hash = (str(uid[0]), str(uid[1]))
-        addr = (host, port) = (
-            str(sockaddr[0]),
-            int(sockaddr[1]),
-        )
-        if port == 0:
+        waddr: Address = wrap_address(addr)
+        if not waddr.is_valid:
+            # should never be 0-dynamic-os-alloc
             await _debug.pause()
-        assert port  # should never be 0-dynamic-os-alloc
+
         self._registry[uid] = addr
 
         # pop and signal all waiter events

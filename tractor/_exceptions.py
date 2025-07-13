@@ -23,7 +23,6 @@ import builtins
 import importlib
 from pprint import pformat
 from pdb import bdb
-import sys
 from types import (
     TracebackType,
 )
@@ -65,15 +64,29 @@ if TYPE_CHECKING:
     from ._context import Context
     from .log import StackLevelAdapter
     from ._stream import MsgStream
-    from ._ipc import Channel
+    from .ipc import Channel
 
 log = get_logger('tractor')
 
 _this_mod = importlib.import_module(__name__)
 
 
-class ActorFailure(Exception):
-    "General actor failure"
+class RuntimeFailure(RuntimeError):
+    '''
+    General `Actor`-runtime failure due to,
+
+    - a bad runtime-env,
+    - falied spawning (bad input to process),
+    -   API usage.
+
+    '''
+
+
+class ActorFailure(RuntimeFailure):
+    '''
+    `Actor` failed to boot before/after spawn
+
+    '''
 
 
 class InternalError(RuntimeError):
@@ -125,6 +138,12 @@ class TrioTaskExited(Exception):
 
     '''
 
+
+class DebugRequestError(RuntimeError):
+    '''
+    Failed to request stdio lock from root actor!
+
+    '''
 
 # NOTE: more or less should be close to these:
 # 'boxed_type',
@@ -190,6 +209,8 @@ def get_err_type(type_name: str) -> BaseException|None:
             False,
         ):
             return type_ref
+
+    return None
 
 
 def pack_from_raise(
@@ -521,7 +542,6 @@ class RemoteActorError(Exception):
             if val:
                 _repr += f'{key}={val_str}{end_char}'
 
-
         return _repr
 
     def reprol(self) -> str:
@@ -600,56 +620,9 @@ class RemoteActorError(Exception):
             the type name is already implicitly shown by python).
 
         '''
-        header: str = ''
-        body: str = ''
-        message: str = ''
-
-        # XXX when the currently raised exception is this instance,
-        # we do not ever use the "type header" style repr.
-        is_being_raised: bool = False
-        if (
-            (exc := sys.exception())
-            and
-            exc is self
-        ):
-            is_being_raised: bool = True
-
-        with_type_header: bool = (
-            with_type_header
-            and
-            not is_being_raised
-        )
-
-        # <RemoteActorError( .. )> style
-        if with_type_header:
-            header: str = f'<{type(self).__name__}('
-
-        if message := self._message:
-
-            # split off the first line so, if needed, it isn't
-            # indented the same like the "boxed content" which
-            # since there is no `.tb_str` is just the `.message`.
-            lines: list[str] = message.splitlines()
-            first: str = lines[0]
-            message: str = message.removeprefix(first)
-
-            # with a type-style header we,
-            # - have no special message "first line" extraction/handling
-            # - place the message a space in from the header:
-            #  `MsgTypeError( <message> ..`
-            #                 ^-here
-            # - indent the `.message` inside the type body.
-            if with_type_header:
-                first = f' {first} )>'
-
-            message: str = textwrap.indent(
-                message,
-                prefix=' '*2,
-            )
-            message: str = first + message
-
         # IFF there is an embedded traceback-str we always
         # draw the ascii-box around it.
+        body: str = ''
         if tb_str := self.tb_str:
             fields: str = self._mk_fields_str(
                 _body_fields
@@ -670,21 +643,15 @@ class RemoteActorError(Exception):
                 boxer_header=self.relay_uid,
             )
 
-        tail = ''
-        if (
-            with_type_header
-            and not message
-        ):
-            tail: str = '>'
-
-        return (
-            header
-            +
-            message
-            +
-            f'{body}'
-            +
-            tail
+        # !TODO, it'd be nice to import these top level without
+        # cycles!
+        from tractor.devx.pformat import (
+            pformat_exc,
+        )
+        return pformat_exc(
+            exc=self,
+            with_type_header=with_type_header,
+            body=body,
         )
 
     __repr__ = pformat
@@ -962,7 +929,7 @@ class StreamOverrun(
     '''
 
 
-class TransportClosed(trio.BrokenResourceError):
+class TransportClosed(Exception):
     '''
     IPC transport (protocol) connection was closed or broke and
     indicates that the wrapping communication `Channel` can no longer
@@ -973,24 +940,39 @@ class TransportClosed(trio.BrokenResourceError):
         self,
         message: str,
         loglevel: str = 'transport',
-        cause: BaseException|None = None,
+        src_exc: Exception|None = None,
         raise_on_report: bool = False,
 
     ) -> None:
         self.message: str = message
-        self._loglevel = loglevel
+        self._loglevel: str = loglevel
         super().__init__(message)
 
-        if cause is not None:
-            self.__cause__ = cause
+        self._src_exc = src_exc
+        # set the cause manually if not already set by python
+        if (
+            src_exc is not None
+            and
+            not self.__cause__
+        ):
+            self.__cause__ = src_exc
 
         # flag to toggle whether the msg loop should raise
         # the exc in its `TransportClosed` handler block.
         self._raise_on_report = raise_on_report
 
+    @property
+    def src_exc(self) -> Exception:
+        return (
+            self.__cause__
+            or
+            self._src_exc
+        )
+
     def report_n_maybe_raise(
         self,
         message: str|None = None,
+        hide_tb: bool = True,
 
     ) -> None:
         '''
@@ -998,9 +980,10 @@ class TransportClosed(trio.BrokenResourceError):
         for this error.
 
         '''
+        __tracebackhide__: bool = hide_tb
         message: str = message or self.message
         # when a cause is set, slap it onto the log emission.
-        if cause := self.__cause__:
+        if cause := self.src_exc:
             cause_tb_str: str = ''.join(
                 traceback.format_tb(cause.__traceback__)
             )
@@ -1009,12 +992,85 @@ class TransportClosed(trio.BrokenResourceError):
                 f'    {cause}\n'  # exc repr
             )
 
-        getattr(log, self._loglevel)(message)
+        getattr(
+            log,
+            self._loglevel
+        )(message)
 
         # some errors we want to blow up from
         # inside the RPC msg loop
         if self._raise_on_report:
             raise self from cause
+
+    @classmethod
+    def repr_src_exc(
+        self,
+        src_exc: Exception|None = None,
+    ) -> str:
+
+        if src_exc is None:
+            return '<unknown>'
+
+        src_msg: tuple[str] = src_exc.args
+        src_exc_repr: str = (
+            f'{type(src_exc).__name__}[ {src_msg} ]'
+        )
+        return src_exc_repr
+
+    def pformat(self) -> str:
+        from tractor.devx.pformat import (
+            pformat_exc,
+        )
+        return pformat_exc(
+            exc=self,
+        )
+
+    # delegate to `str`-ified pformat
+    __repr__ = pformat
+
+    @classmethod
+    def from_src_exc(
+        cls,
+        src_exc: (
+            Exception|
+            trio.ClosedResource|
+            trio.BrokenResourceError
+        ),
+        message: str,
+        body: str = '',
+        **init_kws,
+    ) -> TransportClosed:
+        '''
+        Convenience constructor for creation from an underlying
+        `trio`-sourced async-resource/chan/stream error.
+
+        Embeds the original `src_exc`'s repr within the
+        `Exception.args` via a first-line-in-`.message`-put-in-header
+        pre-processing and allows inserting additional content beyond
+        the main message via a `body: str`.
+
+        '''
+        repr_src_exc: str = cls.repr_src_exc(
+            src_exc,
+        )
+        next_line: str = f'  src_exc: {repr_src_exc}\n'
+        if body:
+            body: str = textwrap.indent(
+                body,
+                prefix=' '*2,
+            )
+
+        return TransportClosed(
+            message=(
+                message
+                +
+                next_line
+                +
+                body
+            ),
+            src_exc=src_exc,
+            **init_kws,
+        )
 
 
 class NoResult(RuntimeError):

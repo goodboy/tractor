@@ -31,6 +31,7 @@ from typing import (
     Type,
     TypeVar,
     TypeAlias,
+    # TYPE_CHECKING,
     Union,
 )
 
@@ -47,6 +48,7 @@ from tractor.msg import (
     pretty_struct,
 )
 from tractor.log import get_logger
+# from tractor._addr import UnwrappedAddress
 
 
 log = get_logger('tractor.msgspec')
@@ -141,9 +143,16 @@ class Aid(
     '''
     name: str
     uuid: str
-    # TODO: use built-in support for UUIDs?
-    # -[ ] `uuid.UUID` which has multi-protocol support
-    #  https://jcristharif.com/msgspec/supported-types.html#uuid
+    pid: int|None = None
+
+    # TODO? can/should we extend this field set?
+    # -[ ] use built-in support for UUIDs? `uuid.UUID` which has
+    #     multi-protocol support
+    #     https://jcristharif.com/msgspec/supported-types.html#uuid
+    #
+    # -[ ] as per the `.ipc._uds` / `._addr` comments, maybe we
+    #     should also include at least `.pid` (equiv to port for tcp)
+    #     and/or host-part always?
 
 
 class SpawnSpec(
@@ -161,14 +170,15 @@ class SpawnSpec(
     # a hard `Struct` def for all of these fields!
     _parent_main_data: dict
     _runtime_vars: dict[str, Any]
+    # ^NOTE see `._state._runtime_vars: dict`
 
     # module import capability
     enable_modules: dict[str, str]
 
     # TODO: not just sockaddr pairs?
     # -[ ] abstract into a `TransportAddr` type?
-    reg_addrs: list[tuple[str, int]]
-    bind_addrs: list[tuple[str, int]]
+    reg_addrs: list[tuple[str, str|int]]
+    bind_addrs: list[tuple[str, str|int]]|None
 
 
 # TODO: caps based RPC support in the payload?

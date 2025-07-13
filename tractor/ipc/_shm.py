@@ -32,10 +32,14 @@ from multiprocessing.shared_memory import (
     ShareableList,
 )
 
-from msgspec import Struct
+from msgspec import (
+    Struct,
+    to_builtins
+)
 import tractor
 
-from .log import get_logger
+from tractor.ipc._mp_bs import disable_mantracker
+from tractor.log import get_logger
 
 
 _USE_POSIX = getattr(shm, '_USE_POSIX', False)
@@ -46,40 +50,15 @@ if _USE_POSIX:
 try:
     import numpy as np
     from numpy.lib import recfunctions as rfn
-    import nptyping
+    # TODO ruff complains with,
+    # warning| F401: `nptyping` imported but unused; consider using
+    # `importlib.util.find_spec` to test for availability
+    import nptyping  # noqa
 except ImportError:
     pass
 
 
 log = get_logger(__name__)
-
-
-def disable_mantracker():
-    '''
-    Disable all ``multiprocessing``` "resource tracking" machinery since
-    it's an absolute multi-threaded mess of non-SC madness.
-
-    '''
-    from multiprocessing import resource_tracker as mantracker
-
-    # Tell the "resource tracker" thing to fuck off.
-    class ManTracker(mantracker.ResourceTracker):
-        def register(self, name, rtype):
-            pass
-
-        def unregister(self, name, rtype):
-            pass
-
-        def ensure_running(self):
-            pass
-
-    # "know your land and know your prey"
-    # https://www.dailymotion.com/video/x6ozzco
-    mantracker._resource_tracker = ManTracker()
-    mantracker.register = mantracker._resource_tracker.register
-    mantracker.ensure_running = mantracker._resource_tracker.ensure_running
-    mantracker.unregister = mantracker._resource_tracker.unregister
-    mantracker.getfd = mantracker._resource_tracker.getfd
 
 
 disable_mantracker()
@@ -142,7 +121,7 @@ class NDToken(Struct, frozen=True):
         ).descr
 
     def as_msg(self):
-        return self.to_dict()
+        return to_builtins(self)
 
     @classmethod
     def from_msg(cls, msg: dict) -> NDToken:

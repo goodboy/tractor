@@ -64,7 +64,7 @@ from ._root import (
     run_daemon as run_daemon,
     open_root_actor as open_root_actor,
 )
-from ._ipc import Channel as Channel
+from .ipc import Channel as Channel
 from ._portal import Portal as Portal
 from ._runtime import Actor as Actor
 # from . import hilevel as hilevel
