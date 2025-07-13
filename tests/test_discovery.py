@@ -7,7 +7,9 @@ import platform
 from functools import partial
 import itertools
 
+import psutil
 import pytest
+import subprocess
 import tractor
 from tractor._testing import tractor_test
 import trio
@@ -152,13 +154,23 @@ async def unpack_reg(actor_or_portal):
 async def spawn_and_check_registry(
     reg_addr: tuple,
     use_signal: bool,
+    debug_mode: bool = False,
     remote_arbiter: bool = False,
     with_streaming: bool = False,
+    maybe_daemon: tuple[
+        subprocess.Popen,
+        psutil.Process,
+    ]|None = None,
 
 ) -> None:
 
+    if maybe_daemon:
+        popen, proc = maybe_daemon
+        # breakpoint()
+
     async with tractor.open_root_actor(
         registry_addrs=[reg_addr],
+        debug_mode=debug_mode,
     ):
         async with tractor.get_registry(reg_addr) as portal:
             # runtime needs to be up to call this
@@ -176,11 +188,11 @@ async def spawn_and_check_registry(
                 extra = 2  # local root actor + remote arbiter
 
             # ensure current actor is registered
-            registry = await get_reg()
+            registry: dict = await get_reg()
             assert actor.uid in registry
 
             try:
-                async with tractor.open_nursery() as n:
+                async with tractor.open_nursery() as an:
                     async with trio.open_nursery(
                         strict_exception_groups=False,
                     ) as trion:
@@ -189,17 +201,17 @@ async def spawn_and_check_registry(
                         for i in range(3):
                             name = f'a{i}'
                             if with_streaming:
-                                portals[name] = await n.start_actor(
+                                portals[name] = await an.start_actor(
                                     name=name, enable_modules=[__name__])
 
                             else:  # no streaming
-                                portals[name] = await n.run_in_actor(
+                                portals[name] = await an.run_in_actor(
                                     trio.sleep_forever, name=name)
 
                         # wait on last actor to come up
                         async with tractor.wait_for_actor(name):
                             registry = await get_reg()
-                            for uid in n._children:
+                            for uid in an._children:
                                 assert uid in registry
 
                         assert len(portals) + extra == len(registry)
@@ -232,6 +244,7 @@ async def spawn_and_check_registry(
 @pytest.mark.parametrize('use_signal', [False, True])
 @pytest.mark.parametrize('with_streaming', [False, True])
 def test_subactors_unregister_on_cancel(
+    debug_mode: bool,
     start_method,
     use_signal,
     reg_addr,
@@ -248,6 +261,7 @@ def test_subactors_unregister_on_cancel(
                 spawn_and_check_registry,
                 reg_addr,
                 use_signal,
+                debug_mode=debug_mode,
                 remote_arbiter=False,
                 with_streaming=with_streaming,
             ),
@@ -257,7 +271,8 @@ def test_subactors_unregister_on_cancel(
 @pytest.mark.parametrize('use_signal', [False, True])
 @pytest.mark.parametrize('with_streaming', [False, True])
 def test_subactors_unregister_on_cancel_remote_daemon(
-    daemon,
+    daemon: subprocess.Popen,
+    debug_mode: bool,
     start_method,
     use_signal,
     reg_addr,
@@ -273,8 +288,13 @@ def test_subactors_unregister_on_cancel_remote_daemon(
                 spawn_and_check_registry,
                 reg_addr,
                 use_signal,
+                debug_mode=debug_mode,
                 remote_arbiter=True,
                 with_streaming=with_streaming,
+                maybe_daemon=(
+                    daemon,
+                    psutil.Process(daemon.pid)
+                ),
             ),
         )
 
@@ -373,7 +393,7 @@ def test_close_channel_explicit(
 
 @pytest.mark.parametrize('use_signal', [False, True])
 def test_close_channel_explicit_remote_arbiter(
-    daemon,
+    daemon: subprocess.Popen,
     start_method,
     use_signal,
     reg_addr,

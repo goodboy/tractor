@@ -24,10 +24,9 @@ async def spawn_until(depth=0):
 
 
 async def main():
-    """The main ``tractor`` routine.
-
-    The process tree should look as approximately as follows when the debugger
-    first engages:
+    '''
+    The process tree should look as approximately as follows when the
+    debugger first engages:
 
     python examples/debugging/multi_nested_subactors_bp_forever.py
     ├─ python -m tractor._child --uid ('spawner1', '7eab8462 ...)
@@ -37,10 +36,11 @@ async def main():
     └─ python -m tractor._child --uid ('spawner0', '1d42012b ...)
        └─ python -m tractor._child --uid ('name_error', '6c2733b8 ...)
 
-    """
+    '''
     async with tractor.open_nursery(
         debug_mode=True,
-        loglevel='warning'
+        loglevel='devx',
+        enable_transports=['uds'],
     ) as n:
 
         # spawn both actors
