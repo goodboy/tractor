@@ -1,8 +1,5 @@
 |logo| ``tractor``: distributed structurred concurrency
 
-|gh_actions|
-|docs|
-
 ``tractor`` is a `structured concurrency`_ (SC), multi-processing_ runtime built on trio_.
 
 Fundamentally, ``tractor`` provides parallelism via
@@ -64,6 +61,13 @@ Features
   - multi-task-single-resource-caching and fan-out-to-multi
     ``__aenter__()`` APIs for ``@acm`` functions,
   - (WIP) a ``TaskMngr``: one-cancels-one style nursery supervisor.
+
+
+Status of `main` / infra
+------------------------
+
+- |gh_actions|
+- |docs|
 
 
 Install
