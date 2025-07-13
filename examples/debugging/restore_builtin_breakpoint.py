@@ -5,7 +5,7 @@ import trio
 import tractor
 
 # ensure mod-path is correct!
-from tractor.devx.debug import (
+from tractor.devx._debug import (
     _sync_pause_from_builtin as _sync_pause_from_builtin,
 )
 
