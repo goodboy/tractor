@@ -1690,9 +1690,9 @@ async def async_main(
 
     op_nested_actor_repr: str = _pformat.nest_from_op(
         input_op=')> ',
-        tree_str=actor.pformat(),
+        text=actor.pformat(),
         nest_prefix='|_',
-        back_from_op=2,
+        nest_indent=2,
     )
     teardown_report += (
         'Actor runtime exited\n'
