@@ -415,3 +415,113 @@ def nest_from_op(
             f'{first}{input_op}{op_suffix}'
             f'{indented_tree_str}'
         )
+
+
+# ------ modden.repr ------
+# XXX originally taken verbaatim from `modden.repr`
+'''
+More "multi-line" representation then the stdlib's `pprint` equivs.
+
+'''
+from inspect import (
+    FrameInfo,
+    stack,
+)
+import pprint
+import reprlib
+from typing import (
+    Callable,
+)
+
+
+def mk_repr(
+    **repr_kws,
+) -> Callable[[str], str]:
+    '''
+    Allocate and deliver a `repr.Repr` instance with provided input
+    settings using the std-lib's `reprlib` mod,
+     * https://docs.python.org/3/library/reprlib.html
+
+    ------ Ex. ------
+    An up to 6-layer-nested `dict` as multi-line:
+    - https://stackoverflow.com/a/79102479
+    - https://docs.python.org/3/library/reprlib.html#reprlib.Repr.maxlevel
+
+    '''
+    def_kws: dict[str, int] = dict(
+        indent=3,  # indent used for repr of recursive objects
+        maxlevel=616,  # recursion levels
+        maxdict=616,  # max items shown for `dict`
+        maxlist=616,  # max items shown for `dict`
+        maxstring=616,  # match editor line-len limit
+        maxtuple=616,  # match editor line-len limit
+        maxother=616,  # match editor line-len limit
+    )
+    def_kws |= repr_kws
+    reprr = reprlib.Repr(**def_kws)
+    return reprr.repr
+
+
+def ppfmt(
+    obj: object,
+    do_print: bool = False,
+) -> str:
+    '''
+    The `pprint.pformat()` version of `pprint.pp()`, namely
+    a default `sort_dicts=False`.. (which i think should be
+    the normal default in the stdlib).
+
+    '''
+    pprepr: Callable = mk_repr()
+    repr_str: str = pprepr(obj)
+
+    if do_print:
+        return pprint.pp(repr_str)
+
+    return repr_str
+
+
+pformat = ppfmt
+
+
+def pfmt_frame_info(fi: FrameInfo) -> str:
+    '''
+    Like a std `inspect.FrameInfo.__repr__()` but multi-line..
+
+    '''
+    return (
+        'FrameInfo(\n'
+        '  frame={!r},\n'
+        '  filename={!r},\n'
+        '  lineno={!r},\n'
+        '  function={!r},\n'
+        '  code_context={!r},\n'
+        '  index={!r},\n'
+        '  positions={!r})'
+        ).format(
+            fi.frame,
+            fi.filename,
+            fi.lineno,
+            fi.function,
+            fi.code_context,
+            fi.index,
+            fi.positions
+        )
+
+
+def pfmt_callstack(frames: int = 1) -> str:
+    '''
+    Generate a string of nested `inspect.FrameInfo` objects returned
+    from a `inspect.stack()` call such that only the `.frame` field
+    for each  layer is pprinted.
+
+    '''
+    caller_frames: list[FrameInfo] =  stack()[1:1+frames]
+    frames_str: str = ''
+    for i, frame_info in enumerate(caller_frames):
+        frames_str += textwrap.indent(
+            f'{frame_info.frame!r}\n',
+            prefix=' '*i,
+
+        )
+    return frames_str
