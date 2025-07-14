@@ -846,9 +846,9 @@ class DebugStatus:
 
         '''
         if not (
-            repl_fixture
-            or
             (rt_repl_fixture := _state._runtime_vars.get('repl_fixture'))
+            or
+            repl_fixture
         ):
             return True  # YES always enter
 
