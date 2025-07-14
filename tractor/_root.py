@@ -521,7 +521,7 @@ async def open_root_actor(
 
                     op_nested_actor_repr: str = _pformat.nest_from_op(
                         input_op='>) ',
-                        tree_str=actor.pformat(),
+                        text=actor.pformat(),
                         nest_prefix='|_',
                     )
                     logger.info(
