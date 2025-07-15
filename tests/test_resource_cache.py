@@ -173,7 +173,7 @@ async def maybe_open_stream(taskname: str):
 
         bstream = stream._broadcaster
         if (
-            not bstream.state.subs
+            not bstream._state.subs
             and
             not cache_hit
         ):
