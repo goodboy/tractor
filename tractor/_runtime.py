@@ -1760,9 +1760,7 @@ async def async_main(
                 f'   {pformat(ipc_server._peers)}'
             )
             log.runtime(teardown_report)
-            await ipc_server.wait_for_no_more_peers(
-                shield=True,
-            )
+            await ipc_server.wait_for_no_more_peers()
 
         teardown_report += (
             '-]> all peer channels are complete.\n'

@@ -814,10 +814,14 @@ class Server(Struct):
 
     async def wait_for_no_more_peers(
         self,
-        shield: bool = False,
+        # XXX, should this even be allowed?
+        # -> i've seen it cause hangs on teardown
+        #    in `test_resource_cache.py`
+        # _shield: bool = False,
     ) -> None:
-        with trio.CancelScope(shield=shield):
-            await self._no_more_peers.wait()
+        await self._no_more_peers.wait()
+        # with trio.CancelScope(shield=_shield):
+        #     await self._no_more_peers.wait()
 
     async def wait_for_peer(
         self,
