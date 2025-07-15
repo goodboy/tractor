@@ -49,7 +49,7 @@ from tractor._state import (
     _runtime_vars,
 )
 from tractor._context import Unresolved
-from tractor.devx import _debug
+from tractor.devx import debug
 from tractor.log import (
     get_logger,
     StackLevelAdapter,
@@ -479,12 +479,12 @@ def _run_asyncio_task(
     if (
         debug_mode()
         and
-        (greenback := _debug.maybe_import_greenback(
+        (greenback := debug.maybe_import_greenback(
             force_reload=True,
             raise_not_found=False,
         ))
     ):
-        log.info(
+        log.devx(
             f'Bestowing `greenback` portal for `asyncio`-task\n'
             f'{task}\n'
         )
@@ -841,7 +841,7 @@ async def translate_aio_errors(
     except BaseException as _trio_err:
         trio_err = chan._trio_err = _trio_err
         # await tractor.pause(shield=True)  # workx!
-        entered: bool = await _debug._maybe_enter_pm(
+        entered: bool = await debug._maybe_enter_pm(
             trio_err,
             api_frame=inspect.currentframe(),
         )
@@ -1406,7 +1406,7 @@ def run_as_asyncio_guest(
             )
             # XXX make it obvi we know this isn't supported yet!
             assert 0
-            # await _debug.maybe_init_greenback(
+            # await debug.maybe_init_greenback(
             #     force_reload=True,
             # )
 

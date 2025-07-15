@@ -26,7 +26,7 @@ import os
 import pathlib
 
 import tractor
-from tractor.devx._debug import (
+from tractor.devx.debug import (
     BoxedMaybeException,
 )
 from .pytest import (
@@ -37,6 +37,9 @@ from .fault_simulation import (
 )
 
 
+# TODO, use dulwhich for this instead?
+# -> we're going to likely need it (or something similar)
+#   for supporting hot-coad reload feats eventually anyway!
 def repodir() -> pathlib.Path:
     '''
     Return the abspath to the repo directory.

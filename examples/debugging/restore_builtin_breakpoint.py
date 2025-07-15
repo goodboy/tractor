@@ -5,7 +5,7 @@ import trio
 import tractor
 
 # ensure mod-path is correct!
-from tractor.devx._debug import (
+from tractor.devx.debug import (
     _sync_pause_from_builtin as _sync_pause_from_builtin,
 )
 
@@ -19,19 +19,22 @@ async def main() -> None:
     async with tractor.open_nursery(
         debug_mode=True,
         loglevel='devx',
-    ) as an:
-        assert an
+        maybe_enable_greenback=True,
+        # ^XXX REQUIRED to enable `breakpoint()` support (from sync
+        # fns) and thus required here to avoid an assertion err
+        # on the next line
+    ):
         assert (
             (pybp_var := os.environ['PYTHONBREAKPOINT'])
             ==
-            'tractor.devx._debug._sync_pause_from_builtin'
+            'tractor.devx.debug._sync_pause_from_builtin'
         )
 
         # TODO: an assert that verifies the hook has indeed been, hooked
         # XD
         assert (
             (pybp_hook := sys.breakpointhook)
-            is not tractor.devx._debug._set_trace
+            is not tractor.devx.debug._set_trace
         )
 
         print(

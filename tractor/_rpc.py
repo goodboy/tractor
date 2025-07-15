@@ -57,7 +57,7 @@ from ._exceptions import (
     unpack_error,
 )
 from .devx import (
-    _debug,
+    debug,
     add_div,
 )
 from . import _state
@@ -266,7 +266,7 @@ async def _errors_relayed_via_ipc(
 
     # TODO: a debug nursery when in debug mode!
     # async with maybe_open_debugger_nursery() as debug_tn:
-    # => see matching comment in side `._debug._pause()`
+    # => see matching comment in side `.debug._pause()`
     rpc_err: BaseException|None = None
     try:
         yield  # run RPC invoke body
@@ -318,7 +318,7 @@ async def _errors_relayed_via_ipc(
                     'RPC task crashed, attempting to enter debugger\n'
                     f'|_{ctx}'
                 )
-                entered_debug = await _debug._maybe_enter_pm(
+                entered_debug = await debug._maybe_enter_pm(
                     err,
                     api_frame=inspect.currentframe(),
                 )
@@ -462,7 +462,7 @@ async def _invoke(
     ):
         # XXX for .pause_from_sync()` usage we need to make sure
         # `greenback` is boostrapped in the subactor!
-        await _debug.maybe_init_greenback()
+        await debug.maybe_init_greenback()
 
     # TODO: possibly a specially formatted traceback
     # (not sure what typing is for this..)?
@@ -751,7 +751,7 @@ async def _invoke(
                 and 'Cancel scope stack corrupted' in scope_error.args[0]
             ):
                 log.exception('Cancel scope stack corrupted!?\n')
-                # _debug.mk_pdb().set_trace()
+                # debug.mk_pdb().set_trace()
 
             # always set this (child) side's exception as the
             # local error on the context
@@ -779,7 +779,7 @@ async def _invoke(
 
             # don't pop the local context until we know the
             # associated child isn't in debug any more
-            await _debug.maybe_wait_for_debugger()
+            await debug.maybe_wait_for_debugger()
             ctx: Context = actor._contexts.pop((
                 chan.uid,
                 cid,
@@ -983,7 +983,7 @@ async def process_messages(
                         # XXX NOTE XXX don't start entire actor
                         # runtime cancellation if this actor is
                         # currently in debug mode!
-                        pdb_complete: trio.Event|None = _debug.DebugStatus.repl_release
+                        pdb_complete: trio.Event|None = debug.DebugStatus.repl_release
                         if pdb_complete:
                             await pdb_complete.wait()
 

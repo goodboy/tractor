@@ -2,9 +2,11 @@
 `tractor.devx.*` tooling sub-pkg test space.
 
 '''
+from __future__ import annotations
 import time
 from typing import (
     Callable,
+    TYPE_CHECKING,
 )
 
 import pytest
@@ -16,7 +18,7 @@ from pexpect.spawnbase import SpawnBase
 from tractor._testing import (
     mk_cmd,
 )
-from tractor.devx._debug import (
+from tractor.devx.debug import (
     _pause_msg as _pause_msg,
     _crash_msg as _crash_msg,
     _repl_fail_msg as _repl_fail_msg,
@@ -26,14 +28,22 @@ from ..conftest import (
     _ci_env,
 )
 
+if TYPE_CHECKING:
+    from pexpect import pty_spawn
+
+
+# a fn that sub-instantiates a `pexpect.spawn()`
+# and returns it.
+type PexpectSpawner = Callable[[str], pty_spawn.spawn]
+
 
 @pytest.fixture
 def spawn(
-    start_method,
+    start_method: str,
     testdir: pytest.Pytester,
     reg_addr: tuple[str, int],
 
-) -> Callable[[str], None]:
+) -> PexpectSpawner:
     '''
     Use the `pexpect` module shipped via `testdir.spawn()` to
     run an `./examples/..` script by name.
@@ -59,7 +69,7 @@ def spawn(
     def _spawn(
         cmd: str,
         **mkcmd_kwargs,
-    ):
+    ) -> pty_spawn.spawn:
         unset_colors()
         return testdir.spawn(
             cmd=mk_cmd(
@@ -73,7 +83,7 @@ def spawn(
         )
 
     # such that test-dep can pass input script name.
-    return _spawn
+    return _spawn  # the `PexpectSpawner`, type alias.
 
 
 @pytest.fixture(
@@ -111,7 +121,7 @@ def ctlc(
         # XXX: disable pygments highlighting for auto-tests
         # since some envs (like actions CI) will struggle
         # the the added color-char encoding..
-        from tractor.devx._debug import TractorConfig
+        from tractor.devx.debug import TractorConfig
         TractorConfig.use_pygements = False
 
     yield use_ctlc

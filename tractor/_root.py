@@ -44,7 +44,10 @@ from ._runtime import (
     # Arbiter as Registry,
     async_main,
 )
-from .devx import _debug
+from .devx import (
+    debug,
+    _frame_stack,
+)
 from . import _spawn
 from . import _state
 from . import log
@@ -67,7 +70,7 @@ from ._exceptions import (
 logger = log.get_logger('tractor')
 
 
-# TODO: stick this in a `@acm` defined in `devx._debug`?
+# TODO: stick this in a `@acm` defined in `devx.debug`?
 # -[ ] also maybe consider making this a `wrapt`-deco to
 #     save an indent level?
 #
@@ -89,7 +92,7 @@ async def maybe_block_bp(
         debug_mode
         and maybe_enable_greenback
         and (
-            maybe_mod := await _debug.maybe_init_greenback(
+            maybe_mod := await debug.maybe_init_greenback(
                 raise_not_found=False,
             )
         )
@@ -99,7 +102,7 @@ async def maybe_block_bp(
             'Enabling `tractor.pause_from_sync()` support!\n'
         )
         os.environ['PYTHONBREAKPOINT'] = (
-            'tractor.devx._debug._sync_pause_from_builtin'
+            'tractor.devx.debug._sync_pause_from_builtin'
         )
         _state._runtime_vars['use_greenback'] = True
         bp_blocked = False
@@ -163,7 +166,9 @@ async def open_root_actor(
 
     # enables the multi-process debugger support
     debug_mode: bool = False,
-    maybe_enable_greenback: bool = True,  # `.pause_from_sync()/breakpoint()` support
+    maybe_enable_greenback: bool = False,  # `.pause_from_sync()/breakpoint()` support
+    # ^XXX NOTE^ the perf implications of use,
+    # https://greenback.readthedocs.io/en/latest/principle.html#performance
     enable_stack_on_sig: bool = False,
 
     # internal logging
@@ -178,7 +183,7 @@ async def open_root_actor(
 
     hide_tb: bool = True,
 
-    # XXX, proxied directly to `.devx._debug._maybe_enter_pm()`
+    # XXX, proxied directly to `.devx.debug._maybe_enter_pm()`
     # for REPL-entry logic.
     debug_filter: Callable[
         [BaseException|BaseExceptionGroup],
@@ -228,12 +233,12 @@ async def open_root_actor(
                 f'enable_transports={enable_transports!r}\n'
             )
 
-        _debug.hide_runtime_frames()
+        _frame_stack.hide_runtime_frames()
         __tracebackhide__: bool = hide_tb
 
         # attempt to retreive ``trio``'s sigint handler and stash it
         # on our debugger lock state.
-        _debug.DebugStatus._trio_handler = signal.getsignal(signal.SIGINT)
+        debug.DebugStatus._trio_handler = signal.getsignal(signal.SIGINT)
 
         # mark top most level process as root actor
         _state._runtime_vars['_is_root'] = True
@@ -281,13 +286,14 @@ async def open_root_actor(
 
         if (
             debug_mode
-            and _spawn._spawn_method == 'trio'
+            and
+            _spawn._spawn_method == 'trio'
         ):
             _state._runtime_vars['_debug_mode'] = True
 
             # expose internal debug module to every actor allowing for
             # use of ``await tractor.pause()``
-            enable_modules.append('tractor.devx._debug')
+            enable_modules.append('tractor.devx.debug._tty_lock')
 
             # if debug mode get's enabled *at least* use that level of
             # logging for some informative console prompts.
@@ -469,7 +475,7 @@ async def open_root_actor(
                     # TODO, in beginning to handle the subsubactor with
                     # crashed grandparent cases..
                     #
-                    # was_locked: bool = await _debug.maybe_wait_for_debugger(
+                    # was_locked: bool = await debug.maybe_wait_for_debugger(
                     #     child_in_debug=True,
                     # )
                     # XXX NOTE XXX see equiv note inside
@@ -477,7 +483,7 @@ async def open_root_actor(
                     # non-root or root-that-opened-this-mahually case we
                     # wait for the local actor-nursery to exit before
                     # exiting the transport channel handler.
-                    entered: bool = await _debug._maybe_enter_pm(
+                    entered: bool = await debug._maybe_enter_pm(
                         err,
                         api_frame=inspect.currentframe(),
                         debug_filter=debug_filter,
@@ -517,8 +523,17 @@ async def open_root_actor(
                     )
                     await actor.cancel(None)  # self cancel
         finally:
+            # revert all process-global runtime state
+            if (
+                debug_mode
+                and
+                _spawn._spawn_method == 'trio'
+            ):
+                _state._runtime_vars['_debug_mode'] = False
+
             _state._current_actor = None
             _state._last_actor_terminated = actor
+
             logger.runtime(
                 f'Root actor terminated\n'
                 f')>\n'

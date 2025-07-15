@@ -10,10 +10,14 @@ TODO:
     - wonder if any of it'll work on OS X?
 
 """
+from __future__ import annotations
 from functools import partial
 import itertools
 import platform
 import time
+from typing import (
+    TYPE_CHECKING,
+)
 
 import pytest
 from pexpect.exceptions import (
@@ -33,6 +37,9 @@ from .conftest import (
     in_prompt_msg,
     assert_before,
 )
+
+if TYPE_CHECKING:
+    from ..conftest import PexpectSpawner
 
 # TODO: The next great debugger audit could be done by you!
 # - recurrent entry to breakpoint() from single actor *after* and an
@@ -528,7 +535,7 @@ def test_multi_daemon_subactors(
     # now the root actor won't clobber the bp_forever child
     # during it's first access to the debug lock, but will instead
     # wait for the lock to release, by the edge triggered
-    # ``devx._debug.Lock.no_remote_has_tty`` event before sending cancel messages
+    # ``devx.debug.Lock.no_remote_has_tty`` event before sending cancel messages
     # (via portals) to its underlings B)
 
     # at some point here there should have been some warning msg from
@@ -1061,6 +1068,88 @@ def test_shield_pause(
     )
     child.sendline('c')
     child.expect(EOF)
+
+
+@pytest.mark.parametrize(
+    'quit_early', [False, True]
+)
+def test_ctxep_pauses_n_maybe_ipc_breaks(
+    spawn: PexpectSpawner,
+    quit_early: bool,
+):
+    '''
+    Audit generator embedded `.pause()`es from within a `@context`
+    endpoint with a chan close at the end, requiring that ctl-c is
+    mashed and zombie reaper kills sub with no hangs.
+
+    '''
+    child = spawn('subactor_bp_in_ctx')
+    child.expect(PROMPT)
+
+    # 3 iters for the `gen()` pause-points
+    for i in range(3):
+        assert_before(
+            child,
+            [
+                _pause_msg,
+                "('bp_boi'",  # actor name
+                "<Task 'just_bp'",  # task name
+            ]
+        )
+        if (
+            i == 1
+            and
+            quit_early
+        ):
+            child.sendline('q')
+            child.expect(PROMPT)
+            assert_before(
+                child,
+                ["tractor._exceptions.RemoteActorError: remote task raised a 'BdbQuit'",
+                 "bdb.BdbQuit",
+                 "('bp_boi'",
+                ]
+            )
+            child.sendline('c')
+            child.expect(EOF)
+            assert_before(
+                child,
+                ["tractor._exceptions.RemoteActorError: remote task raised a 'BdbQuit'",
+                 "bdb.BdbQuit",
+                 "('bp_boi'",
+                ]
+            )
+            break  # end-of-test
+
+        child.sendline('c')
+        try:
+            child.expect(PROMPT)
+        except TIMEOUT:
+            # no prompt since we hang due to IPC chan purposely
+            # closed so verify we see error reporting as well as
+            # a failed crash-REPL request msg and can CTL-c our way
+            # out.
+            assert_before(
+                child,
+                ['peer IPC channel closed abruptly?',
+                 'another task closed this fd',
+                 'Debug lock request was CANCELLED?',
+                 "TransportClosed: 'MsgpackUDSStream' was already closed locally ?",]
+
+                # XXX races on whether these show/hit?
+                 # 'Failed to REPl via `_pause()` You called `tractor.pause()` from an already cancelled scope!',
+                 # 'AssertionError',
+            )
+            # OSc(ancel) the hanging tree
+            do_ctlc(
+                child=child,
+                expect_prompt=False,
+            )
+            child.expect(EOF)
+            assert_before(
+                child,
+                ['KeyboardInterrupt'],
+            )
 
 
 # TODO: better error for "non-ideal" usage from the root actor.

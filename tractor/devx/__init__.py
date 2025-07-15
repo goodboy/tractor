@@ -20,7 +20,7 @@ Runtime "developer experience" utils and addons to aid our
 and working with/on the actor runtime.
 
 """
-from ._debug import (
+from .debug import (
     maybe_wait_for_debugger as maybe_wait_for_debugger,
     acquire_debug_lock as acquire_debug_lock,
     breakpoint as breakpoint,

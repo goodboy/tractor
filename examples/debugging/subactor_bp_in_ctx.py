@@ -33,8 +33,11 @@ async def just_bp(
 
 
 async def main():
+
     async with tractor.open_nursery(
         debug_mode=True,
+        enable_transports=['uds'],
+        loglevel='devx',
     ) as n:
         p = await n.start_actor(
             'bp_boi',

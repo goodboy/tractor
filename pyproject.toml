@@ -63,6 +63,7 @@ dev = [
   "stackscope>=0.2.2,<0.3",
   # ^ requires this?
   "typing-extensions>=4.14.1",
+
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
   "xonsh>=0.19.2",

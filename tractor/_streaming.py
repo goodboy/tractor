@@ -426,8 +426,8 @@ class MsgStream(trio.abc.Channel):
             self._closed = re
 
         # if caught_eoc:
-        #     # from .devx import _debug
-        #     # await _debug.pause()
+        #     # from .devx import debug
+        #     # await debug.pause()
         #     with trio.CancelScope(shield=True):
         #         await rx_chan.aclose()
 

@@ -31,7 +31,7 @@ import warnings
 import trio
 
 
-from .devx._debug import maybe_wait_for_debugger
+from .devx.debug import maybe_wait_for_debugger
 from ._addr import (
     UnwrappedAddress,
     mk_uuid,

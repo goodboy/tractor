@@ -20,13 +20,18 @@ as it pertains to improving the grok-ability of our runtime!
 
 '''
 from __future__ import annotations
+from contextlib import (
+    _GeneratorContextManager,
+    _AsyncGeneratorContextManager,
+)
 from functools import partial
 import inspect
+import textwrap
 from types import (
     FrameType,
     FunctionType,
     MethodType,
-    # CodeType,
+    CodeType,
 )
 from typing import (
     Any,
@@ -34,12 +39,17 @@ from typing import (
     Type,
 )
 
+import pdbp
+from tractor.log import get_logger
+import trio
 from tractor.msg import (
     pretty_struct,
     NamespacePath,
 )
 import wrapt
 
+
+log = get_logger(__name__)
 
 # TODO: yeah, i don't love this and we should prolly just
 # write a decorator that actually keeps a stupid ref to the func
@@ -301,3 +311,70 @@ def api_frame(
 #     error_set: set[BaseException],
 # ) -> TracebackType:
 #     ...
+
+
+def hide_runtime_frames() -> dict[FunctionType, CodeType]:
+    '''
+    Hide call-stack frames for various std-lib and `trio`-API primitives
+    such that the tracebacks presented from our runtime are as minimized
+    as possible, particularly from inside a `PdbREPL`.
+
+    '''
+    # XXX HACKZONE XXX
+    #  hide exit stack frames on nurseries and cancel-scopes!
+    # |_ so avoid seeing it when the `pdbp` REPL is first engaged from
+    #    inside a `trio.open_nursery()` scope (with no line after it
+    #    in before the block end??).
+    #
+    # TODO: FINALLY got this workin originally with
+    #  `@pdbp.hideframe` around the `wrapper()` def embedded inside
+    #  `_ki_protection_decoratior()`.. which is in the module:
+    #  /home/goodboy/.virtualenvs/tractor311/lib/python3.11/site-packages/trio/_core/_ki.py
+    #
+    # -[ ] make an issue and patch for `trio` core? maybe linked
+    #    to the long outstanding `pdb` one below?
+    #   |_ it's funny that there's frame hiding throughout `._run.py`
+    #      but not where it matters on the below exit funcs..
+    #
+    # -[ ] provide a patchset for the lonstanding
+    #   |_ https://github.com/python-trio/trio/issues/1155
+    #
+    # -[ ] make a linked issue to ^ and propose allowing all the
+    #     `._core._run` code to have their `__tracebackhide__` value
+    #     configurable by a `RunVar` to allow getting scheduler frames
+    #     if desired through configuration?
+    #
+    # -[ ] maybe dig into the core `pdb` issue why the extra frame is shown
+    #      at all?
+    #
+    funcs: list[FunctionType] = [
+        trio._core._run.NurseryManager.__aexit__,
+        trio._core._run.CancelScope.__exit__,
+         _GeneratorContextManager.__exit__,
+         _AsyncGeneratorContextManager.__aexit__,
+         _AsyncGeneratorContextManager.__aenter__,
+         trio.Event.wait,
+    ]
+    func_list_str: str = textwrap.indent(
+        "\n".join(f.__qualname__ for f in funcs),
+        prefix=' |_ ',
+    )
+    log.devx(
+        'Hiding the following runtime frames by default:\n'
+        f'{func_list_str}\n'
+    )
+
+    codes: dict[FunctionType, CodeType] = {}
+    for ref in funcs:
+        # stash a pre-modified version of each ref's code-obj
+        # so it can be reverted later if needed.
+        codes[ref] = ref.__code__
+        pdbp.hideframe(ref)
+    #
+    # pdbp.hideframe(trio._core._run.NurseryManager.__aexit__)
+    # pdbp.hideframe(trio._core._run.CancelScope.__exit__)
+    # pdbp.hideframe(_GeneratorContextManager.__exit__)
+    # pdbp.hideframe(_AsyncGeneratorContextManager.__aexit__)
+    # pdbp.hideframe(_AsyncGeneratorContextManager.__aenter__)
+    # pdbp.hideframe(trio.Event.wait)
+    return codes
