@@ -294,7 +294,10 @@ async def maybe_open_context(
         )
         _Cache.users += 1
         lock.release()
-        yield False, yielded
+        yield (
+            False,  # cache_hit = "no"
+            yielded,
+        )
 
     else:
         _Cache.users += 1
@@ -308,7 +311,10 @@ async def maybe_open_context(
             # f'{ctx_key!r} -> {yielded!r}\n'
         )
         lock.release()
-        yield True, yielded
+        yield (
+            True,  # cache_hit = "yes"
+            yielded,
+        )
 
     finally:
         _Cache.users -= 1
