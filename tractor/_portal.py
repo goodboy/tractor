@@ -300,7 +300,7 @@ class Portal:
         )
 
         # XXX the one spot we set it?
-        self.channel._cancel_called: bool = True
+        chan._cancel_called: bool = True
         try:
             # send cancel cmd - might not get response
             # XXX: sure would be nice to make this work with
