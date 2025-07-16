@@ -100,6 +100,32 @@ class Lagged(trio.TooSlowError):
     '''
 
 
+def wrap_rx_for_eoc(
+    rx: AsyncReceiver,
+) -> AsyncReceiver:
+
+    match rx:
+        case trio.MemoryReceiveChannel():
+
+            # XXX, taken verbatim from .receive_nowait()
+            def is_eoc() -> bool:
+                if not rx._state.open_send_channels:
+                    return trio.EndOfChannel
+
+                return False
+
+            rx.is_eoc = is_eoc
+
+        case _:
+            # XXX, ensure we define a private field!
+            # case tractor.MsgStream:
+            assert (
+                getattr(rx, '_eoc', False) is not None
+            )
+
+    return rx
+
+
 class BroadcastState(Struct):
     '''
     Common state to all receivers of a broadcast.
@@ -186,10 +212,22 @@ class BroadcastReceiver(ReceiveChannel):
         state.subs[self.key] = -1
 
         # underlying for this receiver
-        self._rx = rx_chan
+        self._rx = wrap_rx_for_eoc(rx_chan)
         self._recv = receive_afunc or rx_chan.receive
         self._closed: bool = False
         self._raise_on_lag = raise_on_lag
+
+    @property
+    def state(self) -> BroadcastState:
+        '''
+        Read-only access to this receivers internal `._state`
+        instance ref.
+
+        If you just want to read the high-level state metrics,
+        use `.state.statistics()`.
+
+        '''
+        return self._state
 
     def receive_nowait(
         self,
@@ -215,7 +253,23 @@ class BroadcastReceiver(ReceiveChannel):
         try:
             seq = state.subs[key]
         except KeyError:
+            # from tractor import pause_from_sync
+            # pause_from_sync(shield=True)
+            if (
+                (rx_eoc := self._rx.is_eoc())
+                or
+                self.state.eoc
+            ):
+                raise trio.EndOfChannel(
+                    'Broadcast-Rx underlying already ended!'
+                ) from rx_eoc
+
             if self._closed:
+                # if (rx_eoc := self._rx._eoc):
+                #     raise trio.EndOfChannel(
+                #         'Broadcast-Rx underlying already ended!'
+                #     ) from rx_eoc
+
                 raise trio.ClosedResourceError
 
             raise RuntimeError(
@@ -453,8 +507,9 @@ class BroadcastReceiver(ReceiveChannel):
         self._closed = True
 
 
+# NOTE, this can we use as an `@acm` since `BroadcastReceiver`
+# derives from `ReceiveChannel`.
 def broadcast_receiver(
-
     recv_chan: AsyncReceiver,
     max_buffer_size: int,
     receive_afunc: Callable[[], Awaitable[Any]]|None = None,
