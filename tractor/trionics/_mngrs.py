@@ -154,7 +154,7 @@ async def gather_contexts(
     async with (
         # collapse_eg(),
         trio.open_nursery(
-            # strict_exception_groups=False,
+            strict_exception_groups=False,
             # ^XXX^ TODO? soo roll our own then ??
             # -> since we kinda want the "if only one `.exception` then
             # just raise that" interface?

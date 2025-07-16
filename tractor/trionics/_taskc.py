@@ -60,8 +60,8 @@ def find_masked_excs(
     return None
 
 
-# XXX, relevant ish discussion @ `trio`-core,
-# https://github.com/python-trio/trio/issues/455#issuecomment-2785122216
+# XXX, relevant discussion @ `trio`-core,
+# https://github.com/python-trio/trio/issues/455
 #
 @acm
 async def maybe_raise_from_masking_exc(
@@ -112,7 +112,6 @@ async def maybe_raise_from_masking_exc(
         raise_on_exit=raise_unmasked,
     )
     matching: list[BaseException]|None = None
-    maybe_eg: ExceptionGroup|None
     maybe_eg: ExceptionGroup|None
 
     if tn:
