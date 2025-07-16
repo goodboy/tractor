@@ -102,6 +102,9 @@ class MsgStream(trio.abc.Channel):
         self._eoc: bool|trio.EndOfChannel = False
         self._closed: bool|trio.ClosedResourceError = False
 
+    def is_eoc(self) -> bool|trio.EndOfChannel:
+        return self._eoc
+
     @property
     def ctx(self) -> Context:
         '''
@@ -188,7 +191,14 @@ class MsgStream(trio.abc.Channel):
 
         return pld
 
-    async def receive(
+    # XXX NOTE, this is left private because in `.subscribe()` usage
+    # we rebind the public `.recieve()` to a `BroadcastReceiver` but
+    # on `.subscribe().__aexit__()`, for the first task which enters,
+    # we want to revert to this msg-stream-instance's method since
+    # mult-task-tracking provided by the b-caster is then no longer
+    # necessary.
+    #
+    async def _receive(
         self,
         hide_tb: bool = False,
     ):
@@ -312,6 +322,8 @@ class MsgStream(trio.abc.Channel):
                 __tracebackhide__: bool = False
 
             raise src_err
+
+    receive = _receive
 
     async def aclose(self) -> list[Exception|dict]:
         '''
@@ -528,10 +540,15 @@ class MsgStream(trio.abc.Channel):
         receiver wrapper.
 
         '''
-        # NOTE: This operation is indempotent and non-reversible, so be
-        # sure you can deal with any (theoretical) overhead of the the
-        # allocated ``BroadcastReceiver`` before calling this method for
-        # the first time.
+        # XXX NOTE, This operation was originally implemented as
+        # indempotent and non-reversible, so you had to be **VERY**
+        # aware of any (theoretical) overhead from the allocated
+        # `BroadcastReceiver.receive()`.
+        #
+        # HOWEVER, NOw we do revert and de-alloc the ._broadcaster
+        # when the final caller (task) exits.
+        #
+        bcast: BroadcastReceiver|None = None
         if self._broadcaster is None:
 
             bcast = self._broadcaster = broadcast_receiver(
@@ -541,29 +558,60 @@ class MsgStream(trio.abc.Channel):
 
                 # TODO: can remove this kwarg right since
                 # by default behaviour is to do this anyway?
-                receive_afunc=self.receive,
+                receive_afunc=self._receive,
             )
 
-            # NOTE: we override the original stream instance's receive
-            # method to now delegate to the broadcaster's ``.receive()``
-            # such that new subscribers will be copied received values
-            # and this stream doesn't have to expect it's original
-            # consumer(s) to get a new broadcast rx handle.
+            # XXX NOTE, we override the original stream instance's
+            # receive method to instead delegate to the broadcaster's
+            # `.receive()` such that new subscribers (multiple
+            # `trio.Task`s) will be copied received values and the
+            # *first* task to enter here doesn't have to expect its original consumer(s)
+            # to get a new broadcast rx handle; everything happens
+            # underneath this iface seemlessly.
+            #
             self.receive = bcast.receive  # type: ignore
-            # seems there's no graceful way to type this with ``mypy``?
+            # seems there's no graceful way to type this with `mypy`?
             # https://github.com/python/mypy/issues/708
 
-        async with self._broadcaster.subscribe() as bstream:
-            assert bstream.key != self._broadcaster.key
-            assert bstream._recv == self._broadcaster._recv
+        # TODO, prevent re-entrant sub scope?
+        # if self._broadcaster._closed:
+        #     raise RuntimeError(
+        #         'This stream
 
-            # NOTE: we patch on a `.send()` to the bcaster so that the
-            # caller can still conduct 2-way streaming using this
-            # ``bstream`` handle transparently as though it was the msg
-            # stream instance.
-            bstream.send = self.send  # type: ignore
+        try:
+            aenter = self._broadcaster.subscribe()
+            async with aenter as bstream:
+                # ?TODO, move into test suite?
+                assert bstream.key != self._broadcaster.key
+                assert bstream._recv == self._broadcaster._recv
 
-            yield bstream
+                # NOTE: we patch on a `.send()` to the bcaster so that the
+                # caller can still conduct 2-way streaming using this
+                # ``bstream`` handle transparently as though it was the msg
+                # stream instance.
+                bstream.send = self.send  # type: ignore
+
+                # newly-allocated instance
+                yield bstream
+
+        finally:
+            # XXX, the first-enterer task should, like all other
+            # subs, close the first allocated bcrx, which adjusts the
+            # common `bcrx.state`
+            with trio.CancelScope(shield=True):
+                if bcast is not None:
+                    await bcast.aclose()
+
+                # XXX, when the bcrx.state reports there are no more subs
+                # we can revert to this obj's method, removing any
+                # delegation overhead!
+                if (
+                    (orig_bcast := self._broadcaster)
+                    and
+                    not orig_bcast.state.subs
+                ):
+                    self.receive = self._receive
+                    # self._broadcaster = None
 
     async def send(
         self,

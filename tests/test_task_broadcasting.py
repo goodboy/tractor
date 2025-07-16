@@ -67,7 +67,6 @@ async def ensure_sequence(
 
 @acm
 async def open_sequence_streamer(
-
     sequence: list[int],
     reg_addr: tuple[str, int],
     start_method: str,
@@ -96,39 +95,43 @@ async def open_sequence_streamer(
 
 
 def test_stream_fan_out_to_local_subscriptions(
-    reg_addr,
+    debug_mode: bool,
+    reg_addr: tuple,
     start_method,
 ):
 
     sequence = list(range(1000))
 
     async def main():
+        with trio.fail_after(9):
+            async with open_sequence_streamer(
+                sequence,
+                reg_addr,
+                start_method,
+            ) as stream:
 
-        async with open_sequence_streamer(
-            sequence,
-            reg_addr,
-            start_method,
-        ) as stream:
+                async with (
+                    collapse_eg(),
+                    trio.open_nursery() as tn,
+                ):
+                    for i in range(10):
+                        tn.start_soon(
+                            ensure_sequence,
+                            stream,
+                            sequence.copy(),
+                            name=f'consumer_{i}',
+                        )
 
-            async with trio.open_nursery() as n:
-                for i in range(10):
-                    n.start_soon(
-                        ensure_sequence,
-                        stream,
-                        sequence.copy(),
-                        name=f'consumer_{i}',
-                    )
+                    await stream.send(tuple(sequence))
 
-                await stream.send(tuple(sequence))
+                    async for value in stream:
+                        print(f'source stream rx: {value}')
+                        assert value == sequence[0]
+                        sequence.remove(value)
 
-                async for value in stream:
-                    print(f'source stream rx: {value}')
-                    assert value == sequence[0]
-                    sequence.remove(value)
-
-                    if not sequence:
-                        # fully consumed
-                        break
+                        if not sequence:
+                            # fully consumed
+                            break
 
     trio.run(main)
 
@@ -151,67 +154,69 @@ def test_consumer_and_parent_maybe_lag(
         sequence = list(range(300))
         parent_delay, sub_delay = task_delays
 
-        async with open_sequence_streamer(
-            sequence,
-            reg_addr,
-            start_method,
-        ) as stream:
+        # TODO, maybe mak a cm-deco for main()s?
+        with trio.fail_after(3):
+            async with open_sequence_streamer(
+                sequence,
+                reg_addr,
+                start_method,
+            ) as stream:
 
-            try:
-                async with (
-                    collapse_eg(),
-                    trio.open_nursery() as tn,
-                ):
+                try:
+                    async with (
+                        collapse_eg(),
+                        trio.open_nursery() as tn,
+                    ):
 
-                    tn.start_soon(
-                        ensure_sequence,
-                        stream,
-                        sequence.copy(),
-                        sub_delay,
-                        name='consumer_task',
-                    )
+                        tn.start_soon(
+                            ensure_sequence,
+                            stream,
+                            sequence.copy(),
+                            sub_delay,
+                            name='consumer_task',
+                        )
 
-                    await stream.send(tuple(sequence))
+                        await stream.send(tuple(sequence))
 
-                    # async for value in stream:
-                    lagged = False
-                    lag_count = 0
+                        # async for value in stream:
+                        lagged = False
+                        lag_count = 0
 
-                    while True:
-                        try:
-                            value = await stream.receive()
-                            print(f'source stream rx: {value}')
+                        while True:
+                            try:
+                                value = await stream.receive()
+                                print(f'source stream rx: {value}')
 
-                            if lagged:
-                                # re set the sequence starting at our last
-                                # value
-                                sequence = sequence[sequence.index(value) + 1:]
-                            else:
-                                assert value == sequence[0]
-                                sequence.remove(value)
+                                if lagged:
+                                    # re set the sequence starting at our last
+                                    # value
+                                    sequence = sequence[sequence.index(value) + 1:]
+                                else:
+                                    assert value == sequence[0]
+                                    sequence.remove(value)
 
-                            lagged = False
+                                lagged = False
 
-                        except Lagged:
-                            lagged = True
-                            print(f'source stream lagged after {value}')
-                            lag_count += 1
-                            continue
+                            except Lagged:
+                                lagged = True
+                                print(f'source stream lagged after {value}')
+                                lag_count += 1
+                                continue
 
-                        # lag the parent
-                        await trio.sleep(parent_delay)
+                            # lag the parent
+                            await trio.sleep(parent_delay)
 
-                        if not sequence:
-                            # fully consumed
-                            break
-                    print(f'parent + source stream lagged: {lag_count}')
+                            if not sequence:
+                                # fully consumed
+                                break
+                        print(f'parent + source stream lagged: {lag_count}')
 
-                    if parent_delay > sub_delay:
-                        assert lag_count > 0
+                        if parent_delay > sub_delay:
+                            assert lag_count > 0
 
-            except Lagged:
-                # child was lagged
-                assert parent_delay < sub_delay
+                except Lagged:
+                    # child was lagged
+                    assert parent_delay < sub_delay
 
     trio.run(main)
 
@@ -285,13 +290,19 @@ def test_faster_task_to_recv_is_cancelled_by_slower(
 
 
 def test_subscribe_errors_after_close():
+    '''
+    Verify after calling `BroadcastReceiver.aclose()` you can't
+    "re-open" it via `.subscribe()`.
 
+    '''
     async def main():
 
         size = 1
         tx, rx = trio.open_memory_channel(size)
         async with broadcast_receiver(rx, size) as brx:
             pass
+
+        assert brx.key not in brx._state.subs
 
         try:
             # open and close
@@ -302,7 +313,7 @@ def test_subscribe_errors_after_close():
             assert brx.key not in brx._state.subs
 
         else:
-            assert 0
+            pytest.fail('brx.subscribe() never raised!?')
 
     trio.run(main)
 
