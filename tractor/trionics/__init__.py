@@ -32,4 +32,8 @@ from ._broadcast import (
 from ._beg import (
     collapse_eg as collapse_eg,
     maybe_collapse_eg as maybe_collapse_eg,
+    is_multi_cancelled as is_multi_cancelled,
+)
+from ._taskc import (
+    maybe_raise_from_masking_exc as maybe_raise_from_masking_exc,
 )

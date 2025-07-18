@@ -37,6 +37,7 @@ import warnings
 
 import trio
 from trio import (
+    Cancelled,
     CancelScope,
     Nursery,
     TaskStatus,
@@ -52,9 +53,13 @@ from ._exceptions import (
     ModuleNotExposed,
     MsgTypeError,
     TransportClosed,
-    is_multi_cancelled,
     pack_error,
     unpack_error,
+)
+from .trionics import (
+    collapse_eg,
+    is_multi_cancelled,
+    maybe_raise_from_masking_exc,
 )
 from .devx import (
     debug,
@@ -250,7 +255,7 @@ async def _errors_relayed_via_ipc(
     ctx: Context,
     is_rpc: bool,
 
-    hide_tb: bool = False,
+    hide_tb: bool = True,
     debug_kbis: bool = False,
     task_status: TaskStatus[
         Context | BaseException
@@ -375,9 +380,9 @@ async def _errors_relayed_via_ipc(
     # they can be individually ccancelled.
     finally:
 
-        # if the error is not from user code and instead a failure
-        # of a runtime RPC or transport failure we do prolly want to
-        # show this frame
+        # if the error is not from user code and instead a failure of
+        # an internal-runtime-RPC or IPC-connection, we do (prolly) want
+        # to show this frame!
         if (
             rpc_err
             and (
@@ -616,32 +621,40 @@ async def _invoke(
         #  -> the below scope is never exposed to the
         #     `@context` marked RPC function.
         # - `._portal` is never set.
+        scope_err: BaseException|None = None
         try:
-            tn: trio.Nursery
+            # TODO: better `trionics` primitive/tooling usage here!
+            # -[ ] should would be nice to have our `TaskMngr`
+            #   nursery here!
+            # -[ ] payload value checking like we do with
+            #   `.started()` such that the debbuger can engage
+            #   here in the child task instead of waiting for the
+            #   parent to crash with it's own MTE..
+            #
+            tn: Nursery
             rpc_ctx_cs: CancelScope
             async with (
-                trio.open_nursery(
-                    strict_exception_groups=False,
-                    # ^XXX^ TODO? instead unpack any RAE as per "loose" style?
-
-                ) as tn,
+                collapse_eg(),
+                trio.open_nursery() as tn,
                 msgops.maybe_limit_plds(
                     ctx=ctx,
                     spec=ctx_meta.get('pld_spec'),
                     dec_hook=ctx_meta.get('dec_hook'),
                 ),
+
+                # XXX NOTE, this being the "most embedded"
+                # scope ensures unasking of the `await coro` below
+                # *should* never be interfered with!!
+                maybe_raise_from_masking_exc(
+                    tn=tn,
+                    unmask_from=Cancelled,
+                ) as _mbme,  # maybe boxed masked exc
             ):
                 ctx._scope_nursery = tn
                 rpc_ctx_cs = ctx._scope = tn.cancel_scope
                 task_status.started(ctx)
 
-                # TODO: better `trionics` tooling:
-                # -[ ] should would be nice to have our `TaskMngr`
-                #   nursery here!
-                # -[ ] payload value checking like we do with
-                #   `.started()` such that the debbuger can engage
-                #   here in the child task instead of waiting for the
-                #   parent to crash with it's own MTE..
+                # invoke user endpoint fn.
                 res: Any|PayloadT = await coro
                 return_msg: Return|CancelAck = return_msg_type(
                     cid=cid,
@@ -744,38 +757,48 @@ async def _invoke(
             BaseException,
             trio.Cancelled,
 
-        ) as scope_error:
+        ) as _scope_err:
+            scope_err = _scope_err
             if (
-                isinstance(scope_error, RuntimeError)
-                and scope_error.args
-                and 'Cancel scope stack corrupted' in scope_error.args[0]
+                isinstance(scope_err, RuntimeError)
+                and
+                scope_err.args
+                and
+                'Cancel scope stack corrupted' in scope_err.args[0]
             ):
                 log.exception('Cancel scope stack corrupted!?\n')
                 # debug.mk_pdb().set_trace()
 
             # always set this (child) side's exception as the
             # local error on the context
-            ctx._local_error: BaseException = scope_error
+            ctx._local_error: BaseException = scope_err
             # ^-TODO-^ question,
             # does this matter other then for
             # consistentcy/testing?
             # |_ no user code should be in this scope at this point
             #    AND we already set this in the block below?
 
-            # if a remote error was set then likely the
-            # exception group was raised due to that, so
+            # XXX if a remote error was set then likely the
+            # exc group was raised due to that, so
             # and we instead raise that error immediately!
-            ctx.maybe_raise()
+            maybe_re: (
+                ContextCancelled|RemoteActorError
+            ) = ctx.maybe_raise()
+            if maybe_re:
+                log.cancel(
+                    f'Suppressing remote-exc from peer,\n'
+                    f'{maybe_re!r}\n'
+                )
 
             # maybe TODO: pack in come kinda
             # `trio.Cancelled.__traceback__` here so they can be
             # unwrapped and displayed on the caller side? no se..
-            raise
+            raise scope_err
 
         # `@context` entrypoint task bookeeping.
         # i.e. only pop the context tracking if used ;)
         finally:
-            assert chan.uid
+            assert chan.aid
 
             # don't pop the local context until we know the
             # associated child isn't in debug any more
@@ -802,6 +825,9 @@ async def _invoke(
                     descr_str += (
                         f'\n{merr!r}\n'  # needed?
                         f'{tb_str}\n'
+                        f'\n'
+                        f'scope_error:\n'
+                        f'{scope_err!r}\n'
                     )
                 else:
                     descr_str += f'\n{merr!r}\n'

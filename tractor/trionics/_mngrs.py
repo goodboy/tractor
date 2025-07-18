@@ -40,6 +40,8 @@ from typing import (
 import trio
 from tractor._state import current_actor
 from tractor.log import get_logger
+# from ._beg import collapse_eg
+
 
 if TYPE_CHECKING:
     from tractor import ActorNursery
@@ -112,17 +114,19 @@ async def gather_contexts(
     None,
 ]:
     '''
-    Concurrently enter a sequence of async context managers (acms),
-    each from a separate `trio` task and deliver the unwrapped
-    `yield`-ed values in the same order once all managers have entered.
+    Concurrently enter a sequence of async context managers (`acm`s),
+    each scheduled in a separate `trio.Task` and deliver their
+    unwrapped `yield`-ed values in the same order once all `@acm`s
+    in every task have entered.
 
-    On exit, all acms are subsequently and concurrently exited.
+    On exit, all `acm`s are subsequently and concurrently exited with
+    **no order guarantees**.
 
     This function is somewhat similar to a batch of non-blocking
     calls to `contextlib.AsyncExitStack.enter_async_context()`
     (inside a loop) *in combo with* a `asyncio.gather()` to get the
     `.__aenter__()`-ed values, except the managers are both
-    concurrently entered and exited and *cancellation just works*(R).
+    concurrently entered and exited and *cancellation-just-works™*.
 
     '''
     seed: int = id(mngrs)
@@ -142,16 +146,20 @@ async def gather_contexts(
     if not mngrs:
         raise ValueError(
             '`.trionics.gather_contexts()` input mngrs is empty?\n'
+            '\n'
             'Did try to use inline generator syntax?\n'
-            'Use a non-lazy iterator or sequence type intead!'
+            'Use a non-lazy iterator or sequence-type intead!\n'
         )
 
-    async with trio.open_nursery(
-        strict_exception_groups=False,
-        # ^XXX^ TODO? soo roll our own then ??
-        # -> since we kinda want the "if only one `.exception` then
-        # just raise that" interface?
-    ) as tn:
+    async with (
+        # collapse_eg(),
+        trio.open_nursery(
+            strict_exception_groups=False,
+            # ^XXX^ TODO? soo roll our own then ??
+            # -> since we kinda want the "if only one `.exception` then
+            # just raise that" interface?
+        ) as tn,
+    ):
         for mngr in mngrs:
             tn.start_soon(
                 _enter_and_wait,
@@ -168,7 +176,7 @@ async def gather_contexts(
         try:
             yield tuple(unwrapped.values())
         finally:
-            # NOTE: this is ABSOLUTELY REQUIRED to avoid
+            # XXX NOTE: this is ABSOLUTELY REQUIRED to avoid
             # the following wacky bug:
             # <tractorbugurlhere>
             parent_exit.set()
