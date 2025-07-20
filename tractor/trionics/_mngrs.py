@@ -280,20 +280,44 @@ async def maybe_open_context(
         yielded = _Cache.values[ctx_key]
 
     except KeyError:
-        log.debug(f'Allocating new {acm_func} for {ctx_key}')
+        log.debug(
+            f'Allocating new @acm-func entry\n'
+            f'ctx_key={ctx_key}\n'
+            f'acm_func={acm_func}\n'
+        )
         mngr = acm_func(**kwargs)
         resources = _Cache.resources
         assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
         resources[ctx_key] = (service_n, trio.Event())
 
         # sync up to the mngr's yielded value
-        yielded = await service_n.start(
-            _Cache.run_ctx,
-            mngr,
-            ctx_key,
-        )
-        _Cache.users += 1
-        lock.release()
+        try:
+            yielded: Any = await service_n.start(
+                _Cache.run_ctx,
+                mngr,
+                ctx_key,
+            )
+            _Cache.users += 1
+        except trio.Cancelled as taskc:
+            log.cancel(
+                f'Cancelled during caching?\n'
+                f'\n'
+                f'ctx_key: {ctx_key!r}\n'
+                f'mngr: {mngr!r}\n'
+            )
+            raise taskc
+        finally:
+            # XXX, since this runs from an `except` it's a checkpoint
+            # whih can be `trio.Cancelled`-masked.
+            #
+            # NOTE, in that case the mutex is never released by the
+            # (first and) caching task and **we can't** simply shield
+            # bc that will inf-block on the `await
+            # no_more_users.wait()`.
+            #
+            # SO just always unlock!
+            lock.release()
+
         yield (
             False,  # cache_hit = "no"
             yielded,
@@ -301,7 +325,7 @@ async def maybe_open_context(
 
     else:
         _Cache.users += 1
-        log.runtime(
+        log.debug(
             f'Re-using cached resource for user {_Cache.users}\n\n'
             f'{ctx_key!r} -> {type(yielded)}\n'
 
