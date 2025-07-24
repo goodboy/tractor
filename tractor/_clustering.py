@@ -62,7 +62,7 @@ async def open_actor_cluster(
         ) as an
     ):
         async with (
-            tractor.trionics.collapse_eg(),
+            # tractor.trionics.collapse_eg(),
             trio.open_nursery() as tn,
             tractor.trionics.maybe_raise_from_masking_exc()
         ):
