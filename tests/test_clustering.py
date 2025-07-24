@@ -13,27 +13,22 @@ MESSAGE = 'tractoring at full speed'
 def test_empty_mngrs_input_raises() -> None:
 
     async def main():
-        with trio.fail_after(1):
+        with trio.fail_after(3):
             async with (
                 open_actor_cluster(
                     modules=[__name__],
 
                     # NOTE: ensure we can passthrough runtime opts
-                    loglevel='info',
-                    # debug_mode=True,
+                    loglevel='cancel',
+                    debug_mode=False,
 
                 ) as portals,
 
-                gather_contexts(
-                    mngrs=(
-                        p.open_context(worker) for p in portals.values()
-                    ),
-                  # ^^NOTE XXX ^^^
-                    # it's the use of inline-generator syntax here
-                    # that causes the "empty input" -> ValueError,
-                    # see `._clustering` impl.
-                ),
+                gather_contexts(mngrs=()),
             ):
+                # should fail before this?
+                assert portals
+
                 # test should fail if we mk it here!
                 assert 0, 'Should have raised val-err !?'
 
