@@ -119,9 +119,8 @@ def test_acm_embedded_nursery_propagates_enter_err(
             tractor.trionics.maybe_raise_from_masking_exc(
                 tn=tn,
                 unmask_from=(
-                    trio.Cancelled
-                    if unmask_from_canc
-                    else None
+                    (trio.Cancelled,) if unmask_from_canc
+                    else ()
                 ),
             )
         ):
@@ -136,8 +135,7 @@ def test_acm_embedded_nursery_propagates_enter_err(
         with tractor.devx.maybe_open_crash_handler(
             pdb=debug_mode,
         ) as bxerr:
-            if bxerr:
-                assert not bxerr.value
+            assert not bxerr.value
 
             async with (
                 wraps_tn_that_always_cancels() as tn,
@@ -145,11 +143,12 @@ def test_acm_embedded_nursery_propagates_enter_err(
                 assert not tn.cancel_scope.cancel_called
                 assert 0
 
-        assert (
-            (err := bxerr.value)
-            and
-            type(err) is AssertionError
-        )
+        if debug_mode:
+            assert (
+                (err := bxerr.value)
+                and
+                type(err) is AssertionError
+            )
 
     with pytest.raises(ExceptionGroup) as excinfo:
         trio.run(_main)
