@@ -2265,7 +2265,7 @@ async def open_context_from_portal(
         # await debug.pause()
         # log.cancel(
         match scope_err:
-            case trio.Cancelled:
+            case trio.Cancelled():
                 logmeth = log.cancel
 
             # XXX explicitly report on any non-graceful-taskc cases
