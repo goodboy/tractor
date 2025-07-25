@@ -117,7 +117,6 @@ def test_acm_embedded_nursery_propagates_enter_err(
         async with (
             trio.open_nursery() as tn,
             tractor.trionics.maybe_raise_from_masking_exc(
-                tn=tn,
                 unmask_from=(
                     (trio.Cancelled,) if unmask_from_canc
                     else ()

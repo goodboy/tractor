@@ -65,7 +65,6 @@ def find_masked_excs(
 #
 @acm
 async def maybe_raise_from_masking_exc(
-    tn: trio.Nursery|None = None,
     unmask_from: (
         BaseException|
         tuple[BaseException]
