@@ -185,7 +185,9 @@ class Channel:
             addr,
             **kwargs,
         )
-        assert transport.raddr == addr
+        # XXX, for UDS *no!* since we recv the peer-pid and build out
+        # a new addr..
+        # assert transport.raddr == addr
         chan = Channel(transport=transport)
 
         # ?TODO, compact this into adapter level-methods?
@@ -301,7 +303,7 @@ class Channel:
         self,
         payload: Any,
 
-        hide_tb: bool = True,
+        hide_tb: bool = False,
 
     ) -> None:
         '''
