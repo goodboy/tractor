@@ -15,8 +15,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-`BaseExceptionGroup` related utils and helpers pertaining to
-first-class-`trio` from a historical perspective B)
+`BaseExceptionGroup` utils and helpers pertaining to
+first-class-`trio` from a "historical" perspective, like "loose
+exception group" task-nurseries.
 
 '''
 from contextlib import (
@@ -24,28 +25,83 @@ from contextlib import (
 )
 from typing import (
     Literal,
+    Type,
 )
 
 import trio
+# from trio._core._concat_tb import (
+#     concat_tb,
+# )
 
 
-def maybe_collapse_eg(
+# XXX NOTE
+# taken verbatim from `trio._core._run` except,
+# - remove the NONSTRICT_EXCEPTIONGROUP_NOTE deprecation-note
+#   guard-check; we know we want an explicit collapse.
+# - mask out tb rewriting in collapse case, i don't think it really
+#   matters?
+#
+def collapse_exception_group(
+    excgroup: BaseExceptionGroup[BaseException],
+) -> BaseException:
+    """Recursively collapse any single-exception groups into that single contained
+    exception.
+
+    """
+    exceptions = list(excgroup.exceptions)
+    modified = False
+    for i, exc in enumerate(exceptions):
+        if isinstance(exc, BaseExceptionGroup):
+            new_exc = collapse_exception_group(exc)
+            if new_exc is not exc:
+                modified = True
+                exceptions[i] = new_exc
+
+    if (
+        len(exceptions) == 1
+        and isinstance(excgroup, BaseExceptionGroup)
+
+        # XXX trio's loose-setting condition..
+        # and NONSTRICT_EXCEPTIONGROUP_NOTE in getattr(excgroup, "__notes__", ())
+    ):
+        # exceptions[0].__traceback__ = concat_tb(
+        #     excgroup.__traceback__,
+        #     exceptions[0].__traceback__,
+        # )
+        return exceptions[0]
+    elif modified:
+        return excgroup.derive(exceptions)
+    else:
+        return excgroup
+
+
+def get_collapsed_eg(
     beg: BaseExceptionGroup,
-) -> BaseException|bool:
+
+    bp: bool = False,
+) -> BaseException|None:
     '''
-    If the input beg can collapse to a single non-eg sub-exception,
-    return it instead.
+    If the input beg can collapse to a single sub-exception which is
+    itself **not** an eg, return it.
 
     '''
-    if len(excs := beg.exceptions) == 1:
-        return excs[0]
+    maybe_exc = collapse_exception_group(beg)
+    if maybe_exc is beg:
+        return None
 
-    return False
+    return maybe_exc
+
 
 
 @acm
 async def collapse_eg(
     hide_tb: bool = True,
+
+    ignore: set[Type[BaseException]] = {
+        # trio.Cancelled,
+    },
+    add_notes: bool = True,
+    bp: bool = False,
 ):
     '''
     If `BaseExceptionGroup` raised in the body scope is
@@ -57,16 +113,64 @@ async def collapse_eg(
     __tracebackhide__: bool = hide_tb
     try:
         yield
-    except* BaseException as beg:
+    except BaseExceptionGroup as _beg:
+        beg = _beg
+
+    # TODO, remove this rant..
+    #
+    # except* BaseException as beg:
+    # ^XXX WOW.. good job cpython. ^
+    # like, never ever EVER use this!! XD
+    #
+    # turns out rasing from an `except*`-block has the opposite
+    # behaviour of normal `except` and further can *never* be used to
+    # get the equiv of,
+    # `trio.open_nursery(strict_exception_groups=False)`
+    #
+    # ------ docs ------
+    # https://docs.python.org/3/reference/compound_stmts.html#except-star
+    #
+    # > Any remaining exceptions that were not handled by any
+    # > except* clause are re-raised at the end, along with all
+    # > exceptions that were raised from within the except*
+    # > clauses. If this list contains more than one exception to
+    # > reraise, they are combined into an exception group.
+        if bp:
+            from tractor.devx import pause
+            await pause(shield=True)
+
         if (
-            exc := maybe_collapse_eg(beg)
+            (exc := get_collapsed_eg(beg))
+            and
+            type(exc) not in ignore
         ):
-            if cause := exc.__cause__:
-                raise exc from cause
+
+            # TODO? report number of nested groups it was collapsed
+            # *from*?
+            if add_notes:
+                from_group_note: str = (
+                    '( ^^^ this exc was collapsed from a group ^^^ )\n'
+                )
+                if (
+                    from_group_note
+                    not in
+                    getattr(exc, "__notes__", ())
+                ):
+                    exc.add_note(from_group_note)
 
             raise exc
 
-        raise beg
+            # ?TODO? not needed right?
+            # if cause := exc.__cause__:
+            #     raise exc# from cause
+            # else:
+            #     # raise exc from beg
+            #     # suppress "during handling of <the beg>"
+            #     # output in tb/console.
+            #     raise exc from None
+
+        # keep original
+        raise # beg
 
 
 def is_multi_cancelled(
