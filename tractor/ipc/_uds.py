@@ -103,8 +103,6 @@ class UDSAddress(
             self.filedir
             or
             self.def_bindspace
-            # or
-            # get_rt_dir()
         )
 
     @property
@@ -230,7 +228,14 @@ async def start_listener(
     addr: UDSAddress,
     **kwargs,
 ) -> SocketListener:
-    # sock = addr._sock = socket.socket(
+    '''
+    Start listening for inbound connections via
+    a `trio.SocketListener` (task) which `socket.bind()`s on `addr`.
+
+    Note, if the `UDSAddress.bindspace: Path` directory dne it is
+    implicitly created.
+
+    '''
     sock = socket.socket(
         socket.AF_UNIX,
         socket.SOCK_STREAM
@@ -241,7 +246,17 @@ async def start_listener(
         f'|_{addr}\n'
     )
 
+    # ?TODO? should we use the `actor.lifetime_stack`
+    # to rm on shutdown?
     bindpath: Path = addr.sockpath
+    if not (bs := addr.bindspace).is_dir():
+        log.info(
+            'Creating bindspace dir in file-sys\n'
+            f'>{{\n'
+            f'|_{bs!r}\n'
+        )
+        bs.mkdir()
+
     with _reraise_as_connerr(
         src_excs=(
             FileNotFoundError,
