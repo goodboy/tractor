@@ -97,11 +97,11 @@ def get_collapsed_eg(
 async def collapse_eg(
     hide_tb: bool = True,
 
+    # XXX, for ex. will always show begs containing single taskc
     ignore: set[Type[BaseException]] = {
         # trio.Cancelled,
     },
     add_notes: bool = True,
-    bp: bool = False,
 ):
     '''
     If `BaseExceptionGroup` raised in the body scope is
@@ -115,30 +115,6 @@ async def collapse_eg(
         yield
     except BaseExceptionGroup as _beg:
         beg = _beg
-
-    # TODO, remove this rant..
-    #
-    # except* BaseException as beg:
-    # ^XXX WOW.. good job cpython. ^
-    # like, never ever EVER use this!! XD
-    #
-    # turns out rasing from an `except*`-block has the opposite
-    # behaviour of normal `except` and further can *never* be used to
-    # get the equiv of,
-    # `trio.open_nursery(strict_exception_groups=False)`
-    #
-    # ------ docs ------
-    # https://docs.python.org/3/reference/compound_stmts.html#except-star
-    #
-    # > Any remaining exceptions that were not handled by any
-    # > except* clause are re-raised at the end, along with all
-    # > exceptions that were raised from within the except*
-    # > clauses. If this list contains more than one exception to
-    # > reraise, they are combined into an exception group.
-        if bp:
-            from tractor.devx import pause
-            await pause(shield=True)
-
         if (
             (exc := get_collapsed_eg(beg))
             and
@@ -158,16 +134,17 @@ async def collapse_eg(
                 ):
                     exc.add_note(from_group_note)
 
-            raise exc
-
-            # ?TODO? not needed right?
-            # if cause := exc.__cause__:
-            #     raise exc# from cause
-            # else:
-            #     # raise exc from beg
-            #     # suppress "during handling of <the beg>"
-            #     # output in tb/console.
-            #     raise exc from None
+            # raise exc
+            # ^^ this will leave the orig beg tb above with the
+            # "during the handling of <beg> the following.."
+            # So, instead do..
+            #
+            if cause := exc.__cause__:
+                raise exc from cause
+            else:
+                # suppress "during handling of <the beg>"
+                # output in tb/console.
+                raise exc from None
 
         # keep original
         raise # beg
