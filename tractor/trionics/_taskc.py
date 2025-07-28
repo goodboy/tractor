@@ -22,7 +22,10 @@ from __future__ import annotations
 from contextlib import (
     asynccontextmanager as acm,
 )
-from typing import TYPE_CHECKING
+from typing import (
+    Type,
+    TYPE_CHECKING,
+)
 
 import trio
 from tractor.log import get_logger
@@ -80,9 +83,19 @@ async def maybe_raise_from_masking_exc(
         # ^TODO? other cases?
     ),
 
-    always_warn_on: tuple[BaseException] = (
+    always_warn_on: tuple[Type[BaseException]] = (
         trio.Cancelled,
     ),
+
+    # don't ever unmask or warn on any masking pair,
+    # {<masked-excT-key> -> <masking-excT-value>}
+    never_warn_on: dict[
+        Type[BaseException],
+        Type[BaseException],
+    ] = {
+        KeyboardInterrupt: trio.Cancelled,
+        trio.Cancelled: trio.Cancelled,
+    },
     # ^XXX, special case(s) where we warn-log bc likely
     # there will be no operational diff since the exc
     # is always expected to be consumed.
@@ -144,7 +157,10 @@ async def maybe_raise_from_masking_exc(
             maybe_masker=exc_match,
             unmask_from=set(unmask_from),
         ):
-            masked.append((exc_ctx, exc_match))
+            masked.append((
+                exc_ctx,
+                exc_match,
+            ))
             boxed_maybe_exc.value = exc_match
             note: str = (
                 f'\n'
@@ -156,18 +172,36 @@ async def maybe_raise_from_masking_exc(
                     f'\n'
                     f'{extra_note}\n'
                 )
-            exc_ctx.add_note(note)
 
-            if type(exc_match) in always_warn_on:
+            do_warn: bool = (
+                never_warn_on.get(
+                    type(exc_ctx)  # masking type
+                )
+                is not
+                type(exc_match)  # masked type
+            )
+
+            if do_warn:
+                exc_ctx.add_note(note)
+
+            if (
+                do_warn
+                and
+                type(exc_match) in always_warn_on
+            ):
                 log.warning(note)
 
-            if raise_unmasked:
-
+            if (
+                do_warn
+                and
+                raise_unmasked
+            ):
                 if len(masked) < 2:
                     raise exc_ctx from exc_match
+
+                # ??TODO, see above but, possibly unmasking sub-exc
+                # entries if there are > 1
                 # else:
-                #     # ?TODO, see above but, possibly unmasking sub-exc
-                #     # entries if there are > 1
                 #     await pause(shield=True)
     else:
         raise
