@@ -925,6 +925,7 @@ def test_post_mortem_api(
             "<Task 'name_error'",
             "NameError",
             "('child'",
+            'getattr(doggypants)',  # exc-LoC
         ]
     )
     if ctlc:
@@ -941,8 +942,8 @@ def test_post_mortem_api(
             "<Task '__main__.main'",
             "('root'",
             "NameError",
-            "tractor.post_mortem()",
             "src_uid=('child'",
+            "tractor.post_mortem()",  # in `main()`-LoC
         ]
     )
     if ctlc:
@@ -960,6 +961,10 @@ def test_post_mortem_api(
             "('root'",
             "NameError",
             "src_uid=('child'",
+
+            # raising line in `main()` but from crash-handling
+            # in `tractor.open_nursery()`.
+            'async with p.open_context(name_error) as (ctx, first):',
         ]
     )
     if ctlc:
