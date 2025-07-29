@@ -1011,7 +1011,6 @@ class Context:
                 else:
                     log.cancel(
                         f'Timed out on cancel request of remote task?\n'
-                        f'\n'
                         f'{reminfo}'
                     )
 
@@ -1491,6 +1490,12 @@ class Context:
                     and not self._cancel_called
                 ):
                     status = 'peer-cancelled'
+
+            case (
+                Unresolved,
+                trio.Cancelled(),  # any error-type
+            ) if self.canceller:
+                status = 'actor-cancelled'
 
             # (remote) error condition
             case (
@@ -2273,7 +2278,7 @@ async def open_context_from_portal(
                 logmeth = log.exception
 
         logmeth(
-            f'ctx {ctx.side!r}-side exited with {ctx.repr_outcome()}\n'
+            f'ctx {ctx.side!r}-side exited with {ctx.repr_outcome()!r}\n'
         )
 
         if debug_mode():
