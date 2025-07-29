@@ -284,20 +284,32 @@ async def test_cancel_infinite_streamer(start_method):
     ],
 )
 @tractor_test
-async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
-    """Verify a subset of failed subactors causes all others in
+async def test_some_cancels_all(
+    num_actors_and_errs: tuple,
+    start_method: str,
+    loglevel: str,
+):
+    '''
+    Verify a subset of failed subactors causes all others in
     the nursery to be cancelled just like the strategy in trio.
 
     This is the first and only supervisory strategy at the moment.
-    """
-    num_actors, first_err, err_type, ria_func, da_func = num_actors_and_errs
+
+    '''
+    (
+        num_actors,
+        first_err,
+        err_type,
+        ria_func,
+        da_func,
+    ) = num_actors_and_errs
     try:
-        async with tractor.open_nursery() as n:
+        async with tractor.open_nursery() as an:
 
             # spawn the same number of deamon actors which should be cancelled
             dactor_portals = []
             for i in range(num_actors):
-                dactor_portals.append(await n.start_actor(
+                dactor_portals.append(await an.start_actor(
                     f'deamon_{i}',
                     enable_modules=[__name__],
                 ))
@@ -307,7 +319,7 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
             for i in range(num_actors):
                 # start actor(s) that will fail immediately
                 riactor_portals.append(
-                    await n.run_in_actor(
+                    await an.run_in_actor(
                         func,
                         name=f'actor_{i}',
                         **kwargs
@@ -337,7 +349,8 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
 
         # should error here with a ``RemoteActorError`` or ``MultiError``
 
-    except first_err as err:
+    except first_err as _err:
+        err = _err
         if isinstance(err, BaseExceptionGroup):
             assert len(err.exceptions) == num_actors
             for exc in err.exceptions:
@@ -348,8 +361,8 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
         elif isinstance(err, tractor.RemoteActorError):
             assert err.boxed_type == err_type
 
-        assert n.cancelled is True
-        assert not n._children
+        assert an.cancelled is True
+        assert not an._children
     else:
         pytest.fail("Should have gotten a remote assertion error?")
 
@@ -559,8 +572,10 @@ def test_cancel_while_childs_child_in_sync_sleep(
 
     async def main():
         with trio.fail_after(2):
-            async with tractor.open_nursery() as tn:
-                await tn.run_in_actor(
+            async with (
+                tractor.open_nursery() as an
+            ):
+                await an.run_in_actor(
                     spawn,
                     name='spawn',
                 )
