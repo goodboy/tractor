@@ -642,7 +642,7 @@ async def _invoke(
             tn: Nursery
             rpc_ctx_cs: CancelScope
             async with (
-                collapse_eg(),
+                collapse_eg(hide_tb=False),
                 trio.open_nursery() as tn,
                 msgops.maybe_limit_plds(
                     ctx=ctx,
@@ -823,24 +823,44 @@ async def _invoke(
                 f'after having {ctx.repr_state!r}\n'
             )
             if merr:
-
                 logmeth: Callable = log.error
-                if isinstance(merr, ContextCancelled):
-                    logmeth: Callable = log.runtime
+                if (
+                    # ctxc: by `Context.cancel()`
+                    isinstance(merr, ContextCancelled)
 
-                if not isinstance(merr, RemoteActorError):
-                    tb_str: str = ''.join(traceback.format_exception(merr))
+                    # out-of-layer cancellation, one of:
+                    # - actorc: by `Portal.cancel_actor()`
+                    # - OSc: by SIGINT or `Process.signal()`
+                    or (
+                        isinstance(merr, trio.Cancelled)
+                        and
+                        ctx.canceller
+                    )
+                ):
+                    logmeth: Callable = log.cancel
+                    descr_str += (
+                        f' with {merr!r}\n'
+                    )
+
+                elif (
+                    not isinstance(merr, RemoteActorError)
+                ):
+                    tb_str: str = ''.join(
+                        traceback.format_exception(merr)
+                    )
                     descr_str += (
                         f'\n{merr!r}\n'  # needed?
                         f'{tb_str}\n'
-                        f'\n'
-                        f'scope_error:\n'
-                        f'{scope_err!r}\n'
                     )
                 else:
-                    descr_str += f'\n{merr!r}\n'
+                    descr_str += (
+                        f'{merr!r}\n'
+                    )
             else:
-                descr_str += f'\nwith final result {ctx.outcome!r}\n'
+                descr_str += (
+                    f'\n'
+                    f'with final result {ctx.outcome!r}\n'
+                )
 
             logmeth(
                 f'{message}\n'
