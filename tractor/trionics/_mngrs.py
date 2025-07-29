@@ -222,16 +222,18 @@ class _Cache:
         task_status: trio.TaskStatus[T] = trio.TASK_STATUS_IGNORED,
 
     ) -> None:
-        async with mng as value:
-            _, no_more_users = cls.resources[ctx_key]
-            cls.values[ctx_key] = value
-            task_status.started(value)
-            try:
-                await no_more_users.wait()
-            finally:
-                # discard nursery ref so it won't be re-used (an error)?
-                value = cls.values.pop(ctx_key)
-                cls.resources.pop(ctx_key)
+        try:
+            async with mng as value:
+                _, no_more_users = cls.resources[ctx_key]
+                try:
+                    cls.values[ctx_key] = value
+                    task_status.started(value)
+                    await no_more_users.wait()
+                finally:
+                    value = cls.values.pop(ctx_key)
+        finally:
+            # discard nursery ref so it won't be re-used (an error)?
+            cls.resources.pop(ctx_key)
 
 
 @acm
