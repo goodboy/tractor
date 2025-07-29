@@ -573,14 +573,16 @@ def test_basic_interloop_channel_stream(
     fan_out: bool,
 ):
     async def main():
-        async with tractor.open_nursery() as an:
-            portal = await an.run_in_actor(
-                stream_from_aio,
-                infect_asyncio=True,
-                fan_out=fan_out,
-            )
-            # should raise RAE diectly
-            await portal.result()
+        # TODO, figure out min timeout here!
+        with trio.fail_after(6):
+            async with tractor.open_nursery() as an:
+                portal = await an.run_in_actor(
+                    stream_from_aio,
+                    infect_asyncio=True,
+                    fan_out=fan_out,
+                )
+                # should raise RAE diectly
+                await portal.result()
 
     trio.run(main)
 
@@ -1087,6 +1089,97 @@ def test_sigint_closes_lifetime_stack(
 
     trio.run(main)
 
+
+
+# asyncio.Task fn
+async def raise_before_started(
+    from_trio: asyncio.Queue,
+    to_trio: trio.abc.SendChannel,
+
+) -> None:
+    '''
+    `asyncio.Task` entry point which RTEs before calling
+    `to_trio.send_nowait()`.
+
+    '''
+    await asyncio.sleep(0.2)
+    raise RuntimeError('Some shite went wrong before `.send_nowait()`!!')
+
+    to_trio.send_nowait('Uhh we shouldve RTE-d ^^ ??')
+    await asyncio.sleep(float('inf'))
+
+
+@tractor.context
+async def caching_ep(
+    ctx: tractor.Context,
+):
+
+    log = tractor.log.get_logger('caching_ep')
+    log.info('syncing via `ctx.started()`')
+    await ctx.started()
+
+    # XXX, allocate the `open_channel_from()` inside
+    # a `.trionics.maybe_open_context()`.
+    chan: to_asyncio.LinkedTaskChannel
+    async with (
+        tractor.trionics.maybe_open_context(
+            acm_func=tractor.to_asyncio.open_channel_from,
+            kwargs={
+                'target': raise_before_started,
+                # ^XXX, kwarg to `open_channel_from()`
+            },
+
+            # lock around current actor task access
+            key=tractor.current_actor().uid,
+
+        ) as (cache_hit, (clients, chan)),
+    ):
+        if cache_hit:
+            log.error(
+                'Re-using cached `.open_from_channel()` call!\n'
+            )
+
+        else:
+            log.info(
+                'Allocating SHOULD-FAIL `.open_from_channel()`\n'
+            )
+
+        await trio.sleep_forever()
+
+
+# TODO, simulates connection-err from `piker.brokers.ib.api`..
+def test_aio_side_raises_before_started(
+    reg_addr: tuple[str, int],
+    debug_mode: bool,
+    loglevel: str,
+):
+    # delay = 999 if debug_mode else 1
+    async def main():
+        with trio.fail_after(3):
+            an: tractor.ActorNursery
+            async with tractor.open_nursery(
+                debug_mode=debug_mode,
+                loglevel=loglevel,
+            ) as an:
+                p: tractor.Portal = await an.start_actor(
+                    'lchan_cacher_that_raises_fast',
+                    enable_modules=[__name__],
+                    infect_asyncio=True,
+                )
+                async with p.open_context(
+                    caching_ep,
+                ) as (ctx, first):
+                    assert not first
+
+    with pytest.raises(
+        expected_exception=(RemoteActorError),
+    ) as excinfo:
+        trio.run(main)
+
+    # ensure `asyncio.Task` exception is bubbled
+    # allll the way erp!!
+    rae = excinfo.value
+    assert rae.boxed_type is RuntimeError
 
 # TODO: debug_mode tests once we get support for `asyncio`!
 #
