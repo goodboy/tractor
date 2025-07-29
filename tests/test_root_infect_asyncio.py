@@ -147,8 +147,7 @@ def test_trio_prestarted_task_bubbles(
         await trio.sleep_forever()
 
     async def _trio_main():
-        # with trio.fail_after(2):
-        with trio.fail_after(999):
+        with trio.fail_after(2 if not debug_mode else 999):
             first: str
             chan: to_asyncio.LinkedTaskChannel
             aio_ev = asyncio.Event()
@@ -217,32 +216,25 @@ def test_trio_prestarted_task_bubbles(
                         ):
                             aio_ev.set()
 
-    with pytest.raises(
-        expected_exception=ExceptionGroup,
-    ) as excinfo:
-        tractor.to_asyncio.run_as_asyncio_guest(
-            trio_main=_trio_main,
-        )
-
-    eg = excinfo.value
-    rte_eg, rest_eg = eg.split(RuntimeError)
-
     # ensure the trio-task's error bubbled despite the aio-side
     # having (maybe) errored first.
     if aio_err_trigger in (
         'after_trio_task_starts',
         'after_start_point',
     ):
-        assert len(errs := rest_eg.exceptions) == 1
-        typerr = errs[0]
-        assert (
-            type(typerr) is TypeError
-            and
-            'trio-side' in typerr.args
-        )
+        patt: str = 'trio-side'
+        expect_exc = TypeError
 
     # when aio errors BEFORE (last) trio task is scheduled, we should
     # never see anythinb but the aio-side.
     else:
-        assert len(rtes := rte_eg.exceptions) == 1
-        assert 'asyncio-side' in rtes[0].args[0]
+        patt: str = 'asyncio-side'
+        expect_exc = RuntimeError
+
+    with pytest.raises(expect_exc) as excinfo:
+        tractor.to_asyncio.run_as_asyncio_guest(
+            trio_main=_trio_main,
+        )
+
+    caught_exc = excinfo.value
+    assert patt in caught_exc.args
