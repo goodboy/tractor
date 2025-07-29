@@ -58,6 +58,7 @@ from tractor._context import Context
 from tractor import _state
 from tractor._exceptions import (
     NoRuntime,
+    InternalError,
 )
 from tractor._state import (
     current_actor,
@@ -78,6 +79,9 @@ from ._tty_lock import (
 from ._sigint import (
     sigint_shield as sigint_shield,
     _ctlc_ignore_header as _ctlc_ignore_header
+)
+from ..pformat import (
+    ppfmt,
 )
 
 if TYPE_CHECKING:
@@ -1153,9 +1157,10 @@ def pause_from_sync(
                         'use_greenback',
                         False,
                 ):
-                    raise RuntimeError(
-                        '`greenback` was never initialized in this actor!?\n\n'
-                        f'{_state._runtime_vars}\n'
+                    raise InternalError(
+                        f'`greenback` was never initialized in this actor?\n'
+                        f'\n'
+                        f'{ppfmt(_state._runtime_vars)}\n'
                     ) from rte
 
                 raise
