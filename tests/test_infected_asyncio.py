@@ -1091,10 +1091,14 @@ def test_sigint_closes_lifetime_stack(
 
 
 
-# asyncio.Task fn
+# ?TODO asyncio.Task fn-deco?
+# -[ ] do sig checkingat import time like @context?
+# -[ ] maybe name it @aio_task ??
+# -[ ] chan: to_asyncio.InterloopChannel ??
 async def raise_before_started(
-    from_trio: asyncio.Queue,
-    to_trio: trio.abc.SendChannel,
+    # from_trio: asyncio.Queue,
+    # to_trio: trio.abc.SendChannel,
+    chan: to_asyncio.LinkedTaskChannel,
 
 ) -> None:
     '''
@@ -1105,7 +1109,8 @@ async def raise_before_started(
     await asyncio.sleep(0.2)
     raise RuntimeError('Some shite went wrong before `.send_nowait()`!!')
 
-    to_trio.send_nowait('Uhh we shouldve RTE-d ^^ ??')
+    # to_trio.send_nowait('Uhh we shouldve RTE-d ^^ ??')
+    chan.started_nowait('Uhh we shouldve RTE-d ^^ ??')
     await asyncio.sleep(float('inf'))
 
 
@@ -1147,12 +1152,18 @@ async def caching_ep(
         await trio.sleep_forever()
 
 
-# TODO, simulates connection-err from `piker.brokers.ib.api`..
 def test_aio_side_raises_before_started(
     reg_addr: tuple[str, int],
     debug_mode: bool,
     loglevel: str,
 ):
+    '''
+    Simulates connection-err from `piker.brokers.ib.api`..
+
+    Ensure any error raised by child-`asyncio.Task` BEFORE
+    `chan.started()`
+
+    '''
     # delay = 999 if debug_mode else 1
     async def main():
         with trio.fail_after(3):
