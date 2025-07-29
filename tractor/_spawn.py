@@ -236,10 +236,6 @@ async def hard_kill(
     # whilst also hacking on it XD
     # terminate_after: int = 99999,
 
-    # NOTE: for mucking with `.pause()`-ing inside the runtime
-    # whilst also hacking on it XD
-    # terminate_after: int = 99999,
-
 ) -> None:
     '''
     Un-gracefully terminate an OS level `trio.Process` after timeout.
