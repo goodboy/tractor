@@ -264,7 +264,7 @@ async def find_actor(
     raise_on_none: bool = False,
 
 ) -> AsyncGenerator[
-    Portal | list[Portal] | None,
+    Portal|list[Portal]|None,
     None,
 ]:
     '''
@@ -306,6 +306,7 @@ async def find_actor(
         collapse_eg(),
         gather_contexts(
             mngrs=maybe_portals,
+            # tn=tn,  # ?TODO, helps to pass rent tn here?
         ) as portals,
     ):
         # log.runtime(
