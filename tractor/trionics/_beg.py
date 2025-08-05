@@ -78,7 +78,6 @@ def collapse_exception_group(
 def get_collapsed_eg(
     beg: BaseExceptionGroup,
 
-    bp: bool = False,
 ) -> BaseException|None:
     '''
     If the input beg can collapse to a single sub-exception which is
@@ -92,7 +91,6 @@ def get_collapsed_eg(
     return maybe_exc
 
 
-
 @acm
 async def collapse_eg(
     hide_tb: bool = True,
@@ -102,6 +100,8 @@ async def collapse_eg(
         # trio.Cancelled,
     },
     add_notes: bool = True,
+
+    bp: bool = False,
 ):
     '''
     If `BaseExceptionGroup` raised in the body scope is
@@ -115,6 +115,11 @@ async def collapse_eg(
         yield
     except BaseExceptionGroup as _beg:
         beg = _beg
+
+        if bp:
+            import tractor
+            await tractor.pause(shield=True)
+
         if (
             (exc := get_collapsed_eg(beg))
             and
