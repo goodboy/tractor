@@ -639,26 +639,29 @@ class RemoteActorError(Exception):
             self.extra_body_fields,
         )
 
-        # ?TODO, ensure the `.message` doesn't show up 2x in
-        # output ya?
         tb_str: str = (
             self.tb_str
-            or
-            self._message
+            #
+            # ^TODO? what to use instead? if anything?
+            # -[ ] ensure the `.message` doesn't show up 2x in output ya?
+            # -[ ] ._message isn't really right?
+            # or
+            # self._message
         )
-        from tractor.devx import (
-            pformat_boxed_tb,
-        )
-        body: str = pformat_boxed_tb(
-            tb_str=tb_str,
-            fields_str=fields,
-            field_prefix=' |_',
-            # ^- is so that it's placed like so,
-            # just after <Type(
-            #             |___ ..
-            tb_body_indent=1,
-            boxer_header=self.relay_uid or '-',
-        )
+        if tb_str:
+            from tractor.devx import (
+                pformat_boxed_tb,
+            )
+            body: str = pformat_boxed_tb(
+                tb_str=tb_str,
+                fields_str=fields,
+                field_prefix=' |_',
+                # ^- is so that it's placed like so,
+                # just after <Type(
+                #             |___ ..
+                tb_body_indent=1,
+                boxer_header=self.relay_uid or '-',
+            )
 
         # !TODO, it'd be nice to import these top level without
         # cycles!
