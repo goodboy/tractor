@@ -50,7 +50,11 @@ from tractor._addr import UnwrappedAddress
 from tractor._portal import Portal
 from tractor._runtime import Actor
 from tractor._entry import _mp_main
-from tractor._exceptions import ActorFailure
+from tractor._exceptions import (
+    ActorCancelled,
+    ActorFailure,
+    # NoResult,
+)
 from tractor.msg import (
     types as msgtypes,
     pretty_struct,
@@ -137,7 +141,6 @@ def try_set_start_method(
 
 
 async def exhaust_portal(
-
     portal: Portal,
     actor: Actor
 
@@ -185,10 +188,12 @@ async def exhaust_portal(
 
 
 async def cancel_on_completion(
-
     portal: Portal,
     actor: Actor,
-    errors: dict[tuple[str, str], Exception],
+    errors: dict[
+        msgtypes.Aid,
+        Exception,
+    ],
 
 ) -> None:
     '''
@@ -209,23 +214,56 @@ async def cancel_on_completion(
         portal,
         actor,
     )
+    aid: msgtypes.Aid = actor.aid
+    repr_aid: str = aid.reprol(sin_uuid=False)
+
     if isinstance(result, Exception):
-        errors[actor.uid]: Exception = result
+        errors[aid]: Exception = result
         log.cancel(
-            'Cancelling subactor runtime due to error:\n\n'
-            f'Portal.cancel_actor() => {portal.channel.uid}\n\n'
-            f'error: {result}\n'
+            'Cancelling subactor {repr_aid!r} runtime due to error\n'
+            f'\n'
+            f'Portal.cancel_actor() => {portal.channel.uid}\n'
+            f'\n'
+            f'{result!r}\n'
         )
 
     else:
-        log.runtime(
-            'Cancelling subactor gracefully:\n\n'
-            f'Portal.cancel_actor() => {portal.channel.uid}\n\n'
-            f'result: {result}\n'
+        report: str = (
+            f'Cancelling subactor {repr_aid!r} gracefully..\n'
+            f'\n'
+        )
+        canc_info: str = (
+            f'Portal.cancel_actor() => {portal.chan.uid}\n'
+            f'\n'
+            f'final-result => {result!r}\n'
+        )
+        log.cancel(
+            report
+            +
+            canc_info
         )
 
     # cancel the process now that we have a final result
     await portal.cancel_actor()
+
+    if (
+        not errors.get(aid)
+        # and
+        # result is NoResult
+    ):
+        pass
+        # await debug.pause(shield=True)
+
+        # errors[aid] = ActorCancelled(
+        #     message=(
+        #         f'Cancelled subactor {repr_aid!r}\n'
+        #         f'{canc_info}\n'
+        #     ),
+        #     canceller=current_actor().aid,
+        #     # TODO? should we have a ack-msg?
+        #     # ipc_msg=??
+        #     # boxed_type=trio.Cancelled,
+        # )
 
 
 async def hard_kill(
@@ -331,6 +369,10 @@ async def soft_kill(
         Awaitable,
     ],
     portal: Portal,
+    errors: dict[
+        msgtypes.Aid,
+        Exception,
+    ],
 
 ) -> None:
     '''
@@ -374,8 +416,8 @@ async def soft_kill(
         # below. This means we try to do a graceful teardown
         # via sending a cancel message before getting out
         # zombie killing tools.
-        async with trio.open_nursery() as n:
-            n.cancel_scope.shield = True
+        async with trio.open_nursery() as tn:
+            tn.cancel_scope.shield = True
 
             async def cancel_on_proc_deth():
                 '''
@@ -385,16 +427,27 @@ async def soft_kill(
 
                 '''
                 await wait_func(proc)
-                n.cancel_scope.cancel()
+                tn.cancel_scope.cancel()
 
             # start a task to wait on the termination of the
             # process by itself waiting on a (caller provided) wait
             # function which should unblock when the target process
             # has terminated.
-            n.start_soon(cancel_on_proc_deth)
+            tn.start_soon(cancel_on_proc_deth)
 
             # send the actor-runtime a cancel request.
             await portal.cancel_actor()
+
+            # if not errors.get(peer_aid):
+            #     errors[peer_aid] = ActorCancelled(
+            #         message=(
+            #             'Sub-actor cancelled gracefully by parent\n'
+            #         ),
+            #         canceller=current_actor().aid,
+            #         # TODO? should we have a ack-msg?
+            #         # ipc_msg=??
+            #         # boxed_type=trio.Cancelled,
+            #     )
 
             if proc.poll() is None:  # type: ignore
                 log.warning(
@@ -402,7 +455,7 @@ async def soft_kill(
                     f'uid: {peer_aid}\n'
                     f'|_{proc}\n'
                 )
-                n.cancel_scope.cancel()
+                tn.cancel_scope.cancel()
         raise
 
 
@@ -410,7 +463,10 @@ async def new_proc(
     name: str,
     actor_nursery: ActorNursery,
     subactor: Actor,
-    errors: dict[tuple[str, str], Exception],
+    errors: dict[
+        msgtypes.Aid,
+        Exception,
+    ],
 
     # passed through to actor main
     bind_addrs: list[UnwrappedAddress],
@@ -449,7 +505,10 @@ async def trio_proc(
     name: str,
     actor_nursery: ActorNursery,
     subactor: Actor,
-    errors: dict[tuple[str, str], Exception],
+    errors: dict[
+        msgtypes.Aid,
+        Exception,
+    ],
 
     # passed through to actor main
     bind_addrs: list[UnwrappedAddress],
@@ -572,9 +631,9 @@ async def trio_proc(
         with trio.CancelScope(shield=True):
             await actor_nursery._join_procs.wait()
 
-        async with trio.open_nursery() as nursery:
+        async with trio.open_nursery() as ptl_reaper_tn:
             if portal in actor_nursery._cancel_after_result_on_exit:
-                nursery.start_soon(
+                ptl_reaper_tn.start_soon(
                     cancel_on_completion,
                     portal,
                     subactor,
@@ -587,7 +646,8 @@ async def trio_proc(
             await soft_kill(
                 proc,
                 trio.Process.wait,  # XXX, uses `pidfd_open()` below.
-                portal
+                portal,
+                errors,
             )
 
             # cancel result waiter that may have been spawned in
@@ -596,7 +656,7 @@ async def trio_proc(
                 'Cancelling portal result reaper task\n'
                 f'c)> {subactor.aid.reprol()!r}\n'
             )
-            nursery.cancel_scope.cancel()
+            ptl_reaper_tn.cancel_scope.cancel()
 
     finally:
         # XXX NOTE XXX: The "hard" reap since no actor zombies are
@@ -669,7 +729,10 @@ async def mp_proc(
     name: str,
     actor_nursery: ActorNursery,  # type: ignore  # noqa
     subactor: Actor,
-    errors: dict[tuple[str, str], Exception],
+    errors: dict[
+        msgtypes.Aid,
+        Exception,
+    ],
     # passed through to actor main
     bind_addrs: list[UnwrappedAddress],
     parent_addr: UnwrappedAddress,
@@ -794,7 +857,7 @@ async def mp_proc(
                     cancel_on_completion,
                     portal,
                     subactor,
-                    errors
+                    errors,
                 )
 
             # This is a "soft" (cancellable) join/reap which
@@ -803,7 +866,8 @@ async def mp_proc(
             await soft_kill(
                 proc,
                 proc_waiter,
-                portal
+                portal,
+                errors,
             )
 
             # cancel result waiter that may have been spawned in
