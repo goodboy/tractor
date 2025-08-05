@@ -21,12 +21,12 @@ async def breakpoint_forever():
 async def spawn_until(depth=0):
     """"A nested nursery that triggers another ``NameError``.
     """
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery() as an:
         if depth < 1:
 
-            await n.run_in_actor(breakpoint_forever)
+            await an.run_in_actor(breakpoint_forever)
 
-            p = await n.run_in_actor(
+            p = await an.run_in_actor(
                 name_error,
                 name='name_error'
             )
@@ -38,7 +38,7 @@ async def spawn_until(depth=0):
             # recusrive call to spawn another process branching layer of
             # the tree
             depth -= 1
-            await n.run_in_actor(
+            await an.run_in_actor(
                 spawn_until,
                 depth=depth,
                 name=f'spawn_until_{depth}',
