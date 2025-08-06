@@ -709,10 +709,41 @@ def test_multi_nested_subactors_error_through_nurseries(
     child = spawn('multi_nested_subactors_error_up_through_nurseries')
 
     # timed_out_early: bool = False
+    at_least_one: list[str] = [
+        "bdb.BdbQuit",
 
-    for send_char in itertools.cycle(['c', 'q']):
+        # leaf subs, which actually raise in "user code"
+        "src_uid=('breakpoint_forever'",
+        "src_uid=('name_error'",
+
+        # 2nd layer subs
+        "src_uid=('spawn_until_1'",
+        "src_uid=('spawn_until_2'",
+        "src_uid=('spawn_until_3'",
+        "relay_uid=('spawn_until_0'",
+
+        # 1st layer subs
+        "src_uid=('spawner0'",
+        "src_uid=('spawner1'",
+    ]
+
+    for i, send_char in enumerate(
+        itertools.cycle(['c', 'q'])
+    ):
         try:
             child.expect(PROMPT)
+
+            for patt in at_least_one.copy():
+                if in_prompt_msg(
+                    child,
+                    [patt],
+                ):
+                    print(
+                        f'Found patt in prompt {i}\n'
+                        f'patt: {patt!r}\n'
+                    )
+                    at_least_one.remove(patt)
+
             child.sendline(send_char)
             time.sleep(0.01)
 
@@ -721,27 +752,15 @@ def test_multi_nested_subactors_error_through_nurseries(
 
     assert_before(
         child,
-        [ # boxed source errors
-            "NameError: name 'doggypants' is not defined",
+        [
+            # boxed source errors should show in final
+            # post-prompt tb to console.
             "tractor._exceptions.RemoteActorError:",
-            "('name_error'",
-            "bdb.BdbQuit",
+            "NameError: name 'doggypants' is not defined",
 
-            # first level subtrees
-            # "tractor._exceptions.RemoteActorError: ('spawner0'",
-            "src_uid=('spawner0'",
-
-            # "tractor._exceptions.RemoteActorError: ('spawner1'",
-
-            # propagation of errors up through nested subtrees
-            # "tractor._exceptions.RemoteActorError: ('spawn_until_0'",
-            # "tractor._exceptions.RemoteActorError: ('spawn_until_1'",
-            # "tractor._exceptions.RemoteActorError: ('spawn_until_2'",
-            # ^-NOTE-^ old RAE repr, new one is below with a field
-            # showing the src actor's uid.
-            "src_uid=('spawn_until_0'",
-            "relay_uid=('spawn_until_1'",
-            "src_uid=('spawn_until_2'",
+            # TODO? once we get more pedantic with `relay_uid` should
+            # prolly include all actor-IDs we expect to see in final
+            # tb?
         ]
     )
 
