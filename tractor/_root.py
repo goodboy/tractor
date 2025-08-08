@@ -88,7 +88,8 @@ async def maybe_block_bp(
     bp_blocked: bool
     if (
         debug_mode
-        and maybe_enable_greenback
+        and
+        maybe_enable_greenback
         and (
             maybe_mod := await debug.maybe_init_greenback(
                 raise_not_found=False,
@@ -478,7 +479,10 @@ async def open_root_actor(
 
             # start runtime in a bg sub-task, yield to caller.
             async with (
-                collapse_eg(),
+                collapse_eg(
+                    hide_tb=hide_tb,
+                    # bp=True,
+                ),
                 trio.open_nursery() as root_tn,
 
                 # XXX, finally-footgun below?
