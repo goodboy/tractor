@@ -468,7 +468,11 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
     # errors from this daemon actor nursery bubble up to caller
     async with (
-        collapse_eg(),
+        # collapse_eg(),
+        collapse_eg(
+            bp=True,
+            hide_tb=False,
+        ),
         trio.open_nursery() as da_nursery,
     ):
         try:
@@ -481,7 +485,11 @@ async def _open_and_supervise_one_cancels_all_nursery(
             # As such if the strategy propagates any error(s) upwards
             # the above "daemon actor" nursery will be notified.
             async with (
-                collapse_eg(),
+                # collapse_eg(),
+                collapse_eg(
+                    bp=True,
+                    hide_tb=False,
+                ),
                 trio.open_nursery() as ria_nursery,
             ):
                 an = ActorNursery(
@@ -621,11 +629,17 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
                 # use `BaseExceptionGroup` as needed
                 if len(errors) > 1:
-                    raise BaseExceptionGroup(
+                    beg = BaseExceptionGroup(
                         'tractor.ActorNursery errored with',
                         tuple(errors.values()),
                     )
+                    beg.add_note(
+                        'This beg was created from an actor-nursery!\n'
+                    )
+                    await debug.pause(shield=True)
+                    raise beg
                 else:
+                    # await debug.pause(shield=True)
                     raise list(errors.values())[0]
 
             # show frame on any (likely) internal error
@@ -683,16 +697,30 @@ async def open_nursery(
             # mark us for teardown on exit
             implicit_runtime: bool = True
 
-            async with open_root_actor(
-                hide_tb=hide_tb,
-                **kwargs,
-            ) as actor:
+            async with (
+                # collapse_eg(),
+                collapse_eg(
+                    bp=True,
+                    hide_tb=False,
+                ),
+                open_root_actor(
+                    hide_tb=hide_tb,
+                    **kwargs,
+                ) as actor
+            ):
                 assert actor is current_actor()
 
                 try:
-                    async with _open_and_supervise_one_cancels_all_nursery(
-                        actor
-                    ) as an:
+                    async with (
+                        # collapse_eg(),
+                        collapse_eg(
+                            bp=True,
+                            hide_tb=False,
+                        ),
+                        _open_and_supervise_one_cancels_all_nursery(
+                            actor
+                        ) as an,
+                    ):
 
                         # NOTE: mark this nursery as having
                         # implicitly started the root actor so
