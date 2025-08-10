@@ -561,6 +561,9 @@ async def _pause(
             return
 
         elif isinstance(pause_err, trio.Cancelled):
+            __tracebackhide__: bool = False
+            # XXX, unmask to REPL it.
+            # mk_pdb().set_trace(frame=inspect.currentframe())
             _repl_fail_report += (
                 'You called `tractor.pause()` from an already cancelled scope!\n\n'
                 'Consider `await tractor.pause(shield=True)` to make it work B)\n'
