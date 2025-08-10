@@ -478,7 +478,10 @@ async def open_root_actor(
 
             # start runtime in a bg sub-task, yield to caller.
             async with (
-                collapse_eg(),
+                collapse_eg(
+                    bp=True,
+                    hide_tb=False,
+                ),
                 trio.open_nursery() as root_tn,
 
                 # XXX, finally-footgun below?
@@ -523,6 +526,12 @@ async def open_root_actor(
                         err,
                         api_frame=inspect.currentframe(),
                         debug_filter=debug_filter,
+
+                        # XXX NOTE, required to debug root-actor
+                        # crashes under cancellation conditions; so
+                        # most of them!
+                        shield=root_tn.cancel_scope.cancel_called,
+                        # ^TODO? write a (debugger) test for this ya?
                     )
 
                     if (
