@@ -116,9 +116,18 @@ async def collapse_eg(
     except BaseExceptionGroup as _beg:
         beg = _beg
 
-        if bp:
+        if (
+            bp
+            and
+            len(beg.exceptions) > 1
+        ):
             import tractor
-            await tractor.pause(shield=True)
+            if tractor.current_actor(
+                err_on_no_runtime=False,
+            ):
+                await tractor.pause(shield=True)
+            else:
+                breakpoint()
 
         if (
             (exc := get_collapsed_eg(beg))
