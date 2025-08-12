@@ -430,6 +430,7 @@ class MsgpackTransport(MsgTransport):
                 return await self.stream.send_all(size + bytes_data)
             except (
                 trio.BrokenResourceError,
+                trio.ClosedResourceError,
             ) as _re:
                 trans_err = _re
                 tpt_name: str = f'{type(self).__name__!r}'
@@ -444,6 +445,22 @@ class MsgpackTransport(MsgTransport):
                     #    `.discovery` subsys and protos.
                     case trio.BrokenResourceError() if (
                         '[Errno 32] Broken pipe'
+                        in
+                        trans_err.args[0]
+                    ):
+                        tpt_closed = TransportClosed.from_src_exc(
+                            message=(
+                                f'{tpt_name} already closed by peer\n'
+                            ),
+                            body=f'{self}\n',
+                            src_exc=trans_err,
+                            raise_on_report=True,
+                            loglevel='transport',
+                        )
+                        raise tpt_closed from trans_err
+
+                    case trio.ClosedResourceError() if (
+                        'this socket was already closed'
                         in
                         trans_err.args[0]
                     ):
