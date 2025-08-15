@@ -297,6 +297,23 @@ async def hard_kill(
     # zombies (as a feature) we ask the OS to do send in the
     # removal swad as the last resort.
     if cs.cancelled_caught:
+
+        # TODO? attempt at intermediary-rent-sub
+        # with child in debug lock?
+        # |_https://github.com/goodboy/tractor/issues/320
+        #
+        # if not is_root_process():
+        #     log.warning(
+        #         'Attempting to acquire debug-REPL-lock before zombie reap!'
+        #     )
+        #     with trio.CancelScope(shield=True):
+        #         async with debug.acquire_debug_lock(
+        #             subactor_uid=current_actor().uid,
+        #         ) as _ctx:
+        #             log.warning(
+        #                 'Acquired debug lock, child ready to be killed ??\n'
+        #             )
+
         # TODO: toss in the skynet-logo face as ascii art?
         log.critical(
             # 'Well, the #ZOMBIE_LORD_IS_HERE# to collect\n'
