@@ -324,8 +324,8 @@ async def _errors_relayed_via_ipc(
                     )
                 )
                 # TODO? better then `debug_filter` below?
-                # and
-                # not isinstance(err, TransportClosed)
+                and
+                not isinstance(err, TransportClosed)
             ):
                 # XXX QUESTION XXX: is there any case where we'll
                 # want to debug IPC disconnects as a default?
@@ -693,20 +693,23 @@ async def _invoke(
                     f'\n'
                     f'{pretty_struct.pformat(return_msg)}\n'
                 )
-                try:
-                    await chan.send(return_msg)
-                except TransportClosed:
-                    log.exception(
-                        f"Failed send final result to 'parent'-side of IPC-ctx!\n"
-                        f'\n'
-                        f'{chan}\n'
-                        f'Channel already disconnected ??\n'
-                        f'\n'
-                        f'{pretty_struct.pformat(return_msg)}'
-                    )
-                    # ?TODO? will this ever be true though?
-                    if chan.connected():
-                        raise
+                await chan.send(return_msg)
+                # ?TODO, remove the below since .send() already
+                # doesn't raise on tpt-closed?
+                # try:
+                #     await chan.send(return_msg)
+                # except TransportClosed:
+                #     log.exception(
+                #         f"Failed send final result to 'parent'-side of IPC-ctx!\n"
+                #         f'\n'
+                #         f'{chan}\n'
+                #         f'Channel already disconnected ??\n'
+                #         f'\n'
+                #         f'{pretty_struct.pformat(return_msg)}'
+                #     )
+                #     # ?TODO? will this ever be true though?
+                #     if chan.connected():
+                #         raise
 
             # NOTE: this happens IFF `ctx._scope.cancel()` is
             # called by any of,
