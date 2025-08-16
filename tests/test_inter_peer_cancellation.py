@@ -410,7 +410,6 @@ def test_peer_canceller(
     '''
     async def main():
         async with tractor.open_nursery(
-            # NOTE: to halt the peer tasks on ctxc, uncomment this.
             debug_mode=debug_mode,
         ) as an:
             canceller: Portal = await an.start_actor(

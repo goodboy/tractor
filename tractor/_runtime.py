@@ -55,6 +55,7 @@ from typing import (
     TYPE_CHECKING,
 )
 import uuid
+import textwrap
 from types import ModuleType
 import warnings
 
@@ -97,7 +98,10 @@ from ._exceptions import (
     MsgTypeError,
     unpack_error,
 )
-from .devx import debug
+from .devx import (
+    debug,
+    pformat as _pformat
+)
 from ._discovery import get_registry
 from ._portal import Portal
 from . import _state
@@ -206,7 +210,7 @@ class Actor:
         *,
         enable_modules: list[str] = [],
         loglevel: str|None = None,
-        registry_addrs: list[UnwrappedAddress]|None = None,
+        registry_addrs: list[Address]|None = None,
         spawn_method: str|None = None,
 
         # TODO: remove!
@@ -227,7 +231,7 @@ class Actor:
 
         # state
         self._cancel_complete = trio.Event()
-        self._cancel_called_by_remote: tuple[str, tuple]|None = None
+        self._cancel_called_by: tuple[str, tuple]|None = None
         self._cancel_called: bool = False
 
         # retreive and store parent `__main__` data which
@@ -249,11 +253,12 @@ class Actor:
         if arbiter_addr is not None:
             warnings.warn(
                 '`Actor(arbiter_addr=<blah>)` is now deprecated.\n'
-                'Use `registry_addrs: list[tuple]` instead.',
+                'Use `registry_addrs: list[Address]` instead.',
                 DeprecationWarning,
                 stacklevel=2,
             )
-            registry_addrs: list[UnwrappedAddress] = [arbiter_addr]
+
+            registry_addrs: list[Address] = [wrap_address(arbiter_addr)]
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
@@ -292,8 +297,10 @@ class Actor:
         # input via the validator.
         self._reg_addrs: list[UnwrappedAddress] = []
         if registry_addrs:
-            self.reg_addrs: list[UnwrappedAddress] = registry_addrs
-            _state._runtime_vars['_registry_addrs'] = registry_addrs
+            _state._runtime_vars['_registry_addrs'] = self.reg_addrs = [
+                addr.unwrap()
+                for addr in registry_addrs
+            ]
 
     @property
     def aid(self) -> msgtypes.Aid:
@@ -339,46 +346,125 @@ class Actor:
     def pid(self) -> int:
         return self._aid.pid
 
-    def pformat(self) -> str:
-        ds: str = '='
-        parent_uid: tuple|None = None
-        if rent_chan := self._parent_chan:
-            parent_uid = rent_chan.uid
+    @property
+    def repr_state(self) -> str:
+        if self.cancel_complete:
+            return 'cancelled'
 
-        peers: list = []
+        elif canceller := self.cancel_caller:
+                return f' and cancel-called by {canceller}'
+
+        else:
+            return 'running'
+
+    def pformat(
+        self,
+        ds: str = ':',
+        indent: int = 0,
+        privates: bool = False,
+    ) -> str:
+
+        fmtstr: str = f'|_id: {self.aid.reprol()!r}\n'
+        if privates:
+            aid_nest_prefix: str = '|_aid='
+            aid_field_repr: str = _pformat.nest_from_op(
+                input_op='',
+                text=pretty_struct.pformat(
+                    struct=self.aid,
+                    field_indent=2,
+                ),
+                op_suffix='',
+                nest_prefix=aid_nest_prefix,
+                nest_indent=0,
+            )
+            fmtstr: str = f'{aid_field_repr}'
+
+        if rent_chan := self._parent_chan:
+            fmtstr += (
+                f"|_parent{ds}{rent_chan.aid.reprol()}\n"
+            )
+
         server: _server.IPCServer = self.ipc_server
         if server:
-            peers: list[tuple] = list(server._peer_connected)
+            if privates:
+                server_repr: str = self._ipc_server.pformat(
+                    privates=privates,
+                )
+                # create field ln as a key-header indented under
+                # and up to the section's key prefix.
+                # ^XXX if we were to indent `repr(Server)` to
+                # '<key>: '
+                #  _here_^
+                server_repr: str = _pformat.nest_from_op(
+                    input_op='',  # nest as sub-obj
+                    op_suffix='',
+                    text=server_repr,
+                )
+                fmtstr += (
+                    f"{server_repr}"
+                )
+            else:
+                fmtstr += (
+                    f'|_ipc: {server.repr_state!r}\n'
+                )
 
-        fmtstr: str = (
-            f' |_id: {self.aid!r}\n'
-            # f"   aid{ds}{self.aid!r}\n"
-            f"   parent{ds}{parent_uid}\n"
-            f'\n'
-            f' |_ipc: {len(peers)!r} connected peers\n'
-            f"   peers{ds}{peers!r}\n"
-            f"   ipc_server{ds}{self._ipc_server}\n"
-            f'\n'
-            f' |_rpc: {len(self._rpc_tasks)} tasks\n'
-            f"   ctxs{ds}{len(self._contexts)}\n"
-            f'\n'
-            f' |_runtime: ._task{ds}{self._task!r}\n'
-            f'   _spawn_method{ds}{self._spawn_method}\n'
-            f'   _actoruid2nursery{ds}{self._actoruid2nursery}\n'
-            f'   _forkserver_info{ds}{self._forkserver_info}\n'
-            f'\n'
-            f' |_state: "TODO: .repr_state()"\n'
-            f'   _cancel_complete{ds}{self._cancel_complete}\n'
-            f'   _cancel_called_by_remote{ds}{self._cancel_called_by_remote}\n'
-            f'   _cancel_called{ds}{self._cancel_called}\n'
+        fmtstr += (
+            f'|_rpc: {len(self._rpc_tasks)} active tasks\n'
         )
-        return (
-            '<Actor(\n'
-            +
-            fmtstr
-            +
-            ')>\n'
+
+        # TODO, actually fix the .repr_state impl/output?
+        # append ipc-ctx state summary
+        # ctxs: dict = self._contexts
+        # if ctxs:
+        #     ctx_states: dict[str, int] = {}
+        #     for ctx in self._contexts.values():
+        #         ctx_state: str = ctx.repr_state
+        #         cnt = ctx_states.setdefault(ctx_state, 0)
+        #         ctx_states[ctx_state] = cnt + 1
+
+        #     fmtstr += (
+        #         f"  ctxs{ds}{ctx_states}\n"
+        #     )
+
+        # runtime-state
+        task_name: str = '<dne>'
+        if task := self._task:
+            task_name: str = task.name
+        fmtstr += (
+            # TODO, this just like ctx?
+            f'|_state: {self.repr_state!r}\n'
+            f'  task: {task_name}\n'
+            f'  loglevel: {self.loglevel!r}\n'
+            f'  subactors_spawned: {len(self._actoruid2nursery)}\n'
         )
+        if not _state.is_root_process():
+            fmtstr += f'  spawn_method: {self._spawn_method!r}\n'
+
+        if privates:
+            fmtstr += (
+                # f'  actoruid2nursery{ds}{self._actoruid2nursery}\n'
+                f'  cancel_complete{ds}{self._cancel_complete}\n'
+                f'  cancel_called_by_remote{ds}{self._cancel_called_by}\n'
+                f'  cancel_called{ds}{self._cancel_called}\n'
+            )
+
+        if fmtstr:
+            fmtstr: str = textwrap.indent(
+                text=fmtstr,
+                prefix=' '*(1 + indent),
+            )
+
+        _repr: str = (
+            f'<{type(self).__name__}(\n'
+            f'{fmtstr}'
+            f')>\n'
+        )
+        if indent:
+            _repr: str = textwrap.indent(
+                text=_repr,
+                prefix=' '*indent,
+            )
+        return _repr
 
     __repr__ = pformat
 
@@ -386,7 +472,11 @@ class Actor:
     def reg_addrs(self) -> list[UnwrappedAddress]:
         '''
         List of (socket) addresses for all known (and contactable)
-        registry actors.
+        registry-service actors in "unwrapped" (i.e. IPC interchange
+        wire-compat) form.
+
+        If you are looking for the "wrapped" address form, use
+        `.registry_addrs` instead.
 
         '''
         return self._reg_addrs
@@ -405,8 +495,14 @@ class Actor:
 
         self._reg_addrs = addrs
 
+    @property
+    def registry_addrs(self) -> list[Address]:
+        return [wrap_address(uw_addr)
+                for uw_addr in self.reg_addrs]
+
     def load_modules(
         self,
+
     ) -> None:
         '''
         Load explicitly enabled python modules from local fs after
@@ -453,6 +549,14 @@ class Actor:
             )
             raise
 
+    # ?TODO, factor this meth-iface into a new `.rpc` subsys primitive?
+    # - _get_rpc_func(),
+    # - _deliver_ctx_payload(),
+    # - get_context(),
+    # - start_remote_task(),
+    # - cancel_rpc_tasks(),
+    # - _cancel_task(),
+    #
     def _get_rpc_func(self, ns, funcname):
         '''
         Try to lookup and return a target RPC func from the
@@ -496,11 +600,11 @@ class Actor:
         queue.
 
         '''
-        uid: tuple[str, str] = chan.uid
-        assert uid, f"`chan.uid` can't be {uid}"
+        aid: msgtypes.Aid = chan.aid
+        assert aid, f"`chan.aid` can't be {aid}"
         try:
             ctx: Context = self._contexts[(
-                uid,
+                aid.uid,
                 cid,
 
                 # TODO: how to determine this tho?
@@ -511,7 +615,7 @@ class Actor:
                 'Ignoring invalid IPC msg!?\n'
                 f'Ctx seems to not/no-longer exist??\n'
                 f'\n'
-                f'<=? {uid}\n'
+                f'<=? {aid.reprol()!r}\n'
                 f'  |_{pretty_struct.pformat(msg)}\n'
             )
             match msg:
@@ -560,6 +664,7 @@ class Actor:
           msging session's lifetime.
 
         '''
+        # ?TODO, use Aid here as well?
         actor_uid = chan.uid
         assert actor_uid
         try:
@@ -908,6 +1013,22 @@ class Actor:
             None,  # self cancel all rpc tasks
         )
 
+    @property
+    def cancel_complete(self) -> bool:
+        return self._cancel_complete.is_set()
+
+    @property
+    def cancel_called(self) -> bool:
+        '''
+        Was this actor requested to cancel by a remote peer actor.
+
+        '''
+        return self._cancel_called_by is not None
+
+    @property
+    def cancel_caller(self) -> msgtypes.Aid|None:
+        return self._cancel_called_by
+
     async def cancel(
         self,
 
@@ -932,20 +1053,18 @@ class Actor:
 
         '''
         (
-            requesting_uid,
-            requester_type,
+            requesting_aid,  # Aid
+            requester_type,  # str
             req_chan,
             log_meth,
         ) = (
-            req_chan.uid,
+            req_chan.aid,
             'peer',
             req_chan,
             log.cancel,
-
         ) if req_chan else (
-
             # a self cancel of ALL rpc tasks
-            self.uid,
+            self.aid,
             'self',
             self,
             log.runtime,
@@ -953,14 +1072,14 @@ class Actor:
         # TODO: just use the new `Context.repr_rpc: str` (and
         # other) repr fields instead of doing this all manual..
         msg: str = (
-            f'Actor-runtime cancel request from {requester_type}\n\n'
-            f'<=c) {requesting_uid}\n'
-            f'  |_{self}\n'
+            f'Actor-runtime cancel request from {requester_type!r}\n'
             f'\n'
+            f'<=c)\n'
+            f'{self}'
         )
 
         # TODO: what happens here when we self-cancel tho?
-        self._cancel_called_by_remote: tuple = requesting_uid
+        self._cancel_called_by: tuple = requesting_aid
         self._cancel_called = True
 
         # cancel all ongoing rpc tasks
@@ -988,7 +1107,7 @@ class Actor:
 
             # self-cancel **all** ongoing RPC tasks
             await self.cancel_rpc_tasks(
-                req_uid=requesting_uid,
+                req_aid=requesting_aid,
                 parent_chan=None,
             )
 
@@ -1005,19 +1124,11 @@ class Actor:
         self._cancel_complete.set()
         return True
 
-    # XXX: hard kill logic if needed?
-    # def _hard_mofo_kill(self):
-    #     # If we're the root actor or zombied kill everything
-    #     if self._parent_chan is None:  # TODO: more robust check
-    #         root = trio.lowlevel.current_root_task()
-    #         for n in root.child_nurseries:
-    #             n.cancel_scope.cancel()
-
     async def _cancel_task(
         self,
         cid: str,
         parent_chan: Channel,
-        requesting_uid: tuple[str, str]|None,
+        requesting_aid: msgtypes.Aid|None,
 
         ipc_msg: dict|None|bool = False,
 
@@ -1055,7 +1166,7 @@ class Actor:
             log.runtime(
                 'Cancel request for invalid RPC task.\n'
                 'The task likely already completed or was never started!\n\n'
-                f'<= canceller: {requesting_uid}\n'
+                f'<= canceller: {requesting_aid}\n'
                 f'=> {cid}@{parent_chan.uid}\n'
                 f'  |_{parent_chan}\n'
             )
@@ -1063,9 +1174,12 @@ class Actor:
 
         log.cancel(
             'Rxed cancel request for RPC task\n'
-            f'<=c) {requesting_uid}\n'
-            f' |_{ctx._task}\n'
-            f'    >> {ctx.repr_rpc}\n'
+            f'{ctx._task!r} <=c) {requesting_aid}\n'
+            f'|_>> {ctx.repr_rpc}\n'
+
+            # f'|_{ctx._task}\n'
+            # f'   >> {ctx.repr_rpc}\n'
+
             # f'=> {ctx._task}\n'
             # f'  >> Actor._cancel_task() => {ctx._task}\n'
             # f'  |_ {ctx._task}\n\n'
@@ -1086,9 +1200,9 @@ class Actor:
         )
         if (
             ctx._canceller is None
-            and requesting_uid
+            and requesting_aid
         ):
-            ctx._canceller: tuple = requesting_uid
+            ctx._canceller: tuple = requesting_aid.uid
 
         # TODO: pack the RPC `{'cmd': <blah>}` msg into a ctxc and
         # then raise and pack it here?
@@ -1114,7 +1228,7 @@ class Actor:
 
         # wait for _invoke to mark the task complete
         flow_info: str = (
-            f'<= canceller: {requesting_uid}\n'
+            f'<= canceller: {requesting_aid}\n'
             f'=> ipc-parent: {parent_chan}\n'
             f'|_{ctx}\n'
         )
@@ -1131,7 +1245,7 @@ class Actor:
 
     async def cancel_rpc_tasks(
         self,
-        req_uid: tuple[str, str],
+        req_aid: msgtypes.Aid,
 
         # NOTE: when None is passed we cancel **all** rpc
         # tasks running in this actor!
@@ -1148,7 +1262,7 @@ class Actor:
         if not tasks:
             log.runtime(
                 'Actor has no cancellable RPC tasks?\n'
-                f'<= canceller: {req_uid}\n'
+                f'<= canceller: {req_aid.reprol()}\n'
             )
             return
 
@@ -1188,7 +1302,7 @@ class Actor:
         )
         log.cancel(
             f'Cancelling {descr} RPC tasks\n\n'
-            f'<=c) {req_uid} [canceller]\n'
+            f'<=c) {req_aid} [canceller]\n'
             f'{rent_chan_repr}'
             f'c)=> {self.uid} [cancellee]\n'
             f'  |_{self} [with {len(tasks)} tasks]\n'
@@ -1216,7 +1330,7 @@ class Actor:
             await self._cancel_task(
                 cid,
                 task_caller_chan,
-                requesting_uid=req_uid,
+                requesting_aid=req_aid,
             )
 
         if tasks:
@@ -1244,25 +1358,13 @@ class Actor:
         '''
         return self.accept_addrs[0]
 
-    def get_parent(self) -> Portal:
-        '''
-        Return a `Portal` to our parent.
-
-        '''
-        assert self._parent_chan, "No parent channel for this actor?"
-        return Portal(self._parent_chan)
-
-    def get_chans(
-        self,
-        uid: tuple[str, str],
-
-    ) -> list[Channel]:
-        '''
-        Return all IPC channels to the actor with provided `uid`.
-
-        '''
-        return self._peers[uid]
-
+    # TODO, this should delegate ONLY to the
+    # `._spawn_spec._runtime_vars: dict` / `._state` APIs?
+    #
+    # XXX, AH RIGHT that's why..
+    #   it's bc we pass this as a CLI flag to the child.py precisely
+    #   bc we need the bootstrapping pre `async_main()`.. but maybe
+    #   keep this as an impl deat and not part of the pub iface impl?
     def is_infected_aio(self) -> bool:
         '''
         If `True`, this actor is running `trio` in guest mode on
@@ -1272,6 +1374,23 @@ class Actor:
 
         '''
         return self._infected_aio
+
+    # ?TODO, is this the right type for this method?
+    def get_parent(self) -> Portal:
+        '''
+        Return a `Portal` to our parent.
+
+        '''
+        assert self._parent_chan, "No parent channel for this actor?"
+        return Portal(self._parent_chan)
+
+    # XXX: hard kill logic if needed?
+    # def _hard_mofo_kill(self):
+    #     # If we're the root actor or zombied kill everything
+    #     if self._parent_chan is None:  # TODO: more robust check
+    #         root = trio.lowlevel.current_root_task()
+    #         for n in root.child_nurseries:
+    #             n.cancel_scope.cancel()
 
 
 async def async_main(
@@ -1316,6 +1435,8 @@ async def async_main(
         # establish primary connection with immediate parent
         actor._parent_chan: Channel|None = None
 
+        # is this a sub-actor?
+        # get runtime info from parent.
         if parent_addr is not None:
             (
                 actor._parent_chan,
@@ -1361,7 +1482,6 @@ async def async_main(
                 trio.open_nursery(
                     strict_exception_groups=False,
                 ) as service_nursery,
-
                 _server.open_ipc_server(
                     parent_tn=service_nursery,
                     stream_handler_tn=service_nursery,
@@ -1412,9 +1532,6 @@ async def async_main(
 
                 # TODO: why is this not with the root nursery?
                 try:
-                    log.runtime(
-                        'Booting IPC server'
-                    )
                     eps: list = await ipc_server.listen_on(
                         accept_addrs=accept_addrs,
                         stream_handler_nursery=service_nursery,
@@ -1446,18 +1563,6 @@ async def async_main(
                 # TODO, just read direct from ipc_server?
                 accept_addrs: list[UnwrappedAddress] = actor.accept_addrs
 
-                # NOTE: only set the loopback addr for the 
-                # process-tree-global "root" mailbox since
-                # all sub-actors should be able to speak to
-                # their root actor over that channel.
-                if _state._runtime_vars['_is_root']:
-                    raddrs: list[Address] = _state._runtime_vars['_root_addrs']
-                    for addr in accept_addrs:
-                        waddr: Address = wrap_address(addr)
-                        raddrs.append(addr)
-                    else:
-                        _state._runtime_vars['_root_mailbox'] = raddrs[0]
-
                 # Register with the arbiter if we're told its addr
                 log.runtime(
                     f'Registering `{actor.name}` => {pformat(accept_addrs)}\n'
@@ -1475,6 +1580,7 @@ async def async_main(
                     except AssertionError:
                         await debug.pause()
 
+                    # !TODO, get rid of the local-portal crap XD
                     async with get_registry(addr) as reg_portal:
                         for accept_addr in accept_addrs:
                             accept_addr = wrap_address(accept_addr)
@@ -1511,8 +1617,9 @@ async def async_main(
                     # 'Blocking on service nursery to exit..\n'
                 )
             log.runtime(
-                "Service nursery complete\n"
-                "Waiting on root nursery to complete"
+                'Service nursery complete\n'
+                '\n'
+                '->} waiting on root nursery to complete..\n'
             )
 
         # Blocks here as expected until the root nursery is
@@ -1567,6 +1674,7 @@ async def async_main(
     finally:
         teardown_report: str = (
             'Main actor-runtime task completed\n'
+            '\n'
         )
 
         # ?TODO? should this be in `._entry`/`._root` mods instead?
@@ -1608,7 +1716,8 @@ async def async_main(
         # Unregister actor from the registry-sys / registrar.
         if (
             is_registered
-            and not actor.is_registrar
+            and
+            not actor.is_registrar
         ):
             failed: bool = False
             for addr in actor.reg_addrs:
@@ -1643,7 +1752,8 @@ async def async_main(
             ipc_server.has_peers(check_chans=True)
         ):
             teardown_report += (
-                f'-> Waiting for remaining peers {ipc_server._peers} to clear..\n'
+                f'-> Waiting for remaining peers to clear..\n'
+                f'   {pformat(ipc_server._peers)}'
             )
             log.runtime(teardown_report)
             await ipc_server.wait_for_no_more_peers(
@@ -1651,15 +1761,23 @@ async def async_main(
             )
 
         teardown_report += (
-            '-> All peer channels are complete\n'
+            '-]> all peer channels are complete.\n'
         )
 
+    # op_nested_actor_repr: str = _pformat.nest_from_op(
+    #     input_op=')>',
+    #     text=actor.pformat(),
+    #     nest_prefix='|_',
+    #     nest_indent=1,  # under >
+    # )
     teardown_report += (
-        'Actor runtime exiting\n'
-        f'>)\n'
-        f'|_{actor}\n'
+        '-)> actor runtime main task exit.\n'
+        # f'{op_nested_actor_repr}'
     )
-    log.info(teardown_report)
+    # if _state._runtime_vars['_is_root']:
+    #     log.info(teardown_report)
+    # else:
+    log.runtime(teardown_report)
 
 
 # TODO: rename to `Registry` and move to `.discovery._registry`!

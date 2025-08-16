@@ -171,11 +171,23 @@ class Channel:
         )
         assert transport.raddr == addr
         chan = Channel(transport=transport)
-        log.runtime(
-            f'Connected channel IPC transport\n'
-            f'[>\n'
-            f' |_{chan}\n'
-        )
+
+        # ?TODO, compact this into adapter level-methods?
+        # -[ ] would avoid extra repr-calcs if level not active?
+        #   |_ how would the `calc_if_level` look though? func?
+        if log.at_least_level('runtime'):
+            from tractor.devx import (
+                pformat as _pformat,
+            )
+            chan_repr: str = _pformat.nest_from_op(
+                input_op='[>',
+                text=chan.pformat(),
+                nest_indent=1,
+            )
+            log.runtime(
+                f'Connected channel IPC transport\n'
+                f'{chan_repr}'
+            )
         return chan
 
     @cm
@@ -196,9 +208,12 @@ class Channel:
             self._transport.codec = orig
 
     # TODO: do a .src/.dst: str for maddrs?
-    def pformat(self) -> str:
+    def pformat(
+        self,
+        privates: bool = False,
+    ) -> str:
         if not self._transport:
-            return '<Channel with inactive transport?>'
+            return '<Channel( with inactive transport? )>'
 
         tpt: MsgTransport = self._transport
         tpt_name: str = type(tpt).__name__
@@ -206,26 +221,35 @@ class Channel:
             'connected' if self.connected()
             else 'closed'
         )
-        return (
+        repr_str: str = (
             f'<Channel(\n'
             f' |_status: {tpt_status!r}\n'
+        ) + (
             f'   _closed={self._closed}\n'
             f'   _cancel_called={self._cancel_called}\n'
-            f'\n'
-            f' |_peer: {self.aid}\n'
-            f'\n'
+            if privates else ''
+        ) + (  # peer-actor (processs) section
+            f' |_peer: {self.aid.reprol()!r}\n'
+            if self.aid else ' |_peer: <unknown>\n'
+        ) + (
             f' |_msgstream: {tpt_name}\n'
-            f'   proto={tpt.laddr.proto_key!r}\n'
-            f'   layer={tpt.layer_key!r}\n'
-            f'   laddr={tpt.laddr}\n'
-            f'   raddr={tpt.raddr}\n'
-            f'   codec={tpt.codec_key!r}\n'
-            f'   stream={tpt.stream}\n'
-            f'   maddr={tpt.maddr!r}\n'
-            f'   drained={tpt.drained}\n'
+            f'   maddr: {tpt.maddr!r}\n'
+            f'   proto: {tpt.laddr.proto_key!r}\n'
+            f'   layer: {tpt.layer_key!r}\n'
+            f'   codec: {tpt.codec_key!r}\n'
+            f'   .laddr={tpt.laddr}\n'
+            f'   .raddr={tpt.raddr}\n'
+        ) + (
+            f'   ._transport.stream={tpt.stream}\n'
+            f'   ._transport.drained={tpt.drained}\n'
+            if privates else ''
+        ) + (
             f'   _send_lock={tpt._send_lock.statistics()}\n'
-            f')>\n'
+            if privates else ''
+        ) + (
+            ')>\n'
         )
+        return repr_str
 
     # NOTE: making this return a value that can be passed to
     # `eval()` is entirely **optional** FYI!
@@ -246,6 +270,10 @@ class Channel:
     @property
     def raddr(self) -> Address|None:
         return self._transport.raddr if self._transport else None
+
+    @property
+    def maddr(self) -> str:
+        return self._transport.maddr if self._transport else '<no-tpt>'
 
     # TODO: something like,
     # `pdbp.hideframe_on(errors=[MsgTypeError])`
@@ -434,8 +462,8 @@ class Channel:
         await self.send(aid)
         peer_aid: Aid = await self.recv()
         log.runtime(
-            f'Received hanshake with peer actor,\n'
-            f'{peer_aid}\n'
+            f'Received hanshake with peer\n'
+            f'<= {peer_aid.reprol(sin_uuid=False)}\n'
         )
         # NOTE, we always are referencing the remote peer!
         self.aid = peer_aid

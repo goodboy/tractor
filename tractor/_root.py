@@ -47,6 +47,7 @@ from ._runtime import (
 from .devx import (
     debug,
     _frame_stack,
+    pformat as _pformat,
 )
 from . import _spawn
 from . import _state
@@ -202,7 +203,9 @@ async def open_root_actor(
 
     '''
     # XXX NEVER allow nested actor-trees!
-    if already_actor := _state.current_actor(err_on_no_runtime=False):
+    if already_actor := _state.current_actor(
+        err_on_no_runtime=False,
+    ):
         rtvs: dict[str, Any] = _state._runtime_vars
         root_mailbox: list[str, int] = rtvs['_root_mailbox']
         registry_addrs: list[list[str, int]] = rtvs['_registry_addrs']
@@ -272,14 +275,20 @@ async def open_root_actor(
                 DeprecationWarning,
                 stacklevel=2,
             )
-            registry_addrs = [arbiter_addr]
+            uw_reg_addrs = [arbiter_addr]
 
-        if not registry_addrs:
-            registry_addrs: list[UnwrappedAddress] = default_lo_addrs(
+        uw_reg_addrs = registry_addrs
+        if not uw_reg_addrs:
+            uw_reg_addrs: list[UnwrappedAddress] = default_lo_addrs(
                 enable_transports
             )
 
-        assert registry_addrs
+        # must exist by now since all below code is dependent
+        assert uw_reg_addrs
+        registry_addrs: list[Address] = [
+            wrap_address(uw_addr)
+            for uw_addr in uw_reg_addrs
+        ]
 
         loglevel = (
             loglevel
@@ -328,10 +337,10 @@ async def open_root_actor(
             enable_stack_on_sig()
 
         # closed into below ping task-func
-        ponged_addrs: list[UnwrappedAddress] = []
+        ponged_addrs: list[Address] = []
 
         async def ping_tpt_socket(
-            addr: UnwrappedAddress,
+            addr: Address,
             timeout: float = 1,
         ) -> None:
             '''
@@ -351,17 +360,22 @@ async def open_root_actor(
                 # be better to eventually have a "discovery" protocol
                 # with basic handshake instead?
                 with trio.move_on_after(timeout):
-                    async with _connect_chan(addr):
+                    async with _connect_chan(addr.unwrap()):
                         ponged_addrs.append(addr)
 
             except OSError:
-                # TODO: make this a "discovery" log level?
+                # ?TODO, make this a "discovery" log level?
                 logger.info(
-                    f'No actor registry found @ {addr}\n'
+                    f'No root-actor registry found @ {addr!r}\n'
                 )
 
+        # !TODO, this is basically just another (abstract)
+        # happy-eyeballs, so we should try for formalize it somewhere
+        # in a `.[_]discovery` ya?
+        #
         async with trio.open_nursery() as tn:
-            for addr in registry_addrs:
+            for uw_addr in uw_reg_addrs:
+                addr: Address = wrap_address(uw_addr)
                 tn.start_soon(
                     ping_tpt_socket,
                     addr,
@@ -390,24 +404,28 @@ async def open_root_actor(
                 loglevel=loglevel,
                 enable_modules=enable_modules,
             )
-            # DO NOT use the registry_addrs as the transport server
-            # addrs for this new non-registar, root-actor.
+            # **DO NOT** use the registry_addrs as the
+            # ipc-transport-server's bind-addrs as this is
+            # a new NON-registrar, ROOT-actor.
+            #
+            # XXX INSTEAD, bind random addrs using the same tpt
+            # proto.
             for addr in ponged_addrs:
-                waddr: Address = wrap_address(addr)
                 trans_bind_addrs.append(
-                    waddr.get_random(bindspace=waddr.bindspace)
+                    addr.get_random(
+                        bindspace=addr.bindspace,
+                    )
                 )
 
         # Start this local actor as the "registrar", aka a regular
         # actor who manages the local registry of "mailboxes" of
         # other process-tree-local sub-actors.
         else:
-
             # NOTE that if the current actor IS THE REGISTAR, the
             # following init steps are taken:
             # - the tranport layer server is bound to each addr
             #   pair defined in provided registry_addrs, or the default.
-            trans_bind_addrs = registry_addrs
+            trans_bind_addrs = uw_reg_addrs
 
             # - it is normally desirable for any registrar to stay up
             #   indefinitely until either all registered (child/sub)
@@ -430,6 +448,16 @@ async def open_root_actor(
             # `.trio.run()`.
             actor._infected_aio = _state._runtime_vars['_is_infected_aio']
 
+        # NOTE, only set the loopback addr for the
+        # process-tree-global "root" mailbox since all sub-actors
+        # should be able to speak to their root actor over that
+        # channel.
+        raddrs: list[Address] = _state._runtime_vars['_root_addrs']
+        raddrs.extend(trans_bind_addrs)
+        # TODO, remove once we have also removed all usage;
+        # eventually all (root-)registry apis should expect > 1 addr.
+        _state._runtime_vars['_root_mailbox'] = raddrs[0]
+
         # Start up main task set via core actor-runtime nurseries.
         try:
             # assign process-local actor
@@ -437,13 +465,16 @@ async def open_root_actor(
 
             # start local channel-server and fake the portal API
             # NOTE: this won't block since we provide the nursery
-            ml_addrs_str: str = '\n'.join(
-                f'@{addr}' for addr in trans_bind_addrs
-            )
-            logger.info(
-                f'Starting local {actor.uid} on the following transport addrs:\n'
-                f'{ml_addrs_str}'
-            )
+            report: str = f'Starting actor-runtime for {actor.aid.reprol()!r}\n'
+            if reg_addrs := actor.registry_addrs:
+                report += (
+                    '-> Opening new registry @ '
+                    +
+                    '\n'.join(
+                        f'@{addr}' for addr in reg_addrs
+                    )
+                )
+            logger.info(f'{report}\n')
 
             # start the actor runtime in a new task
             async with trio.open_nursery(
@@ -518,12 +549,21 @@ async def open_root_actor(
                     #     for an in nurseries:
                     #         tempn.start_soon(an.exited.wait)
 
+                    op_nested_actor_repr: str = _pformat.nest_from_op(
+                        input_op='>) ',
+                        text=actor.pformat(),
+                        nest_prefix='|_',
+                    )
                     logger.info(
                         f'Closing down root actor\n'
-                        f'>)\n'
-                        f'|_{actor}\n'
+                        f'{op_nested_actor_repr}'
                     )
-                    await actor.cancel(None)  # self cancel
+                    # XXX, THIS IS A *finally-footgun*!
+                    # -> though already shields iternally it can
+                    # taskc here and mask underlying errors raised in
+                    # the try-block above?
+                    with trio.CancelScope(shield=True):
+                        await actor.cancel(None)  # self cancel
         finally:
             # revert all process-global runtime state
             if (
@@ -536,10 +576,16 @@ async def open_root_actor(
             _state._current_actor = None
             _state._last_actor_terminated = actor
 
-            logger.runtime(
+            sclang_repr: str = _pformat.nest_from_op(
+                input_op=')>',
+                text=actor.pformat(),
+                nest_prefix='|_',
+                nest_indent=1,
+            )
+
+            logger.info(
                 f'Root actor terminated\n'
-                f')>\n'
-                f' |_{actor}\n'
+                f'{sclang_repr}'
             )
 
 

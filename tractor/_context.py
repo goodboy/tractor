@@ -740,6 +740,8 @@ class Context:
             # cancelled, NOT their reported canceller. IOW in the
             # latter case we're cancelled by someone else getting
             # cancelled.
+            #
+            # !TODO, switching to `Actor.aid` here!
             if (canc := error.canceller) == self._actor.uid:
                 whom: str = 'us'
                 self._canceller = canc
@@ -2257,7 +2259,7 @@ async def open_context_from_portal(
         # await debug.pause()
         # log.cancel(
         match scope_err:
-            case trio.Cancelled:
+            case trio.Cancelled():
                 logmeth = log.cancel
 
             # XXX explicitly report on any non-graceful-taskc cases

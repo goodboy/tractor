@@ -237,9 +237,9 @@ def enable_stack_on_sig(
     try:
         import stackscope
     except ImportError:
-        log.error(
-            '`stackscope` not installed for use in debug mode!\n'
-            '`Ignoring {enable_stack_on_sig!r} call!\n'
+        log.warning(
+            'The `stackscope` lib is not installed!\n'
+            '`Ignoring enable_stack_on_sig() call!\n'
         )
         return None
 
