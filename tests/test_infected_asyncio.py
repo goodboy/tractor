@@ -234,10 +234,8 @@ async def trio_ctx(
     with trio.fail_after(1 + delay):
         try:
             async with (
-                trio.open_nursery(
-                    # TODO, for new `trio` / py3.13
-                    # strict_exception_groups=False,
-                ) as tn,
+                tractor.trionics.collapse_eg(),
+                trio.open_nursery() as tn,
                 tractor.to_asyncio.open_channel_from(
                     sleep_and_err,
                 ) as (first, chan),

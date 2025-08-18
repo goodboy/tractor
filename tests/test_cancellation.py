@@ -532,10 +532,15 @@ def test_cancel_via_SIGINT_other_task(
     async def main():
         # should never timeout since SIGINT should cancel the current program
         with trio.fail_after(timeout):
-            async with trio.open_nursery(
-                strict_exception_groups=False,
-            ) as n:
-                await n.start(spawn_and_sleep_forever)
+            async with (
+
+                # XXX ?TODO? why no work!?
+                # tractor.trionics.collapse_eg(),
+                trio.open_nursery(
+                    strict_exception_groups=False,
+                ) as tn,
+            ):
+                await tn.start(spawn_and_sleep_forever)
                 if 'mp' in spawn_backend:
                     time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)

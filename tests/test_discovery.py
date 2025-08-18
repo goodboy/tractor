@@ -11,6 +11,7 @@ import psutil
 import pytest
 import subprocess
 import tractor
+from tractor.trionics import collapse_eg
 from tractor._testing import tractor_test
 import trio
 
@@ -193,10 +194,10 @@ async def spawn_and_check_registry(
 
             try:
                 async with tractor.open_nursery() as an:
-                    async with trio.open_nursery(
-                        strict_exception_groups=False,
-                    ) as trion:
-
+                    async with (
+                        collapse_eg(),
+                        trio.open_nursery() as trion,
+                    ):
                         portals = {}
                         for i in range(3):
                             name = f'a{i}'
@@ -338,11 +339,12 @@ async def close_chans_before_nursery(
                         async with portal2.open_stream_from(
                             stream_forever
                         ) as agen2:
-                            async with trio.open_nursery(
-                                strict_exception_groups=False,
-                            ) as n:
-                                n.start_soon(streamer, agen1)
-                                n.start_soon(cancel, use_signal, .5)
+                            async with (
+                                collapse_eg(),
+                                trio.open_nursery() as tn,
+                            ):
+                                tn.start_soon(streamer, agen1)
+                                tn.start_soon(cancel, use_signal, .5)
                                 try:
                                     await streamer(agen2)
                                 finally:

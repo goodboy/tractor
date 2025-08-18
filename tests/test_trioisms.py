@@ -8,6 +8,7 @@ from contextlib import (
 )
 
 import pytest
+from tractor.trionics import collapse_eg
 import trio
 from trio import TaskStatus
 
@@ -64,9 +65,8 @@ def test_stashed_child_nursery(use_start_soon):
     async def main():
 
         async with (
-            trio.open_nursery(
-                strict_exception_groups=False,
-            ) as pn,
+            collapse_eg(),
+            trio.open_nursery() as pn,
         ):
             cn = await pn.start(mk_child_nursery)
             assert cn
@@ -197,10 +197,8 @@ def test_gatherctxs_with_memchan_breaks_multicancelled(
         async with (
             # XXX should ensure ONLY the KBI
             # is relayed upward
-            trionics.collapse_eg(),
-            trio.open_nursery(
-                # strict_exception_groups=False,
-            ), # as tn,
+            collapse_eg(),
+            trio.open_nursery(), # as tn,
 
             trionics.gather_contexts([
                 open_memchan(),
