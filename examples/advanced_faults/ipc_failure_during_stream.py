@@ -16,6 +16,7 @@ from tractor import (
     ContextCancelled,
     MsgStream,
     _testing,
+    trionics,
 )
 import trio
 import pytest
@@ -62,9 +63,8 @@ async def recv_and_spawn_net_killers(
     await ctx.started()
     async with (
         ctx.open_stream() as stream,
-        trio.open_nursery(
-            strict_exception_groups=False,
-        ) as tn,
+        trionics.collapse_eg(),
+        trio.open_nursery() as tn,
     ):
         async for i in stream:
             print(f'child echoing {i}')
