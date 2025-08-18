@@ -236,7 +236,10 @@ async def stream_forever():
 async def test_cancel_infinite_streamer(start_method):
 
     # stream for at most 1 seconds
-    with trio.move_on_after(1) as cancel_scope:
+    with (
+        trio.fail_after(4),
+        trio.move_on_after(1) as cancel_scope
+    ):
         async with tractor.open_nursery() as n:
             portal = await n.start_actor(
                 'donny',
@@ -284,20 +287,32 @@ async def test_cancel_infinite_streamer(start_method):
     ],
 )
 @tractor_test
-async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
-    """Verify a subset of failed subactors causes all others in
+async def test_some_cancels_all(
+    num_actors_and_errs: tuple,
+    start_method: str,
+    loglevel: str,
+):
+    '''
+    Verify a subset of failed subactors causes all others in
     the nursery to be cancelled just like the strategy in trio.
 
     This is the first and only supervisory strategy at the moment.
-    """
-    num_actors, first_err, err_type, ria_func, da_func = num_actors_and_errs
+
+    '''
+    (
+        num_actors,
+        first_err,
+        err_type,
+        ria_func,
+        da_func,
+    ) = num_actors_and_errs
     try:
-        async with tractor.open_nursery() as n:
+        async with tractor.open_nursery() as an:
 
             # spawn the same number of deamon actors which should be cancelled
             dactor_portals = []
             for i in range(num_actors):
-                dactor_portals.append(await n.start_actor(
+                dactor_portals.append(await an.start_actor(
                     f'deamon_{i}',
                     enable_modules=[__name__],
                 ))
@@ -307,7 +322,7 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
             for i in range(num_actors):
                 # start actor(s) that will fail immediately
                 riactor_portals.append(
-                    await n.run_in_actor(
+                    await an.run_in_actor(
                         func,
                         name=f'actor_{i}',
                         **kwargs
@@ -337,7 +352,8 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
 
         # should error here with a ``RemoteActorError`` or ``MultiError``
 
-    except first_err as err:
+    except first_err as _err:
+        err = _err
         if isinstance(err, BaseExceptionGroup):
             assert len(err.exceptions) == num_actors
             for exc in err.exceptions:
@@ -348,8 +364,8 @@ async def test_some_cancels_all(num_actors_and_errs, start_method, loglevel):
         elif isinstance(err, tractor.RemoteActorError):
             assert err.boxed_type == err_type
 
-        assert n.cancelled is True
-        assert not n._children
+        assert an.cancelled is True
+        assert not an._children
     else:
         pytest.fail("Should have gotten a remote assertion error?")
 
@@ -519,10 +535,15 @@ def test_cancel_via_SIGINT_other_task(
     async def main():
         # should never timeout since SIGINT should cancel the current program
         with trio.fail_after(timeout):
-            async with trio.open_nursery(
-                strict_exception_groups=False,
-            ) as n:
-                await n.start(spawn_and_sleep_forever)
+            async with (
+
+                # XXX ?TODO? why no work!?
+                # tractor.trionics.collapse_eg(),
+                trio.open_nursery(
+                    strict_exception_groups=False,
+                ) as tn,
+            ):
+                await tn.start(spawn_and_sleep_forever)
                 if 'mp' in spawn_backend:
                     time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)
@@ -533,38 +554,123 @@ def test_cancel_via_SIGINT_other_task(
 
 async def spin_for(period=3):
     "Sync sleep."
+    print(f'sync sleeping in sub-sub for {period}\n')
     time.sleep(period)
 
 
-async def spawn():
-    async with tractor.open_nursery() as tn:
-        await tn.run_in_actor(
+async def spawn_sub_with_sync_blocking_task():
+    async with tractor.open_nursery() as an:
+        print('starting sync blocking subactor..\n')
+        await an.run_in_actor(
             spin_for,
             name='sleeper',
         )
+        print('exiting first subactor layer..\n')
 
 
+@pytest.mark.parametrize(
+    'man_cancel_outer',
+    [
+        False,  # passes if delay != 2
+
+        # always causes an unexpected eg-w-embedded-assert-err?
+        pytest.param(True,
+             marks=pytest.mark.xfail(
+                 reason=(
+                    'always causes an unexpected eg-w-embedded-assert-err?'
+                )
+            ),
+        ),
+    ],
+)
 @no_windows
 def test_cancel_while_childs_child_in_sync_sleep(
-    loglevel,
-    start_method,
-    spawn_backend,
+    loglevel: str,
+    start_method: str,
+    spawn_backend: str,
+    debug_mode: bool,
+    reg_addr: tuple,
+    man_cancel_outer: bool,
 ):
-    """Verify that a child cancelled while executing sync code is torn
+    '''
+    Verify that a child cancelled while executing sync code is torn
     down even when that cancellation is triggered by the parent
     2 nurseries "up".
-    """
+
+    Though the grandchild should stay blocking its actor runtime, its
+    parent should issue a "zombie reaper" to hard kill it after
+    sufficient timeout.
+
+    '''
     if start_method == 'forkserver':
         pytest.skip("Forksever sux hard at resuming from sync sleep...")
 
     async def main():
-        with trio.fail_after(2):
-            async with tractor.open_nursery() as tn:
-                await tn.run_in_actor(
-                    spawn,
-                    name='spawn',
+        #
+        # XXX BIG TODO NOTE XXX
+        #
+        # it seems there's a strange race that can happen
+        # where where the fail-after will trigger outer scope
+        # .cancel() which then causes the inner scope to raise,
+        #
+        # BaseExceptionGroup('Exceptions from Trio nursery', [
+        #   BaseExceptionGroup('Exceptions from Trio nursery',
+        #   [
+        #       Cancelled(),
+        #       Cancelled(),
+        #   ]
+        #   ),
+        #   AssertionError('assert 0')
+        # ])
+        #
+        # WHY THIS DOESN'T MAKE SENSE:
+        # ---------------------------
+        # - it should raise too-slow-error when too slow..
+        #  * verified that using simple-cs and manually cancelling
+        #    you get same outcome -> indicates that the fail-after
+        #    can have its TooSlowError overriden!
+        #  |_ to check this it's easy, simplly decrease the timeout
+        #     as per the var below.
+        #
+        # - when using the manual simple-cs the outcome is different
+        #   DESPITE the `assert 0` which means regardless of the
+        #   inner scope effectively failing in the same way, the
+        #   bubbling up **is NOT the same**.
+        #
+        # delays trigger diff outcomes..
+        # ---------------------------
+        # as seen by uncommenting various lines below there is from
+        # my POV an unexpected outcome due to the delay=2 case.
+        #
+        # delay = 1  # no AssertionError in eg, TooSlowError raised.
+        # delay = 2  # is AssertionError in eg AND no TooSlowError !?
+        delay = 4  # is AssertionError in eg AND no _cs cancellation.
+
+        with trio.fail_after(delay) as _cs:
+        # with trio.CancelScope() as cs:
+        # ^XXX^ can be used instead to see same outcome.
+
+            async with (
+                # tractor.trionics.collapse_eg(),  # doesn't help
+                tractor.open_nursery(
+                    hide_tb=False,
+                    debug_mode=debug_mode,
+                    registry_addrs=[reg_addr],
+                ) as an,
+            ):
+                await an.run_in_actor(
+                    spawn_sub_with_sync_blocking_task,
+                    name='sync_blocking_sub',
                 )
                 await trio.sleep(1)
+
+                if man_cancel_outer:
+                    print('Cancelling manually in root')
+                    _cs.cancel()
+
+                # trigger exc-srced taskc down
+                # the actor tree.
+                print('RAISING IN ROOT')
                 assert 0
 
     with pytest.raises(AssertionError):

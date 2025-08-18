@@ -55,10 +55,17 @@ async def open_actor_cluster(
         raise ValueError(
             'Number of names is {len(names)} but count it {count}')
 
-    async with tractor.open_nursery(
-        **runtime_kwargs,
-    ) as an:
-        async with trio.open_nursery() as n:
+    async with (
+        # tractor.trionics.collapse_eg(),
+        tractor.open_nursery(
+            **runtime_kwargs,
+        ) as an
+    ):
+        async with (
+            # tractor.trionics.collapse_eg(),
+            trio.open_nursery() as tn,
+            tractor.trionics.maybe_raise_from_masking_exc()
+        ):
             uid = tractor.current_actor().uid
 
             async def _start(name: str) -> None:
@@ -69,9 +76,8 @@ async def open_actor_cluster(
                 )
 
             for name in names:
-                n.start_soon(_start, name)
+                tn.start_soon(_start, name)
 
         assert len(portals) == count
         yield portals
-
         await an.cancel(hard_kill=hard_kill)

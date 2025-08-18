@@ -37,13 +37,7 @@ import warnings
 
 import trio
 
-from ._runtime import (
-    Actor,
-    Arbiter,
-    # TODO: rename and make a non-actor subtype?
-    # Arbiter as Registry,
-    async_main,
-)
+from . import _runtime
 from .devx import (
     debug,
     _frame_stack,
@@ -64,6 +58,7 @@ from ._addr import (
 )
 from .trionics import (
     is_multi_cancelled,
+    collapse_eg,
 )
 from ._exceptions import (
     RuntimeFailure,
@@ -102,7 +97,7 @@ async def maybe_block_bp(
     ):
         logger.info(
             f'Found `greenback` installed @ {maybe_mod}\n'
-            'Enabling `tractor.pause_from_sync()` support!\n'
+            f'Enabling `tractor.pause_from_sync()` support!\n'
         )
         os.environ['PYTHONBREAKPOINT'] = (
             'tractor.devx.debug._sync_pause_from_builtin'
@@ -197,9 +192,13 @@ async def open_root_actor(
     # read-only state to sublayers?
     # extra_rt_vars: dict|None = None,
 
-) -> Actor:
+) -> _runtime.Actor:
     '''
-    Runtime init entry point for ``tractor``.
+    Initialize the `tractor` runtime by starting a "root actor" in
+    a parent-most Python process.
+
+    All (disjoint) actor-process-trees-as-programs are created via
+    this entrypoint.
 
     '''
     # XXX NEVER allow nested actor-trees!
@@ -397,7 +396,7 @@ async def open_root_actor(
                 f'Registry(s) seem(s) to exist @ {ponged_addrs}'
             )
 
-            actor = Actor(
+            actor = _runtime.Actor(
                 name=name or 'anonymous',
                 uuid=mk_uuid(),
                 registry_addrs=ponged_addrs,
@@ -436,7 +435,8 @@ async def open_root_actor(
             # https://github.com/goodboy/tractor/pull/348
             # https://github.com/goodboy/tractor/issues/296
 
-            actor = Arbiter(
+            # TODO: rename as `RootActor` or is that even necessary?
+            actor = _runtime.Arbiter(
                 name=name or 'registrar',
                 uuid=mk_uuid(),
                 registry_addrs=registry_addrs,
@@ -471,18 +471,21 @@ async def open_root_actor(
                     '-> Opening new registry @ '
                     +
                     '\n'.join(
-                        f'@{addr}' for addr in reg_addrs
+                        f'{addr}' for addr in reg_addrs
                     )
                 )
             logger.info(f'{report}\n')
 
-            # start the actor runtime in a new task
-            async with trio.open_nursery(
-                strict_exception_groups=False,
-                # ^XXX^ TODO? instead unpack any RAE as per "loose" style?
-            ) as nursery:
+            # start runtime in a bg sub-task, yield to caller.
+            async with (
+                collapse_eg(),
+                trio.open_nursery() as root_tn,
 
-                # ``_runtime.async_main()`` creates an internal nursery
+                # XXX, finally-footgun below?
+                # -> see note on why shielding.
+                # maybe_raise_from_masking_exc(),
+            ):
+                # `_runtime.async_main()` creates an internal nursery
                 # and blocks here until any underlying actor(-process)
                 # tree has terminated thereby conducting so called
                 # "end-to-end" structured concurrency throughout an
@@ -490,9 +493,9 @@ async def open_root_actor(
                 # "actor runtime" primitives are SC-compat and thus all
                 # transitively spawned actors/processes must be as
                 # well.
-                await nursery.start(
+                await root_tn.start(
                     partial(
-                        async_main,
+                        _runtime.async_main,
                         actor,
                         accept_addrs=trans_bind_addrs,
                         parent_addr=None
@@ -540,7 +543,7 @@ async def open_root_actor(
                     raise
 
                 finally:
-                    # NOTE: not sure if we'll ever need this but it's
+                    # NOTE/TODO?, not sure if we'll ever need this but it's
                     # possibly better for even more determinism?
                     # logger.cancel(
                     #     f'Waiting on {len(nurseries)} nurseries in root..')

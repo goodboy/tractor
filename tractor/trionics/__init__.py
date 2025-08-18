@@ -31,7 +31,7 @@ from ._broadcast import (
 )
 from ._beg import (
     collapse_eg as collapse_eg,
-    maybe_collapse_eg as maybe_collapse_eg,
+    get_collapsed_eg as get_collapsed_eg,
     is_multi_cancelled as is_multi_cancelled,
 )
 from ._taskc import (

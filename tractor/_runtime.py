@@ -74,6 +74,9 @@ from tractor.msg import (
     pretty_struct,
     types as msgtypes,
 )
+from .trionics import (
+    collapse_eg,
+)
 from .ipc import (
     Channel,
     # IPCServer,  # causes cycles atm..
@@ -359,7 +362,7 @@ class Actor:
 
     def pformat(
         self,
-        ds: str = ':',
+        ds: str = ': ',
         indent: int = 0,
         privates: bool = False,
     ) -> str:
@@ -1471,17 +1474,18 @@ async def async_main(
         # parent is kept alive as a resilient service until
         # cancellation steps have (mostly) occurred in
         # a deterministic way.
-        async with trio.open_nursery(
-            strict_exception_groups=False,
-        ) as root_nursery:
-            actor._root_n = root_nursery
+        root_tn: trio.Nursery
+        async with (
+            collapse_eg(),
+            trio.open_nursery() as root_tn,
+        ):
+            actor._root_n = root_tn
             assert actor._root_n
 
             ipc_server: _server.IPCServer
             async with (
-                trio.open_nursery(
-                    strict_exception_groups=False,
-                ) as service_nursery,
+                collapse_eg(),
+                trio.open_nursery() as service_nursery,
                 _server.open_ipc_server(
                     parent_tn=service_nursery,
                     stream_handler_tn=service_nursery,
@@ -1605,7 +1609,7 @@ async def async_main(
                 # start processing parent requests until our channel
                 # server is 100% up and running.
                 if actor._parent_chan:
-                    await root_nursery.start(
+                    await root_tn.start(
                         partial(
                             _rpc.process_messages,
                             chan=actor._parent_chan,
@@ -1756,9 +1760,7 @@ async def async_main(
                 f'   {pformat(ipc_server._peers)}'
             )
             log.runtime(teardown_report)
-            await ipc_server.wait_for_no_more_peers(
-                shield=True,
-            )
+            await ipc_server.wait_for_no_more_peers()
 
         teardown_report += (
             '-]> all peer channels are complete.\n'

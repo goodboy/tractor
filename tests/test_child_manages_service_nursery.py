@@ -117,9 +117,10 @@ async def open_actor_local_nursery(
     ctx: tractor.Context,
 ):
     global _nursery
-    async with trio.open_nursery(
-        strict_exception_groups=False,
-    ) as tn:
+    async with (
+        tractor.trionics.collapse_eg(),
+        trio.open_nursery() as tn
+    ):
         _nursery = tn
         await ctx.started()
         await trio.sleep(10)

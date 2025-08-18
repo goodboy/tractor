@@ -313,9 +313,8 @@ async def inf_streamer(
         # `trio.EndOfChannel` doesn't propagate directly to the above
         # .open_stream() parent, resulting in it also raising instead
         # of gracefully absorbing as normal.. so how to handle?
-        trio.open_nursery(
-            strict_exception_groups=False,
-        ) as tn,
+        tractor.trionics.collapse_eg(),
+        trio.open_nursery() as tn,
     ):
         async def close_stream_on_sentinel():
             async for msg in stream:

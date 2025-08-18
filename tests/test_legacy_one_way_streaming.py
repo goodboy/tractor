@@ -235,10 +235,16 @@ async def cancel_after(wait, reg_addr):
 
 
 @pytest.fixture(scope='module')
-def time_quad_ex(reg_addr, ci_env, spawn_backend):
+def time_quad_ex(
+    reg_addr: tuple,
+    ci_env: bool,
+    spawn_backend: str,
+):
     if spawn_backend == 'mp':
-        """no idea but the  mp *nix runs are flaking out here often...
-        """
+        '''
+        no idea but the  mp *nix runs are flaking out here often...
+
+        '''
         pytest.skip("Test is too flaky on mp in CI")
 
     timeout = 7 if platform.system() in ('Windows', 'Darwin') else 4
@@ -249,12 +255,24 @@ def time_quad_ex(reg_addr, ci_env, spawn_backend):
     return results, diff
 
 
-def test_a_quadruple_example(time_quad_ex, ci_env, spawn_backend):
-    """This also serves as a kind of "we'd like to be this fast test"."""
+def test_a_quadruple_example(
+    time_quad_ex: tuple,
+    ci_env: bool,
+    spawn_backend: str,
+):
+    '''
+    This also serves as a kind of "we'd like to be this fast test".
 
+    '''
     results, diff = time_quad_ex
     assert results
-    this_fast = 6 if platform.system() in ('Windows', 'Darwin') else 3
+    this_fast = (
+        6 if platform.system() in (
+            'Windows',
+            'Darwin',
+        )
+        else 3
+    )
     assert diff < this_fast
 
 

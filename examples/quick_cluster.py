@@ -23,9 +23,8 @@ async def main():
             modules=[__name__]
         ) as portal_map,
 
-        trio.open_nursery(
-            strict_exception_groups=False,
-        ) as tn,
+        tractor.trionics.collapse_eg(),
+        trio.open_nursery() as tn,
     ):
 
         for (name, portal) in portal_map.items():

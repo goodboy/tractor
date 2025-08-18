@@ -101,6 +101,9 @@ from ._state import (
     debug_mode,
     _ctxvar_Context,
 )
+from .trionics import (
+    collapse_eg,
+)
 # ------ - ------
 if TYPE_CHECKING:
     from ._portal import Portal
@@ -942,7 +945,7 @@ class Context:
         self.cancel_called = True
 
         header: str = (
-            f'Cancelling ctx from {side.upper()}-side\n'
+            f'Cancelling ctx from {side!r}-side\n'
         )
         reminfo: str = (
             # ' =>\n'
@@ -950,7 +953,7 @@ class Context:
             f'\n'
             f'c)=> {self.chan.uid}\n'
             f'   |_[{self.dst_maddr}\n'
-            f'     >>{self.repr_rpc}\n'
+            f'     >> {self.repr_rpc}\n'
             # f'    >> {self._nsf}() -> {codec}[dict]:\n\n'
             # TODO: pull msg-type from spec re #320
         )
@@ -2025,10 +2028,8 @@ async def open_context_from_portal(
     ctxc_from_callee: ContextCancelled|None = None
     try:
         async with (
-            trio.open_nursery(
-                strict_exception_groups=False,
-            ) as tn,
-
+            collapse_eg(),
+            trio.open_nursery() as tn,
             msgops.maybe_limit_plds(
                 ctx=ctx,
                 spec=ctx_meta.get('pld_spec'),
