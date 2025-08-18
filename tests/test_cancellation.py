@@ -236,7 +236,10 @@ async def stream_forever():
 async def test_cancel_infinite_streamer(start_method):
 
     # stream for at most 1 seconds
-    with trio.move_on_after(1) as cancel_scope:
+    with (
+        trio.fail_after(4),
+        trio.move_on_after(1) as cancel_scope
+    ):
         async with tractor.open_nursery() as n:
             portal = await n.start_actor(
                 'donny',
