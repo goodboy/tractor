@@ -654,7 +654,6 @@ async def _invoke(
                 # scope ensures unasking of the `await coro` below
                 # *should* never be interfered with!!
                 maybe_raise_from_masking_exc(
-                    tn=tn,
                     unmask_from=(Cancelled,),
                 ) as _mbme,  # maybe boxed masked exc
             ):
