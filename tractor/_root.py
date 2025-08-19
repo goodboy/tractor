@@ -488,6 +488,7 @@ async def open_root_actor(
                 # -> see note on why shielding.
                 # maybe_raise_from_masking_exc(),
             ):
+                actor._root_tn = root_tn
                 # `_runtime.async_main()` creates an internal nursery
                 # and blocks here until any underlying actor(-process)
                 # tree has terminated thereby conducting so called

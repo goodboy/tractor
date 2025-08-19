@@ -481,12 +481,12 @@ async def _pause(
             # we have to figure out how to avoid having the service nursery
             # cancel on this task start? I *think* this works below:
             # ```python
-            #   actor._service_n.cancel_scope.shield = shield
+            #   actor._service_tn.cancel_scope.shield = shield
             # ```
             # but not entirely sure if that's a sane way to implement it?
 
             # NOTE currently we spawn the lock request task inside this
-            # subactor's global `Actor._service_n` so that the
+            # subactor's global `Actor._service_tn` so that the
             # lifetime of the lock-request can outlive the current
             # `._pause()` scope while the user steps through their
             # application code and when they finally exit the
@@ -510,7 +510,7 @@ async def _pause(
                 f'|_{task}\n'
             )
             with trio.CancelScope(shield=shield):
-                req_ctx: Context = await actor._service_n.start(
+                req_ctx: Context = await actor._service_tn.start(
                     partial(
                         request_root_stdio_lock,
                         actor_uid=actor.uid,
@@ -544,7 +544,7 @@ async def _pause(
             _repl_fail_report = None
 
         # when the actor is mid-runtime cancellation the
-        # `Actor._service_n` might get closed before we can spawn
+        # `Actor._service_tn` might get closed before we can spawn
         # the request task, so just ignore expected RTE.
         elif (
             isinstance(pause_err, RuntimeError)
@@ -989,7 +989,7 @@ def pause_from_sync(
                 # that output and assign the `repl` created above!
                 bg_task, _ = trio.from_thread.run(
                     afn=partial(
-                        actor._service_n.start,
+                        actor._service_tn.start,
                         partial(
                             _pause_from_bg_root_thread,
                             behalf_of_thread=thread,

@@ -204,7 +204,7 @@ class _Cache:
     a kept-alive-while-in-use async resource.
 
     '''
-    service_n: Optional[trio.Nursery] = None
+    service_tn: Optional[trio.Nursery] = None
     locks: dict[Hashable, trio.Lock] = {}
     users: int = 0
     values: dict[Any,  Any] = {}
@@ -294,15 +294,15 @@ async def maybe_open_context(
                 f'task: {task}\n'
                 f'task_tn: {task_tn}\n'
             )
-        service_n = tn
+        service_tn = tn
     else:
-        service_n: trio.Nursery = current_actor()._service_n
+        service_tn: trio.Nursery = current_actor()._service_tn
 
     # TODO: is there any way to allocate
     # a 'stays-open-till-last-task-finshed nursery?
-    # service_n: trio.Nursery
-    # async with maybe_open_nursery(_Cache.service_n) as service_n:
-    #     _Cache.service_n = service_n
+    # service_tn: trio.Nursery
+    # async with maybe_open_nursery(_Cache.service_tn) as service_tn:
+    #     _Cache.service_tn = service_tn
 
     cache_miss_ke: KeyError|None = None
     maybe_taskc: trio.Cancelled|None = None
@@ -324,8 +324,8 @@ async def maybe_open_context(
             mngr = acm_func(**kwargs)
             resources = _Cache.resources
             assert not resources.get(ctx_key), f'Resource exists? {ctx_key}'
-            resources[ctx_key] = (service_n, trio.Event())
-            yielded: Any = await service_n.start(
+            resources[ctx_key] = (service_tn, trio.Event())
+            yielded: Any = await service_tn.start(
                 _Cache.run_ctx,
                 mngr,
                 ctx_key,

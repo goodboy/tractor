@@ -384,7 +384,7 @@ async def _errors_relayed_via_ipc(
 
     # RPC task bookeeping.
     # since RPC tasks are scheduled inside a flat
-    # `Actor._service_n`, we add "handles" to each such that
+    # `Actor._service_tn`, we add "handles" to each such that
     # they can be individually ccancelled.
     finally:
 
@@ -462,7 +462,7 @@ async def _invoke(
     connected IPC channel.
 
     This is the core "RPC" `trio.Task` scheduling machinery used to start every
-    remotely invoked function, normally in `Actor._service_n: Nursery`.
+    remotely invoked function, normally in `Actor._service_tn: Nursery`.
 
     '''
     __tracebackhide__: bool = hide_tb
@@ -936,7 +936,7 @@ async def process_messages(
 
     Receive (multiplexed) per-`Channel` RPC requests as msgs from
     remote processes; schedule target async funcs as local
-    `trio.Task`s inside the `Actor._service_n: Nursery`.
+    `trio.Task`s inside the `Actor._service_tn: Nursery`.
 
     Depending on msg type, non-`cmd` (task spawning/starting)
     request payloads (eg. `started`, `yield`, `return`, `error`)
@@ -961,7 +961,7 @@ async def process_messages(
 
     '''
     actor: Actor = _state.current_actor()
-    assert actor._service_n  # runtime state sanity
+    assert actor._service_tn  # runtime state sanity
 
     # TODO: once `trio` get's an "obvious way" for req/resp we
     # should use it?
@@ -1172,7 +1172,7 @@ async def process_messages(
                         start_status += '->( scheduling new task..\n'
                         log.runtime(start_status)
                         try:
-                            ctx: Context = await actor._service_n.start(
+                            ctx: Context = await actor._service_tn.start(
                                 partial(
                                     _invoke,
                                     actor,
@@ -1312,7 +1312,7 @@ async def process_messages(
     ) as err:
 
         if nursery_cancelled_before_task:
-            sn: Nursery = actor._service_n
+            sn: Nursery = actor._service_tn
             assert sn and sn.cancel_scope.cancel_called  # sanity
             log.cancel(
                 f'Service nursery cancelled before it handled {funcname}'
