@@ -215,7 +215,7 @@ class LinkedTaskChannel(
         val: Any = None,
     ) -> None:
         '''
-        Synchronize aio-sde with its trio-parent.
+        Synchronize aio-side with its trio-parent.
 
         '''
         self._aio_started_val = val
@@ -459,14 +459,22 @@ def _run_asyncio_task(
                         f'Task exited with final result: {result!r}\n'
                     )
 
-                # only close the aio (child) side which will relay
-                # a `trio.EndOfChannel` to the trio (parent) side.
+                # XXX ALWAYS close the child-`asyncio`-task-side's
+                # `to_trio` handle which will in turn relay
+                # a `trio.EndOfChannel` to the `trio`-parent.
+                # Consequently the parent `trio` task MUST ALWAYS
+                # check for any `chan._aio_err` to be raised when it
+                # receives an EoC.
                 #
-                # XXX NOTE, that trio-side MUST then in such cases
-                # check for a `chan._aio_err` and raise it!!
+                # NOTE, there are 2 EoC cases,
+                # - normal/graceful EoC due to the aio-side actually
+                #   terminating its "streaming", but the task did not
+                #   error and is not yet complete.
+                #
+                # - the aio-task terminated and we specially mark the
+                #   closure as due to the `asyncio.Task`'s exit.
+                #
                 to_trio.close()
-                # specially mark the closure as due to the
-                # asyncio.Task terminating!
                 chan._closed_by_aio_task = True
 
             aio_task_complete.set()
@@ -845,8 +853,6 @@ async def translate_aio_errors(
             )
             chan._trio_to_raise = aio_err
             trio_err = chan._trio_err = eoc
-            #
-            # await tractor.pause(shield=True)
             #
             # ?TODO?, raise something like a,
             # chan._trio_to_raise = AsyncioErrored()
