@@ -18,8 +18,9 @@ from tractor import (
 @pytest.fixture
 def bindspace_dir_str() -> str:
 
-    bs_dir_str: str = '/run/user/1000/doggy'
-    bs_dir = Path(bs_dir_str)
+    rt_dir: Path = tractor._state.get_rt_dir()
+    bs_dir: Path = rt_dir / 'doggy'
+    bs_dir_str: str = str(bs_dir)
     assert not bs_dir.is_dir()
 
     yield bs_dir_str
