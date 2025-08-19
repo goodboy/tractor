@@ -174,7 +174,6 @@ class Actor:
     msg_buffer_size: int = 2**6
 
     # nursery placeholders filled in by `async_main()` after fork
-    _root_n: Nursery|None = None
     _service_n: Nursery|None = None
 
     _ipc_server: _server.IPCServer|None = None
@@ -1479,8 +1478,8 @@ async def async_main(
             collapse_eg(),
             trio.open_nursery() as root_tn,
         ):
-            actor._root_n = root_tn
-            assert actor._root_n
+            # actor._root_n = root_tn
+            # assert actor._root_n
 
             ipc_server: _server.IPCServer
             async with (

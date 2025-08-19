@@ -117,7 +117,6 @@ class ActorNursery:
             ]
         ] = {}
 
-        self.cancelled: bool = False
         self._join_procs = trio.Event()
         self._at_least_one_child_in_debug: bool = False
         self.errors = errors
@@ -135,9 +134,52 @@ class ActorNursery:
         # TODO: remove the `.run_in_actor()` API and thus this 2ndary
         # nursery when that API get's moved outside this primitive!
         self._ria_nursery = ria_nursery
+
+        # TODO, factor this into a .hilevel api!
+        #
         # portals spawned with ``run_in_actor()`` are
         # cancelled when their "main" result arrives
         self._cancel_after_result_on_exit: set = set()
+
+        # trio.Nursery-like cancel (request) statuses
+        self._cancelled_caught: bool = False
+        self._cancel_called: bool = False
+
+    @property
+    def cancel_called(self) -> bool:
+        '''
+        Records whether cancellation has been requested for this
+        actor-nursery by a call to  `.cancel()` either due to,
+        - an explicit call by some actor-local-task,
+        - an implicit call due to an error/cancel emited inside
+          the `tractor.open_nursery()` block.
+
+        '''
+        return self._cancel_called
+
+    @property
+    def cancelled_caught(self) -> bool:
+        '''
+        Set when this nursery was able to cance all spawned subactors
+        gracefully via an (implicit) call to `.cancel()`.
+
+        '''
+        return self._cancelled_caught
+
+    # TODO! remove internal/test-suite usage!
+    @property
+    def cancelled(self) -> bool:
+        warnings.warn(
+            "`ActorNursery.cancelled` is now deprecated, use "
+            " `.cancel_called` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return (
+            self._cancel_called
+            # and
+            # self._cancelled_caught
+        )
 
     async def start_actor(
         self,
@@ -316,7 +358,7 @@ class ActorNursery:
 
         '''
         __runtimeframe__: int = 1  # noqa
-        self.cancelled = True
+        self._cancel_called = True
 
         # TODO: impl a repr for spawn more compact
         # then `._children`..
@@ -394,6 +436,8 @@ class ActorNursery:
             ) in children.values():
                 log.warning(f"Hard killing process {proc}")
                 proc.terminate()
+        else:
+            self._cancelled_caught
 
         # mark ourselves as having (tried to have) cancelled all subactors
         self._join_procs.set()
@@ -603,6 +647,7 @@ _shutdown_msg: str = (
 @acm
 # @api_frame
 async def open_nursery(
+    *,  # named params only!
     hide_tb: bool = True,
     **kwargs,
     # ^TODO, paramspec for `open_root_actor()`
