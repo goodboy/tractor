@@ -101,10 +101,26 @@ class Channel:
         # ^XXX! ONLY set if a remote actor sends an `Error`-msg
         self._closed: bool = False
 
-        # flag set by ``Portal.cancel_actor()`` indicating remote
-        # (possibly peer) cancellation of the far end actor
-        # runtime.
+        # flag set by `Portal.cancel_actor()` indicating remote
+        # (possibly peer) cancellation of the far end actor runtime.
         self._cancel_called: bool = False
+
+    @property
+    def closed(self) -> bool:
+        '''
+        Was `.aclose()` successfully called?
+
+        '''
+        return self._closed
+
+    @property
+    def cancel_called(self) -> bool:
+        '''
+        Set when `Portal.cancel_actor()` is called on a portal which
+        wraps this IPC channel.
+
+        '''
+        return self._cancel_called
 
     @property
     def uid(self) -> tuple[str, str]:
@@ -169,7 +185,9 @@ class Channel:
             addr,
             **kwargs,
         )
-        assert transport.raddr == addr
+        # XXX, for UDS *no!* since we recv the peer-pid and build out
+        # a new addr..
+        # assert transport.raddr == addr
         chan = Channel(transport=transport)
 
         # ?TODO, compact this into adapter level-methods?
@@ -285,7 +303,7 @@ class Channel:
         self,
         payload: Any,
 
-        hide_tb: bool = True,
+        hide_tb: bool = False,
 
     ) -> None:
         '''

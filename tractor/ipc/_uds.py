@@ -18,6 +18,9 @@ Unix Domain Socket implementation of tractor.ipc._transport.MsgTransport protoco
 
 '''
 from __future__ import annotations
+from contextlib import (
+    contextmanager as cm,
+)
 from pathlib import Path
 import os
 from socket import (
@@ -29,6 +32,7 @@ from socket import (
 )
 import struct
 from typing import (
+    Type,
     TYPE_CHECKING,
     ClassVar,
 )
@@ -99,8 +103,6 @@ class UDSAddress(
             self.filedir
             or
             self.def_bindspace
-            # or
-            # get_rt_dir()
         )
 
     @property
@@ -205,12 +207,35 @@ class UDSAddress(
             f']'
         )
 
+@cm
+def _reraise_as_connerr(
+    src_excs: tuple[Type[Exception]],
+    addr: UDSAddress,
+):
+    try:
+        yield
+    except src_excs as src_exc:
+        raise ConnectionError(
+            f'Bad UDS socket-filepath-as-address ??\n'
+            f'{addr}\n'
+            f' |_sockpath: {addr.sockpath}\n'
+            f'\n'
+            f'from src: {src_exc!r}\n'
+        ) from src_exc
+
 
 async def start_listener(
     addr: UDSAddress,
     **kwargs,
 ) -> SocketListener:
-    # sock = addr._sock = socket.socket(
+    '''
+    Start listening for inbound connections via
+    a `trio.SocketListener` (task) which `socket.bind()`s on `addr`.
+
+    Note, if the `UDSAddress.bindspace: Path` directory dne it is
+    implicitly created.
+
+    '''
     sock = socket.socket(
         socket.AF_UNIX,
         socket.SOCK_STREAM
@@ -221,17 +246,25 @@ async def start_listener(
         f'|_{addr}\n'
     )
 
+    # ?TODO? should we use the `actor.lifetime_stack`
+    # to rm on shutdown?
     bindpath: Path = addr.sockpath
-    try:
+    if not (bs := addr.bindspace).is_dir():
+        log.info(
+            'Creating bindspace dir in file-sys\n'
+            f'>{{\n'
+            f'|_{bs!r}\n'
+        )
+        bs.mkdir()
+
+    with _reraise_as_connerr(
+        src_excs=(
+            FileNotFoundError,
+            OSError,
+        ),
+        addr=addr
+    ):
         await sock.bind(str(bindpath))
-    except (
-        FileNotFoundError,
-    ) as fdne:
-        raise ConnectionError(
-            f'Bad UDS socket-filepath-as-address ??\n'
-            f'{addr}\n'
-            f' |_sockpath: {addr.sockpath}\n'
-        ) from fdne
 
     sock.listen(1)
     log.info(
@@ -356,27 +389,30 @@ class MsgpackUDSStream(MsgpackTransport):
         # `.setsockopt()` call tells the OS provide it; the client
         # pid can then be read on server/listen() side via
         # `get_peer_info()` above.
-        try:
+
+        with _reraise_as_connerr(
+            src_excs=(
+                FileNotFoundError,
+            ),
+            addr=addr
+        ):
             stream = await open_unix_socket_w_passcred(
                 str(sockpath),
                 **kwargs
             )
-        except (
-            FileNotFoundError,
-        ) as fdne:
-            raise ConnectionError(
-                f'Bad UDS socket-filepath-as-address ??\n'
-                f'{addr}\n'
-                f' |_sockpath: {sockpath}\n'
-            ) from fdne
 
-        stream = MsgpackUDSStream(
+        tpt_stream = MsgpackUDSStream(
             stream,
             prefix_size=prefix_size,
             codec=codec
         )
-        stream._raddr = addr
-        return stream
+        # XXX assign from new addrs after peer-PID extract!
+        (
+            tpt_stream._laddr,
+            tpt_stream._raddr,
+        ) = cls.get_stream_addrs(stream)
+
+        return tpt_stream
 
     @classmethod
     def get_stream_addrs(

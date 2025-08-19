@@ -430,20 +430,25 @@ class MsgpackTransport(MsgTransport):
                 return await self.stream.send_all(size + bytes_data)
             except (
                 trio.BrokenResourceError,
-            ) as bre:
-                trans_err = bre
+                trio.ClosedResourceError,
+            ) as _re:
+                trans_err = _re
                 tpt_name: str = f'{type(self).__name__!r}'
+
                 match trans_err:
+
+                    # XXX, specifc to UDS transport and its,
+                    # well, "speediness".. XD
+                    # |_ likely todo with races related to how fast
+                    #    the socket is setup/torn-down on linux
+                    #    as it pertains to rando pings from the
+                    #    `.discovery` subsys and protos.
                     case trio.BrokenResourceError() if (
-                        '[Errno 32] Broken pipe' in trans_err.args[0]
-                        # ^XXX, specifc to UDS transport and its,
-                        # well, "speediness".. XD
-                        # |_ likely todo with races related to how fast
-                        #    the socket is setup/torn-down on linux
-                        #    as it pertains to rando pings from the
-                        #    `.discovery` subsys and protos.
+                        '[Errno 32] Broken pipe'
+                        in
+                        trans_err.args[0]
                     ):
-                        raise TransportClosed.from_src_exc(
+                        tpt_closed = TransportClosed.from_src_exc(
                             message=(
                                 f'{tpt_name} already closed by peer\n'
                             ),
@@ -451,14 +456,31 @@ class MsgpackTransport(MsgTransport):
                             src_exc=trans_err,
                             raise_on_report=True,
                             loglevel='transport',
-                        ) from bre
+                        )
+                        raise tpt_closed from trans_err
+
+                    # case trio.ClosedResourceError() if (
+                    #     'this socket was already closed'
+                    #     in
+                    #     trans_err.args[0]
+                    # ):
+                    #     tpt_closed = TransportClosed.from_src_exc(
+                    #         message=(
+                    #             f'{tpt_name} already closed by peer\n'
+                    #         ),
+                    #         body=f'{self}\n',
+                    #         src_exc=trans_err,
+                    #         raise_on_report=True,
+                    #         loglevel='transport',
+                    #     )
+                    #     raise tpt_closed from trans_err
 
                     # unless the disconnect condition falls under "a
                     # normal operation breakage" we usualy console warn
                     # about it.
                     case _:
                         log.exception(
-                            '{tpt_name} layer failed pre-send ??\n'
+                            f'{tpt_name} layer failed pre-send ??\n'
                         )
                         raise trans_err
 
@@ -503,7 +525,7 @@ class MsgpackTransport(MsgTransport):
     def pformat(self) -> str:
         return (
             f'<{type(self).__name__}(\n'
-            f' |_peers: 2\n'
+            f' |_peers: 1\n'
             f'   laddr: {self._laddr}\n'
             f'   raddr: {self._raddr}\n'
             # f'\n'

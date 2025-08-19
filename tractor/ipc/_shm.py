@@ -23,14 +23,15 @@ considered optional within the context of this runtime-library.
 
 """
 from __future__ import annotations
+from multiprocessing import shared_memory as shm
+from multiprocessing.shared_memory import (
+    # SharedMemory,
+    ShareableList,
+)
+import platform
 from sys import byteorder
 import time
 from typing import Optional
-from multiprocessing import shared_memory as shm
-from multiprocessing.shared_memory import (
-    SharedMemory,
-    ShareableList,
-)
 
 from msgspec import (
     Struct,
@@ -61,7 +62,7 @@ except ImportError:
 log = get_logger(__name__)
 
 
-disable_mantracker()
+SharedMemory = disable_mantracker()
 
 
 class SharedInt:
@@ -789,11 +790,23 @@ def open_shm_list(
         readonly=readonly,
     )
 
+    # TODO, factor into a @actor_fixture acm-API?
+    # -[ ] also `@maybe_actor_fixture()` which inludes
+    #     the .current_actor() convenience check?
+    #   |_ orr can that just be in the sin-maybe-version?
+    #
     # "close" attached shm on actor teardown
     try:
         actor = tractor.current_actor()
+
         actor.lifetime_stack.callback(shml.shm.close)
-        actor.lifetime_stack.callback(shml.shm.unlink)
+
+        # XXX on 3.13+ we don't need to call this?
+        # -> bc we pass `track=False` for `SharedMemeory` orr?
+        if (
+            platform.python_version_tuple()[:-1] < ('3', '13')
+        ):
+            actor.lifetime_stack.callback(shml.shm.unlink)
     except RuntimeError:
         log.warning('tractor runtime not active, skipping teardown steps')
 
