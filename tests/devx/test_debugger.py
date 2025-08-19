@@ -1,13 +1,13 @@
 """
 That "native" debug mode better work!
 
-All these tests can be understood (somewhat) by running the equivalent
-`examples/debugging/` scripts manually.
+All these tests can be understood (somewhat) by running the
+equivalent `examples/debugging/` scripts manually.
 
 TODO:
-    - none of these tests have been run successfully on windows yet but
-      there's been manual testing that verified it works.
-    - wonder if any of it'll work on OS X?
+  - none of these tests have been run successfully on windows yet but
+    there's been manual testing that verified it works.
+  - wonder if any of it'll work on OS X?
 
 """
 from __future__ import annotations
@@ -1154,6 +1154,54 @@ def test_ctxep_pauses_n_maybe_ipc_breaks(
                 child,
                 ['KeyboardInterrupt'],
             )
+
+
+def test_crash_handling_within_cancelled_root_actor(
+    spawn: PexpectSpawner,
+):
+    '''
+    Ensure that when only a root-actor is started via `open_root_actor()`
+    we can crash-handle in debug-mode despite self-cancellation.
+
+    More-or-less ensures we conditionally shield the pause in
+    `._root.open_root_actor()`'s `await debug._maybe_enter_pm()`
+    call.
+
+    '''
+    child = spawn('root_self_cancelled_w_error')
+    child.expect(PROMPT)
+
+    assert_before(
+        child,
+        [
+            "Actor.cancel_soon()` was called!",
+            "root cancelled",
+            _pause_msg,
+            "('root'",  # actor name
+        ]
+    )
+
+    child.sendline('c')
+    child.expect(PROMPT)
+    assert_before(
+        child,
+        [
+            _crash_msg,
+            "('root'",  # actor name
+            "AssertionError",
+            "assert 0",
+        ]
+    )
+
+    child.sendline('c')
+    child.expect(EOF)
+    assert_before(
+        child,
+        [
+            "AssertionError",
+            "assert 0",
+        ]
+    )
 
 
 # TODO: better error for "non-ideal" usage from the root actor.
