@@ -17,6 +17,8 @@
 Utils to tame mp non-SC madeness
 
 '''
+from functools import partial
+from multiprocessing.shared_memory import SharedMemory
 import platform
 
 
@@ -26,7 +28,6 @@ def disable_mantracker():
     it's an absolute multi-threaded mess of non-SC madness.
 
     '''
-    from multiprocessing.shared_memory import SharedMemory
 
 
     # 3.13+ only.. can pass `track=False` to disable
@@ -38,7 +39,6 @@ def disable_mantracker():
             ('3', '13')
         )
     ):
-        from functools import partial
         return partial(
             SharedMemory,
             track=False,
@@ -70,6 +70,4 @@ def disable_mantracker():
         mantracker.getfd = mantracker._resource_tracker.getfd
 
         # use std type verbatim
-        shmT = SharedMemory
-
-    return shmT
+        return SharedMemory
