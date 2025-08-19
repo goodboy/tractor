@@ -655,7 +655,7 @@ async def _invoke(
                 # *should* never be interfered with!!
                 maybe_raise_from_masking_exc(
                     tn=tn,
-                    unmask_from=Cancelled,
+                    unmask_from=(Cancelled,),
                 ) as _mbme,  # maybe boxed masked exc
             ):
                 ctx._scope_nursery = tn
