@@ -1,5 +1,5 @@
 # tractor: structured concurrent "actors".
-# Copyright 2018-eternity Tyler Goodlet.
+# Copyright 2024-eternity Tyler Goodlet.
 
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -15,27 +15,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Sugary patterns for trio + tractor designs.
+High level design patterns, APIs and runtime extensions built on top
+of the `tractor` runtime core.
 
 '''
-from ._mngrs import (
-    gather_contexts as gather_contexts,
-    maybe_open_context as maybe_open_context,
-)
-from ._broadcast import (
-    AsyncReceiver as AsyncReceiver,
-    broadcast_receiver as broadcast_receiver,
-    BroadcastReceiver as BroadcastReceiver,
-    Lagged as Lagged,
-)
-from ._beg import (
-    collapse_eg as collapse_eg,
-    get_collapsed_eg as get_collapsed_eg,
-    is_multi_cancelled as is_multi_cancelled,
-)
-from ._taskc import (
-    maybe_raise_from_masking_exc as maybe_raise_from_masking_exc,
-)
-from ._tn import (
-    maybe_open_nursery as maybe_open_nursery,
+from ._service import (
+    open_service_mngr as open_service_mngr,
+    get_service_mngr as get_service_mngr,
+    ServiceMngr as ServiceMngr,
 )
