@@ -1520,7 +1520,6 @@ async def async_main(
             maybe_open_nursery(
                 nursery=actor._root_tn,
             ) as root_tn,
-            # trio.open_nursery() as root_tn,
         ):
             if ya_root_tn:
                 assert root_tn is actor._root_tn
@@ -1533,13 +1532,10 @@ async def async_main(
                 maybe_open_nursery(
                     nursery=actor._service_tn,
                 ) as service_tn,
-                # trio.open_nursery() as service_tn,
                 _server.open_ipc_server(
-                    parent_tn=service_tn,
+                    parent_tn=service_tn,  # ?TODO, why can't this be the root-tn
                     stream_handler_tn=service_tn,
                 ) as ipc_server,
-                # ) as actor._ipc_server,
-                # ^TODO? prettier?
 
             ):
                 if ya_service_tn:
@@ -1551,17 +1547,8 @@ async def async_main(
                     # in the background until this nursery is cancelled.
                     actor._service_tn = service_tn
 
+                # set after allocate
                 actor._ipc_server = ipc_server
-                assert (
-                    actor._service_tn
-                    and (
-                        actor._service_tn
-                        is
-                        actor._ipc_server._parent_tn
-                        is
-                        ipc_server._stream_handler_tn
-                    )
-                )
 
                 # load exposed/allowed RPC modules
                 # XXX: do this **after** establishing a channel to the parent
@@ -1587,6 +1574,7 @@ async def async_main(
                 # - root actor: the ``accept_addr`` passed to this method
 
                 # TODO: why is this not with the root nursery?
+                # - see above that the `._service_tn` is what's used?
                 try:
                     eps: list = await ipc_server.listen_on(
                         accept_addrs=accept_addrs,
