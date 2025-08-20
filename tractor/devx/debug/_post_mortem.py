@@ -250,7 +250,7 @@ async def _maybe_enter_pm(
     *,
     tb: TracebackType|None = None,
     api_frame: FrameType|None = None,
-    hide_tb: bool = False,
+    hide_tb: bool = True,
 
     # only enter debugger REPL when returns `True`
     debug_filter: Callable[

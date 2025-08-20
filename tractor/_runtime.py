@@ -35,6 +35,15 @@ for running all lower level spawning, supervision and msging layers:
   SC-transitive RPC via scheduling of `trio` tasks.
 - registration of newly spawned actors with the discovery sys.
 
+Glossary:
+--------
+ - tn: a `trio.Nursery` or "task nursery".
+ - an: an `ActorNursery` or "actor nursery".
+ - root: top/parent-most scope/task/process/actor (or other runtime
+         primitive) in a hierarchical tree.
+ - parent-ish: "higher-up" in the runtime-primitive hierarchy.
+ - child-ish: "lower-down" in the runtime-primitive hierarchy.
+
 '''
 from __future__ import annotations
 from contextlib import (
@@ -76,6 +85,7 @@ from tractor.msg import (
 )
 from .trionics import (
     collapse_eg,
+    maybe_open_nursery,
 )
 from .ipc import (
     Channel,
@@ -173,9 +183,11 @@ class Actor:
 
     msg_buffer_size: int = 2**6
 
-    # nursery placeholders filled in by `async_main()` after fork
-    _service_n: Nursery|None = None
-
+    # nursery placeholders filled in by `async_main()`,
+    # - after fork for subactors.
+    # - during boot for the root actor.
+    _root_tn: Nursery|None = None
+    _service_tn: Nursery|None = None
     _ipc_server: _server.IPCServer|None = None
 
     @property
@@ -1009,10 +1021,46 @@ class Actor:
         the RPC service nursery.
 
         '''
-        assert self._service_n
-        self._service_n.start_soon(
+        actor_repr: str = _pformat.nest_from_op(
+            input_op='>c(',
+            text=self.pformat(),
+            nest_indent=1,
+        )
+        log.cancel(
+            'Actor.cancel_soon()` was called!\n'
+            f'>> scheduling `Actor.cancel()`\n'
+            f'{actor_repr}'
+        )
+        assert self._service_tn
+        self._service_tn.start_soon(
             self.cancel,
             None,  # self cancel all rpc tasks
+        )
+
+        # schedule a "canceller task" in the `._root_tn` once the
+        # `._service_tn` is fully shutdown; task waits for child-ish
+        # scopes to fully exit then finally cancels its parent,
+        # root-most, scope.
+        async def cancel_root_tn_after_services():
+            log.runtime(
+                'Waiting on service-tn to cancel..\n'
+                f'c>)\n'
+                f'|_{self._service_tn.cancel_scope!r}\n'
+            )
+            await self._cancel_complete.wait()
+            log.cancel(
+                f'`._service_tn` cancelled\n'
+                f'>c)\n'
+                f'|_{self._service_tn.cancel_scope!r}\n'
+                f'\n'
+                f'>> cancelling `._root_tn`\n'
+                f'c>(\n'
+                f' |_{self._root_tn.cancel_scope!r}\n'
+            )
+            self._root_tn.cancel_scope.cancel()
+
+        self._root_tn.start_soon(
+            cancel_root_tn_after_services
         )
 
     @property
@@ -1119,8 +1167,8 @@ class Actor:
                 await ipc_server.wait_for_shutdown()
 
             # cancel all rpc tasks permanently
-            if self._service_n:
-                self._service_n.cancel_scope.cancel()
+            if self._service_tn:
+                self._service_tn.cancel_scope.cancel()
 
         log_meth(msg)
         self._cancel_complete.set()
@@ -1257,7 +1305,7 @@ class Actor:
         '''
         Cancel all ongoing RPC tasks owned/spawned for a given
         `parent_chan: Channel` or simply all tasks (inside
-        `._service_n`) when `parent_chan=None`.
+        `._service_tn`) when `parent_chan=None`.
 
         '''
         tasks: dict = self._rpc_tasks
@@ -1469,46 +1517,55 @@ async def async_main(
                     accept_addrs.append(addr.unwrap())
 
         assert accept_addrs
-        # The "root" nursery ensures the channel with the immediate
-        # parent is kept alive as a resilient service until
-        # cancellation steps have (mostly) occurred in
-        # a deterministic way.
+
+        ya_root_tn: bool = bool(actor._root_tn)
+        ya_service_tn: bool = bool(actor._service_tn)
+
+        # NOTE, a top-most "root" nursery in each actor-process
+        # enables a lifetime priority for the IPC-channel connection
+        # with a sub-actor's immediate parent. I.e. this connection
+        # is kept alive as a resilient service connection until all
+        # other machinery has exited, cancellation of all
+        # embedded/child scopes have completed. This helps ensure
+        # a deterministic (and thus "graceful")
+        # first-class-supervision style teardown where a parent actor
+        # (vs. say peers) is always the last to be contacted before
+        # disconnect.
         root_tn: trio.Nursery
         async with (
             collapse_eg(),
-            trio.open_nursery() as root_tn,
+            maybe_open_nursery(
+                nursery=actor._root_tn,
+            ) as root_tn,
         ):
-            # actor._root_n = root_tn
-            # assert actor._root_n
+            if ya_root_tn:
+                assert root_tn is actor._root_tn
+            else:
+                actor._root_tn = root_tn
 
             ipc_server: _server.IPCServer
             async with (
                 collapse_eg(),
-                trio.open_nursery() as service_nursery,
+                maybe_open_nursery(
+                    nursery=actor._service_tn,
+                ) as service_tn,
                 _server.open_ipc_server(
-                    parent_tn=service_nursery,
-                    stream_handler_tn=service_nursery,
+                    parent_tn=service_tn,  # ?TODO, why can't this be the root-tn
+                    stream_handler_tn=service_tn,
                 ) as ipc_server,
-                # ) as actor._ipc_server,
-                # ^TODO? prettier?
 
             ):
-                # This nursery is used to handle all inbound
-                # connections to us such that if the TCP server
-                # is killed, connections can continue to process
-                # in the background until this nursery is cancelled.
-                actor._service_n = service_nursery
+                if ya_service_tn:
+                    assert service_tn is actor._service_tn
+                else:
+                    # This nursery is used to handle all inbound
+                    # connections to us such that if the TCP server
+                    # is killed, connections can continue to process
+                    # in the background until this nursery is cancelled.
+                    actor._service_tn = service_tn
+
+                # set after allocate
                 actor._ipc_server = ipc_server
-                assert (
-                    actor._service_n
-                    and (
-                        actor._service_n
-                        is
-                        actor._ipc_server._parent_tn
-                        is
-                        ipc_server._stream_handler_tn
-                    )
-                )
 
                 # load exposed/allowed RPC modules
                 # XXX: do this **after** establishing a channel to the parent
@@ -1534,10 +1591,11 @@ async def async_main(
                 # - root actor: the ``accept_addr`` passed to this method
 
                 # TODO: why is this not with the root nursery?
+                # - see above that the `._service_tn` is what's used?
                 try:
                     eps: list = await ipc_server.listen_on(
                         accept_addrs=accept_addrs,
-                        stream_handler_nursery=service_nursery,
+                        stream_handler_nursery=service_tn,
                     )
                     log.runtime(
                         f'Booted IPC server\n'
@@ -1545,7 +1603,7 @@ async def async_main(
                     )
                     assert (
                         (eps[0].listen_tn)
-                        is not service_nursery
+                        is not service_tn
                     )
 
                 except OSError as oserr:
@@ -1707,7 +1765,7 @@ async def async_main(
 
         # XXX TODO but hard XXX
         # we can't actually do this bc the debugger uses the
-        # _service_n to spawn the lock task, BUT, in theory if we had
+        # _service_tn to spawn the lock task, BUT, in theory if we had
         # the root nursery surround this finally block it might be
         # actually possible to debug THIS machinery in the same way
         # as user task code?

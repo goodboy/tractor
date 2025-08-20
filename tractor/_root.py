@@ -481,10 +481,11 @@ async def open_root_actor(
                 collapse_eg(),
                 trio.open_nursery() as root_tn,
 
-                # XXX, finally-footgun below?
+                # ?TODO? finally-footgun below?
                 # -> see note on why shielding.
                 # maybe_raise_from_masking_exc(),
             ):
+                actor._root_tn = root_tn
                 # `_runtime.async_main()` creates an internal nursery
                 # and blocks here until any underlying actor(-process)
                 # tree has terminated thereby conducting so called
@@ -523,6 +524,11 @@ async def open_root_actor(
                         err,
                         api_frame=inspect.currentframe(),
                         debug_filter=debug_filter,
+
+                        # XXX NOTE, required to debug root-actor
+                        # crashes under cancellation conditions; so
+                        # most of them!
+                        shield=root_tn.cancel_scope.cancel_called,
                     )
 
                     if (
@@ -562,6 +568,7 @@ async def open_root_actor(
                         f'{op_nested_actor_repr}'
                     )
                     # XXX, THIS IS A *finally-footgun*!
+                    # (also mentioned in with-block above)
                     # -> though already shields iternally it can
                     # taskc here and mask underlying errors raised in
                     # the try-block above?
