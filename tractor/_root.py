@@ -478,13 +478,10 @@ async def open_root_actor(
 
             # start runtime in a bg sub-task, yield to caller.
             async with (
-                collapse_eg(
-                    # bp=True,
-                    hide_tb=False,
-                ),
+                collapse_eg(),
                 trio.open_nursery() as root_tn,
 
-                # XXX, finally-footgun below?
+                # ?TODO? finally-footgun below?
                 # -> see note on why shielding.
                 # maybe_raise_from_masking_exc(),
             ):
@@ -532,7 +529,6 @@ async def open_root_actor(
                         # crashes under cancellation conditions; so
                         # most of them!
                         shield=root_tn.cancel_scope.cancel_called,
-                        # ^TODO? write a (debugger) test for this ya?
                     )
 
                     if (
@@ -572,6 +568,7 @@ async def open_root_actor(
                         f'{op_nested_actor_repr}'
                     )
                     # XXX, THIS IS A *finally-footgun*!
+                    # (also mentioned in with-block above)
                     # -> though already shields iternally it can
                     # taskc here and mask underlying errors raised in
                     # the try-block above?
