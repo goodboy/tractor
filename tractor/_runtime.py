@@ -35,6 +35,15 @@ for running all lower level spawning, supervision and msging layers:
   SC-transitive RPC via scheduling of `trio` tasks.
 - registration of newly spawned actors with the discovery sys.
 
+Glossary:
+--------
+ - tn: a `trio.Nursery` or "task nursery".
+ - an: an `ActorNursery` or "actor nursery".
+ - root: top/parent-most scope/task/process/actor (or other runtime
+         primitive) in a hierarchical tree.
+ - parent-ish: "higher-up" in the runtime-primitive hierarchy.
+ - child-ish: "lower-down" in the runtime-primitive hierarchy.
+
 '''
 from __future__ import annotations
 from contextlib import (
@@ -1028,8 +1037,10 @@ class Actor:
             None,  # self cancel all rpc tasks
         )
 
-        # schedule a root-tn canceller task once the service tn
-        # is fully shutdown.
+        # schedule a "canceller task" in the `._root_tn` once the
+        # `._service_tn` is fully shutdown; task waits for child-ish
+        # scopes to fully exit then finally cancels its parent,
+        # root-most, scope.
         async def cancel_root_tn_after_services():
             log.runtime(
                 'Waiting on service-tn to cancel..\n'
@@ -1510,10 +1521,16 @@ async def async_main(
         ya_root_tn: bool = bool(actor._root_tn)
         ya_service_tn: bool = bool(actor._service_tn)
 
-        # NOTE, a top-most "root" task-nursery ensures the channel
-        # with the immediate parent is kept alive as a resilient
-        # service until cancellation steps have (mostly) occurred in
-        # a deterministic way.
+        # NOTE, a top-most "root" nursery in each actor-process
+        # enables a lifetime priority for the IPC-channel connection
+        # with a sub-actor's immediate parent. I.e. this connection
+        # is kept alive as a resilient service connection until all
+        # other machinery has exited, cancellation of all
+        # embedded/child scopes have completed. This helps ensure
+        # a deterministic (and thus "graceful")
+        # first-class-supervision style teardown where a parent actor
+        # (vs. say peers) is always the last to be contacted before
+        # disconnect.
         root_tn: trio.Nursery
         async with (
             collapse_eg(),
