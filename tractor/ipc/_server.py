@@ -1001,7 +1001,11 @@ class Server(Struct):
             partial(
                 _serve_ipc_eps,
                 server=self,
-                stream_handler_tn=stream_handler_nursery,
+                stream_handler_tn=(
+                    stream_handler_nursery
+                    or
+                    self._stream_handler_tn
+                ),
                 listen_addrs=accept_addrs,
             )
         )
@@ -1145,13 +1149,17 @@ async def open_ipc_server(
 
     async with maybe_open_nursery(
         nursery=parent_tn,
-    ) as rent_tn:
+    ) as parent_tn:
         no_more_peers = trio.Event()
         no_more_peers.set()
 
         ipc_server = IPCServer(
-            _parent_tn=rent_tn,
-            _stream_handler_tn=stream_handler_tn or rent_tn,
+            _parent_tn=parent_tn,
+            _stream_handler_tn=(
+                stream_handler_tn
+                or
+                parent_tn
+            ),
             _no_more_peers=no_more_peers,
         )
         try:
