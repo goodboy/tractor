@@ -22,7 +22,10 @@ from __future__ import annotations
 from contextlib import (
     asynccontextmanager as acm,
 )
-from typing import TYPE_CHECKING
+from typing import (
+    Type,
+    TYPE_CHECKING,
+)
 
 import trio
 from tractor.log import get_logger
@@ -65,7 +68,6 @@ def find_masked_excs(
 #
 @acm
 async def maybe_raise_from_masking_exc(
-    tn: trio.Nursery|None = None,
     unmask_from: (
         BaseException|
         tuple[BaseException]
@@ -74,15 +76,26 @@ async def maybe_raise_from_masking_exc(
     raise_unmasked: bool = True,
     extra_note: str = (
         'This can occurr when,\n'
-        ' - a `trio.Nursery` scope embeds a `finally:`-block '
-        'which executes a checkpoint!'
+        '\n'
+        ' - a `trio.Nursery/CancelScope` embeds a `finally/except:`-block '
+        'which execs an un-shielded checkpoint!'
         #
         # ^TODO? other cases?
     ),
 
-    always_warn_on: tuple[BaseException] = (
+    always_warn_on: tuple[Type[BaseException]] = (
         trio.Cancelled,
     ),
+
+    # don't ever unmask or warn on any masking pair,
+    # {<masked-excT-key> -> <masking-excT-value>}
+    never_warn_on: dict[
+        Type[BaseException],
+        Type[BaseException],
+    ] = {
+        KeyboardInterrupt: trio.Cancelled,
+        trio.Cancelled: trio.Cancelled,
+    },
     # ^XXX, special case(s) where we warn-log bc likely
     # there will be no operational diff since the exc
     # is always expected to be consumed.
@@ -104,81 +117,91 @@ async def maybe_raise_from_masking_exc(
         individual sub-excs but maintain the eg-parent's form right?
 
     '''
+    if not isinstance(unmask_from, tuple):
+        raise ValueError(
+            f'Invalid unmask_from = {unmask_from!r}\n'
+            f'Must be a `tuple[Type[BaseException]]`.\n'
+        )
+
     from tractor.devx.debug import (
         BoxedMaybeException,
-        pause,
     )
     boxed_maybe_exc = BoxedMaybeException(
         raise_on_exit=raise_unmasked,
     )
     matching: list[BaseException]|None = None
-    maybe_eg: ExceptionGroup|None
-
-    if tn:
-        try:  # handle egs
-            yield boxed_maybe_exc
-            return
-        except* unmask_from as _maybe_eg:
-            maybe_eg = _maybe_eg
+    try:
+        yield boxed_maybe_exc
+        return
+    except BaseException as _bexc:
+        bexc = _bexc
+        if isinstance(bexc, BaseExceptionGroup):
             matches: ExceptionGroup
-            matches, _ = maybe_eg.split(
-                unmask_from
-            )
-            if not matches:
-                raise
+            matches, _ = bexc.split(unmask_from)
+            if matches:
+                matching = matches.exceptions
 
-            matching: list[BaseException] = matches.exceptions
-    else:
-        try:  # handle non-egs
-            yield boxed_maybe_exc
-            return
-        except unmask_from as _maybe_exc:
-            maybe_exc = _maybe_exc
-            matching: list[BaseException] = [
-                maybe_exc
-            ]
-
-        # XXX, only unmask-ed for debuggin!
-        # TODO, remove eventually..
-        except BaseException as _berr:
-            berr = _berr
-            await pause(shield=True)
-            raise berr
+        elif (
+            unmask_from
+            and
+            type(bexc) in unmask_from
+        ):
+            matching = [bexc]
 
     if matching is None:
         raise
 
     masked: list[tuple[BaseException, BaseException]] = []
     for exc_match in matching:
-
         if exc_ctx := find_masked_excs(
             maybe_masker=exc_match,
-            unmask_from={unmask_from},
+            unmask_from=set(unmask_from),
         ):
-            masked.append((exc_ctx, exc_match))
+            masked.append((
+                exc_ctx,
+                exc_match,
+            ))
             boxed_maybe_exc.value = exc_match
             note: str = (
                 f'\n'
-                f'^^WARNING^^ the above {exc_ctx!r} was masked by a {unmask_from!r}\n'
+                f'^^WARNING^^\n'
+                f'the above {type(exc_ctx)!r} was masked by a {type(exc_match)!r}\n'
             )
             if extra_note:
                 note += (
                     f'\n'
                     f'{extra_note}\n'
                 )
-            exc_ctx.add_note(note)
 
-            if type(exc_match) in always_warn_on:
+            do_warn: bool = (
+                never_warn_on.get(
+                    type(exc_ctx)  # masking type
+                )
+                is not
+                type(exc_match)  # masked type
+            )
+
+            if do_warn:
+                exc_ctx.add_note(note)
+
+            if (
+                do_warn
+                and
+                type(exc_match) in always_warn_on
+            ):
                 log.warning(note)
 
-            # await tractor.pause(shield=True)
-            if raise_unmasked:
-
+            if (
+                do_warn
+                and
+                raise_unmasked
+            ):
                 if len(masked) < 2:
                     raise exc_ctx from exc_match
-                else:
-                    # ?TODO, see above but, possibly unmasking sub-exc
-                    # entries if there are > 1
-                    await pause(shield=True)
+
+                # ??TODO, see above but, possibly unmasking sub-exc
+                # entries if there are > 1
+                # else:
+                #     await pause(shield=True)
     else:
         raise

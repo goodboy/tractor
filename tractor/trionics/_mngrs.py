@@ -31,7 +31,6 @@ from typing import (
     AsyncIterator,
     Callable,
     Hashable,
-    Optional,
     Sequence,
     TypeVar,
     TYPE_CHECKING,
@@ -204,7 +203,7 @@ class _Cache:
     a kept-alive-while-in-use async resource.
 
     '''
-    service_tn: Optional[trio.Nursery] = None
+    service_tn: trio.Nursery|None = None
     locks: dict[Hashable, trio.Lock] = {}
     users: int = 0
     values: dict[Any,  Any] = {}
@@ -213,7 +212,7 @@ class _Cache:
         tuple[trio.Nursery, trio.Event]
     ] = {}
     # nurseries: dict[int, trio.Nursery] = {}
-    no_more_users: Optional[trio.Event] = None
+    no_more_users: trio.Event|None = None
 
     @classmethod
     async def run_ctx(
