@@ -97,10 +97,17 @@ def at_least_level(
     return False
 
 
-# TODO: this isn't showing the correct '{filename}'
-# as it did before..
+# TODO, compare with using a "filter" instead?
+# - https://stackoverflow.com/questions/60691759/add-information-to-every-log-message-in-python-logging/61830838#61830838
+#  |_corresponding dict-config,
+#    https://stackoverflow.com/questions/7507825/where-is-a-complete-example-of-logging-config-dictconfig/7507842#7507842
+#  - [ ] what's the benefit/tradeoffs?
+#
 class StackLevelAdapter(LoggerAdapter):
+    '''
+    A (software) stack oriented logger "adapter".
 
+    '''
     def at_least_level(
         self,
         level: str,
@@ -283,6 +290,9 @@ class ActorContextInfo(Mapping):
 
 
 def get_logger(
+    # ?TODO, could we just grab the caller's `mod.__name__`?
+    # -[ ] do it with `inspect` says SO,
+    # |_https://stackoverflow.com/a/1095621
     name: str|None = None,
     _root_name: str = _proj_name,
 
@@ -304,9 +314,10 @@ def get_logger(
     log = rlog = logger or logging.getLogger(_root_name)
 
     if (
-        name
-        and
         name != _proj_name
+        and
+        name
+        # ^TODO? see caller_mod.__name__ as default above?
     ):
 
         # NOTE: for handling for modules that use `get_logger(__name__)`
@@ -319,18 +330,53 @@ def get_logger(
         #   module-file.
 
         sub_name: None|str = None
+
+        # ex. modden.runtime.progman
+        # -> rname='modden', _, sub_name='runtime.progman'
         rname, _, sub_name = name.partition('.')
-        pkgpath, _, modfilename = sub_name.rpartition('.')
 
-        # NOTE: for tractor itself never include the last level
-        # module key in the name such that something like: eg.
-        # 'tractor.trionics._broadcast` only includes the first
-        # 2 tokens in the (coloured) name part.
-        if rname == 'tractor':
-            sub_name = pkgpath
+        # ex. modden.runtime.progman
+        # -> pkgpath='runtime', _, leaf_mod='progman'
+        subpkg_path, _, leaf_mod = sub_name.rpartition('.')
 
+        # NOTE: special usage for passing `name=__name__`,
+        #
+        # - remove duplication of any root-pkg-name in the
+        #   (sub/child-)logger name; i.e. never include the
+        #   `_root_name` *twice* in the top-most-pkg-name/level
+        #
+        # -> this happens normally since it is added to `.getChild()`
+        #   and as the name of its root-logger.
+        #
+        # => So for ex. (module key in the name) something like
+        #   `name='tractor.trionics._broadcast` is passed,
+        #   only includes the first 2 sub-pkg name-tokens in the
+        #   child-logger's name; the colored "pkg-namespace" header
+        #   will then correctly show the same value as `name`.
+        if rname == _root_name:
+            sub_name = subpkg_path
+
+        # XXX, do some double-checks for duplication of,
+        # - root-pkg-name, already in root logger
+        # - leaf-module-name already in `{filename}` header-field
         if _root_name in sub_name:
-            duplicate, _, sub_name = sub_name.partition('.')
+            _duplicate, _, sub_name = sub_name.partition('.')
+            if _duplicate:
+                assert _duplicate == rname
+                log.warning(
+                    f'Duplicate pkg-name in sub-logger key?\n'
+                    f'_root_name = {_root_name!r}\n'
+                    f'sub_name = {sub_name!r}\n'
+                )
+
+        if leaf_mod in sub_name:
+            # XXX, for debuggin..
+            # import pdbp; pdbp.set_trace()
+            log.warning(
+                f'Duplicate leaf-module-name in sub-logger key?\n'
+                f'leaf_mod = {leaf_mod!r}\n'
+                f'sub_name = {sub_name!r}\n'
+            )
 
         if not sub_name:
             log = rlog
