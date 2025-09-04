@@ -22,6 +22,10 @@ from __future__ import annotations
 from contextlib import (
     asynccontextmanager as acm,
 )
+import inspect
+from types import (
+    TracebackType,
+)
 from typing import (
     Type,
     TYPE_CHECKING,
@@ -61,6 +65,66 @@ def find_masked_excs(
         return exc_ctx
 
     return None
+
+
+_mask_cases: dict[
+    Type[Exception],  # masked exc type
+    dict[
+        int,  # inner-frame index into `inspect.getinnerframes()`
+        # `FrameInfo.function/filename: str`s to match
+        tuple[str, str],
+    ],
+] = {
+    trio.WouldBlock: {
+        # `trio.Lock.acquire()` has a checkpoint inside the
+        # `WouldBlock`-no_wait path's handler..
+        -5: {  # "5th frame up" from checkpoint
+            'filename': 'trio/_sync.py',
+            'function': 'acquire',
+            # 'lineno': 605,  # matters?
+        },
+    }
+}
+
+
+def is_expected_masking_case(
+    cases: dict,
+    exc_ctx: Exception,
+    exc_match: BaseException,
+
+) -> bool|inspect.FrameInfo:
+    '''
+    Determine whether the provided masked exception is from a known
+    bug/special/unintentional-`trio`-impl case which we do not wish
+    to unmask.
+
+    Return any guilty `inspect.FrameInfo` ow `False`.
+
+    '''
+    exc_tb: TracebackType = exc_match.__traceback__
+    if cases := _mask_cases.get(type(exc_ctx)):
+        inner: list[inspect.FrameInfo] = inspect.getinnerframes(exc_tb)
+
+        # from tractor.devx.debug import mk_pdb
+        # mk_pdb().set_trace()
+        for iframe, matchon in cases.items():
+            try:
+                masker_frame: inspect.FrameInfo = inner[iframe]
+            except IndexError:
+                continue
+
+            for field, in_field in matchon.items():
+                val = getattr(
+                    masker_frame,
+                    field,
+                )
+                if in_field not in val:
+                    break
+            else:
+                return masker_frame
+
+    return False
+
 
 
 # XXX, relevant discussion @ `trio`-core,
@@ -197,6 +261,24 @@ async def maybe_raise_from_masking_exc(
                 raise_unmasked
             ):
                 if len(masked) < 2:
+                    # don't unmask already known "special" cases..
+                    if (
+                        (cases := _mask_cases.get(type(exc_ctx)))
+                        and
+                        (masker_frame := is_expected_masking_case(
+                            cases,
+                            exc_ctx,
+                            exc_match,
+                        ))
+                    ):
+                        log.warning(
+                            f'Ignoring already-known/non-ideally-valid masker code @\n'
+                            f'{masker_frame}\n'
+                            f'\n'
+                            f'NOT raising {exc_ctx} from masker {exc_match!r}\n'
+                        )
+                        raise exc_match
+
                     raise exc_ctx from exc_match
 
                 # ??TODO, see above but, possibly unmasking sub-exc
