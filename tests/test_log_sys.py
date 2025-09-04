@@ -14,7 +14,7 @@ import tractor
 
 def test_root_pkg_not_duplicated_in_logger_name():
     '''
-    When both `_root_name` and `name` are passed and they have
+    When both `pkg_name` and `name` are passed and they have
     a common `<root_name>.< >` prefix, ensure that it is not
     duplicated in the child's `StackLevelAdapter.name: str`.
 
@@ -23,12 +23,12 @@ def test_root_pkg_not_duplicated_in_logger_name():
     pkg_path: str = 'pylib.subpkg.mod'
 
     proj_log = tractor.log.get_logger(
-        _root_name=project_name,
+        pkg_name=project_name,
         mk_sublog=False,
     )
 
     sublog = tractor.log.get_logger(
-        _root_name=project_name,
+        pkg_name=project_name,
         name=pkg_path,
     )
 
@@ -64,6 +64,7 @@ def load_module_from_path(
 
 def test_implicit_mod_name_applied_for_child(
     testdir: pytest.Pytester,
+    loglevel: str,
 ):
     '''
     Verify that when `.log.get_logger(pkg_name='pylib')` is called
@@ -72,11 +73,12 @@ def test_implicit_mod_name_applied_for_child(
     module.
 
     '''
+    # tractor.log.get_console_log(level=loglevel)
     proj_name: str = 'snakelib'
     mod_code: str = (
         f'import tractor\n'
         f'\n'
-        f'log = tractor.log.get_logger(_root_name="{proj_name}")\n'
+        f'log = tractor.log.get_logger(pkg_name="{proj_name}")\n'
     )
 
     # create a sub-module for each pkg layer
@@ -112,7 +114,7 @@ def test_implicit_mod_name_applied_for_child(
         module_name=proj_name,
     )
     pkg_root_log = tractor.log.get_logger(
-        _root_name=proj_name,
+        pkg_name=proj_name,
         mk_sublog=False,
     )
     assert pkg_root_log.name == proj_name
