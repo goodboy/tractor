@@ -337,9 +337,12 @@ def _run_asyncio_task(
 
     '''
     __tracebackhide__: bool = hide_tb
-    if not tractor.current_actor().is_infected_aio():
+    if not (actor := tractor.current_actor()).is_infected_aio():
         raise RuntimeError(
-            "`infect_asyncio` mode is not enabled!?"
+            f'`infect_asyncio: bool` mode is not enabled ??\n'
+            f'Ensure you pass `ActorNursery.start_actor(infect_asyncio=True)`\n'
+            f'\n'
+            f'{actor}\n'
         )
 
     # ITC (inter task comms), these channel/queue names are mostly from
