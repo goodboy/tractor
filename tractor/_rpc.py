@@ -464,7 +464,7 @@ async def _invoke(
     kwargs: dict[str, Any],
 
     is_rpc: bool = True,
-    hide_tb: bool = False,
+    hide_tb: bool = True,
     return_msg_type: Return|CancelAck = Return,
 
     task_status: TaskStatus[
