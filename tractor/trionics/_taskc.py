@@ -163,6 +163,7 @@ async def maybe_raise_from_masking_exc(
     # ^XXX, special case(s) where we warn-log bc likely
     # there will be no operational diff since the exc
     # is always expected to be consumed.
+
 ) -> BoxedMaybeException:
     '''
     Maybe un-mask and re-raise exception(s) suppressed by a known
@@ -263,6 +264,8 @@ async def maybe_raise_from_masking_exc(
                 if len(masked) < 2:
                     # don't unmask already known "special" cases..
                     if (
+                        _mask_cases
+                        and
                         (cases := _mask_cases.get(type(exc_ctx)))
                         and
                         (masker_frame := is_expected_masking_case(
