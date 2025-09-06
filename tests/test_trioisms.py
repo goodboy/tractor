@@ -265,3 +265,38 @@ def test_unmask_aclose_as_checkpoint_on_aexit(
             raise_unmasked=raise_unmasked,
             child_errors_mid_stream=child_errors_mid_stream,
         ))
+
+
+
+@pytest.mark.parametrize(
+    'ignore_special_cases', [
+        True,
+        pytest.param(
+            False,
+            marks=pytest.mark.xfail(
+                reason="see examples/trio/lockacquire_not_umasked.py"
+            )
+        ),
+    ]
+)
+def test_cancelled_lockacquire_in_ipctx_not_unmaskeed(
+    ignore_special_cases: bool,
+    loglevel: str,
+    debug_mode: bool,
+):
+    mod: ModuleType = pathlib.import_path(
+        examples_dir()
+        / 'trio'
+        / 'lockacquire_not_unmasked.py',
+        root=examples_dir(),
+        consider_namespace_packages=False,
+    )
+    async def _main():
+        with trio.fail_after(2):
+            await mod.main(
+                ignore_special_cases=ignore_special_cases,
+                loglevel=loglevel,
+                debug_mode=debug_mode,
+            )
+
+    trio.run(_main)
