@@ -31,7 +31,6 @@ from typing import (
     AsyncIterator,
     Callable,
     Hashable,
-    Optional,
     Sequence,
     TypeVar,
     TYPE_CHECKING,
@@ -204,7 +203,7 @@ class _Cache:
     a kept-alive-while-in-use async resource.
 
     '''
-    service_tn: Optional[trio.Nursery] = None
+    service_tn: trio.Nursery|None = None
     locks: dict[Hashable, trio.Lock] = {}
     users: int = 0
     values: dict[Any,  Any] = {}
@@ -213,7 +212,7 @@ class _Cache:
         tuple[trio.Nursery, trio.Event]
     ] = {}
     # nurseries: dict[int, trio.Nursery] = {}
-    no_more_users: Optional[trio.Event] = None
+    no_more_users: trio.Event|None = None
 
     @classmethod
     async def run_ctx(
@@ -223,16 +222,18 @@ class _Cache:
         task_status: trio.TaskStatus[T] = trio.TASK_STATUS_IGNORED,
 
     ) -> None:
-        async with mng as value:
-            _, no_more_users = cls.resources[ctx_key]
-            cls.values[ctx_key] = value
-            task_status.started(value)
-            try:
-                await no_more_users.wait()
-            finally:
-                # discard nursery ref so it won't be re-used (an error)?
-                value = cls.values.pop(ctx_key)
-                cls.resources.pop(ctx_key)
+        try:
+            async with mng as value:
+                _, no_more_users = cls.resources[ctx_key]
+                try:
+                    cls.values[ctx_key] = value
+                    task_status.started(value)
+                    await no_more_users.wait()
+                finally:
+                    value = cls.values.pop(ctx_key)
+        finally:
+            # discard nursery ref so it won't be re-used (an error)?
+            cls.resources.pop(ctx_key)
 
 
 @acm

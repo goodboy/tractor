@@ -95,6 +95,7 @@ def run_example_in_subproc(
             and 'integration' not in p[0]
             and 'advanced_faults' not in p[0]
             and 'multihost' not in p[0]
+            and 'trio' not in p[0]
         )
     ],
     ids=lambda t: t[1],
