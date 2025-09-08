@@ -9,7 +9,7 @@ from functools import partial
 # from contextlib import asynccontextmanager as acm
 # import itertools
 
-# import pytest
+import pytest
 import trio
 import tractor
 from tractor import (  # typing
@@ -89,10 +89,14 @@ async def sleep_forever(
     await trio.sleep_forever()
 
 
+@pytest.mark.parametrize(
+    'cancel_ctx',
+    [True, False],
+)
 def test_cancel_ctx_with_parent_side_entered_in_bg_task(
     debug_mode: bool,
     loglevel: str,
-    cancel_ctx: bool = False,
+    cancel_ctx: bool,
 ):
     '''
     The most "basic" out-of-band-task self-cancellation case where
@@ -179,7 +183,30 @@ def test_cancel_ctx_with_parent_side_entered_in_bg_task(
                 print('cancelling subactor!')
                 await ptl.cancel_actor()
 
-    trio.run(main)
+                if maybe_ctx:
+                    try:
+                        await maybe_ctx.wait_for_result()
+                    except tractor.ContextCancelled as ctxc:
+                        assert not cancel_ctx
+                        assert (
+                            ctxc.canceller
+                            ==
+                            tractor.current_actor().aid.uid
+                        )
+                        # don't re-raise since it'll trigger
+                        # an EG from the above tn.
+
+    if cancel_ctx:
+        # graceful self-cancel
+        trio.run(main)
+
+    else:
+        # ctx parent task should see OoB ctxc due to
+        # `ptl.cancel_actor()`.
+        with pytest.raises(tractor.ContextCancelled) as excinfo:
+            trio.run(main)
+
+        'root' in excinfo.value.canceller[0]
 
 
 # def test_parent_actor_cancels_subactor_with_gt1_ctxs_open_to_it(
