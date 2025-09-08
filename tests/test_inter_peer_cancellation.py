@@ -24,14 +24,10 @@ from tractor._testing import (
 )
 
 # XXX TODO cases:
-# - [ ] peer cancelled itself - so other peers should
-#   get errors reflecting that the peer was itself the .canceller?
-
 # - [x] WE cancelled the peer and thus should not see any raised
 #   `ContextCancelled` as it should be reaped silently?
 #   => pretty sure `test_context_stream_semantics::test_caller_cancels()`
 #      already covers this case?
-
 # - [x] INTER-PEER: some arbitrary remote peer cancels via
 #   Portal.cancel_actor().
 #   => all other connected peers should get that cancel requesting peer's
@@ -42,16 +38,6 @@ from tractor._testing import (
 #   (also) spawned a failing task which was unhandled and
 #   propagated up to the immediate parent - the peer to the actor
 #   that also spawned a remote task task in that same peer-parent.
-
-
-# def test_self_cancel():
-#     '''
-#     2 cases:
-#     - calls `Actor.cancel()` locally in some task
-#     - calls LocalPortal.cancel_actor()` ?
-
-#     '''
-#     ...
 
 
 @tractor.context
