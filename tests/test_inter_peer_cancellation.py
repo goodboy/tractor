@@ -1225,12 +1225,16 @@ def test_peer_spawns_and_cancels_service_subactor(
 
                 # assert spawn_ctx.cancelled_caught
 
+    async def _main():
+        with trio.fail_after(2):
+            await main()
+
     if raise_sub_spawn_error_after:
         with pytest.raises(RemoteActorError) as excinfo:
-            trio.run(main)
+            trio.run(_main)
 
         rae: RemoteActorError = excinfo.value
         check_inner_rte(rae)
 
     else:
-        trio.run(main)
+        trio.run(_main)
