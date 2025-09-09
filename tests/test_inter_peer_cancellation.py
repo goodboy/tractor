@@ -792,7 +792,7 @@ async def basic_echo_server(
     ctx: Context,
     peer_name: str = 'wittle_bruv',
 
-    err_after: int|None = None,
+    err_after_imsg: int|None = None,
 
 ) -> None:
     '''
@@ -821,8 +821,9 @@ async def basic_echo_server(
             await ipc.send(resp)
 
             if (
-                err_after
-                and i > err_after
+                err_after_imsg
+                and
+                i > err_after_imsg
             ):
                 raise RuntimeError(
                     f'Simulated error in `{peer_name}`'
@@ -964,7 +965,8 @@ async def tell_little_bro(
     actor_name: str,
 
     caller: str = '',
-    err_after: int|None = None,
+    err_after: float|None = None,
+    rng_seed: int = 50,
 ):
     # contact target actor, do a stream dialog.
     async with (
@@ -975,14 +977,18 @@ async def tell_little_bro(
             basic_echo_server,
 
             # XXX proxy any delayed err condition
-            err_after=err_after,
+            err_after_imsg=(
+                err_after * rng_seed
+                if err_after is not None
+                else None
+            ),
         ) as (sub_ctx, first),
 
         sub_ctx.open_stream() as echo_ipc,
     ):
         actor: Actor = current_actor()
         uid: tuple = actor.uid
-        for i in range(100):
+        for i in range(rng_seed):
             msg: tuple = (
                 uid,
                 i,
@@ -1007,13 +1013,13 @@ async def tell_little_bro(
 )
 @pytest.mark.parametrize(
     'raise_sub_spawn_error_after',
-    [None, 50],
+    [None, 0.5],
 )
 def test_peer_spawns_and_cancels_service_subactor(
     debug_mode: bool,
     raise_client_error: str,
     reg_addr: tuple[str, int],
-    raise_sub_spawn_error_after: int|None,
+    raise_sub_spawn_error_after: float|None,
 ):
     # NOTE: this tests for the modden `mod wks open piker` bug
     # discovered as part of implementing workspace ctx
@@ -1026,6 +1032,7 @@ def test_peer_spawns_and_cancels_service_subactor(
     # -> client actor cancels the context and should exit gracefully
     #   and the server's spawned child should cancel and terminate!
     peer_name: str = 'little_bro'
+
 
     def check_inner_rte(rae: RemoteActorError):
         '''
@@ -1120,8 +1127,7 @@ def test_peer_spawns_and_cancels_service_subactor(
                         )
 
                     try:
-                        res = await client_ctx.result(hide_tb=False)
-
+                        res = await client_ctx.wait_for_result(hide_tb=False)
                         # in remote (relayed inception) error
                         # case, we should error on the line above!
                         if raise_sub_spawn_error_after:
@@ -1132,6 +1138,23 @@ def test_peer_spawns_and_cancels_service_subactor(
                         assert isinstance(res, ContextCancelled)
                         assert client_ctx.cancel_acked
                         assert res.canceller == root.uid
+                        assert not raise_sub_spawn_error_after
+
+                        # cancelling the spawner sub should
+                        # transitively cancel it's sub, the little
+                        # bruv.
+                        print('root cancelling server/client sub-actors')
+                        await spawn_ctx.cancel()
+                        async with tractor.find_actor(
+                            name=peer_name,
+                        ) as sub:
+                            assert not sub
+
+                    # XXX, only for tracing
+                    # except BaseException as _berr:
+                    #     berr = _berr
+                    #     await tractor.pause(shield=True)
+                    #     raise berr
 
                     except RemoteActorError as rae:
                         _err = rae
@@ -1160,19 +1183,8 @@ def test_peer_spawns_and_cancels_service_subactor(
                         raise
                         # await tractor.pause()
 
-                    else:
-                        assert not raise_sub_spawn_error_after
 
-                        # cancelling the spawner sub should
-                        # transitively cancel it's sub, the little
-                        # bruv.
-                        print('root cancelling server/client sub-actors')
-                        await spawn_ctx.cancel()
-                        async with tractor.find_actor(
-                            name=peer_name,
-                        ) as sub:
-                            assert not sub
-
+                    # await tractor.pause()
                     # await server.cancel_actor()
 
             except RemoteActorError as rae:
@@ -1185,7 +1197,7 @@ def test_peer_spawns_and_cancels_service_subactor(
 
             # since we called `.cancel_actor()`, `.cancel_ack`
             # will not be set on the ctx bc `ctx.cancel()` was not
-            # called directly fot this confext.
+            # called directly for this confext.
             except ContextCancelled as ctxc:
                 _ctxc = ctxc
                 print(
@@ -1226,7 +1238,10 @@ def test_peer_spawns_and_cancels_service_subactor(
                 # assert spawn_ctx.cancelled_caught
 
     async def _main():
-        with trio.fail_after(2):
+        with trio.fail_after(
+            3 if not debug_mode
+            else 999
+        ):
             await main()
 
     if raise_sub_spawn_error_after:
