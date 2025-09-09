@@ -613,10 +613,9 @@ async def drain_to_final_msg(
             #       msg: dict = await ctx._rx_chan.receive()
             #   if res_cs.cancelled_caught:
             #
-            # -[ ] make sure pause points work here for REPLing
+            # -[x] make sure pause points work here for REPLing
             #   the runtime itself; i.e. ensure there's no hangs!
-            # |_from tractor.devx.debug import pause
-            #   await pause()
+            #  |_see masked code below in .cancel_called path
 
         # NOTE: we get here if the far end was
         # `ContextCancelled` in 2 cases:
@@ -652,6 +651,10 @@ async def drain_to_final_msg(
                     f'IPC ctx cancelled externally during result drain ?\n'
                     f'{ctx}'
                 )
+                # XXX, for tracing `Cancelled`..
+                # from tractor.devx.debug import pause
+                # await pause(shield=True)
+
             # CASE 2: mask the local cancelled-error(s)
             # only when we are sure the remote error is
             # the source cause of this local task's
