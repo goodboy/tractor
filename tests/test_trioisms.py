@@ -6,11 +6,18 @@ want to see changed.
 from contextlib import (
     asynccontextmanager as acm,
 )
+from types import ModuleType
+
+from functools import partial
 
 import pytest
+from _pytest import pathlib
 from tractor.trionics import collapse_eg
 import trio
 from trio import TaskStatus
+from tractor._testing import (
+    examples_dir,
+)
 
 
 @pytest.mark.parametrize(
@@ -106,8 +113,9 @@ def test_acm_embedded_nursery_propagates_enter_err(
     debug_mode: bool,
 ):
     '''
-    Demo how a masking `trio.Cancelled` could be handled by unmasking from the
-    `.__context__` field when a user (by accident) re-raises from a `finally:`.
+    Demo how a masking `trio.Cancelled` could be handled by unmasking
+    from the `.__context__` field when a user (by accident) re-raises
+    from a `finally:`.
 
     '''
     import tractor
@@ -117,11 +125,9 @@ def test_acm_embedded_nursery_propagates_enter_err(
         async with (
             trio.open_nursery() as tn,
             tractor.trionics.maybe_raise_from_masking_exc(
-                tn=tn,
                 unmask_from=(
-                    trio.Cancelled
-                    if unmask_from_canc
-                    else None
+                    (trio.Cancelled,) if unmask_from_canc
+                    else ()
                 ),
             )
         ):
@@ -136,8 +142,7 @@ def test_acm_embedded_nursery_propagates_enter_err(
         with tractor.devx.maybe_open_crash_handler(
             pdb=debug_mode,
         ) as bxerr:
-            if bxerr:
-                assert not bxerr.value
+            assert not bxerr.value
 
             async with (
                 wraps_tn_that_always_cancels() as tn,
@@ -145,11 +150,12 @@ def test_acm_embedded_nursery_propagates_enter_err(
                 assert not tn.cancel_scope.cancel_called
                 assert 0
 
-        assert (
-            (err := bxerr.value)
-            and
-            type(err) is AssertionError
-        )
+        if debug_mode:
+            assert (
+                (err := bxerr.value)
+                and
+                type(err) is AssertionError
+            )
 
     with pytest.raises(ExceptionGroup) as excinfo:
         trio.run(_main)
@@ -160,13 +166,13 @@ def test_acm_embedded_nursery_propagates_enter_err(
     assert len(assert_eg.exceptions) == 1
 
 
-
 def test_gatherctxs_with_memchan_breaks_multicancelled(
     debug_mode: bool,
 ):
     '''
-    Demo how a using an `async with sndchan` inside a `.trionics.gather_contexts()` task
-    will break a strict-eg-tn's multi-cancelled absorption..
+    Demo how a using an `async with sndchan` inside
+    a `.trionics.gather_contexts()` task will break a strict-eg-tn's
+    multi-cancelled absorption..
 
     '''
     from tractor import (
@@ -192,7 +198,6 @@ def test_gatherctxs_with_memchan_breaks_multicancelled(
                 f'Closed {task!r}\n'
             )
 
-
     async def main():
         async with (
             # XXX should ensure ONLY the KBI
@@ -213,3 +218,85 @@ def test_gatherctxs_with_memchan_breaks_multicancelled(
 
     with pytest.raises(KeyboardInterrupt):
         trio.run(main)
+
+
+@pytest.mark.parametrize(
+    'raise_unmasked', [
+        True,
+        pytest.param(
+            False,
+            marks=pytest.mark.xfail(
+                reason="see examples/trio/send_chan_aclose_masks.py"
+            )
+        ),
+    ]
+)
+@pytest.mark.parametrize(
+    'child_errors_mid_stream',
+    [True, False],
+)
+def test_unmask_aclose_as_checkpoint_on_aexit(
+    raise_unmasked: bool,
+    child_errors_mid_stream: bool,
+    debug_mode: bool,
+):
+    '''
+    Verify that our unmasker util works over the common case where
+    a mem-chan's `.aclose()` is included in an `@acm` stack
+    and it being currently a checkpoint, can `trio.Cancelled`-mask an embedded
+    exception from user code resulting in a silent failure which
+    appears like graceful cancellation.
+
+    This test suite is mostly implemented as an example script so it
+    could more easily be shared with `trio`-core peeps as `tractor`-less
+    minimum reproducing example.
+
+    '''
+    mod: ModuleType = pathlib.import_path(
+        examples_dir()
+        / 'trio'
+        / 'send_chan_aclose_masks_beg.py',
+        root=examples_dir(),
+        consider_namespace_packages=False,
+    )
+    with pytest.raises(RuntimeError):
+        trio.run(partial(
+            mod.main,
+            raise_unmasked=raise_unmasked,
+            child_errors_mid_stream=child_errors_mid_stream,
+        ))
+
+
+
+@pytest.mark.parametrize(
+    'ignore_special_cases', [
+        True,
+        pytest.param(
+            False,
+            marks=pytest.mark.xfail(
+                reason="see examples/trio/lockacquire_not_umasked.py"
+            )
+        ),
+    ]
+)
+def test_cancelled_lockacquire_in_ipctx_not_unmasked(
+    ignore_special_cases: bool,
+    loglevel: str,
+    debug_mode: bool,
+):
+    mod: ModuleType = pathlib.import_path(
+        examples_dir()
+        / 'trio'
+        / 'lockacquire_not_unmasked.py',
+        root=examples_dir(),
+        consider_namespace_packages=False,
+    )
+    async def _main():
+        with trio.fail_after(2):
+            await mod.main(
+                ignore_special_cases=ignore_special_cases,
+                loglevel=loglevel,
+                debug_mode=debug_mode,
+            )
+
+    trio.run(_main)
