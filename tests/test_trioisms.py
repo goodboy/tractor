@@ -279,7 +279,7 @@ def test_unmask_aclose_as_checkpoint_on_aexit(
         ),
     ]
 )
-def test_cancelled_lockacquire_in_ipctx_not_unmaskeed(
+def test_cancelled_lockacquire_in_ipctx_not_unmasked(
     ignore_special_cases: bool,
     loglevel: str,
     debug_mode: bool,

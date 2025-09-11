@@ -72,7 +72,7 @@ _mask_cases: dict[
     dict[
         int,  # inner-frame index into `inspect.getinnerframes()`
         # `FrameInfo.function/filename: str`s to match
-        tuple[str, str],
+        dict[str, str],
     ],
 ] = {
     trio.WouldBlock: {
@@ -275,7 +275,8 @@ async def maybe_raise_from_masking_exc(
                         ))
                     ):
                         log.warning(
-                            f'Ignoring already-known/non-ideally-valid masker code @\n'
+                            f'Ignoring already-known, non-ideal-but-valid '
+                            f'masker code @\n'
                             f'{masker_frame}\n'
                             f'\n'
                             f'NOT raising {exc_ctx} from masker {exc_match!r}\n'
