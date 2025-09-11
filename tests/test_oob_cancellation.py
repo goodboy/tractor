@@ -206,7 +206,7 @@ def test_cancel_ctx_with_parent_side_entered_in_bg_task(
         with pytest.raises(tractor.ContextCancelled) as excinfo:
             trio.run(main)
 
-        'root' in excinfo.value.canceller[0]
+        assert 'root' in excinfo.value.canceller[0]
 
 
 # def test_parent_actor_cancels_subactor_with_gt1_ctxs_open_to_it(
