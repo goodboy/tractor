@@ -94,10 +94,14 @@ else:
     QueueShutDown = False
 
 
-# TODO, generally speaking we can generalize this abstraction, a "SC linked
-# parent->child task pair", as the same "supervision scope primitive"
-# **that is** our `._context.Context` with the only difference being
-# in how the tasks conduct msg-passing comms.
+# TODO, generally speaking we can generalize this abstraction as,
+#
+# > A "SC linked, inter-event-loop" channel for comms between
+# > a `parent: trio.Task` -> `child: asyncio.Task` pair.
+#
+# It is **very similar** in terms of its operation as a "supervision
+# scope primitive" to that of our `._context.Context` with the only
+# difference being in how the tasks conduct msg-passing comms.
 #
 # For `LinkedTaskChannel` we are passing the equivalent of (once you
 # include all the recently added  `._trio/aio_to_raise`
@@ -122,6 +126,7 @@ class LinkedTaskChannel(
     task scheduled in the host loop.
 
     '''
+    # ?TODO, rename as `._aio_q` since it's 2-way?
     _to_aio: asyncio.Queue
     _from_aio: trio.MemoryReceiveChannel
 
@@ -235,9 +240,11 @@ class LinkedTaskChannel(
     #
     async def receive(self) -> Any:
         '''
-        Receive a value from the paired `asyncio.Task` with
+        Receive a value `trio.Task` <- `asyncio.Task`.
+
+        Note the tasks in each loop are "SC linked" as a pair with
         exception/cancel handling to teardown both sides on any
-        unexpected error.
+        unexpected error or cancellation.
 
         '''
         try:
@@ -261,14 +268,41 @@ class LinkedTaskChannel(
             ):
                 raise err
 
+    async def get(self) -> Any:
+        '''
+        Receive a value `asyncio.Task` <- `trio.Task`.
+
+        This is equiv to `await self._from_trio.get()`.
+
+        '''
+        return await self._to_aio.get()
+
     async def send(self, item: Any) -> None:
         '''
-        Send a value through to the asyncio task presuming
-        it defines a ``from_trio`` argument, if it does not
+        Send a value through `trio.Task` -> `asyncio.Task`
+        presuming
+        it defines a `from_trio` argument or makes calls
+        to `chan.get()` , if it does not
         this method will raise an error.
 
         '''
         self._to_aio.put_nowait(item)
+
+    # TODO? could we only compile-in this method on an instance
+    # handed to the `asyncio`-side, i.e. the fn invoked with
+    # `.open_channel_from()`.
+    def send_nowait(
+        self,
+        item: Any,
+    ) -> None:
+        '''
+        Send a value through FROM the `asyncio.Task` to
+        the `trio.Task` NON-BLOCKING.
+
+        This is equiv to `self._to_trio.send_nowait()`.
+
+        '''
+        self._to_trio.send_nowait(item)
 
     # TODO? needed?
     # async def wait_aio_complete(self) -> None:

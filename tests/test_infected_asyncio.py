@@ -732,15 +732,21 @@ def test_aio_errors_and_channel_propagates_and_closes(
 
 
 async def aio_echo_server(
-    to_trio: trio.MemorySendChannel,
-    from_trio: asyncio.Queue,
+    chan: to_asyncio.LinkedTaskChannel,
 ) -> None:
+    '''
+    An IPC-msg "echo server" with msgs received and relayed by
+    a parent `trio.Task` into a child `asyncio.Task`
+    and then repeated back to that local parent (`trio.Task`)
+    and sent again back to the original calling remote actor.
 
-    to_trio.send_nowait('start')
+    '''
+    # same semantics as `trio.TaskStatus.started()`
+    chan.started_nowait('start')
 
     while True:
         try:
-            msg = await from_trio.get()
+            msg = await chan.get()
         except to_asyncio.TrioTaskExited:
             print(
                 'breaking aio echo loop due to `trio` exit!'
@@ -748,7 +754,7 @@ async def aio_echo_server(
             break
 
         # echo the msg back
-        to_trio.send_nowait(msg)
+        chan.send_nowait(msg)
 
         # if we get the terminate sentinel
         # break the echo loop
@@ -765,7 +771,10 @@ async def trio_to_aio_echo_server(
 ):
     async with to_asyncio.open_channel_from(
         aio_echo_server,
-    ) as (first, chan):
+    ) as (
+        first,  # value from `chan.started_nowait()` above
+        chan,
+    ):
         assert first == 'start'
 
         await ctx.started(first)
@@ -776,7 +785,8 @@ async def trio_to_aio_echo_server(
                 await chan.send(msg)
 
                 out = await chan.receive()
-                # echo back to parent actor-task
+
+                # echo back to parent-actor's remote parent-ctx-task!
                 await stream.send(out)
 
                 if out is None:
@@ -1090,14 +1100,12 @@ def test_sigint_closes_lifetime_stack(
 
 
 # ?TODO asyncio.Task fn-deco?
-# -[ ] do sig checkingat import time like @context?
-# -[ ] maybe name it @aio_task ??
 # -[ ] chan: to_asyncio.InterloopChannel ??
+# -[ ] do fn-sig checking at import time like @context?
+#  |_[ ] maybe name it @a(sync)io_task ??
+# @asyncio_task  <- not bad ??
 async def raise_before_started(
-    # from_trio: asyncio.Queue,
-    # to_trio: trio.abc.SendChannel,
     chan: to_asyncio.LinkedTaskChannel,
-
 ) -> None:
     '''
     `asyncio.Task` entry point which RTEs before calling
