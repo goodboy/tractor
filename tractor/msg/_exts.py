@@ -33,9 +33,7 @@ converters,
   |_ https://jcristharif.com/msgspec/changelog.html
 
 '''
-from types import (
-    ModuleType,
-)
+import types
 import typing
 from typing import (
     Type,
@@ -44,35 +42,51 @@ from typing import (
 
 def dec_type_union(
     type_names: list[str],
-    mods: list[ModuleType] = []
+    mods: list[types.ModuleType] = []
 ) -> Type|Union[Type]:
     '''
     Look up types by name, compile into a list and then create and
     return a `typing.Union` from the full set.
 
     '''
-    # import importlib
-    types: list[Type] = []
+    _types: list[Type] = []
     for type_name in type_names:
         for mod in [
             typing,
-            # importlib.import_module(__name__),
+            types,
         ] + mods:
             if type_ref := getattr(
                 mod,
                 type_name,
                 False,
             ):
-                types.append(type_ref)
+                _types.append(type_ref)
+                break
 
-    # special case handling only..
-    # ipc_pld_spec: Union[Type] = eval(
-    #     pld_spec_str,
-    #     {},  # globals
-    #     {'typing': typing},  # locals
-    # )
+    report: str = ''
+    if not _types:
+        report: str = 'No type-instances could be resolved from `type_names` ??\n'
 
-    return Union[*types]
+    elif len(type_names) != len(_types):
+        report: str = (
+            f'Some type-instances could not be resolved from `type_names` ??\n'
+            f'_types: {_types!r}\n'
+        )
+
+    if report:
+        raise ValueError(
+            report
+            +
+            f'type_names: {type_names!r}\n'
+        )
+
+    if not _types:
+        raise ValueError(
+            f'No type-instance could be resolved from `type_names` ??\n'
+            f'type_names: {type_names!r}\n'
+        )
+
+    return Union[*_types]
 
 
 def enc_type_union(
