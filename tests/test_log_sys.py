@@ -2,14 +2,12 @@
 `tractor.log`-wrapping unit tests.
 
 '''
-import importlib
 from pathlib import Path
 import shutil
-import sys
-from types import ModuleType
 
 import pytest
 import tractor
+from tractor import _code_load
 
 
 def test_root_pkg_not_duplicated_in_logger_name():
@@ -35,31 +33,6 @@ def test_root_pkg_not_duplicated_in_logger_name():
     assert proj_log is not sublog
     assert sublog.name.count(proj_log.name) == 1
     assert 'mod' not in sublog.name
-
-
-# ?TODO, move this into internal libs?
-# -[ ] we already use it in `modden.config._pymod` as well
-def load_module_from_path(
-    path: Path,
-    module_name: str|None = None,
-) -> ModuleType:
-    '''
-    Taken from SO,
-    https://stackoverflow.com/a/67208147
-
-    which is based on stdlib docs,
-    https://docs.python.org/3/library/importlib.html#importing-a-source-file-directly
-
-    '''
-    module_name = module_name or path.stem
-    spec = importlib.util.spec_from_file_location(
-        module_name,
-        str(path),
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_implicit_mod_name_applied_for_child(
@@ -109,7 +82,7 @@ def test_implicit_mod_name_applied_for_child(
     # XXX NOTE, once the "top level" pkg mod has been
     # imported, we can then use `import` syntax to
     # import it's sub-pkgs and modules.
-    pkgmod = load_module_from_path(
+    pkgmod = _code_load.load_module_from_path(
         Path(pkg / '__init__.py'),
         module_name=proj_name,
     )
