@@ -181,7 +181,11 @@ class MsgDec(Struct):
 
 
 def mk_dec(
-    spec: Union[Type[Struct]]|Type|None,
+    spec: (
+        Union[Type[Struct]]
+        |Type  # lone type
+        |None # implying `Union[*ext_types]|None`
+    ),
 
     # NOTE, required for ad-hoc type extensions to the underlying
     # serialization proto (which is default `msgpack`),
@@ -194,16 +198,18 @@ def mk_dec(
     Create an IPC msg decoder, a slightly higher level wrapper around
     a `msgspec.msgpack.Decoder` which provides,
 
-    - easier introspection of the underlying type spec via
-      the `.spec` and `.spec_str` attrs,
+    - easier introspection of the underlying type spec via the
+      `.spec` and `.spec_str` attrs,
     - `.hook` access to the `Decoder.dec_hook()`,
     - automatic custom extension-types decode support when
       `dec_hook()` is provided such that any `PayloadMsg.pld` tagged
-      as a type from from `ext_types` (presuming the `MsgCodec.encode()` also used
-      a `.enc_hook()`) is processed and constructed by a `PldRx` implicitily.
+      as a type from from `ext_types` (presuming the
+      `MsgCodec.encode()` also used a `.enc_hook()`) is processed and
+      constructed by a `PldRx` implicitily.
 
-    NOTE, as mentioned a `MsgDec` is normally used for `PayloadMsg.pld: PayloadT` field
-    decoding inside an IPC-ctx-oriented `PldRx`.
+    NOTE, as mentioned a `MsgDec` is normally used for
+    `PayloadMsg.pld: PayloadT` field decoding inside an
+    IPC-ctx-oriented `PldRx`.
 
     '''
     if (
@@ -248,7 +254,8 @@ def mk_dec(
         # will work? kk B)
         #
         # maybe_box_struct = mk_boxed_ext_struct(ext_types)
-        spec = Raw | Union[*ext_types]
+
+        spec = spec | Union[*ext_types]
 
     return MsgDec(
         _dec=msgpack.Decoder(
