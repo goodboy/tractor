@@ -7,6 +7,12 @@ related settings around IPC contexts.
 from contextlib import (
     asynccontextmanager as acm,
 )
+import sys
+import types
+from typing import (
+    Union,
+    Type,
+)
 
 from msgspec import (
     Struct,
@@ -22,11 +28,10 @@ from tractor import (
     Portal,
 )
 from tractor.msg import (
+    _codec,
     _ops as msgops,
     Return,
-)
-from tractor.msg import (
-    _codec,
+    _exts,
 )
 from tractor.msg.types import (
     log,
@@ -45,9 +50,6 @@ class PldMsg(
     # tag_field='msg_type',
 ):
     field: str
-
-
-maybe_msg_spec = PldMsg|None
 
 
 @acm
@@ -104,9 +106,15 @@ async def maybe_expect_raises(
                 )
 
 
-@tractor.context(
-    pld_spec=maybe_msg_spec,
-)
+# NOTE, this decorator is applied dynamically by both the root and
+# 'sub' actor such that we can dynamically apply various cases from
+# a parametrized test.
+#
+# maybe_msg_spec = PldMsg|None
+#
+# @tractor.context(
+#     pld_spec=maybe_msg_spec,
+# )
 async def child(
     ctx: Context,
     started_value: int|PldMsg|None,
@@ -219,6 +227,48 @@ async def child(
     # msg-type-error from this RPC task ;)
     return return_value
 
+def decorate_child_ep(
+    pld_spec: Union[Type],
+) -> types.ModuleType:
+    '''
+    Apply parametrized pld_spec to ctx ep like,
+
+        @tractor.context(
+            pld_spec=maybe_msg_spec,
+        )(child)
+
+    '''
+    this_mod = sys.modules[__name__]
+    global child  # a mod-fn defined above
+    assert this_mod.child is child
+    this_mod.child = tractor.context(
+        pld_spec=pld_spec,
+    )(child)
+    return this_mod
+
+
+@tractor.context
+async def set_chld_pldspec(
+    ctx: tractor.Context,
+    pld_spec_strs: list[str],
+):
+    '''
+    Dynamically apply the `@context(pld_spec=pld_spec)` deco to the
+    current actor's in-mem instance of this test module.
+
+    Allows dynamically applying the "payload-spec" in both a parent
+    and child actor after spawn.
+
+    '''
+    this_mod = sys.modules[__name__]
+    pld_spec: list[str] = _exts.dec_type_union(
+        pld_spec_strs,
+        mods=[this_mod],
+    )
+    decorate_child_ep(pld_spec)
+    await ctx.started()
+    await trio.sleep_forever()
+
 
 @pytest.mark.parametrize(
     'return_value',
@@ -253,12 +303,25 @@ async def child(
         'no-started-pld-validate',
     ],
 )
+@pytest.mark.parametrize(
+    'pld_spec',
+    [
+        PldMsg|None,
+        # !TODO, these cases
+        # Msg1|Msg2|None,
+        # Msg1|Msg2|Any,
+    ],
+    ids=[
+        'maybe_PldMsg_spec',
+    ]
+)
 def test_basic_payload_spec(
     debug_mode: bool,
     loglevel: str,
     return_value: str|None,
     started_value: int|PldMsg,
     pld_check_started_value: bool,
+    pld_spec: Union[Type],
 ):
     '''
     Validate the most basic `PldRx` msg-type-spec semantics around
@@ -270,13 +333,24 @@ def test_basic_payload_spec(
     invalid_return: bool = return_value == 'yo'
     invalid_started: bool = started_value == 10
 
+    # dynamically apply ep's pld-spec in 'root'.
+    decorate_child_ep(pld_spec)
+    assert (
+        child._tractor_context_meta['pld_spec'] == pld_spec
+    )
+    pld_types: set[Type] = _codec.unpack_spec_types(pld_spec)
+    pld_spec_strs: list[str] = _exts.enc_type_union(
+        pld_spec,
+    )
+    assert len(pld_types) > 1
+
     async def main():
         async with tractor.open_nursery(
             debug_mode=debug_mode,
             loglevel=loglevel,
         ) as an:
             p: Portal = await an.start_actor(
-                'child',
+                'sub',
                 enable_modules=[__name__],
             )
 
@@ -286,9 +360,11 @@ def test_basic_payload_spec(
             if invalid_started:
                 msg_type_str: str = 'Started'
                 bad_value: int = 10
+
             elif invalid_return:
                 msg_type_str: str = 'Return'
                 bad_value: str = 'yo'
+
             else:
                 # XXX but should never be used below then..
                 msg_type_str: str = ''
@@ -302,6 +378,7 @@ def test_basic_payload_spec(
                     invalid_started
                 ) else None
             )
+
             async with (
                 maybe_expect_raises(
                     raises=should_raise,
@@ -315,6 +392,11 @@ def test_basic_payload_spec(
                     # only for debug
                     # post_mortem=True,
                 ),
+                p.open_context(
+                    set_chld_pldspec,
+                    pld_spec_strs=pld_spec_strs,
+                ) as (deco_ctx, _),
+
                 p.open_context(
                     child,
                     return_value=return_value,
@@ -355,6 +437,9 @@ def test_basic_payload_spec(
                         ctx.maybe_error is
                         ctx.outcome
                     )
+
+                if should_raise is None:
+                    await deco_ctx.cancel()
 
             if should_raise is None:
                 assert maybe_mte is None
