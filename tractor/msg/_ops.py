@@ -119,7 +119,7 @@ class PldRx(Struct):
     def limit_plds(
         self,
         spec: Union[Type[Struct]],
-        **dec_kwargs,
+        **mk_dec_kwargs,
 
     ) -> MsgDec:
         '''
@@ -135,7 +135,7 @@ class PldRx(Struct):
         orig_dec: MsgDec = self._pld_dec
         limit_dec: MsgDec = mk_dec(
             spec=spec,
-            **dec_kwargs,
+            **mk_dec_kwargs,
         )
         try:
             self._pld_dec = limit_dec
@@ -582,6 +582,7 @@ async def drain_to_final_msg(
     even after ctx closure and the `.open_context()` block exit.
 
     '''
+    __tracebackhide__: bool = hide_tb
     raise_overrun: bool = not ctx._allow_overruns
     parent_never_opened_stream: bool = ctx._stream is None
 
@@ -834,7 +835,8 @@ async def drain_to_final_msg(
             f'{ctx.outcome}\n'
         )
 
-    __tracebackhide__: bool = hide_tb
+    # ?TODO? why was this here and not above?
+    # __tracebackhide__: bool = hide_tb
     return (
         result_msg,
         pre_result_drained,
