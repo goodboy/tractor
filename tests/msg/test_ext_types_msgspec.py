@@ -454,7 +454,7 @@ async def send_back_values(
     with (
         maybe_apply_codec(nsp_codec) as codec,
         limit_plds(
-            rent_pld_spec,
+            spec=rent_pld_spec,
             dec_hook=dec_nsp if add_hooks else None,
             ext_types=[NamespacePath]  if add_hooks else None,
         ) as pld_dec,
@@ -665,7 +665,9 @@ def test_ext_types_over_ipc(
                     expect_codec=nsp_codec,
                     enter_value=codec,
                 )
-                rent_pld_spec_type_strs: list[str] = _exts.enc_type_union(pld_spec)
+                rent_pld_spec_type_strs: list[str] = _exts.enc_type_union(
+                    pld_spec
+                )
 
                 # XXX should raise an mte (`MsgTypeError`)
                 # when `add_hooks == False` bc the input
@@ -695,7 +697,7 @@ def test_ext_types_over_ipc(
                             limit_plds(
                                 pld_spec,
                                 dec_hook=dec_nsp if add_hooks else None,
-                                ext_types=[NamespacePath]  if add_hooks else None,
+                                ext_types=[NamespacePath] if add_hooks else None,
                             ) as pld_dec,
                         ):
                             ctx_pld_dec: MsgDec = ctx._pld_rx._pld_dec
@@ -704,7 +706,7 @@ def test_ext_types_over_ipc(
                             # if (
                             #     not add_hooks
                             #     and
-                            #     NamespacePath in 
+                            #     NamespacePath in
                             # ):
                             #     pytest.fail('ctx should fail to open without custom enc_hook!?')
 
@@ -743,204 +745,10 @@ def test_ext_types_over_ipc(
         assert exc.boxed_type is TypeError
 
 
-# def chk_pld_type(
-#     payload_spec: Type[Struct]|Any,
-#     pld: Any,
-
-#     expect_roundtrip: bool|None = None,
-
-# ) -> bool:
-
-#     pld_val_type: Type = type(pld)
-
-#     # TODO: verify that the overridden subtypes
-#     # DO NOT have modified type-annots from original!
-#     # 'Start',  .pld: FuncSpec
-#     # 'StartAck',  .pld: IpcCtxSpec
-#     # 'Stop',  .pld: UNSEt
-#     # 'Error',  .pld: ErrorData
-
-#     codec: MsgCodec = mk_codec(
-#         # NOTE: this ONLY accepts `PayloadMsg.pld` fields of a specified
-#         # type union.
-#         ipc_pld_spec=payload_spec,
-#     )
-
-#     # make a one-off dec to compare with our `MsgCodec` instance
-#     # which does the below `mk_msg_spec()` call internally
-#     ipc_msg_spec: Union[Type[Struct]]
-#     msg_types: list[PayloadMsg[payload_spec]]
-#     (
-#         ipc_msg_spec,
-#         msg_types,
-#     ) = mk_msg_spec(
-#         payload_type_union=payload_spec,
-#     )
-#     _enc = msgpack.Encoder()
-#     _dec = msgpack.Decoder(
-#         type=ipc_msg_spec or Any,  # like `PayloadMsg[Any]`
-#     )
-
-#     assert (
-#         payload_spec
-#         ==
-#         codec.pld_spec
-#     )
-
-#     # assert codec.dec == dec
-#     #
-#     # ^-XXX-^ not sure why these aren't "equal" but when cast
-#     # to `str` they seem to match ?? .. kk
-
-#     assert (
-#         str(ipc_msg_spec)
-#         ==
-#         str(codec.msg_spec)
-#         ==
-#         str(_dec.type)
-#         ==
-#         str(codec.dec.type)
-#     )
-
-#     # verify the boxed-type for all variable payload-type msgs.
-#     if not msg_types:
-#         breakpoint()
-
-#     roundtrip: bool|None = None
-#     pld_spec_msg_names: list[str] = [
-#         td.__name__ for td in _payload_msgs
-#     ]
-#     for typedef in msg_types:
-
-#         skip_runtime_msg: bool = typedef.__name__ not in pld_spec_msg_names
-#         if skip_runtime_msg:
-#             continue
-
-#         pld_field = structs.fields(typedef)[1]
-#         assert pld_field.type is payload_spec # TODO-^ does this need to work to get all subtypes to adhere?
-
-#         kwargs: dict[str, Any] = {
-#             'cid': '666',
-#             'pld': pld,
-#         }
-#         enc_msg: PayloadMsg = typedef(**kwargs)
-
-#         _wire_bytes: bytes = _enc.encode(enc_msg)
-#         wire_bytes: bytes = codec.enc.encode(enc_msg)
-#         assert _wire_bytes == wire_bytes
-
-#         ve: ValidationError|None = None
-#         try:
-#             dec_msg = codec.dec.decode(wire_bytes)
-#             _dec_msg = _dec.decode(wire_bytes)
-
-#             # decoded msg and thus payload should be exactly same!
-#             assert (roundtrip := (
-#                 _dec_msg
-#                 ==
-#                 dec_msg
-#                 ==
-#                 enc_msg
-#             ))
-
-#             if (
-#                 expect_roundtrip is not None
-#                 and expect_roundtrip != roundtrip
-#             ):
-#                 breakpoint()
-
-#             assert (
-#                 pld
-#                 ==
-#                 dec_msg.pld
-#                 ==
-#                 enc_msg.pld
-#             )
-#             # assert (roundtrip := (_dec_msg == enc_msg))
-
-#         except ValidationError as _ve:
-#             ve = _ve
-#             roundtrip: bool = False
-#             if pld_val_type is payload_spec:
-#                 raise ValueError(
-#                    'Got `ValidationError` despite type-var match!?\n'
-#                     f'pld_val_type: {pld_val_type}\n'
-#                     f'payload_type: {payload_spec}\n'
-#                 ) from ve
-
-#             else:
-#                 # ow we good cuz the pld spec mismatched.
-#                 print(
-#                     'Got expected `ValidationError` since,\n'
-#                     f'{pld_val_type} is not {payload_spec}\n'
-#                 )
-#         else:
-#             if (
-#                 payload_spec is not Any
-#                 and
-#                 pld_val_type is not payload_spec
-#             ):
-#                 raise ValueError(
-#                    'DID NOT `ValidationError` despite expected type match!?\n'
-#                     f'pld_val_type: {pld_val_type}\n'
-#                     f'payload_type: {payload_spec}\n'
-#                 )
-
-#     # full code decode should always be attempted!
-#     if roundtrip is None:
-#         breakpoint()
-
-#     return roundtrip
-
-
-# ?TODO? maybe remove since covered in the newer `test_pldrx_limiting`
-# via end-2-end testing of all this?
-# -[ ] IOW do we really NEED this lowlevel unit testing?
-#
-# def test_limit_msgspec(
-#     debug_mode: bool,
-# ):
-#     '''
-#     Internals unit testing to verify that type-limiting an IPC ctx's
-#     msg spec with `Pldrx.limit_plds()` results in various
-#     encapsulated `msgspec` object settings and state.
-
-#     '''
-#     async def main():
-#         async with tractor.open_root_actor(
-#             debug_mode=debug_mode,
-#         ):
-#             # ensure we can round-trip a boxing `PayloadMsg`
-#             assert chk_pld_type(
-#                 payload_spec=Any,
-#                 pld=None,
-#                 expect_roundtrip=True,
-#             )
-
-#             # verify that a mis-typed payload value won't decode
-#             assert not chk_pld_type(
-#                 payload_spec=int,
-#                 pld='doggy',
-#             )
-
-#             # parametrize the boxed `.pld` type as a custom-struct
-#             # and ensure that parametrization propagates
-#             # to all payload-msg-spec-able subtypes!
-#             class CustomPayload(Struct):
-#                 name: str
-#                 value: Any
-
-#             assert not chk_pld_type(
-#                 payload_spec=CustomPayload,
-#                 pld='doggy',
-#             )
-
-#             assert chk_pld_type(
-#                 payload_spec=CustomPayload,
-#                 pld=CustomPayload(name='doggy', value='urmom')
-#             )
-
-#             # yah, we can `.pause_from_sync()` now!
-#             # breakpoint()
-
-#     trio.run(main)
+# TODO: further SC-msg-specific verification that the overridden
+# subtypes DO NOT have modified type-annots from original!
+# 'Start',  .pld: FuncSpec
+# 'StartAck',  .pld: IpcCtxSpec
+# 'Stop',  .pld: UNSEt
+# 'Error',  .pld: ErrorData
+# def test_per_msg_payload_spec_limits():
