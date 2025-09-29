@@ -259,8 +259,11 @@ def mk_dec(
 
     return MsgDec(
         _dec=msgpack.Decoder(
-            type=spec,  # like `MsgType[Any]`
+            type=spec,
             dec_hook=dec_hook,
+            # ?TODO, support it?
+            # https://jcristharif.com/msgspec/usage.html#strict-vs-lax-mode
+            # strict=False,
         ),
     )
 
