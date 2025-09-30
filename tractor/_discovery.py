@@ -219,13 +219,14 @@ async def maybe_open_portal(
             uid: tuple[str, str] = await reg_portal.run_from_ns(
                 'self',
                 'delete_sockaddr',
-                sockaddr=addr.unwrap(),
+                sockaddr=addr,
             )
-            log.error(
+            log.warning(
                 f'Deleted stale registry entry !\n'
                 f'addr: {addr!r}\n'
                 f'uid: {uid!r}\n'
             )
+            yield None
 
 
 @acm
@@ -307,7 +308,6 @@ async def find_actor(
             # given there are multi-homed or multiple registrars..
             # SO, we probably need de-duplication logic?
             yield portals
-
 
 
 @acm
