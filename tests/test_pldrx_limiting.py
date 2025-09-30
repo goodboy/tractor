@@ -10,10 +10,12 @@ from contextlib import (
 import sys
 import types
 from typing import (
+    Any,
     Union,
     Type,
 )
 
+import msgspec
 from msgspec import (
     Struct,
 )
@@ -46,10 +48,22 @@ class PldMsg(
     #      case of these details?
     #
     # https://jcristharif.com/msgspec/structs.html#tagged-unions
-    # tag=True,
-    # tag_field='msg_type',
+    tag=True,
+    tag_field='msg_type',
 ):
     field: str
+
+
+class Msg1(PldMsg):
+    field: str
+
+
+class Msg2(PldMsg):
+    field: int
+
+
+class AnyFieldMsg(PldMsg):
+    field: Any
 
 
 @acm
@@ -122,19 +136,20 @@ async def child(
     validate_pld_spec: bool,
     raise_on_started_mte: bool = True,
 
+    pack_any_field: bool = False,
+
 ) -> None:
     '''
     Call ``Context.started()`` more then once (an error).
 
     '''
-    expect_started_mte: bool = started_value == 10
-
     # sanaity check that child RPC context is the current one
     curr_ctx: Context = current_ipc_ctx()
     assert ctx is curr_ctx
 
     rx: msgops.PldRx = ctx._pld_rx
     curr_pldec: _codec.MsgDec = rx.pld_dec
+
 
     ctx_meta: dict = getattr(
         child,
@@ -144,9 +159,27 @@ async def child(
     if ctx_meta:
         assert (
             ctx_meta['pld_spec']
-            is curr_pldec.spec
-            is curr_pldec.pld_spec
+            is
+            curr_pldec.spec
+            is
+            curr_pldec.pld_spec
         )
+
+    pld_types: set[Type] = _codec.unpack_spec_types(
+        curr_pldec.pld_spec,
+    )
+    if (
+        AnyFieldMsg in pld_types
+        and
+        pack_any_field
+    ):
+        started_value = AnyFieldMsg(field=started_value)
+
+    expect_started_mte: bool = (
+        started_value == 10
+        and
+        not pack_any_field
+    )
 
     # 2 cases: hdndle send-side and recv-only validation
     # - when `raise_on_started_mte == True`, send validate
@@ -263,7 +296,10 @@ async def set_chld_pldspec(
     this_mod = sys.modules[__name__]
     pld_spec: list[str] = _exts.dec_type_union(
         pld_spec_strs,
-        mods=[this_mod],
+        mods=[
+            this_mod,
+            msgspec.inspect,
+        ],
     )
     decorate_child_ep(pld_spec)
     await ctx.started()
@@ -275,10 +311,14 @@ async def set_chld_pldspec(
     [
         'yo',
         None,
+        Msg2(field=10),
+        AnyFieldMsg(field='yo'),
     ],
     ids=[
         'return[invalid-"yo"]',
-        'return[valid-None]',
+        'return[maybe-valid-None]',
+        'return[maybe-valid-Msg2]',
+        'return[maybe-valid-any-packed-yo]',
     ],
 )
 @pytest.mark.parametrize(
@@ -286,10 +326,14 @@ async def set_chld_pldspec(
     [
         10,
         PldMsg(field='yo'),
+        Msg1(field='yo'),
+        AnyFieldMsg(field=10),
     ],
     ids=[
         'Started[invalid-10]',
-        'Started[valid-PldMsg]',
+        'Started[maybe-valid-PldMsg]',
+        'Started[maybe-valid-Msg1]',
+        'Started[maybe-valid-any-packed-10]',
     ],
 )
 @pytest.mark.parametrize(
@@ -307,12 +351,18 @@ async def set_chld_pldspec(
     'pld_spec',
     [
         PldMsg|None,
-        # !TODO, these cases
-        # Msg1|Msg2|None,
-        # Msg1|Msg2|Any,
+
+        # demo how to have strict msgs alongside all other supported
+        # py-types by embedding the any-types inside a shuttle msg.
+        Msg1|Msg2|AnyFieldMsg,
+
+        # XXX, will never work since Struct overrides dict.
+        # https://jcristharif.com/msgspec/usage.html#typed-decoding
+        # Msg1|Msg2|msgspec.inspect.AnyType,
     ],
     ids=[
         'maybe_PldMsg_spec',
+        'Msg1_or_Msg2_or_AnyFieldMsg_spec',
     ]
 )
 def test_basic_payload_spec(
@@ -330,21 +380,27 @@ def test_basic_payload_spec(
     pld-spec.
 
     '''
-    invalid_return: bool = return_value == 'yo'
-    invalid_started: bool = started_value == 10
+    pld_types: set[Type] = _codec.unpack_spec_types(pld_spec)
+    invalid_return: bool = (
+        return_value == 'yo'
+    )
+    invalid_started: bool = (
+        started_value == 10
+    )
 
     # dynamically apply ep's pld-spec in 'root'.
     decorate_child_ep(pld_spec)
     assert (
         child._tractor_context_meta['pld_spec'] == pld_spec
     )
-    pld_types: set[Type] = _codec.unpack_spec_types(pld_spec)
     pld_spec_strs: list[str] = _exts.enc_type_union(
         pld_spec,
     )
     assert len(pld_types) > 1
 
     async def main():
+        nonlocal pld_spec
+
         async with tractor.open_nursery(
             debug_mode=debug_mode,
             loglevel=loglevel,
@@ -407,12 +463,18 @@ def test_basic_payload_spec(
                 # now opened with 'child' sub
                 assert current_ipc_ctx() is ctx
 
-                assert type(first) is PldMsg
+                # assert type(first) is PldMsg
+                assert isinstance(first, PldMsg)
                 assert first.field == 'yo'
 
                 try:
                     res: None|PldMsg = await ctx.result(hide_tb=False)
-                    assert res is None
+                    assert res == return_value
+                    if res is None:
+                        await tractor.pause()
+                    if isinstance(res, PldMsg):
+                        assert res.field == 10
+
                 except MsgTypeError as mte:
                     maybe_mte = mte
                     if not invalid_return:
