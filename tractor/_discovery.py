@@ -218,8 +218,8 @@ async def maybe_open_portal(
             # registar actor.
             uid: tuple[str, str] = await reg_portal.run_from_ns(
                 'self',
-                'delete_sockaddr',
-                sockaddr=addr,
+                'delete_addr',
+                addr=addr,
             )
             log.warning(
                 f'Deleted stale registry entry !\n'

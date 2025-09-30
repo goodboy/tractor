@@ -1994,12 +1994,12 @@ class Arbiter(Actor):
                 f'Request to de-register {uid!r} failed?'
             )
 
-    async def delete_sockaddr(
+    async def delete_addr(
         self,
-        sockaddr: tuple[str, int|str],
+        addr: tuple[str, int|str],
     ) -> tuple[str, str]:
         uid: tuple | None = self._registry.inverse.pop(
-            sockaddr,
+            addr,
             None,
         )
         if uid:
@@ -2010,6 +2010,6 @@ class Arbiter(Actor):
         log.warning(
             report
             +
-            f'{sockaddr!r}@{uid!r}'
+            f'{addr!r}@{uid!r}'
         )
         return uid
