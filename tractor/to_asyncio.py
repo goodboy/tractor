@@ -1703,7 +1703,7 @@ def run_as_asyncio_guest(
                 # asyncio.CancelledError,
                 # ^^XXX `.shield()` call above prevents this??
 
-            )as state_err:
+            ) as state_err:
 
                 # XXX be super dupere noisy about abandonment issues!
                 aio_task: asyncio.Task = asyncio.current_task()
