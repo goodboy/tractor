@@ -1972,7 +1972,8 @@ class Arbiter(Actor):
             # should never be 0-dynamic-os-alloc
             await debug.pause()
 
-        self._registry[uid] = addr
+        # XXX NOTE, value must also be hashable.
+        self._registry[uid] = tuple(addr)
 
         # pop and signal all waiter events
         events = self._waiters.pop(name, [])
