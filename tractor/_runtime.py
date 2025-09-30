@@ -68,6 +68,7 @@ import textwrap
 from types import ModuleType
 import warnings
 
+from bidict import bidict
 import trio
 from trio._core import _run as trio_runtime
 from trio import (
@@ -1879,10 +1880,10 @@ class Arbiter(Actor):
         **kwargs,
     ) -> None:
 
-        self._registry: dict[
+        self._registry: bidict[
             tuple[str, str],
             UnwrappedAddress,
-        ] = {}
+        ] = bidict({})
         self._waiters: dict[
             str,
             # either an event to sync to receiving an actor uid (which
@@ -1971,7 +1972,8 @@ class Arbiter(Actor):
             # should never be 0-dynamic-os-alloc
             await debug.pause()
 
-        self._registry[uid] = addr
+        # XXX NOTE, value must also be hashable.
+        self._registry[uid] = tuple(addr)
 
         # pop and signal all waiter events
         events = self._waiters.pop(name, [])
@@ -1988,4 +1990,26 @@ class Arbiter(Actor):
         uid = (str(uid[0]), str(uid[1]))
         entry: tuple = self._registry.pop(uid, None)
         if entry is None:
-            log.warning(f'Request to de-register {uid} failed?')
+            log.warning(
+                f'Request to de-register {uid!r} failed?'
+            )
+
+    async def delete_addr(
+        self,
+        addr: tuple[str, int|str],
+    ) -> tuple[str, str]:
+        uid: tuple | None = self._registry.inverse.pop(
+            addr,
+            None,
+        )
+        if uid:
+            report: str = 'Deleting registry-entry for,\n'
+        else:
+            report: str = 'No registry entry for,\n'
+
+        log.warning(
+            report
+            +
+            f'{addr!r}@{uid!r}'
+        )
+        return uid
