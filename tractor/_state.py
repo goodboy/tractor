@@ -22,7 +22,6 @@ from __future__ import annotations
 from contextvars import (
     ContextVar,
 )
-import os
 from pathlib import Path
 from typing import (
     Any,
@@ -30,6 +29,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
+import platformdirs
 from trio.lowlevel import current_task
 
 if TYPE_CHECKING:
@@ -172,23 +172,32 @@ def current_ipc_ctx(
     return ctx
 
 
-# std ODE (mutable) app state location
-_rtdir: Path = Path(os.environ['XDG_RUNTIME_DIR'])
-
 
 def get_rt_dir(
-    subdir: str = 'tractor'
+    subdir: str|Path|None = None,
 ) -> Path:
     '''
-    Return the user "runtime dir" where most userspace apps stick
-    their IPC and cache related system util-files; we take hold
-    of a `'XDG_RUNTIME_DIR'/tractor/` subdir by default.
+    Return the user "runtime dir", the file-sys location where most
+    userspace apps stick their IPC and cache related system
+    util-files.
+
+    On linux we take use a `'${XDG_RUNTIME_DIR}/tractor/` subdir by
+    default but equivalents are mapped for each platform using
+    the lovely `platformdirs`.
 
     '''
-    rtdir: Path = _rtdir / subdir
-    if not rtdir.is_dir():
-        rtdir.mkdir()
-    return rtdir
+    rt_dir: Path = Path(
+        platformdirs.user_runtime_dir(
+            appname='tractor',
+        ),
+    )
+    if subdir:
+        rt_dir: Path = rt_dir / subdir
+
+    if not rt_dir.is_dir():
+        rt_dir.mkdir()
+
+    return rt_dir
 
 
 def current_ipc_protos() -> list[str]:
