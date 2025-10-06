@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 
 [[package]]
@@ -237,6 +237,15 @@ wheels = [
 ]
 
 [[package]]
+name = "platformdirs"
+version = "4.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/e8/21db9c9987b0e728855bd57bff6984f67952bea55d6f75e055c46b5383e8/platformdirs-4.4.0.tar.gz", hash = "sha256:ca753cf4d81dc309bc67b0ea38fd15dc97bc30ce419a7f58d13eb3bf14c4febf", size = 21634, upload-time = "2025-08-26T14:32:04.268Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/4b/2028861e724d3bd36227adfa20d3fd24c3fc6d52032f4a93c133be5d17ce/platformdirs-4.4.0-py3-none-any.whl", hash = "sha256:abd01743f24e5287cd7a5db3752faf1a2d65353f38ec26d98e25a6db65958c85", size = 18654, upload-time = "2025-08-26T14:32:02.735Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -378,6 +387,7 @@ dependencies = [
     { name = "colorlog" },
     { name = "msgspec" },
     { name = "pdbp" },
+    { name = "platformdirs" },
     { name = "tricycle" },
     { name = "trio" },
     { name = "wrapt" },
@@ -403,6 +413,7 @@ requires-dist = [
     { name = "colorlog", specifier = ">=6.8.2,<7" },
     { name = "msgspec", specifier = ">=0.19.0" },
     { name = "pdbp", specifier = ">=1.6,<2" },
+    { name = "platformdirs", specifier = ">=4.4.0" },
     { name = "tricycle", specifier = ">=0.4.1,<0.5" },
     { name = "trio", specifier = ">0.27" },
     { name = "wrapt", specifier = ">=1.16.0,<2" },
