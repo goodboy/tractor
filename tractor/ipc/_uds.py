@@ -23,14 +23,29 @@ from contextlib import (
 )
 from pathlib import Path
 import os
+import sys
 from socket import (
     AF_UNIX,
     SOCK_STREAM,
-    SO_PASSCRED,
-    SO_PEERCRED,
     SOL_SOCKET,
 )
 import struct
+
+# Platform-specific credential passing constants
+# See: https://stackoverflow.com/a/7982749
+if sys.platform == 'linux':
+    from socket import SO_PASSCRED, SO_PEERCRED
+elif sys.platform == 'darwin':  # macOS
+    # macOS uses LOCAL_PEERCRED instead of SO_PEERCRED
+    # and doesn't need SO_PASSCRED (credential passing is always enabled)
+    # Value from <sys/un.h>: #define LOCAL_PEERCRED 0x001
+    LOCAL_PEERCRED = 0x0001
+    SO_PEERCRED = LOCAL_PEERCRED  # Alias for compatibility
+    SO_PASSCRED = None  # Not needed/available on macOS
+else:
+    # Other Unix platforms - may need additional handling
+    SO_PASSCRED = None
+    SO_PEERCRED = None
 from typing import (
     Type,
     TYPE_CHECKING,
@@ -310,7 +325,11 @@ async def open_unix_socket_w_passcred(
     # much more simplified logic vs tcp sockets - one socket type and only one
     # possible location to connect to
     sock = trio.socket.socket(AF_UNIX, SOCK_STREAM)
-    sock.setsockopt(SOL_SOCKET, SO_PASSCRED, 1)
+
+    # Only set SO_PASSCRED on Linux (not needed/available on macOS)
+    if SO_PASSCRED is not None:
+        sock.setsockopt(SOL_SOCKET, SO_PASSCRED, 1)
+
     with close_on_error(sock):
         await sock.connect(os.fspath(filename))
 
@@ -324,7 +343,10 @@ def get_peer_info(sock: trio.socket.socket) -> tuple[
 ]:
     '''
     Deliver the connecting peer's "credentials"-info as defined in
-    a very Linux specific way..
+    a platform-specific way.
+
+    On Linux, uses SO_PEERCRED.
+    On macOS, uses LOCAL_PEERCRED.
 
     For more deats see,
     - `man accept`,
@@ -337,6 +359,11 @@ def get_peer_info(sock: trio.socket.socket) -> tuple[
     - https://stackoverflow.com/a/7982749
 
     '''
+    if SO_PEERCRED is None:
+        raise RuntimeError(
+            f'Peer credential retrieval not supported on {sys.platform}!'
+        )
+
     creds: bytes = sock.getsockopt(
         SOL_SOCKET,
         SO_PEERCRED,
