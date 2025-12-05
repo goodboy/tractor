@@ -31,12 +31,22 @@ from threading import (
     RLock,
 )
 import multiprocessing as mp
-from signal import (
+
+import platform
+import signal
+
+from signal import ( 
     signal,
     getsignal,
-    SIGUSR1,
     SIGINT,
 )
+
+
+if platform.system() != "Windows":
+    from signal import SIGUSR1
+else:
+    SIGUSR1 = None
+
 # import traceback
 from types import ModuleType
 from typing import (

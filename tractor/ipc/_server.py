@@ -27,6 +27,8 @@ from functools import partial
 from itertools import chain
 import inspect
 import textwrap
+import platform
+import socket
 from types import (
     ModuleType,
 )
@@ -64,16 +66,23 @@ from .. import (
 from .._addr import Address
 from ._chan import Channel
 from ._transport import MsgTransport
-from ._uds import UDSAddress
-from ._tcp import TCPAddress
+
 
 if TYPE_CHECKING:
     from .._runtime import Actor
     from .._supervise import ActorNursery
 
 
+from ._tcp import TCPAddress
+
 log = log.get_logger(__name__)
 
+UDSAddress = None
+
+if getattr(socket, "AF_UNIX", None) is not None and platform.system() != "Windows":
+    from ._uds import UDSAddress
+else:
+    pass
 
 async def maybe_wait_on_canced_subs(
     uid: tuple[str, str],
