@@ -9,7 +9,7 @@ name = "tractor"
 version = "0.1.0a6dev0"
 description = 'structured concurrent `trio`-"actors"'
 authors = [{ name = "Tyler Goodlet", email = "goodboy_foss@protonmail.com" }]
-requires-python = ">= 3.11"
+requires-python = ">= 3.12"
 readme = "docs/README.rst"
 license = "AGPL-3.0-or-later"
 keywords = [
@@ -42,12 +42,13 @@ dependencies = [
   "wrapt>=1.16.0,<2",
   "colorlog>=6.8.2,<7",
   # built-in multi-actor `pdb` REPL
-  "pdbp>=1.6,<2", # windows only (from `pdbp`)
+  "pdbp>=1.8.2,<2", # windows only (from `pdbp`)
   # typed IPC msging
   "msgspec>=0.19.0",
   "cffi>=1.17.1",
   "bidict>=0.23.1",
   "platformdirs>=4.4.0",
+  "multiaddr>=0.1.1",
 ]
 
 # ------ project ------
@@ -75,7 +76,7 @@ testing = [
 repl = [
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
-  "xonsh>=0.19.2",
+  "xonsh>=0.22.2",
   "psutil>=7.0.0",
 ]
 lint = [
@@ -87,15 +88,19 @@ lint = [
 #   "sphinx>="
 #   "sphinx_book_theme>="
 # ]
-
 # ------ dependency-groups ------
 
-# ------ dependency-groups ------
 
 [tool.uv.sources]
 # XXX NOTE, only for @goodboy's hacking on `pprint(sort_dicts=False)`
 # for the `pp` alias..
-# pdbp = { path = "../pdbp", editable = true }
+
+# [tool.uv.sources.pdbp]
+# XXX, in case we need to tmp patch again.
+# git = "https://github.com/goodboy/pdbp.git"
+# branch ="repair_stack_trace_frame_indexing"
+# path = "../pdbp"
+# editable = true
 
 # ------ tool.uv.sources ------
 # TODO, distributed (multi-host) extensions
