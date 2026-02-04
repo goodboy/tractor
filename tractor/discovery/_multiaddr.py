@@ -38,6 +38,7 @@ prots: bidict[int, str] = {
 
     'tcp': 4,
     'udp': 4,
+    'uds': 4,
 
     # TODO: support the next-gen shite Bo
     # 'quic': 4,
@@ -51,6 +52,7 @@ prot_params: dict[str, tuple[str]] = {
 
     'tcp': ('port',),
     'udp': ('port',),
+    'uds': ('path',),
 
     # 'quic': ('port',),
     # 'ssh': ('port',),
@@ -75,7 +77,7 @@ def iter_prot_layers(
     assert not root  # there is a root '/' on LHS
     itokens = iter(tokens)
 
-    prot: str | None = None
+    prot: str|None = None
     params: list[str] = []
     for token in itokens:
         # every prot path should start with a known
@@ -98,7 +100,10 @@ def iter_prot_layers(
 
 def parse_maddr(
     multiaddr: str,
-) -> dict[str, str | int | dict]:
+) -> dict[
+    str,
+    str|int|dict,
+]:
     '''
     Parse a libp2p style "multiaddress" into its distinct protocol
     segments where each segment is of the form:
@@ -122,14 +127,17 @@ def parse_maddr(
         `'/wg/1.1.1.1/51820/<pubkey>'`
 
     '''
-    layers: dict[str, str | int | dict] = {}
+    layers: dict[str, str|int|dict] = {}
     for (
         prot_key,
         params,
     ) in iter_prot_layers(multiaddr):
 
         layer: int = prots[prot_key]  # OSI layer used for sorting
-        ep: dict[str, int | str] = {'layer': layer}
+        ep: dict[str, int|str] = {
+            'layer': layer,
+            'proto': prot_key,
+        }
         layers[prot_key] = ep
 
         # TODO; validation and resolving of names:
@@ -139,7 +147,7 @@ def parse_maddr(
         #   any loaded network.resolv: dict[str, str]
         rparams: list = list(reversed(params))
         for key in prot_params[prot_key]:
-            val: str | int = rparams.pop()
+            val: str|int = rparams.pop()
 
             # TODO: UGHH, dunno what we should do for validation
             # here, put it in the params spec somehow?
