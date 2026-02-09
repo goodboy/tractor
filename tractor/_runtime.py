@@ -906,6 +906,14 @@ class Actor:
                 # => update process-wide globals
                 # TODO! -[ ] another `Struct` for rtvs..
                 rvs: dict[str, Any] = spawnspec._runtime_vars
+                # if (
+                #     isinstance(rvs['_root_addrs'], dict)
+                #     or
+                #     isinstance(rvs['_root_mailbox'], dict)
+                # ):
+                #     from .devx import mk_pdb
+                #     mk_pdb.set_trace()
+
                 if rvs['_debug_mode']:
                     from .devx import (
                         enable_stack_on_sig,
