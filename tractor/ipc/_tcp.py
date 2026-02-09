@@ -41,7 +41,7 @@ from tractor.ipc._transport import (
 )
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 class TCPAddress(

@@ -37,7 +37,7 @@ from .ipc._uds import UDSAddress
 if TYPE_CHECKING:
     from ._runtime import Actor
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 # TODO, maybe breakout the netns key to a struct?
@@ -259,6 +259,8 @@ def wrap_address(
 
         case _:
             # import pdbp; pdbp.set_trace()
+            # from tractor.devx import mk_pdb
+            # mk_pdb().set_trace()
             raise TypeError(
                 f'Can not wrap unwrapped-address ??\n'
                 f'type(addr): {type(addr)!r}\n'

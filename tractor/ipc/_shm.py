@@ -59,7 +59,7 @@ except ImportError:
     pass
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 SharedMemory = disable_mantracker()

@@ -60,7 +60,7 @@ if TYPE_CHECKING:
     from ._transport import MsgTransport
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 _is_windows = platform.system() == 'Windows'
 

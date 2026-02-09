@@ -81,7 +81,7 @@ if TYPE_CHECKING:
         BoxedMaybeException,
     )
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 class LockStatus(

@@ -49,7 +49,7 @@ from tractor.msg import (
 import wrapt
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 # TODO: yeah, i don't love this and we should prolly just
 # write a decorator that actually keeps a stupid ref to the func

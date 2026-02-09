@@ -47,7 +47,7 @@ if TYPE_CHECKING:
         Actor,
     )
 
-log = get_logger(__name__)
+log = get_logger()
 
 _ctlc_ignore_header: str = (
     'Ignoring SIGINT while debug REPL in use'

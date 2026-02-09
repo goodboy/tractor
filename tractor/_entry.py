@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from ._spawn import SpawnMethodKey
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 def _mp_main(
@@ -72,11 +72,15 @@ def _mp_main(
     spawn_ctx: mp.context.BaseContext = try_set_start_method(start_method)
     assert spawn_ctx
 
+    # XXX, enable root log at level
     if actor.loglevel is not None:
         log.info(
-            f'Setting loglevel for {actor.uid} to {actor.loglevel}'
+            f'Setting loglevel for {actor.uid} to {actor.loglevel!r}'
         )
-        get_console_log(actor.loglevel)
+        get_console_log(
+            level=actor.loglevel,
+            name='tractor',
+        )
 
     # TODO: use scops headers like for `trio` below!
     # (well after we libify it maybe..)
@@ -126,8 +130,12 @@ def _trio_main(
         parent_addr=parent_addr
     )
 
+    # XXX, enable root log at level
     if actor.loglevel is not None:
-        get_console_log(actor.loglevel)
+        get_console_log(
+            level=actor.loglevel,
+            name='tractor',
+        )
         log.info(
             f'Starting `trio` subactor from parent @ '
             f'{parent_addr}\n'

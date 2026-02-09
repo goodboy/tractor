@@ -84,7 +84,7 @@ _crash_msg: str = (
     'Opening a pdb REPL in crashed actor'
 )
 
-log = get_logger(__package__)
+log = get_logger()
 
 
 class BoxedMaybeException(Struct):

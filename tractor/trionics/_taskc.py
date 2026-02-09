@@ -34,7 +34,7 @@ from typing import (
 import trio
 from tractor.log import get_logger
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 if TYPE_CHECKING:
@@ -246,23 +246,12 @@ async def maybe_raise_from_masking_exc(
                 type(exc_match)  # masked type
             )
 
+            # Add to masked `exc_ctx`
             if do_warn:
                 exc_ctx.add_note(note)
 
-            if (
-                do_warn
-                and
-                type(exc_match) in always_warn_on
-            ):
-                log.warning(note)
-
-            if (
-                do_warn
-                and
-                raise_unmasked
-            ):
+                # don't unmask already known "special" cases..
                 if len(masked) < 2:
-                    # don't unmask already known "special" cases..
                     if (
                         _mask_cases
                         and
@@ -283,11 +272,26 @@ async def maybe_raise_from_masking_exc(
                         )
                         raise exc_match
 
-                    raise exc_ctx from exc_match
+                    # ^?TODO, see above but, possibly unmasking sub-exc
+                    # entries if there are > 1
+                    # else:
+                    #     await pause(shield=True)
 
-                # ??TODO, see above but, possibly unmasking sub-exc
-                # entries if there are > 1
-                # else:
-                #     await pause(shield=True)
+                if type(exc_match) in always_warn_on:
+                    import traceback
+                    trace: list[str] = traceback.format_exception(
+                        type(exc_ctx),
+                        exc_ctx,
+                        exc_ctx.__traceback__
+                    )
+                    tb_str: str = ''.join(trace)
+                    log.warning(tb_str)
+                    # XXX, for debug
+                    # from tractor import pause
+                    # await pause(shield=True)
+
+            if raise_unmasked:
+                raise exc_ctx from exc_match
+
     else:
         raise

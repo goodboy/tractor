@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from .._supervise import ActorNursery
 
 
-log = log.get_logger(__name__)
+log = log.get_logger()
 
 
 async def maybe_wait_on_canced_subs(
