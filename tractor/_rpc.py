@@ -897,9 +897,9 @@ async def _invoke(
                 )
 
             logmeth(
-                f'{message}\n'
+                f'{message}'
                 f'\n'
-                f'{descr_str}\n'
+                f'{descr_str}'
             )
 
 
