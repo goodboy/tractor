@@ -1020,6 +1020,9 @@ def test_peer_spawns_and_cancels_service_subactor(
     raise_client_error: str,
     reg_addr: tuple[str, int],
     raise_sub_spawn_error_after: float|None,
+    loglevel: str,
+    # ^XXX, set to 'warning' to see masked-exc warnings
+    # that may transpire during actor-nursery teardown.
 ):
     # NOTE: this tests for the modden `mod wks open piker` bug
     # discovered as part of implementing workspace ctx
@@ -1049,6 +1052,7 @@ def test_peer_spawns_and_cancels_service_subactor(
             # NOTE: to halt the peer tasks on ctxc, uncomment this.
             debug_mode=debug_mode,
             registry_addrs=[reg_addr],
+            loglevel=loglevel,
         ) as an:
             server: Portal = await an.start_actor(
                 (server_name := 'spawn_server'),
