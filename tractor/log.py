@@ -42,6 +42,9 @@ from types import ModuleType
 import warnings
 
 import colorlog  # type: ignore
+# ?TODO, some other (modern) alt libs?
+# import coloredlogs
+# import colored_traceback.auto  # ?TODO, need better config?
 import trio
 
 from ._state import current_actor
