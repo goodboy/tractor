@@ -7,7 +7,10 @@ import shutil
 
 import pytest
 import tractor
-from tractor import _code_load
+from tractor import (
+    _code_load,
+    log,
+)
 
 
 def test_root_pkg_not_duplicated_in_logger_name():
@@ -20,12 +23,15 @@ def test_root_pkg_not_duplicated_in_logger_name():
     project_name: str = 'pylib'
     pkg_path: str = 'pylib.subpkg.mod'
 
-    proj_log = tractor.log.get_logger(
+    assert not tractor.current_actor(
+        err_on_no_runtime=False,
+    )
+    proj_log = log.get_logger(
         pkg_name=project_name,
         mk_sublog=False,
     )
 
-    sublog = tractor.log.get_logger(
+    sublog = log.get_logger(
         pkg_name=project_name,
         name=pkg_path,
     )
@@ -51,6 +57,7 @@ def test_implicit_mod_name_applied_for_child(
     mod_code: str = (
         f'import tractor\n'
         f'\n'
+        # f'breakpoint()\n'  # if you want to trace it all
         f'log = tractor.log.get_logger(pkg_name="{proj_name}")\n'
     )
 
@@ -78,6 +85,8 @@ def test_implicit_mod_name_applied_for_child(
         pkg_subpkg_submod,
     )
     testdir.chdir()
+    # NOTE, to introspect the py-file-module-layout use (in .xsh
+    # syntax): `ranger @str(testdir)`
 
     # XXX NOTE, once the "top level" pkg mod has been
     # imported, we can then use `import` syntax to
@@ -86,13 +95,20 @@ def test_implicit_mod_name_applied_for_child(
         Path(pkg / '__init__.py'),
         module_name=proj_name,
     )
-    pkg_root_log = tractor.log.get_logger(
+    pkg_root_log = log.get_logger(
         pkg_name=proj_name,
         mk_sublog=False,
     )
+    # the top level pkg-mod, created just now,
+    # by above API call.
     assert pkg_root_log.name == proj_name
     assert not pkg_root_log.logger.getChildren()
+    #
+    # ^TODO! test this same output but created via a `get_logger()`
+    # call in the `snakelib.__init__py`!!
 
+    # a first-pkg-level module should only
+    # use
     from snakelib import mod
     assert mod.log.name == proj_name
 
