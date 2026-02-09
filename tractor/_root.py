@@ -529,11 +529,15 @@ async def open_root_actor(
                 )
                 # TODO, remove once we have also removed all usage;
                 # eventually all (root-)registry apis should expect > 1 addr.
-                _state._runtime_vars['_root_mailbox'] = raddrs[0]
-                # if 'chart' in actor.aid.name:
-                #     from tractor.devx import mk_pdb
+                root_mailbox = raddrs[0]
+                _state._runtime_vars['_root_mailbox'] = root_mailbox
+                # if not isinstance(root_mailbox, tuple):
+                #     from .devx import mk_pdb
                 #     mk_pdb().set_trace()
-
+                #     raise TypeError(
+                #         f'Root mailbox addr must be a `tuple`?\n'
+                #         f'{root_mailbox!r}\n'
+                #     )
                 try:
                     yield actor
                 except (
