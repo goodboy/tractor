@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from .ipc import IPCServer
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 class ActorNursery:

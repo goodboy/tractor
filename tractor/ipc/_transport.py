@@ -56,7 +56,7 @@ from tractor.msg import (
 if TYPE_CHECKING:
     from tractor._addr import Address
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 # (codec, transport)

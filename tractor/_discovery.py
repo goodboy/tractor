@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from ._runtime import Actor
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 @acm

@@ -58,7 +58,7 @@ from ._sigint import (
     _ctlc_ignore_header as _ctlc_ignore_header
 )
 
-log = get_logger(__package__)
+log = get_logger()
 
 
 async def maybe_wait_for_debugger(

@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from .ipc import Channel
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 # TODO: the list

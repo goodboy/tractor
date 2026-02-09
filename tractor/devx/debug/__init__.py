@@ -59,7 +59,7 @@ from ._sigint import (
     _ctlc_ignore_header as _ctlc_ignore_header
 )
 
-log = get_logger(__name__)
+log = get_logger()
 
 # ----------------
 # XXX PKG TODO XXX

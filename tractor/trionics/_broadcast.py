@@ -42,7 +42,7 @@ from trio.lowlevel import current_task
 from msgspec import Struct
 from tractor.log import get_logger
 
-log = get_logger(__name__)
+log = get_logger()
 
 # TODO: use new type-vars syntax from 3.12
 # https://realpython.com/python312-new-features/#dedicated-type-variable-syntax

@@ -65,7 +65,11 @@ def loglevel(request):
     import tractor
     orig = tractor.log._default_loglevel
     level = tractor.log._default_loglevel = request.config.option.loglevel
-    tractor.log.get_console_log(level)
+    log = tractor.log.get_console_log(
+        level=level,
+        name='tractor',  # <- enable root logger
+    )
+    log.info(f'Test-harness logging level: {level}\n')
     yield level
     tractor.log._default_loglevel = orig
 

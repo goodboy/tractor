@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from tractor import ActorNursery
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 # A regular invariant generic type
 T = TypeVar("T")

@@ -17,9 +17,8 @@ from tractor.log import (
     get_console_log,
     get_logger,
 )
-log = get_logger(__name__)
 
-
+log = get_logger()
 
 _resource: int = 0
 

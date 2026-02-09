@@ -68,7 +68,7 @@ from tractor.log import get_logger
 if TYPE_CHECKING:
     from tractor._context import Context
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 # TODO: unify with `MsgCodec` by making `._dec` part this?
