@@ -25,6 +25,7 @@ built on `tractor`.
 
 '''
 from collections.abc import Mapping
+from functools import partial
 from inspect import (
     FrameInfo,
     getmodule,
@@ -46,7 +47,6 @@ import trio
 from ._state import current_actor
 
 
-_proj_name: str = 'tractor'
 _default_loglevel: str = 'ERROR'
 
 # Super sexy formatting thanks to ``colorlog``.
@@ -124,6 +124,16 @@ class StackLevelAdapter(LoggerAdapter):
     A (software) stack oriented logger "adapter".
 
     '''
+    @property
+    def level(self) -> str:
+        '''
+        The currently set `str` emit level (in lowercase).
+
+        '''
+        return logging.getLevelName(
+            self.getEffectiveLevel()
+        ).lower()
+
     def at_least_level(
         self,
         level: str,
@@ -271,9 +281,14 @@ def pformat_task_uid(
     return f'{task.name}[{tid_part}]'
 
 
+_curr_actor_no_exc = partial(
+    current_actor,
+    err_on_no_runtime=False,
+)
+
 _conc_name_getters = {
     'task': pformat_task_uid,
-    'actor': lambda: current_actor(),
+    'actor': lambda: _curr_actor_no_exc(),
     'actor_name': lambda: current_actor().name,
     'actor_uid': lambda: current_actor().uid[1][:6],
 }
@@ -305,8 +320,13 @@ class ActorContextInfo(Mapping):
             return f'no {key} context'
 
 
+_proj_name: str = 'tractor'
+
+
 def get_logger(
     name: str|None = None,
+    # ^NOTE, setting `name=_proj_name=='tractor'` enables the "root
+    # logger" for `tractor` itself.
     pkg_name: str = _proj_name,
     # XXX, deprecated, use ^
     _root_name: str|None = None,
@@ -319,6 +339,7 @@ def get_logger(
     #  |_https://docs.python.org/3/library/logging.config.html#configuration-dictionary-schema
     subsys_spec: str|None = None,
     mk_sublog: bool = True,
+    _strict_debug: bool = False,
 
 ) -> StackLevelAdapter:
     '''
@@ -348,79 +369,169 @@ def get_logger(
             DeprecationWarning,
             stacklevel=2,
         )
-    pkg_name: str = _root_name or pkg_name
-    log: Logger
-    log = rlog = logger or logging.getLogger(pkg_name)
 
+        pkg_name: str =  _root_name
+
+    def get_caller_mod(
+        frames_up:int = 2
+    ):
+        '''
+        Attempt to get the module which called `tractor.get_logger()`.
+
+        '''
+        callstack: list[FrameInfo] = stack()
+        caller_fi: FrameInfo = callstack[frames_up]
+        caller_mod: ModuleType = getmodule(caller_fi.frame)
+        return caller_mod
+
+    # --- Auto--naming-CASE ---
+    # -------------------------
     # Implicitly introspect the caller's module-name whenever `name`
     # if left as the null default.
     #
     # When the `pkg_name` is `in` in the `mod.__name__` we presume
     # this instance can be created as a sub-`StackLevelAdapter` and
-    # that the intention is get free module-path tracing and
+    # that the intention is to get free module-path tracing and
     # filtering (well once we implement that) oriented around the
     # py-module code hierarchy of the consuming project.
+    #
     if (
-        pkg_name != _proj_name
+        mk_sublog
         and
         name is None
         and
-        mk_sublog
+        pkg_name
     ):
-        callstack: list[FrameInfo] = stack()
-        caller_fi: FrameInfo = callstack[1]
-        caller_mod: ModuleType = getmodule(caller_fi.frame)
-        if caller_mod:
-            # ?how is this `mod.__name__` defined?
-            # -> well by how the mod is imported..
+        if (caller_mod := get_caller_mod()):
+            # ?XXX how is this `caller_mod.__name__` defined?
+            # => well by how the mod is imported.. XD
             # |_https://stackoverflow.com/a/15883682
-            mod_name: str = caller_mod.__name__
-            mod_pkg: str = caller_mod.__package__
-            log.info(
-                f'Generating sub-logger name,\n'
-                f'{mod_pkg}.{mod_name}\n'
-            )
+            #
             # if pkg_name in caller_mod.__package__:
             #     from tractor.devx.debug import mk_pdb
             #     mk_pdb().set_trace()
 
+            mod_ns_path: str = caller_mod.__name__
+            mod_pkg_ns_path: str = caller_mod.__package__
+            # if 'snakelib' in mod_pkg_ns_path:
+            #     import pdbp
+            #     breakpoint()
             if (
+                mod_pkg_ns_path in mod_ns_path
+                or
+                pkg_name in mod_ns_path
+            ):
+                # proper_mod_name = mod_ns_path.lstrip(
+                proper_mod_name = mod_pkg_ns_path.removeprefix(
+                    f'{pkg_name}.'
+                )
+                name = proper_mod_name
+
+            elif (
                 pkg_name
                 # and
-                # pkg_name in mod_name
+                # pkg_name in mod_ns_path
             ):
-                name = mod_name
+                name = mod_ns_path
+
+            if _strict_debug:
+                msg: str = (
+                    f'@ {get_caller_mod()}\n'
+                    f'Generating sub-logger name,\n'
+                    f'{pkg_name}.{name}\n'
+                )
+                if _curr_actor_no_exc():
+                    _root_log.debug(msg)
+                elif pkg_name != _proj_name:
+                    print(
+                        f'=> tractor.log.get_logger():\n'
+                        f'{msg}\n'
+                    )
+
+    # build a root logger instance
+    log: Logger
+    rlog = log = (
+        logger
+        or
+        logging.getLogger(pkg_name)
+    )
 
     # XXX, lowlevel debuggin..
     # if pkg_name != _proj_name:
         # from tractor.devx.debug import mk_pdb
         # mk_pdb().set_trace()
 
+    # NOTE: for handling for modules that use the unecessary,
+    # `get_logger(__name__)`
+    #
+    # we make the following stylistic choice:
+    # - always avoid duplicate project-package token
+    #   in msg output: i.e. tractor.tractor.ipc._chan.py in header
+    #   looks ridiculous XD
+    # - never show the leaf module name in the {name} part
+    #   since in python the {filename} is always this same
+    #   module-file.
     if (
-        name != _proj_name
-        and
         name
+        and
+        # ?TODO? more correct?
+        # _proj_name not in name
+        name != pkg_name
     ):
-        # NOTE: for handling for modules that use `get_logger(__name__)`
-        # we make the following stylistic choice:
-        # - always avoid duplicate project-package token
-        #   in msg output: i.e. tractor.tractor.ipc._chan.py in header
-        #   looks ridiculous XD
-        # - never show the leaf module name in the {name} part
-        #   since in python the {filename} is always this same
-        #   module-file.
+        # ex. modden.runtime.progman
+        # -> rname='modden', _, pkg_path='runtime.progman'
+        if (
+            pkg_name
+            and
+            pkg_name in name
+        ):
+            proper_name: str = name.removeprefix(
+                f'{pkg_name}.'
+            )
+            # if 'pylib' in name:
+            #     import pdbp
+            #     breakpoint()
+
+            msg: str = (
+                f'@ {get_caller_mod()}\n'
+                f'Duplicate pkg-name in sub-logger `name`-key?\n'
+                f'pkg_name = {pkg_name!r}\n'
+                f'name = {name!r}\n'
+                f'\n'
+                f'=> You should change your input params to,\n'
+                f'get_logger(\n' 
+                f'    pkg_name={pkg_name!r}\n'
+                f'    name={proper_name!r}\n'
+                f')'
+            )
+            # assert _duplicate == rname
+            if _curr_actor_no_exc():
+                _root_log.warning(msg)
+            else:
+                print(
+                    f'=> tractor.log.get_logger() ERROR:\n'
+                    f'{msg}\n'
+                )
+
+            name = proper_name
 
         rname: str = pkg_name
         pkg_path: str = name
 
-        # ex. modden.runtime.progman
-        # -> rname='modden', _, pkg_path='runtime.progman'
-        if pkg_name in name:
-            rname, _, pkg_path = name.partition('.')
 
-        # ex. modden.runtime.progman
+            # (
+            #     rname,
+            #     _,
+            #     pkg_path,
+            # ) = name.partition('.')
+
+        # For ex. 'modden.runtime.progman'
         # -> pkgpath='runtime', _, leaf_mod='progman'
-        subpkg_path, _, leaf_mod = pkg_path.rpartition('.')
+        (
+            subpkg_path,
+            _,
+            leaf_mod,
+        ) = pkg_path.rpartition('.')
 
         # NOTE: special usage for passing `name=__name__`,
         #
@@ -436,36 +547,84 @@ def get_logger(
         #   only includes the first 2 sub-pkg name-tokens in the
         #   child-logger's name; the colored "pkg-namespace" header
         #   will then correctly show the same value as `name`.
-        if rname == pkg_name:
+        if (
+            # XXX, TRY to remove duplication cases
+            # which get warn-logged on below!
+            (
+                # when, subpkg_path == pkg_path
+                subpkg_path
+                and
+                rname == pkg_name
+            )
+            # ) or (
+            #     # when, pkg_path == leaf_mod
+            #     pkg_path
+            #     and
+            #     leaf_mod == pkg_path
+            # )
+        ):
             pkg_path = subpkg_path
 
         # XXX, do some double-checks for duplication of,
         # - root-pkg-name, already in root logger
         # - leaf-module-name already in `{filename}` header-field
-        if pkg_name in pkg_path:
+        if (
+            _strict_debug
+            and
+            pkg_name
+            and
+            pkg_name in pkg_path
+        ):
             _duplicate, _, pkg_path = pkg_path.partition('.')
             if _duplicate:
-                # assert _duplicate == rname
-                _root_log.warning(
+                msg: str = (
+                    f'@ {get_caller_mod()}\n'
                     f'Duplicate pkg-name in sub-logger key?\n'
                     f'pkg_name = {pkg_name!r}\n'
                     f'pkg_path = {pkg_path!r}\n'
                 )
-
+                # assert _duplicate == rname
+                if _curr_actor_no_exc():
+                    _root_log.warning(msg)
+                else:
+                    print(
+                        f'=> tractor.log.get_logger() ERROR:\n'
+                        f'{msg}\n'
+                    )
+                # XXX, should never get here?
+                breakpoint()
         if (
+            _strict_debug
+            and
             leaf_mod
             and
             leaf_mod in pkg_path
         ):
-            _root_log.warning(
+            msg: str = (
+                f'@ {get_caller_mod()}\n'
                 f'Duplicate leaf-module-name in sub-logger key?\n'
                 f'leaf_mod = {leaf_mod!r}\n'
                 f'pkg_path = {pkg_path!r}\n'
             )
+            if _curr_actor_no_exc():
+                _root_log.warning(msg)
+            else:
+                print(
+                    f'=> tractor.log.get_logger() ERROR:\n'
+                    f'{msg}\n'
+                )
 
-        if not pkg_path:
+        # mk/get underlying (sub-)`Logger`
+        if (
+            not pkg_path
+            and
+            leaf_mod == pkg_name
+        ):
+            # breakpoint()
             log = rlog
+
         elif mk_sublog:
+            # breakpoint()
             log = rlog.getChild(pkg_path)
 
         log.level = rlog.level
