@@ -34,7 +34,10 @@ if TYPE_CHECKING:
 
 # a fn that sub-instantiates a `pexpect.spawn()`
 # and returns it.
-type PexpectSpawner = Callable[[str], pty_spawn.spawn]
+type PexpectSpawner = Callable[
+    [str],
+    pty_spawn.spawn,
+]
 
 
 @pytest.fixture
@@ -109,7 +112,11 @@ def ctlc(
                 'https://github.com/goodboy/tractor/issues/320'
             )
 
-        if mark.name == 'ctlcs_bish':
+        if (
+            mark.name == 'ctlcs_bish'
+            and
+            use_ctlc
+        ):
             pytest.skip(
                 f'Test {node} prolly uses something from the stdlib (namely `asyncio`..)\n'
                 f'The test and/or underlying example script can *sometimes* run fine '
