@@ -19,20 +19,25 @@ async def aio_sleep_forever():
 
 async def bp_then_error(
     chan: to_asyncio.LinkedTaskChannel,
-
     raise_after_bp: bool = True,
+    pre_sleep: float = 0.5,
 
 ) -> None:
 
     # sync with `trio`-side (caller) task
     chan.started_nowait('start')
 
+    if pre_sleep:
+        await asyncio.sleep(pre_sleep)
+
     # NOTE: what happens here inside the hook needs some refinement..
     # => seems like it's still `.debug._set_trace()` but
     #    we set `Lock.local_task_in_debug = 'sync'`, we probably want
     #    some further, at least, meta-data about the task/actor in debug
     #    in terms of making it clear it's `asyncio` mucking about.
-    breakpoint()  # asyncio-side
+    for i in range(3):
+        breakpoint()  # asyncio-side
+        await asyncio.sleep(1)
 
     # short checkpoint / delay
     await asyncio.sleep(0.5)  # asyncio-side
@@ -50,9 +55,10 @@ async def bp_then_error(
 @tractor.context
 async def trio_ctx(
     ctx: tractor.Context,
-    bp_before_started: bool = False,
+    bp_before_started: bool = True,
 ):
 
+    await tractor.pause()
     # this will block until the ``asyncio`` task sends a "first"
     # message, see first line in above func.
     async with (
@@ -74,6 +80,11 @@ async def trio_ctx(
             to_asyncio.run_task,
             aio_sleep_forever,
         )
+
+        # XXX try to clobber asyncio side's REPL use.
+        await trio.sleep(1)
+        await tractor.pause()
+
         await trio.sleep_forever()
 
 
