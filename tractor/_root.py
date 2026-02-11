@@ -616,6 +616,13 @@ async def open_root_actor(
             ):
                 _state._runtime_vars['_debug_mode'] = False
 
+            # !XXX, clear ALL prior contact info state, this is MEGA
+            # important if you are opening the runtime multiple times
+            # from the same parent process (like in our test
+            # harness)!
+            _state._runtime_vars['_root_addrs'].clear()
+            _state._runtime_vars['_root_mailbox'] = None
+
             _state._current_actor = None
             _state._last_actor_terminated = actor
 
