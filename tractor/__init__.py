@@ -15,13 +15,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-tractor: structured concurrent ``trio``-"actors".
+tractor: distributed structurred concurrency
 
 """
-
-from ._clustering import (
-    open_actor_cluster as open_actor_cluster,
-)
 from ._context import (
     Context as Context,  # the type
     context as context,  # a func-decorator

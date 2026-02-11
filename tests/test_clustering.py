@@ -3,7 +3,7 @@ import itertools
 import pytest
 import trio
 import tractor
-from tractor import open_actor_cluster
+from tractor.experimental import open_actor_cluster
 from tractor.trionics import gather_contexts
 from tractor._testing import tractor_test
 

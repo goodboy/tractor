@@ -19,7 +19,7 @@ async def main():
     # look at this hip new syntax!
     async with (
 
-        tractor.open_actor_cluster(
+        tractor.experimental.open_actor_cluster(
             modules=[__name__]
         ) as portal_map,
 

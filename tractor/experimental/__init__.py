@@ -21,7 +21,12 @@ built-ins.
 This is a staging area for ``tractor.builtin``.
 
 '''
-from ._pubsub import pub as msgpub
+from ._cluster import (
+    open_actor_cluster as open_actor_cluster,
+)
+from ._pubsub import (
+    pub as msgpub,
+)
 
 
 __all__ = [
