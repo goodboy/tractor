@@ -497,6 +497,9 @@ async def _connect_chan(
     teardown.
 
     '''
+    # XXX, ONLY uncomment for tracing lowlevel connection issues.
+    # from tractor.devx import open_crash_handler
+    # with open_crash_handler():
     chan = await Channel.from_addr(addr)
     yield chan
     with trio.CancelScope(shield=True):
