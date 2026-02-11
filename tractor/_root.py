@@ -88,7 +88,8 @@ async def maybe_block_bp(
     bp_blocked: bool
     if (
         debug_mode
-        and maybe_enable_greenback
+        and
+        maybe_enable_greenback
         and (
             maybe_mod := await debug.maybe_init_greenback(
                 raise_not_found=False,
@@ -385,10 +386,13 @@ async def open_root_actor(
                     addr,
                 )
 
-        trans_bind_addrs: list[UnwrappedAddress] = []
+        tpt_bind_addrs: list[
+            Address  # `Address.get_random()` case
+            |UnwrappedAddress  # registrar case `= uw_reg_addrs`
+        ] = []
 
-        # Create a new local root-actor instance which IS NOT THE
-        # REGISTRAR
+        # ------ NON-REGISTRAR ------
+        # create a new root-actor instance.
         if ponged_addrs:
             if ensure_registry:
                 raise RuntimeError(
@@ -415,12 +419,21 @@ async def open_root_actor(
             # XXX INSTEAD, bind random addrs using the same tpt
             # proto.
             for addr in ponged_addrs:
-                trans_bind_addrs.append(
+                tpt_bind_addrs.append(
+                    # XXX, these are `Address` NOT `UnwrappedAddress`.
+                    #
+                    # NOTE, in the case of posix/berkley socket
+                    # protos we allocate port=0 such that the system
+                    # allocates a random value at bind time; this
+                    # happens in the `.ipc.*` stack's backend.
                     addr.get_random(
                         bindspace=addr.bindspace,
                     )
                 )
 
+        # ------ REGISTRAR ------
+        # create a new "registry providing" root-actor instance.
+        #
         # Start this local actor as the "registrar", aka a regular
         # actor who manages the local registry of "mailboxes" of
         # other process-tree-local sub-actors.
@@ -429,7 +442,7 @@ async def open_root_actor(
             # following init steps are taken:
             # - the tranport layer server is bound to each addr
             #   pair defined in provided registry_addrs, or the default.
-            trans_bind_addrs = uw_reg_addrs
+            tpt_bind_addrs = uw_reg_addrs
 
             # - it is normally desirable for any registrar to stay up
             #   indefinitely until either all registered (child/sub)
@@ -449,19 +462,9 @@ async def open_root_actor(
                 enable_modules=enable_modules,
             )
             # XXX, in case the root actor runtime was actually run from
-            # `tractor.to_asyncio.run_as_asyncio_guest()` and NOt
+            # `tractor.to_asyncio.run_as_asyncio_guest()` and NOT
             # `.trio.run()`.
             actor._infected_aio = _state._runtime_vars['_is_infected_aio']
-
-        # NOTE, only set the loopback addr for the
-        # process-tree-global "root" mailbox since all sub-actors
-        # should be able to speak to their root actor over that
-        # channel.
-        raddrs: list[Address] = _state._runtime_vars['_root_addrs']
-        raddrs.extend(trans_bind_addrs)
-        # TODO, remove once we have also removed all usage;
-        # eventually all (root-)registry apis should expect > 1 addr.
-        _state._runtime_vars['_root_mailbox'] = raddrs[0]
 
         # Start up main task set via core actor-runtime nurseries.
         try:
@@ -499,14 +502,39 @@ async def open_root_actor(
                 # "actor runtime" primitives are SC-compat and thus all
                 # transitively spawned actors/processes must be as
                 # well.
-                await root_tn.start(
+                accept_addrs: list[UnwrappedAddress]
+                reg_addrs: list[UnwrappedAddress]
+                (
+                    accept_addrs,
+                    reg_addrs,
+                ) = await root_tn.start(
                     partial(
                         _runtime.async_main,
                         actor,
-                        accept_addrs=trans_bind_addrs,
+                        accept_addrs=tpt_bind_addrs,
                         parent_addr=None
                     )
                 )
+                # NOTE, only set a local-host addr (i.e. like
+                # `lo`-loopback for TCP) for the process-tree-global
+                # "root"-process (its tree-wide "mailbox") since all
+                # sub-actors should be able to speak to their root
+                # actor over that channel.
+                #
+                # ?TODO, per-OS non-network-proto alt options?
+                # -[ ] on linux we should be able to always use UDS?
+                #
+                raddrs: list[Address] = _state._runtime_vars['_root_addrs']
+                raddrs.extend(
+                    accept_addrs,
+                )
+                # TODO, remove once we have also removed all usage;
+                # eventually all (root-)registry apis should expect > 1 addr.
+                _state._runtime_vars['_root_mailbox'] = raddrs[0]
+                # if 'chart' in actor.aid.name:
+                #     from tractor.devx import mk_pdb
+                #     mk_pdb().set_trace()
+
                 try:
                     yield actor
                 except (
