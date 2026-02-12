@@ -71,7 +71,7 @@ from outcome import (
     Outcome,
 )
 
-log: StackLevelAdapter = get_logger(__name__)
+log: StackLevelAdapter = get_logger()
 
 
 __all__ = [

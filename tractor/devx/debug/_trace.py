@@ -93,7 +93,7 @@ if TYPE_CHECKING:
     # from ._post_mortem import BoxedMaybeException
     from ._repl import PdbREPL
 
-log = get_logger(__package__)
+log = get_logger()
 
 _pause_msg: str = 'Opening a pdb REPL in paused actor'
 _repl_fail_msg: str|None = (
@@ -628,7 +628,7 @@ def _set_trace(
     log.pdb(
         f'{_pause_msg}\n'
         f'>(\n'
-        f'|_{actor.uid}\n'
+        f'|_{actor.aid.uid}\n'
         f'  |_{task}\n' #  @ {actor.uid}\n'
         # f'|_{task}\n'
         # ^-TODO-^ more compact pformating?

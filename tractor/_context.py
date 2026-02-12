@@ -113,7 +113,7 @@ if TYPE_CHECKING:
         CallerInfo,
     )
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 class Unresolved:
@@ -2391,16 +2391,18 @@ async def open_context_from_portal(
             case trio.Cancelled():
                 logmeth = log.cancel
                 cause: str = 'cancelled'
+                msg: str = (
+                    f'ctx {ctx.side!r}-side {cause!r} with,\n'
+                    f'{ctx.repr_outcome()!r}\n'
+                )
 
             # XXX explicitly report on any non-graceful-taskc cases
             case _:
                 cause: str = 'errored'
                 logmeth = log.exception
+                msg: str = f'ctx {ctx.side!r}-side {cause!r} with,\n'
 
-        logmeth(
-            f'ctx {ctx.side!r}-side {cause!r} with,\n'
-            f'{ctx.repr_outcome()!r}\n'
-        )
+        logmeth(msg)
 
         if debug_mode():
             # async with debug.acquire_debug_lock(portal.actor.uid):

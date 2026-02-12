@@ -51,7 +51,7 @@ from tractor.log import get_logger
 # from tractor._addr import UnwrappedAddress
 
 
-log = get_logger('tractor.msgspec')
+log = get_logger()
 
 # type variable for the boxed payload field `.pld`
 PayloadT = TypeVar('PayloadT')
@@ -202,7 +202,10 @@ class SpawnSpec(
     # TODO: similar to the `Start` kwargs spec needed below, we need
     # a hard `Struct` def for all of these fields!
     _parent_main_data: dict
-    _runtime_vars: dict[str, Any]
+    _runtime_vars: (
+        dict[str, Any]
+        #|RuntimeVars  # !TODO
+    )
     # ^NOTE see `._state._runtime_vars: dict`
 
     # module import capability

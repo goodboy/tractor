@@ -77,7 +77,7 @@ if TYPE_CHECKING:
     from tractor._streaming import MsgStream
 
 
-log = get_logger(__name__)
+log = get_logger()
 
 
 _def_any_pldec: MsgDec[Any] = mk_dec(spec=Any)

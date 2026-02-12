@@ -289,10 +289,12 @@ async def open_root_actor(
             for uw_addr in uw_reg_addrs
         ]
 
-        loglevel = (
+        loglevel: str = (
             loglevel
-            or log._default_loglevel
-        ).upper()
+            or
+            log._default_loglevel
+        )
+        loglevel: str = loglevel.upper()
 
         if (
             debug_mode
@@ -323,7 +325,10 @@ async def open_root_actor(
             )
 
         assert loglevel
-        _log = log.get_console_log(loglevel)
+        _log = log.get_console_log(
+            level=loglevel,
+            name='tractor',
+        )
         assert _log
 
         # TODO: factor this into `.devx._stackscope`!!

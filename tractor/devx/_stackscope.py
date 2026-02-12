@@ -51,7 +51,7 @@ from tractor import (
 )
 from tractor.devx import debug
 
-log = logmod.get_logger(__name__)
+log = logmod.get_logger()
 
 
 if TYPE_CHECKING:
