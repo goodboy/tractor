@@ -524,7 +524,7 @@ async def open_root_actor(
                 # ?TODO, per-OS non-network-proto alt options?
                 # -[ ] on linux we should be able to always use UDS?
                 #
-                raddrs: list[Address] = _state._runtime_vars['_root_addrs']
+                raddrs: list[UnwrappedAddress] = _state._runtime_vars['_root_addrs']
                 raddrs.extend(
                     accept_addrs,
                 )

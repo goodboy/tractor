@@ -163,7 +163,7 @@ def test_non_registrar_spawns_child(
 
             async with sub_ptl.open_context(
                 get_root_portal,
-            ) as (ctx, first):
+            ) as (ctx, _):
                 print('Waiting for `sub` to connect back to us..')
 
             await an.cancel()
