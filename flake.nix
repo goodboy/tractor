@@ -2,7 +2,7 @@
 # https://pyproject-nix.github.io/pyproject.nix/templates.html#impure
 # https://github.com/pyproject-nix/pyproject.nix/blob/master/templates/impure/flake.nix
 {
-  description = "An impure overlay using `uv` with Nix(OS)";
+  description = "An impure overlay (w dev-shell) using `uv`";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -29,17 +29,17 @@
         {
           default = pkgs.mkShell {
 
-            packages = with pkgs; [
+            packages = [
               # XXX, ensure sh completions activate!
-              bashInteractive
-              bash-completion
+              pkgs.bashInteractive
+              pkgs.bash-completion
 
-              # on nixos, use pkg(s)
-              ruff
-              pypkgs.ruff
+              # XXX, on nix(os), use pkgs version to avoid
+              # build/sys-sh-integration issues
+              pkgs.ruff
 
-              uv
-              python313  # ?TODO^ how to set from `cpython` above?
+              pkgs.uv
+              pkgs.${cpython}# ?TODO^ how to set from `cpython` above?
             ];
 
             shellHook = ''
@@ -56,7 +56,7 @@
               # - always use the ./py313/ venv-subdir
               # - sync env with all extras
               export UV_PROJECT_ENVIRONMENT=${venv_dir}
-              uv sync --dev --all-extras --no-group lint
+              uv sync --dev --all-extras
 
               # ------ TIPS ------
               # NOTE, to launch the py-venv installed `xonsh` (like @goodboy)
