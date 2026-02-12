@@ -4,6 +4,7 @@
 '''
 from pathlib import Path
 import shutil
+from types import ModuleType
 
 import pytest
 import tractor
@@ -57,28 +58,32 @@ def test_implicit_mod_name_applied_for_child(
     mod_code: str = (
         f'import tractor\n'
         f'\n'
-        # f'breakpoint()\n'  # if you want to trace it all
+        # if you need to trace `testdir` stuff @ import-time..
+        # f'breakpoint()\n'
         f'log = tractor.log.get_logger(pkg_name="{proj_name}")\n'
     )
 
     # create a sub-module for each pkg layer
     _lib = testdir.mkpydir(proj_name)
     pkg: Path = Path(_lib)
+    pkg_init_mod: Path = pkg / "__init__.py"
+    pkg_init_mod.write_text(mod_code)
+
     subpkg: Path = pkg / 'subpkg'
     subpkg.mkdir()
-
-    pkgmod: Path = subpkg / "__init__.py"
-    pkgmod.touch()
+    subpkgmod: Path = subpkg / "__init__.py"
+    subpkgmod.touch()
+    subpkgmod.write_text(mod_code)
 
     _submod: Path = testdir.makepyfile(
         _mod=mod_code,
     )
 
-    pkg_mod = pkg / 'mod.py'
+    pkg_submod = pkg / 'mod.py'
     pkg_subpkg_submod = subpkg / 'submod.py'
     shutil.copyfile(
         _submod,
-        pkg_mod,
+        pkg_submod,
     )
     shutil.copyfile(
         _submod,
@@ -91,10 +96,11 @@ def test_implicit_mod_name_applied_for_child(
     # XXX NOTE, once the "top level" pkg mod has been
     # imported, we can then use `import` syntax to
     # import it's sub-pkgs and modules.
-    pkgmod = _code_load.load_module_from_path(
+    subpkgmod: ModuleType = _code_load.load_module_from_path(
         Path(pkg / '__init__.py'),
         module_name=proj_name,
     )
+
     pkg_root_log = log.get_logger(
         pkg_name=proj_name,
         mk_sublog=False,
@@ -107,16 +113,31 @@ def test_implicit_mod_name_applied_for_child(
     # ^TODO! test this same output but created via a `get_logger()`
     # call in the `snakelib.__init__py`!!
 
-    # a first-pkg-level module should only
-    # use
+    # NOTE, the pkg-level "init mod" should of course
+    # have the same name as the package ns-path.
+    import snakelib as init_mod
+    assert init_mod.log.name == proj_name
+
+    # NOTE, a first-pkg-level sub-module should only
+    # use the package-name since the leaf-node-module
+    # will be included in log headers by default.
     from snakelib import mod
     assert mod.log.name == proj_name
+
+    from snakelib import subpkg
+    assert (
+        subpkg.log.name
+        ==
+        subpkg.__package__ 
+        ==
+        f'{proj_name}.subpkg'
+    )
 
     from snakelib.subpkg import submod
     assert (
         submod.log.name
         ==
-        submod.__package__  # ?TODO, use this in `.get_logger()` instead?
+        submod.__package__ 
         ==
         f'{proj_name}.subpkg'
     )
@@ -124,8 +145,6 @@ def test_implicit_mod_name_applied_for_child(
     sub_logs = pkg_root_log.logger.getChildren()
     assert len(sub_logs) == 1  # only one nested sub-pkg module
     assert submod.log.logger in sub_logs
-
-    # breakpoint()
 
 
 # TODO, moar tests against existing feats:
