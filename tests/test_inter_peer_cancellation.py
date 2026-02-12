@@ -11,12 +11,13 @@ import trio
 import tractor
 from tractor import (  # typing
     Actor,
-    current_actor,
-    open_nursery,
-    Portal,
     Context,
     ContextCancelled,
+    MsgStream,
+    Portal,
     RemoteActorError,
+    current_actor,
+    open_nursery,
 )
 from tractor._testing import (
     # tractor_test,
@@ -796,8 +797,8 @@ async def basic_echo_server(
 
 ) -> None:
     '''
-    Just the simplest `MsgStream` echo server which resays what
-    you told it but with its uid in front ;)
+    Just the simplest `MsgStream` echo server which resays what you
+    told it but with its uid in front ;)
 
     '''
     actor: Actor = tractor.current_actor()
@@ -966,9 +967,14 @@ async def tell_little_bro(
 
     caller: str = '',
     err_after: float|None = None,
-    rng_seed: int = 50,
+    rng_seed: int = 100,
+    # NOTE, ensure ^ is large enough (on fast hw anyway)
+    # to ensure the peer cancel req arrives before the
+    # echoing dialog does itself Bp
 ):
     # contact target actor, do a stream dialog.
+    lb: Portal
+    echo_ipc: MsgStream
     async with (
         tractor.wait_for_actor(
             name=actor_name
@@ -983,7 +989,6 @@ async def tell_little_bro(
                 else None
             ),
         ) as (sub_ctx, first),
-
         sub_ctx.open_stream() as echo_ipc,
     ):
         actor: Actor = current_actor()
@@ -994,6 +999,7 @@ async def tell_little_bro(
                 i,
             )
             await echo_ipc.send(msg)
+            await trio.sleep(0.001)
             resp = await echo_ipc.receive()
             print(
                 f'{caller} => {actor_name}: {msg}\n'
@@ -1005,6 +1011,9 @@ async def tell_little_bro(
             ) = resp
             assert sub_uid != uid
             assert _i == i
+
+    # XXX, usually should never get here!
+    # await tractor.pause()
 
 
 @pytest.mark.parametrize(
