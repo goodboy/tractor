@@ -53,21 +53,32 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-  # test suite
-  # TODO: maybe some of these layout choices?
-  # https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
-  "pytest>=8.3.5",
-  "pexpect>=4.9.0,<5",
+  {include-group = 'devx'},
+  {include-group = 'testing'},
+  {include-group = 'repl'},
+]
+devx = [
   # `tractor.devx` tooling
   "greenback>=1.2.1,<2",
   "stackscope>=0.2.2,<0.3",
   # ^ requires this?
   "typing-extensions>=4.14.1",
-
+]
+testing = [
+  # test suite
+  # TODO: maybe some of these layout choices?
+  # https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
+  "pytest>=8.3.5",
+  "pexpect>=4.9.0,<5",
+]
+repl = [
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
   "xonsh>=0.19.2",
   "psutil>=7.0.0",
+]
+lint = [
+  "ruff>=0.9.6"
 ]
 # TODO, add these with sane versions; were originally in
 # `requirements-docs.txt`..
