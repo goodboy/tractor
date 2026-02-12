@@ -147,6 +147,8 @@ def get_mod_nsps2fps(mod_ns_paths: list[str]) -> dict[str, str]:
     return nsp2fp
 
 
+_bp = False
+
 class Actor:
     '''
     The fundamental "runtime" concurrency primitive.
@@ -272,7 +274,9 @@ class Actor:
                 stacklevel=2,
             )
 
-            registry_addrs: list[Address] = [wrap_address(arbiter_addr)]
+            registry_addrs: list[Address] = [
+                wrap_address(arbiter_addr)
+            ]
 
         # marked by the process spawning backend at startup
         # will be None for the parent most process started manually
@@ -959,6 +963,21 @@ class Actor:
 
                 rvs['_is_root'] = False  # obvi XD
 
+                # TODO, remove! left in just while protoing init fix!
+                # global _bp
+                # if (
+                #     'chart' in self.aid.name
+                #     and
+                #     isinstance(
+                #         rvs['_root_addrs'][0],
+                #         dict,
+                #     )
+                #     and
+                #     not _bp
+                # ): 
+                #     _bp = True
+                #     breakpoint()
+
                 _state._runtime_vars.update(rvs)
 
                 # `SpawnSpec.reg_addrs`
@@ -1455,7 +1474,12 @@ async def async_main(
     # be False when running as root actor and True when as
     # a subactor.
     parent_addr: UnwrappedAddress|None = None,
-    task_status: TaskStatus[None] = trio.TASK_STATUS_IGNORED,
+    task_status: TaskStatus[
+        tuple[
+            list[UnwrappedAddress],  # accept_addrs
+            list[UnwrappedAddress],  # reg_addrs
+        ]
+    ] = trio.TASK_STATUS_IGNORED,
 
 ) -> None:
     '''
@@ -1634,6 +1658,7 @@ async def async_main(
                 # if addresses point to the same actor..
                 # So we need a way to detect that? maybe iterate
                 # only on unique actor uids?
+                addr: UnwrappedAddress
                 for addr in actor.reg_addrs:
                     try:
                         waddr = wrap_address(addr)
@@ -1642,7 +1667,9 @@ async def async_main(
                         await debug.pause()
 
                     # !TODO, get rid of the local-portal crap XD
+                    reg_portal: Portal
                     async with get_registry(addr) as reg_portal:
+                        accept_addr: UnwrappedAddress
                         for accept_addr in accept_addrs:
                             accept_addr = wrap_address(accept_addr)
 
@@ -1658,8 +1685,12 @@ async def async_main(
 
                     is_registered: bool = True
 
-                # init steps complete
-                task_status.started()
+                # init steps complete, deliver IPC-server and
+                # registrar addrs back to caller.
+                task_status.started((
+                    accept_addrs,
+                    actor.reg_addrs,
+                ))
 
                 # Begin handling our new connection back to our
                 # parent. This is done last since we don't want to
