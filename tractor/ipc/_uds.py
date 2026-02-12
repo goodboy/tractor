@@ -169,7 +169,7 @@ class UDSAddress(
             # ?^TODO, for `multiaddr`'s parser we can't use the `::`
             # above^, SO maybe a `.` or something else here?
             # sockname: str = '.'.join(actor.uid) + f'@{pid}'
-            # -[ ] CURRETLY using `.` BREAKS TEST SUITE tho..
+            # -[ ] CURRENTLY using `.` BREAKS TEST SUITE tho..
         else:
             prefix: str = '<unknown-actor>'
             if is_root_process():

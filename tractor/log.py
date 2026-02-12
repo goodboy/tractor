@@ -416,9 +416,6 @@ def get_logger(
 
             mod_ns_path: str = caller_mod.__name__
             mod_pkg_ns_path: str = caller_mod.__package__
-            # if 'snakelib' in mod_pkg_ns_path:
-            #     import pdbp
-            #     breakpoint()
             if (
                 mod_pkg_ns_path in mod_ns_path
                 or
@@ -491,10 +488,6 @@ def get_logger(
             proper_name: str = name.removeprefix(
                 f'{pkg_name}.'
             )
-            # if 'pylib' in name:
-            #     import pdbp
-            #     breakpoint()
-
             msg: str = (
                 f'@ {get_caller_mod()}\n'
                 f'Duplicate pkg-name in sub-logger `name`-key?\n'
