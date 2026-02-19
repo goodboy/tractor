@@ -284,6 +284,15 @@ async def _errors_relayed_via_ipc(
     try:
         yield  # run RPC invoke body
 
+    # NOTE, never REPL any pseudo-expected tpt-disconnect.
+    except TransportClosed as err:
+        rpc_err = err
+        log.warning(
+            f'Tpt disconnect during remote-exc relay due to,\n'
+            f'{err!r}\n'
+        )
+        raise err
+
     # box and ship RPC errors for wire-transit via
     # the task's requesting parent IPC-channel.
     except (
@@ -327,10 +336,15 @@ async def _errors_relayed_via_ipc(
                 # recovery logic - the only case is some kind of
                 # strange bug in our transport layer itself? Going
                 # to keep this open ended for now.
-                log.debug(
-                    'RPC task crashed, attempting to enter debugger\n'
-                    f'|_{ctx}'
-                )
+
+                if _state.debug_mode():
+                    log.exception(
+                        f'RPC task crashed!\n'
+                        f'Attempting to enter debugger\n'
+                        f'\n'
+                        f'{ctx}'
+                    )
+
                 entered_debug = await debug._maybe_enter_pm(
                     err,
                     api_frame=inspect.currentframe(),
@@ -419,7 +433,7 @@ async def _errors_relayed_via_ipc(
             # cancel scope will not have been inserted yet
             if is_rpc:
                 log.warning(
-                    'RPC task likely errored or cancelled before start?\n'
+                    'RPC task likely crashed or cancelled before start?\n'
                     f'|_{ctx._task}\n'
                     f'  >> {ctx.repr_rpc}\n'
                 )
@@ -862,9 +876,9 @@ async def _invoke(
                 )
 
             logmeth(
-                f'{message}\n'
+                f'{message}'
                 f'\n'
-                f'{descr_str}\n'
+                f'{descr_str}'
             )
 
 
@@ -900,6 +914,11 @@ async def try_ship_error_to_remote(
 
         # XXX NOTE XXX in SC terms this is one of the worst things
         # that can happen and provides for a 2-general's dilemma..
+        #
+        # FURHTER, we should never really have to handle these
+        # lowlevel excs from `trio` since the `Channel.send()` layers
+        # downward should be mostly wrapping such cases in a
+        # tpt-closed; the `.critical()` usage is warranted.
         except (
             trio.ClosedResourceError,
             trio.BrokenResourceError,

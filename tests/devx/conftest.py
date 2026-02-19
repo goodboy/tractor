@@ -4,6 +4,7 @@
 '''
 from __future__ import annotations
 import time
+import signal
 from typing import (
     Callable,
     TYPE_CHECKING,
@@ -69,12 +70,15 @@ def spawn(
         import os
         os.environ['PYTHON_COLORS'] = '0'
 
+    spawned: PexpectSpawner|None = None
+
     def _spawn(
         cmd: str,
         **mkcmd_kwargs,
     ) -> pty_spawn.spawn:
+        nonlocal spawned
         unset_colors()
-        return testdir.spawn(
+        spawned = testdir.spawn(
             cmd=mk_cmd(
                 cmd,
                 **mkcmd_kwargs,
@@ -84,9 +88,35 @@ def spawn(
             # ^TODO? get `pytest` core to expose underlying
             # `pexpect.spawn()` stuff?
         )
+        return spawned
 
     # such that test-dep can pass input script name.
-    return _spawn  # the `PexpectSpawner`, type alias.
+    yield _spawn  # the `PexpectSpawner`, type alias.
+
+    if (
+        spawned
+        and
+        (ptyproc := spawned.ptyproc)
+    ):
+        start: float = time.time()
+        timeout: float = 5
+        while (
+            ptyproc.isalive()
+            and
+            (
+                (_time_took := (time.time() - start))
+                 <
+                 timeout
+            )
+        ):
+            ptyproc.kill(signal.SIGINT)
+            time.sleep(0.01)
+
+        if ptyproc.isalive():
+            ptyproc.kill(signal.SIGKILL)
+
+    # TODO? ensure we've cleaned up any UDS-paths?
+    # breakpoint()
 
 
 @pytest.fixture(

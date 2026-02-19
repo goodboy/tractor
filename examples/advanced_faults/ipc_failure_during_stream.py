@@ -17,6 +17,7 @@ from tractor import (
     MsgStream,
     _testing,
     trionics,
+    TransportClosed,
 )
 import trio
 import pytest
@@ -208,12 +209,16 @@ async def main(
                         # TODO: is this needed or no?
                         raise
 
-                    except trio.ClosedResourceError:
+                    except (
+                        trio.ClosedResourceError,
+                        TransportClosed,
+                    ) as _tpt_err:
                         # NOTE: don't send if we already broke the
                         # connection to avoid raising a closed-error
                         # such that we drop through to the ctl-c
                         # mashing by user.
-                        await trio.sleep(0.01)
+                        with trio.CancelScope(shield=True):
+                            await trio.sleep(0.01)
 
                     # timeout: int = 1
                     # with trio.move_on_after(timeout) as cs:
@@ -247,6 +252,7 @@ async def main(
                     await stream.send(i)
                     pytest.fail('stream not closed?')
                 except (
+                    TransportClosed,
                     trio.ClosedResourceError,
                     trio.EndOfChannel,
                 ) as send_err:

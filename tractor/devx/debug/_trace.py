@@ -1257,3 +1257,26 @@ async def breakpoint(
         api_frame=inspect.currentframe(),
         **kwargs,
     )
+
+
+async def maybe_pause_bp():
+    '''
+    Internal (ONLY for now) `breakpoint()`-er fn which only tries to
+    use the multi-actor `.pause()` API when the current actor is the
+    root.
+
+    ?! BUT WHY !?
+       -------
+
+    This is useful when debugging cases where the tpt layer breaks
+    (or is intentionally broken, say during resiliency testing) in
+    the case where a child can no longer contact the root process to
+    acquire the process-tree-singleton TTY lock.
+
+    '''
+    import tractor
+    actor = tractor.current_actor()
+    if actor.aid.name == 'root':
+        await tractor.pause(shield=True)
+    else:
+        tractor.devx.mk_pdb().set_trace()

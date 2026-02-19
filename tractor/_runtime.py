@@ -183,6 +183,14 @@ class Actor:
     def is_registrar(self) -> bool:
         return self.is_arbiter
 
+    @property
+    def is_root(self) -> bool:
+        '''
+        This actor is the parent most in the tree?
+
+        '''
+        return _state.is_root_process()
+
     msg_buffer_size: int = 2**6
 
     # nursery placeholders filled in by `async_main()`,

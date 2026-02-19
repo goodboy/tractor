@@ -154,7 +154,6 @@ class MsgTransport(Protocol):
     #     ...
 
 
-
 class MsgpackTransport(MsgTransport):
 
     # TODO: better naming for this?
@@ -278,14 +277,18 @@ class MsgpackTransport(MsgTransport):
             except trio.ClosedResourceError as cre:
                 closure_err = cre
 
+                # await tractor.devx._trace.maybe_pause_bp()
+
                 raise TransportClosed(
                     message=(
-                        f'{tpt_name} was already closed locally ?\n'
+                        f'{tpt_name} was already closed locally?'
                     ),
                     src_exc=closure_err,
                     loglevel='error',
                     raise_on_report=(
-                        'another task closed this fd' in closure_err.args
+                        'another task closed this fd'
+                        in
+                        closure_err.args
                     ),
                 ) from closure_err
 
@@ -435,6 +438,11 @@ class MsgpackTransport(MsgTransport):
                 trans_err = _re
                 tpt_name: str = f'{type(self).__name__!r}'
 
+                trans_err_msg: str = trans_err.args[0]
+                by_whom: str = {
+                    'another task closed this fd': 'locally',
+                    'this socket was already closed': 'by peer',
+                }.get(trans_err_msg)
                 match trans_err:
 
                     # XXX, specifc to UDS transport and its,
@@ -446,38 +454,42 @@ class MsgpackTransport(MsgTransport):
                     case trio.BrokenResourceError() if (
                         '[Errno 32] Broken pipe'
                         in
-                        trans_err.args[0]
+                        trans_err_msg
                     ):
                         tpt_closed = TransportClosed.from_src_exc(
                             message=(
                                 f'{tpt_name} already closed by peer\n'
                             ),
-                            body=f'{self}\n',
+                            body=f'{self}',
                             src_exc=trans_err,
                             raise_on_report=True,
                             loglevel='transport',
                         )
                         raise tpt_closed from trans_err
 
-                    # case trio.ClosedResourceError() if (
-                    #     'this socket was already closed'
-                    #     in
-                    #     trans_err.args[0]
-                    # ):
-                    #     tpt_closed = TransportClosed.from_src_exc(
-                    #         message=(
-                    #             f'{tpt_name} already closed by peer\n'
-                    #         ),
-                    #         body=f'{self}\n',
-                    #         src_exc=trans_err,
-                    #         raise_on_report=True,
-                    #         loglevel='transport',
-                    #     )
-                    #     raise tpt_closed from trans_err
+                    # ??TODO??, what case in piker does this and HOW
+                    # CAN WE RE-PRODUCE IT?!?!?
+                    case trio.ClosedResourceError() if (
+                        by_whom
+                    ):
+                        tpt_closed = TransportClosed.from_src_exc(
+                            message=(
+                                f'{tpt_name} was already closed {by_whom!r}?\n'
+                            ),
+                            body=f'{self}',
+                            src_exc=trans_err,
+                            raise_on_report=True,
+                            loglevel='transport',
+                        )
 
-                    # unless the disconnect condition falls under "a
-                    # normal operation breakage" we usualy console warn
-                    # about it.
+                        # await tractor.devx._trace.maybe_pause_bp()
+                        raise tpt_closed from trans_err
+
+                    # XXX, unless the disconnect condition falls
+                    # under "a normal/expected operating breakage"
+                    # (per the `trans_err_msg` guards in the cases
+                    # above) we usualy console-error about it and
+                    # raise-thru. about it.
                     case _:
                         log.exception(
                             f'{tpt_name} layer failed pre-send ??\n'

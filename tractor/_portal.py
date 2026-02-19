@@ -329,18 +329,7 @@ class Portal:
             # if we get here some weird cancellation case happened
             return False
 
-        except (
-            # XXX, should never really get raised unless we aren't
-            # wrapping them in the below type by mistake?
-            #
-            # Leaving the catch here for now until we're very sure
-            # all the cases (for various tpt protos) have indeed been
-            # re-wrapped ;p
-            trio.ClosedResourceError,
-            trio.BrokenResourceError,
-
-            TransportClosed,
-        ) as tpt_err:
+        except TransportClosed as tpt_err:
             ipc_borked_report: str = (
                 f'IPC for actor already closed/broken?\n\n'
                 f'\n'

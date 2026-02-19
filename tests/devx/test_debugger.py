@@ -1138,7 +1138,10 @@ def test_ctxep_pauses_n_maybe_ipc_breaks(
                 ['peer IPC channel closed abruptly?',
                  'another task closed this fd',
                  'Debug lock request was CANCELLED?',
-                 "TransportClosed: 'MsgpackUDSStream' was already closed locally ?",]
+                 "'MsgpackUDSStream' was already closed locally?",
+                 "TransportClosed: 'MsgpackUDSStream' was already closed 'by peer'?",
+                 # ?TODO^? match depending on `tpt_proto(s)`?
+                ]
 
                 # XXX races on whether these show/hit?
                  # 'Failed to REPl via `_pause()` You called `tractor.pause()` from an already cancelled scope!',

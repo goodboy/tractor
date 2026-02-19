@@ -38,6 +38,7 @@ import trio
 from ._exceptions import (
     ContextCancelled,
     RemoteActorError,
+    TransportClosed,
 )
 from .log import get_logger
 from .trionics import (
@@ -409,10 +410,8 @@ class MsgStream(trio.abc.Channel):
             # it).
             with trio.CancelScope(shield=True):
                 await self._ctx.send_stop()
-
         except (
-            trio.BrokenResourceError,
-            trio.ClosedResourceError
+            TransportClosed,
         ) as re:
             # the underlying channel may already have been pulled
             # in which case our stop message is meaningless since
@@ -593,9 +592,8 @@ class MsgStream(trio.abc.Channel):
                 ),
             )
         except (
-            trio.ClosedResourceError,
-            trio.BrokenResourceError,
             BrokenPipeError,
+            TransportClosed,
         ) as _trans_err:
             trans_err = _trans_err
             if (
