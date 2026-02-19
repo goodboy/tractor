@@ -410,10 +410,7 @@ class MsgStream(trio.abc.Channel):
             # it).
             with trio.CancelScope(shield=True):
                 await self._ctx.send_stop()
-
         except (
-            trio.BrokenResourceError,
-            trio.ClosedResourceError,
             TransportClosed,
         ) as re:
             # the underlying channel may already have been pulled
@@ -595,8 +592,6 @@ class MsgStream(trio.abc.Channel):
                 ),
             )
         except (
-            trio.ClosedResourceError,
-            trio.BrokenResourceError,
             BrokenPipeError,
             TransportClosed,
         ) as _trans_err:

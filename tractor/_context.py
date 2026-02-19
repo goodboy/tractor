@@ -2429,11 +2429,7 @@ async def open_context_from_portal(
             try:
                 # await pause(shield=True)
                 await ctx.cancel()
-            except (
-                trio.BrokenResourceError,
-                trio.ClosedResourceError,
-                TransportClosed,
-            ):
+            except TransportClosed:
                 log.warning(
                     'IPC connection for context is broken?\n'
                     f'task: {ctx.cid}\n'

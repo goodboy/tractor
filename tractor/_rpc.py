@@ -935,6 +935,11 @@ async def try_ship_error_to_remote(
 
         # XXX NOTE XXX in SC terms this is one of the worst things
         # that can happen and provides for a 2-general's dilemma..
+        #
+        # FURHTER, we should never really have to handle these
+        # lowlevel excs from `trio` since the `Channel.send()` layers
+        # downward should be mostly wrapping such cases in a
+        # tpt-closed; the `.critical()` usage is warranted.
         except (
             trio.ClosedResourceError,
             trio.BrokenResourceError,
