@@ -70,6 +70,7 @@ from ._exceptions import (
     MsgTypeError,
     RemoteActorError,
     StreamOverrun,
+    TransportClosed,
     pack_from_raise,
     unpack_error,
 )
@@ -2431,6 +2432,7 @@ async def open_context_from_portal(
             except (
                 trio.BrokenResourceError,
                 trio.ClosedResourceError,
+                TransportClosed,
             ):
                 log.warning(
                     'IPC connection for context is broken?\n'

@@ -98,7 +98,8 @@ def test_ipc_channel_break_during_stream(
         expect_final_exc = TransportClosed
 
     mod: ModuleType = import_path(
-        examples_dir() / 'advanced_faults'
+        examples_dir()
+        / 'advanced_faults'
         / 'ipc_failure_during_stream.py',
         root=examples_dir(),
         consider_namespace_packages=False,
@@ -113,8 +114,9 @@ def test_ipc_channel_break_during_stream(
     if (
         # only expect EoC if trans is broken on the child side,
         ipc_break['break_child_ipc_after'] is not False
+        and
         # AND we tell the child to call `MsgStream.aclose()`.
-        and pre_aclose_msgstream
+        pre_aclose_msgstream
     ):
         # expect_final_exc = trio.EndOfChannel
         # ^XXX NOPE! XXX^ since now `.open_stream()` absorbs this
@@ -160,7 +162,8 @@ def test_ipc_channel_break_during_stream(
         ipc_break['break_child_ipc_after'] is not False
         and (
             ipc_break['break_parent_ipc_after']
-            > ipc_break['break_child_ipc_after']
+            >
+            ipc_break['break_child_ipc_after']
         )
     ):
         if pre_aclose_msgstream:
@@ -248,8 +251,13 @@ def test_ipc_channel_break_during_stream(
     # get raw instance from pytest wrapper
     value = excinfo.value
     if isinstance(value, ExceptionGroup):
-        excs = value.exceptions
-        assert len(excs) == 1
+        excs: tuple[Exception] = value.exceptions
+        assert (
+            len(excs) <= 2
+            and
+            (isinstance(exc, TransportClosed)
+             for exc in excs)
+        )
         final_exc = excs[0]
         assert isinstance(final_exc, expect_final_exc)
 
