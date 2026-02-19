@@ -485,9 +485,11 @@ class MsgpackTransport(MsgTransport):
                         # await tractor.devx._trace.maybe_pause_bp()
                         raise tpt_closed from trans_err
 
-                    # unless the disconnect condition falls under "a
-                    # normal operation breakage" we usualy console warn
-                    # about it.
+                    # XXX, unless the disconnect condition falls
+                    # under "a normal/expected operating breakage"
+                    # (per the `trans_err_msg` guards in the cases
+                    # above) we usualy console-error about it and
+                    # raise-thru. about it.
                     case _:
                         log.exception(
                             f'{tpt_name} layer failed pre-send ??\n'
