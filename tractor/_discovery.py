@@ -91,10 +91,13 @@ async def get_registry(
 
 
 @acm
-async def get_root(
-    **kwargs,
-) -> AsyncGenerator[Portal, None]:
+async def get_root(**kwargs) -> AsyncGenerator[Portal, None]:
+    '''
+    Deliver the current actor's "root process" actor (yes in actor
+    and proc tree terms) by delivering a `Portal` from the spawn-time
+    provided contact address.
 
+    '''
     # TODO: rename mailbox to `_root_maddr` when we finally
     # add and impl libp2p multi-addrs?
     addr = _runtime_vars['_root_mailbox']
@@ -193,6 +196,11 @@ async def maybe_open_portal(
     addr: UnwrappedAddress,
     name: str,
 ):
+    '''
+    Open a `Portal` to the actor serving @ `addr` or `None` if no
+    peer can be contacted or found.
+
+    '''
     async with query_actor(
         name=name,
         regaddr=addr,
