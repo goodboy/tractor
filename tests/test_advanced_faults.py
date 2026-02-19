@@ -255,8 +255,10 @@ def test_ipc_channel_break_during_stream(
         assert (
             len(excs) <= 2
             and
-            (isinstance(exc, TransportClosed)
-             for exc in excs)
+            all(
+                isinstance(exc, TransportClosed)
+                for exc in excs
+            )
         )
         final_exc = excs[0]
         assert isinstance(final_exc, expect_final_exc)

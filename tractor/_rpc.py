@@ -284,9 +284,14 @@ async def _errors_relayed_via_ipc(
     try:
         yield  # run RPC invoke body
 
-    except TransportClosed:
-        log.exception('Tpt disconnect during remote-exc relay?')
-        raise
+    # NOTE, never REPL any pseudo-expected tpt-disconnect.
+    except TransportClosed as err:
+        rpc_err = err
+        log.warning(
+            f'Tpt disconnect during remote-exc relay due to,\n'
+            f'{err!r}\n'
+        )
+        raise err
 
     # box and ship RPC errors for wire-transit via
     # the task's requesting parent IPC-channel.
@@ -323,9 +328,6 @@ async def _errors_relayed_via_ipc(
                         and debug_kbis
                     )
                 )
-                # TODO? better then `debug_filter` below?
-                and
-                not isinstance(err, TransportClosed)
             ):
                 # XXX QUESTION XXX: is there any case where we'll
                 # want to debug IPC disconnects as a default?
@@ -346,13 +348,6 @@ async def _errors_relayed_via_ipc(
                 entered_debug = await debug._maybe_enter_pm(
                     err,
                     api_frame=inspect.currentframe(),
-
-                    # don't REPL any psuedo-expected tpt-disconnect
-                    # debug_filter=lambda exc: (
-                    #     type (exc) not in {
-                    #         TransportClosed,
-                    #     }
-                    # ),
                 )
                 if not entered_debug:
                     # if we prolly should have entered the REPL but
@@ -438,7 +433,7 @@ async def _errors_relayed_via_ipc(
             # cancel scope will not have been inserted yet
             if is_rpc:
                 log.warning(
-                    'RPC task likely errored or cancelled before start?\n'
+                    'RPC task likely crashed or cancelled before start?\n'
                     f'|_{ctx._task}\n'
                     f'  >> {ctx.repr_rpc}\n'
                 )
@@ -694,22 +689,6 @@ async def _invoke(
                     f'{pretty_struct.pformat(return_msg)}\n'
                 )
                 await chan.send(return_msg)
-                # ?TODO, remove the below since .send() already
-                # doesn't raise on tpt-closed?
-                # try:
-                #     await chan.send(return_msg)
-                # except TransportClosed:
-                #     log.exception(
-                #         f"Failed send final result to 'parent'-side of IPC-ctx!\n"
-                #         f'\n'
-                #         f'{chan}\n'
-                #         f'Channel already disconnected ??\n'
-                #         f'\n'
-                #         f'{pretty_struct.pformat(return_msg)}'
-                #     )
-                #     # ?TODO? will this ever be true though?
-                #     if chan.connected():
-                #         raise
 
             # NOTE: this happens IFF `ctx._scope.cancel()` is
             # called by any of,

@@ -101,15 +101,18 @@ def spawn(
         start: float = time.time()
         timeout: float = 5
         while (
-            spawned
+            ptyproc.isalive()
             and
-            spawned.isalive()
-            and
-            (_time_took := (time.time() - start) < timeout)
+            (
+                (_time_took := (time.time() - start))
+                 <
+                 timeout
+            )
         ):
             ptyproc.kill(signal.SIGINT)
             time.sleep(0.01)
-        else:
+
+        if ptyproc.isalive():
             ptyproc.kill(signal.SIGKILL)
 
     # TODO? ensure we've cleaned up any UDS-paths?
