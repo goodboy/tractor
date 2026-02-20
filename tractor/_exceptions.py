@@ -46,6 +46,7 @@ from msgspec import (
 from tractor._state import current_actor
 from tractor.log import get_logger
 from tractor.msg import (
+    Aid,
     Error,
     PayloadMsg,
     MsgType,
@@ -479,9 +480,10 @@ class RemoteActorError(Exception):
 
     @property
     def relay_uid(self) -> tuple[str, str]|None:
-        return tuple(
-            self._ipc_msg.relay_path[-1]
-        )
+        if msg := self._ipc_msg:
+            return tuple(
+                msg.relay_path[-1]
+            )
 
     @property
     def src_uid(self) -> tuple[str, str]|None:
@@ -521,7 +523,8 @@ class RemoteActorError(Exception):
         for key in fields:
             if (
                 key == 'relay_uid'
-                and not self.is_inception()
+                and
+                not self.is_inception()
             ):
                 continue
 
@@ -534,6 +537,13 @@ class RemoteActorError(Exception):
                     None,
                 )
             )
+            if (
+                key == 'canceller'
+                and
+                isinstance(val, Aid)
+            ):
+                val: str = val.reprol(sin_uuid=False)
+
             # TODO: for `.relay_path` on multiline?
             # if not isinstance(val, str):
             #     val_str = pformat(val)
@@ -623,12 +633,22 @@ class RemoteActorError(Exception):
         # IFF there is an embedded traceback-str we always
         # draw the ascii-box around it.
         body: str = ''
-        if tb_str := self.tb_str:
-            fields: str = self._mk_fields_str(
-                _body_fields
-                +
-                self.extra_body_fields,
-            )
+        fields: str = self._mk_fields_str(
+            _body_fields
+            +
+            self.extra_body_fields,
+        )
+
+        tb_str: str = (
+            self.tb_str
+            #
+            # ^TODO? what to use instead? if anything?
+            # -[ ] ensure the `.message` doesn't show up 2x in output ya?
+            # -[ ] ._message isn't really right?
+            # or
+            # self._message
+        )
+        if tb_str:
             from tractor.devx import (
                 pformat_boxed_tb,
             )
@@ -640,7 +660,7 @@ class RemoteActorError(Exception):
                 # just after <Type(
                 #             |___ ..
                 tb_body_indent=1,
-                boxer_header=self.relay_uid,
+                boxer_header=self.relay_uid or '-',
             )
 
         # !TODO, it'd be nice to import these top level without
@@ -713,6 +733,10 @@ class RemoteActorError(Exception):
 
 class ContextCancelled(RemoteActorError):
     '''
+    IPC context cancellation signal/msg.
+
+    Often reffed with the short-hand: "ctxc".
+
     Inter-actor task context was cancelled by either a call to
     ``Portal.cancel_actor()`` or ``Context.cancel()``.
 
@@ -737,8 +761,8 @@ class ContextCancelled(RemoteActorError):
 
         - (simulating) an IPC transport network outage
         - a (malicious) pkt sent specifically to cancel an actor's
-          runtime non-gracefully without ensuring ongoing RPC tasks are 
-          incrementally cancelled as is done with:
+          runtime non-gracefully without ensuring ongoing RPC tasks
+          are incrementally cancelled as is done with:
           `Actor`
           |_`.cancel()`
           |_`.cancel_soon()`
@@ -757,6 +781,59 @@ class ContextCancelled(RemoteActorError):
 
     # TODO: to make `.__repr__()` work uniformly?
     # src_actor_uid = canceller
+
+
+class ActorCancelled(ContextCancelled):
+    '''
+    Runtime-layer cancellation signal/msg.
+
+    Indicates a "graceful interrupt" of the machinery scheduled by
+    the py-proc's `trio.run()`.
+
+    Often reffed with the short-hand: "actorc".
+
+    Raised from within `an: ActorNursery` (via an `ExceptionGroup`)
+    when an actor has been "process wide" cancel-called using any of,
+
+    - `ActorNursery.cancel()`
+    - `Portal.cancel_actor()`
+
+    **and** that cancel request was part of a "non graceful" cancel
+    condition.
+
+    That is, whenever an exception is to be raised outside an `an`
+    scope-block due to some error raised-in/relayed-to that scope. In
+    such cases for every subactor which was cancelledand subsequently
+    ( and according to the `an`'s supervision strat ) this is
+    normally raised per subactor portal.
+
+    '''
+    @property
+    def canceller(self) -> Aid:
+        '''
+        Return the (maybe) `Actor.aid: Aid` for the requesting-author
+        of this actorc.
+
+        Emit a warning msg when `.canceller` has not been set.
+
+        See additional relevant notes in
+        `ContextCancelled.canceller`.
+
+        '''
+        value: tuple[str, str]|None
+        if msg := self._ipc_msg:
+            value = msg.canceller
+        else:
+            value = self._extra_msgdata['canceller']
+
+        if value:
+            return value
+
+        log.warning(
+            'IPC Context cancelled without a requesting actor?\n'
+            'Maybe the IPC transport ended abruptly?\n\n'
+            f'{self}'
+        )
 
 
 class MsgTypeError(
