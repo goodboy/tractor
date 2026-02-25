@@ -195,7 +195,9 @@ def get_rt_dir(
         rt_dir: Path = rt_dir / subdir
 
     if not rt_dir.is_dir():
-        rt_dir.mkdir()
+        rt_dir.mkdir(
+            parents=True,
+        )
 
     return rt_dir
 
