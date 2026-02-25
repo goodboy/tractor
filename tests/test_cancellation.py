@@ -14,7 +14,9 @@ import tractor
 from tractor._testing import (
     tractor_test,
 )
-from .conftest import no_windows
+from .conftest import (
+    no_windows,
+)
 
 
 def is_win():
@@ -503,7 +505,6 @@ def test_cancel_via_SIGINT(
 
     with pytest.raises(KeyboardInterrupt):
         trio.run(main)
-
 
 @no_windows
 def test_cancel_via_SIGINT_other_task(
