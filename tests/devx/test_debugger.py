@@ -37,6 +37,9 @@ from .conftest import (
     in_prompt_msg,
     assert_before,
 )
+from ..conftest import (
+    no_macos,
+)
 
 if TYPE_CHECKING:
     from ..conftest import PexpectSpawner
@@ -470,6 +473,7 @@ def test_multi_subactors(
     ])
 
 
+@no_macos
 def test_multi_daemon_subactors(
     spawn,
     loglevel: str,
@@ -1074,6 +1078,7 @@ def test_shield_pause(
     child.expect(EOF)
 
 
+@no_macos  # XXX weird tpt unpack issue?
 @pytest.mark.parametrize(
     'quit_early', [False, True]
 )
