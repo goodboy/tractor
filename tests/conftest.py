@@ -44,6 +44,10 @@ no_windows = pytest.mark.skipif(
     platform.system() == "Windows",
     reason="Test is unsupported on windows",
 )
+no_macos = pytest.mark.skipif(
+    platform.system() == "Darwin",
+    reason="Test is unsupported on MacOS",
+)
 
 
 def pytest_addoption(
