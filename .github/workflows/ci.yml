@@ -83,7 +83,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ['3.13']
+        python-version: [
+          '3.13',
+          # '3.14',
+        ]
         spawn_backend: [
           'trio',
           # 'mp_spawn',
@@ -91,8 +94,8 @@ jobs:
         ]
 
     steps:
-
       - uses: actions/checkout@v4
+
       - name: 'Install uv + py-${{ matrix.python-version }}'
         uses: astral-sh/setup-uv@v6
         with:
@@ -128,13 +131,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest]
-        python: ['3.13']
+        python-version: [
+          '3.13',
+          # '3.14',
+        ]
         spawn_backend: [
           'trio',
         ]
 
     steps:
       - uses: actions/checkout@v4
+
       - name: 'Install uv + py-${{ matrix.python-version }}'
         uses: astral-sh/setup-uv@v6
         with:
