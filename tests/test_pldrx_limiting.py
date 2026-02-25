@@ -33,10 +33,6 @@ from tractor.msg.types import (
     log,
 )
 
-no_macos = pytest.mark.skipif(
-    platform.system() == "Darwin",
-    reason="Struct for msgspec borked?",
-)
 
 class PldMsg(
     Struct,
