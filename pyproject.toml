@@ -9,7 +9,7 @@ name = "tractor"
 version = "0.1.0a6dev0"
 description = 'structured concurrent `trio`-"actors"'
 authors = [{ name = "Tyler Goodlet", email = "goodboy_foss@protonmail.com" }]
-requires-python = ">= 3.12"
+requires-python = ">=3.12,<3.14 "
 readme = "docs/README.rst"
 license = "AGPL-3.0-or-later"
 keywords = [
