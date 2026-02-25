@@ -31,6 +31,11 @@ from .conftest import (
     PROMPT,
     _pause_msg,
 )
+from ..conftest import (
+    no_macos,
+)
+
+pytestmark = no_macos
 
 import pytest
 from pexpect.exceptions import (
