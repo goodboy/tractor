@@ -75,14 +75,17 @@ jobs:
 
 
   testing-linux:
-    name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
+    name: '${{ matrix.os }} Python${{ matrix.python-version }} - spawn_backend=${{ matrix.spawn_backend }}'
     timeout-minutes: 10
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [
+          ubuntu-latest,
+          # macos-latest,  # ?TODO, better?
+        ]
         python-version: [
           '3.13',
           # '3.14',
@@ -123,14 +126,16 @@ jobs:
         run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
 
   testing-macos:
-    name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
+    name: '${{ matrix.os }} Python${{ matrix.python-version }} - spawn_backend=${{ matrix.spawn_backend }}'
     timeout-minutes: 10
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
+        os: [
+          macos-latest,
+        ]
         python-version: [
           '3.13',
           # '3.14',
