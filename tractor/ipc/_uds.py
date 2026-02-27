@@ -30,22 +30,6 @@ from socket import (
     SOL_SOCKET,
 )
 import struct
-
-# Platform-specific credential passing constants
-# See: https://stackoverflow.com/a/7982749
-if sys.platform == 'linux':
-    from socket import SO_PASSCRED, SO_PEERCRED
-elif sys.platform == 'darwin':  # macOS
-    # macOS uses LOCAL_PEERCRED instead of SO_PEERCRED
-    # and doesn't need SO_PASSCRED (credential passing is always enabled)
-    # Value from <sys/un.h>: #define LOCAL_PEERCRED 0x001
-    LOCAL_PEERCRED = 0x0001
-    SO_PEERCRED = LOCAL_PEERCRED  # Alias for compatibility
-    SO_PASSCRED = None  # Not needed/available on macOS
-else:
-    # Other Unix platforms - may need additional handling
-    SO_PASSCRED = None
-    SO_PEERCRED = None
 from typing import (
     Type,
     TYPE_CHECKING,
@@ -68,7 +52,7 @@ from tractor.log import get_logger
 from tractor.ipc._transport import (
     MsgpackTransport,
 )
-from .._state import (
+from tractor._state import (
     get_rt_dir,
     current_actor,
     is_root_process,
@@ -76,6 +60,28 @@ from .._state import (
 
 if TYPE_CHECKING:
     from ._runtime import Actor
+
+
+# Platform-specific credential passing constants
+# See: https://stackoverflow.com/a/7982749
+if sys.platform == 'linux':
+    from socket import (
+        SO_PASSCRED,
+        SO_PEERCRED,
+    )
+
+# NOTE, macOS uses `LOCAL_PEERCRED` instead of `SO_PEERCRED` and
+# doesn't need `SO_PASSCRED` (credential passing is always enabled).
+# XXX See code in <sys/un.h>: `#define LOCAL_PEERCRED 0x001`
+#
+elif sys.platform == 'darwin':  # macOS
+    LOCAL_PEERCRED: int = 0x0001
+    SO_PEERCRED:int|None = LOCAL_PEERCRED  # Alias for compatibility
+    SO_PASSCRED: int|None = None  # Not needed/available on macOS
+else:
+    # Other Unix platforms - may need additional handling
+    SO_PASSCRED = None
+    SO_PEERCRED = None
 
 
 log = get_logger()
@@ -307,7 +313,12 @@ def close_listener(
 
 
 async def open_unix_socket_w_passcred(
-    filename: str|bytes|os.PathLike[str]|os.PathLike[bytes],
+    filename: (
+        str
+        |bytes
+        |os.PathLike[str]
+        |os.PathLike[bytes]
+    ),
 ) -> trio.SocketStream:
     '''
     Literally the exact same as `trio.open_unix_socket()` except we set the additiona
@@ -336,7 +347,9 @@ async def open_unix_socket_w_passcred(
     return trio.SocketStream(sock)
 
 
-def get_peer_info(sock: trio.socket.socket) -> tuple[
+def get_peer_info(
+    sock: trio.socket.socket,
+) -> tuple[
     int,  # pid
     int,  # uid
     int,  # guid
