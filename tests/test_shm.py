@@ -2,6 +2,7 @@
 Shared mem primitives and APIs.
 
 """
+import platform
 import uuid
 
 # import numpy
@@ -53,7 +54,18 @@ def test_child_attaches_alot():
                     shm_key=shml.key,
                 ) as (ctx, start_val),
             ):
-                assert start_val == key
+                assert (_key := shml.key) == start_val
+
+                if platform.system() != 'Darwin':
+                    # XXX, macOS has a char limit..
+                    # see `ipc._shm._shorten_key_for_macos`
+                    assert (
+                        start_val
+                        ==
+                        key
+                        ==
+                        _key
+                    )
                 await ctx.result()
 
             await portal.cancel_actor()
