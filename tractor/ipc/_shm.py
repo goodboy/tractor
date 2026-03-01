@@ -197,28 +197,46 @@ def get_shm_token(key: str) -> NDToken | None:
     return _known_tokens.get(key)
 
 
-def _shorten_key_for_macos(key: str) -> str:
+def _shorten_key_for_macos(
+    key: str,
+    prefix: str = '',
+    suffix: str = '',
+) -> str:
     '''
-    macOS has a 31 character limit for POSIX shared
-    memory names. Hash long keys to fit within this
-    limit while maintaining uniqueness.
+    MacOS has a (hillarious) 31 character limit for POSIX shared
+    memory names. Hash long keys to fit within this limit while
+    maintaining uniqueness.
 
     '''
     # macOS shm_open() has a 31 char limit (PSHMNAMLEN)
     # format: /t_<hash16> = 19 chars, well under limit
-    if len(key) <= 31:
+    max_len: int = 31
+    if len(key) <= max_len:
         return key
 
-    key_hash: str = hashlib.sha256(
+    _hash: str = hashlib.sha256(
         key.encode()
-    ).hexdigest()[:16]
-    short_key = f't_{key_hash}'
+    ).hexdigest()
+
+    hash_len: int = (
+        (max_len - 1)
+        - len(prefix)
+        - len(suffix)
+    )
+    key_hash: str = _hash[:hash_len]
+    short_key = (
+        prefix
+        +
+        f'{key_hash}'
+        +
+        suffix
+    )
 
     log.debug(
         f'Shortened shm key for macOS:\n'
-        f'  original: {key} ({len(key)} chars)\n'
-        f'  shortened: {short_key}'
-        f' ({len(short_key)} chars)'
+        f'  original: {key!r} ({len(key)!r} chars)\n'
+        f'  shortened: {short_key!r}'
+        f' ({len(short_key)!r} chars)'
     )
     return short_key
 
@@ -237,12 +255,16 @@ def _make_token(
     # On macOS, shorten keys that exceed the
     # 31 character limit
     if platform.system() == 'Darwin':
-        shm_name = _shorten_key_for_macos(key)
+        shm_name = _shorten_key_for_macos(
+            key=key,
+        )
         shm_first = _shorten_key_for_macos(
-            key + '_first'
+            key=key,
+            suffix='_first',
         )
         shm_last = _shorten_key_for_macos(
-            key + '_last'
+            key=key,
+            suffix='_last',
         )
     else:
         shm_name = key
@@ -760,7 +782,10 @@ def maybe_open_shm_ndarray(
             False,  # not newly opened
         )
     except KeyError:
-        log.warning(f"Could not find {key} in shms cache")
+        log.warning(
+            f'Could not find key in shms cache,\n'
+            f'key: {key!r}\n'
+        )
         if dtype:
             token = _make_token(
                 key,
@@ -870,6 +895,7 @@ def open_shm_list(
     size: int = int(2 ** 10),
     dtype: float | int | bool | str | bytes | None = float,
     readonly: bool = True,
+    prefix: str = 'shml_',
 
 ) -> ShmList:
 
@@ -882,6 +908,12 @@ def open_shm_list(
             None: None,
         }[dtype]
         sequence = [default] * size
+
+    if platform.system() == 'Darwin':
+        key: str = _shorten_key_for_macos(
+            key=key,
+            prefix=prefix,
+        )
 
     shml = ShmList(
         sequence=sequence,
