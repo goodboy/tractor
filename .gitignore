@@ -102,3 +102,27 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# all files under
+.git/
+
+# any commit-msg gen tmp files
+.claude/*_commit_*.md
+.claude/*_commit*.toml
+
+# nix develop --profile .nixdev
+.nixdev*
+
+# :Obsession .
+Session.vim
+# gitea local `.md`-files
+# TODO? would this be handy to also commit and sync with
+# wtv git hosting service tho?
+gitea/
+
+# ------ macOS ------
+# Finder metadata
+**/.DS_Store
+
+# LLM conversations that should remain private
+docs/conversations/
