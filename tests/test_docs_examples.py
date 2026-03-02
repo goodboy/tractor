@@ -17,6 +17,8 @@ from tractor._testing import (
     examples_dir,
 )
 
+_non_linux: bool = platform.system() != 'Linux'
+
 
 @pytest.fixture
 def run_example_in_subproc(
@@ -123,7 +125,10 @@ def test_example(
     if 'rpc_bidir_streaming' in ex_file and sys.version_info < (3, 9):
         pytest.skip("2-way streaming example requires py3.9 async with syntax")
 
-    timeout: float = 16
+    timeout: float = (
+        30 if ci_env and _non_linux
+        else 16
+    )
 
     with open(ex_file, 'r') as ex:
         code = ex.read()
