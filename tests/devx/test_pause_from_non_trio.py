@@ -22,9 +22,6 @@ from pexpect.exceptions import (
     EOF,
 )
 
-from ..conftest import (
-    no_macos,
-)
 from .conftest import (
     # _ci_env,
     do_ctlc,
@@ -54,7 +51,6 @@ def maybe_expect_timeout(
         raise
 
 
-@no_macos  # XXX no `greenback` atm
 @pytest.mark.ctlcs_bish
 def test_pause_from_sync(
     spawn,
@@ -250,7 +246,6 @@ def expect_any_of(
     return expected_patts
 
 
-@no_macos  # XXX no `greenback` atm
 @pytest.mark.ctlcs_bish
 def test_sync_pause_from_aio_task(
     spawn,
