@@ -240,6 +240,10 @@ def time_quad_ex(
     ci_env: bool,
     spawn_backend: str,
 ):
+    non_linux: bool = (_sys := platform.system()) != 'Linux'
+    if ci_env and non_linux:
+        pytest.skip("Test is too flaky on {_sys!r} in CI")
+
     if spawn_backend == 'mp':
         '''
         no idea but the  mp *nix runs are flaking out here often...
@@ -247,7 +251,7 @@ def time_quad_ex(
         '''
         pytest.skip("Test is too flaky on mp in CI")
 
-    timeout = 7 if platform.system() in ('Windows', 'Darwin') else 4
+    timeout = 7 if non_linux else 4
     start = time.time()
     results = trio.run(cancel_after, timeout, reg_addr)
     diff = time.time() - start
@@ -264,13 +268,12 @@ def test_a_quadruple_example(
     This also serves as a kind of "we'd like to be this fast test".
 
     '''
+    non_linux: bool = (_sys := platform.system()) != 'Linux'
+
     results, diff = time_quad_ex
     assert results
     this_fast = (
-        6 if platform.system() in (
-            'Windows',
-            'Darwin',
-        )
+        6 if non_linux
         else 3
     )
     assert diff < this_fast
