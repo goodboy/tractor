@@ -750,7 +750,8 @@ def test_multi_subactors_root_errors(
 
 @has_nested_actors
 def test_multi_nested_subactors_error_through_nurseries(
-    spawn,
+    ci_env: bool,
+    spawn: PexpectSpawner,
 
     # TODO: address debugger issue for nested tree:
     # https://github.com/goodboy/tractor/issues/320
@@ -773,7 +774,16 @@ def test_multi_nested_subactors_error_through_nurseries(
 
     for send_char in itertools.cycle(['c', 'q']):
         try:
-            child.expect(PROMPT)
+            child.expect(
+                PROMPT,
+                timeout=(
+                    2 if (
+                        _non_linux
+                        and
+                        ci_env
+                    ) else -1
+                ),
+            )
             child.sendline(send_char)
             time.sleep(0.01)
 
