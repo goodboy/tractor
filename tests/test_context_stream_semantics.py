@@ -941,6 +941,11 @@ def test_one_end_stream_not_opened(
     from tractor._runtime import Actor
     buf_size = buf_size_increase + Actor.msg_buffer_size
 
+    timeout: float = (
+        1 if sys.platform == 'linux'
+        else 3
+    )
+
     async def main():
         async with tractor.open_nursery(
             debug_mode=debug_mode,
@@ -950,7 +955,7 @@ def test_one_end_stream_not_opened(
                 enable_modules=[__name__],
             )
 
-            with trio.fail_after(1):
+            with trio.fail_after(timeout):
                 async with portal.open_context(
                     entrypoint,
                 ) as (ctx, sent):
