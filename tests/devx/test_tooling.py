@@ -35,8 +35,6 @@ from ..conftest import (
     no_macos,
 )
 
-pytestmark = no_macos
-
 import pytest
 from pexpect.exceptions import (
     # TIMEOUT,
@@ -47,6 +45,7 @@ if TYPE_CHECKING:
     from ..conftest import PexpectSpawner
 
 
+@no_macos
 def test_shield_pause(
     spawn: PexpectSpawner,
 ):
@@ -62,6 +61,7 @@ def test_shield_pause(
     expect(
         child,
         'Yo my child hanging..?',
+        timeout=3,
     )
     assert_before(
         child,
