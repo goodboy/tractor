@@ -11,6 +11,7 @@ import platform
 import time
 
 import pytest
+import tractor
 from tractor._testing import (
     examples_dir as examples_dir,
     tractor_test as tractor_test,
@@ -65,7 +66,7 @@ def pytest_addoption(
 
 
 @pytest.fixture(scope='session', autouse=True)
-def loglevel(request):
+def loglevel(request) -> str:
     import tractor
     orig = tractor.log._default_loglevel
     level = tractor.log._default_loglevel = request.config.option.loglevel
@@ -73,9 +74,44 @@ def loglevel(request):
         level=level,
         name='tractor',  # <- enable root logger
     )
-    log.info(f'Test-harness logging level: {level}\n')
+    log.info(
+        f'Test-harness set runtime loglevel: {level!r}\n'
+    )
     yield level
     tractor.log._default_loglevel = orig
+
+
+@pytest.fixture(scope='function')
+def test_log(
+    request,
+    loglevel: str,
+) -> tractor.log.StackLevelAdapter:
+    '''
+    Deliver a per test-module-fn logger instance for reporting from
+    within actual test bodies/fixtures.
+
+    For example this can be handy to report certain error cases from
+    exception handlers using `test_log.exception()`.
+
+    '''
+    modname: str = request.function.__module__
+    log = tractor.log.get_logger(
+        name=modname,  # <- enable root logger
+        # pkg_name='tests',
+    )
+    _log = tractor.log.get_console_log(
+        level=loglevel,
+        logger=log,
+        name=modname,
+        # pkg_name='tests',
+    )
+    _log.debug(
+        f'In-test-logging requested\n'
+        f'test_log.name: {log.name!r}\n'
+        f'level: {loglevel!r}\n'
+
+    )
+    yield _log
 
 
 _ci_env: bool = os.environ.get('CI', False)
