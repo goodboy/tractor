@@ -1,11 +1,13 @@
 """
-Actor "discovery" testing
+Discovery subsys.
+
 """
 import os
 import signal
 import platform
 from functools import partial
 import itertools
+from typing import Callable
 
 import psutil
 import pytest
@@ -17,7 +19,9 @@ import trio
 
 
 @tractor_test
-async def test_reg_then_unreg(reg_addr):
+async def test_reg_then_unreg(
+    reg_addr: tuple,
+):
     actor = tractor.current_actor()
     assert actor.is_arbiter
     assert len(actor._registry) == 1  # only self is registered
@@ -82,11 +86,15 @@ async def say_hello_use_wait(
 
 
 @tractor_test
-@pytest.mark.parametrize('func', [say_hello, say_hello_use_wait])
+@pytest.mark.parametrize(
+    'func',
+    [say_hello,
+     say_hello_use_wait]
+)
 async def test_trynamic_trio(
-    func,
-    start_method,
-    reg_addr,
+    func: Callable,
+    start_method: str,
+    reg_addr: tuple,
 ):
     '''
     Root actor acting as the "director" and running one-shot-task-actors
@@ -119,7 +127,10 @@ async def stream_forever():
         await trio.sleep(0.01)
 
 
-async def cancel(use_signal, delay=0):
+async def cancel(
+    use_signal: bool,
+    delay: float = 0,
+):
     # hold on there sally
     await trio.sleep(delay)
 
@@ -132,13 +143,15 @@ async def cancel(use_signal, delay=0):
         raise KeyboardInterrupt
 
 
-async def stream_from(portal):
+async def stream_from(portal: tractor.Portal):
     async with portal.open_stream_from(stream_forever) as stream:
         async for value in stream:
             print(value)
 
 
-async def unpack_reg(actor_or_portal):
+async def unpack_reg(
+    actor_or_portal: tractor.Portal|tractor.Actor,
+):
     '''
     Get and unpack a "registry" RPC request from the "arbiter" registry
     system.
@@ -173,7 +186,9 @@ async def spawn_and_check_registry(
         registry_addrs=[reg_addr],
         debug_mode=debug_mode,
     ):
-        async with tractor.get_registry(reg_addr) as portal:
+        async with tractor.get_registry(
+            addr=reg_addr,
+        ) as portal:
             # runtime needs to be up to call this
             actor = tractor.current_actor()
 
@@ -246,10 +261,10 @@ async def spawn_and_check_registry(
 @pytest.mark.parametrize('with_streaming', [False, True])
 def test_subactors_unregister_on_cancel(
     debug_mode: bool,
-    start_method,
-    use_signal,
-    reg_addr,
-    with_streaming,
+    start_method: str,
+    use_signal: bool,
+    reg_addr: tuple,
+    with_streaming: bool,
 ):
     '''
     Verify that cancelling a nursery results in all subactors
@@ -274,15 +289,17 @@ def test_subactors_unregister_on_cancel(
 def test_subactors_unregister_on_cancel_remote_daemon(
     daemon: subprocess.Popen,
     debug_mode: bool,
-    start_method,
-    use_signal,
-    reg_addr,
-    with_streaming,
+    start_method: str,
+    use_signal: bool,
+    reg_addr: tuple,
+    with_streaming: bool,
 ):
-    """Verify that cancelling a nursery results in all subactors
-    deregistering themselves with a **remote** (not in the local process
-    tree) arbiter.
-    """
+    '''
+    Verify that cancelling a nursery results in all subactors
+    deregistering themselves with a **remote** (not in the local
+    process tree) arbiter.
+
+    '''
     with pytest.raises(KeyboardInterrupt):
         trio.run(
             partial(
@@ -374,14 +391,16 @@ async def close_chans_before_nursery(
 
 @pytest.mark.parametrize('use_signal', [False, True])
 def test_close_channel_explicit(
-    start_method,
-    use_signal,
-    reg_addr,
+    start_method: str,
+    use_signal: bool,
+    reg_addr: tuple,
 ):
-    """Verify that closing a stream explicitly and killing the actor's
+    '''
+    Verify that closing a stream explicitly and killing the actor's
     "root nursery" **before** the containing nursery tears down also
     results in subactor(s) deregistering from the arbiter.
-    """
+
+    '''
     with pytest.raises(KeyboardInterrupt):
         trio.run(
             partial(
@@ -396,14 +415,16 @@ def test_close_channel_explicit(
 @pytest.mark.parametrize('use_signal', [False, True])
 def test_close_channel_explicit_remote_arbiter(
     daemon: subprocess.Popen,
-    start_method,
-    use_signal,
-    reg_addr,
+    start_method: str,
+    use_signal: bool,
+    reg_addr: tuple,
 ):
-    """Verify that closing a stream explicitly and killing the actor's
+    '''
+    Verify that closing a stream explicitly and killing the actor's
     "root nursery" **before** the containing nursery tears down also
     results in subactor(s) deregistering from the arbiter.
-    """
+
+    '''
     with pytest.raises(KeyboardInterrupt):
         trio.run(
             partial(
