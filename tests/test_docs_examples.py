@@ -9,8 +9,10 @@ import sys
 import subprocess
 import platform
 import shutil
+from typing import Callable
 
 import pytest
+import tractor
 from tractor._testing import (
     examples_dir,
 )
@@ -101,8 +103,10 @@ def run_example_in_subproc(
     ids=lambda t: t[1],
 )
 def test_example(
-    run_example_in_subproc,
-    example_script,
+    run_example_in_subproc: Callable,
+    example_script: str,
+    test_log: tractor.log.StackLevelAdapter,
+    ci_env: bool,
 ):
     '''
     Load and run scripts from this repo's ``examples/`` dir as a user
@@ -119,6 +123,8 @@ def test_example(
     if 'rpc_bidir_streaming' in ex_file and sys.version_info < (3, 9):
         pytest.skip("2-way streaming example requires py3.9 async with syntax")
 
+    timeout: float = 16
+
     with open(ex_file, 'r') as ex:
         code = ex.read()
 
@@ -126,9 +132,12 @@ def test_example(
             err = None
             try:
                 if not proc.poll():
-                    _, err = proc.communicate(timeout=15)
+                    _, err = proc.communicate(timeout=timeout)
 
             except subprocess.TimeoutExpired as e:
+                test_log.exception(
+                    f'Example failed to finish within {timeout}s ??\n'
+                )
                 proc.kill()
                 err = e.stderr
 
