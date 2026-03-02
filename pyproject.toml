@@ -161,6 +161,7 @@ all_bullets = true
 
 [tool.pytest.ini_options]
 minversion = '6.0'
+# https://docs.pytest.org/en/stable/reference/reference.html#configuration-options
 testpaths = [
   'tests'
 ]
@@ -171,10 +172,17 @@ addopts = [
   '--import-mode=importlib',
   # don't show frickin captured logs AGAIN in the report..
   '--show-capture=no',
+
+  # disable `xonsh` plugin
+  # https://docs.pytest.org/en/stable/how-to/plugins.html#disabling-plugins-from-autoloading
+  # https://docs.pytest.org/en/stable/how-to/plugins.html#deactivating-unregistering-a-plugin-by-name
+  '-p no:xonsh'
 ]
 log_cli = false
 # TODO: maybe some of these layout choices?
 # https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
 # pythonpath = "src"
 
+# https://docs.pytest.org/en/stable/reference/reference.html#confval-console_output_style
+console_output_style = 'progress'
 # ------ tool.pytest ------
