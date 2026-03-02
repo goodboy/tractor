@@ -33,6 +33,14 @@ if TYPE_CHECKING:
     from pexpect import pty_spawn
 
 
+def pytest_configure(config):
+    # register custom marks to avoid warnings see,
+    # https://docs.pytest.org/en/stable/how-to/writing_plugins.html#registering-custom-markers
+    config.addinivalue_line(
+        'markers',
+        'ctlcs_bish: test will (likely) not behave under SIGINT..'
+    )
+
 # a fn that sub-instantiates a `pexpect.spawn()`
 # and returns it.
 type PexpectSpawner = Callable[
