@@ -780,7 +780,7 @@ def test_multi_nested_subactors_error_through_nurseries(
             child.expect(
                 PROMPT,
                 timeout=(
-                    2 if (
+                    6 if (
                         _non_linux
                         and
                         ci_env
