@@ -228,18 +228,23 @@ async def a_quadruple_example():
         return result_stream
 
 
-async def cancel_after(wait, reg_addr):
+async def cancel_after(
+    wait: float,
+    reg_addr: tuple,
+):
     async with tractor.open_root_actor(registry_addrs=[reg_addr]):
         with trio.move_on_after(wait):
             return await a_quadruple_example()
 
 
-@pytest.fixture(scope='module')
 def time_quad_ex(
     reg_addr: tuple,
-    ci_env: bool,
     spawn_backend: str,
 ):
+    '''
+    Time running `cancel_after()` and deliver the result.
+
+    '''
     if spawn_backend == 'mp':
         '''
         no idea but the  mp *nix runs are flaking out here often...
@@ -247,16 +252,23 @@ def time_quad_ex(
         '''
         pytest.skip("Test is too flaky on mp in CI")
 
-    timeout = 7 if platform.system() in ('Windows', 'Darwin') else 4
+    timeout = (
+        7 if platform.system() in ('Windows', 'Darwin')
+        else 4
+    )
     start = time.time()
-    results = trio.run(cancel_after, timeout, reg_addr)
+    results = trio.run(
+        cancel_after,
+        timeout,
+        reg_addr,
+    )
     diff = time.time() - start
     assert results
     return results, diff
 
 
 def test_a_quadruple_example(
-    time_quad_ex: tuple,
+    reg_addr: tuple,
     ci_env: bool,
     spawn_backend: str,
 ):
@@ -264,8 +276,12 @@ def test_a_quadruple_example(
     This also serves as a kind of "we'd like to be this fast test".
 
     '''
-    results, diff = time_quad_ex
+    results, diff = time_quad_ex(
+        reg_addr,
+        spawn_backend,
+    )
     assert results
+
     this_fast = (
         6 if platform.system() in (
             'Windows',
@@ -281,14 +297,21 @@ def test_a_quadruple_example(
     list(map(lambda i: i/10, range(3, 9)))
 )
 def test_not_fast_enough_quad(
-    reg_addr, time_quad_ex, cancel_delay, ci_env, spawn_backend
+    reg_addr,
+    time_quad_ex,
+    cancel_delay,
+    ci_env,
+    spawn_backend,
 ):
-    """Verify we can cancel midway through the quad example and all actors
-    cancel gracefully.
-    """
-    results, diff = time_quad_ex
+    '''
+    Verify we can cancel midway through the quad example and all
+    actors cancel gracefully.
+
+    '''
+    results, diff = time_quad_ex(
     delay = max(diff - cancel_delay, 0)
     results = trio.run(cancel_after, delay, reg_addr)
+
     system = platform.system()
     if system in ('Windows', 'Darwin') and results is not None:
         # In CI envoirments it seems later runs are quicker then the first
