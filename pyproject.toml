@@ -61,7 +61,7 @@ dev = [
 ]
 devx = [
   # `tractor.devx` tooling
-  #"greenback>=1.2.1,<2",
+  "greenback>=1.2.1,<2",
   "stackscope>=0.2.2,<0.3",
   # ^ requires this?
   "typing-extensions>=4.14.1",
