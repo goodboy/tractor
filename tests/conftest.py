@@ -23,6 +23,7 @@ pytest_plugins: list[str] = [
     'tractor._testing.pytest',
 ]
 
+_non_linux: bool = platform.system() != 'Linux'
 
 # Sending signal.SIGINT on subprocess fails on windows. Use CTRL_* alternatives
 if platform.system() == 'Windows':
@@ -150,6 +151,7 @@ def daemon(
     testdir: pytest.Pytester,
     reg_addr: tuple[str, int],
     tpt_proto: str,
+    ci_env: bool,
 
 ) -> subprocess.Popen:
     '''
@@ -197,6 +199,13 @@ def daemon(
     time.sleep(_PROC_SPAWN_WAIT)
 
     assert not proc.returncode
+    # TODO! we should poll for the registry socket-bind to take place
+    # and only once that's done yield to the requester!
+    # -[ ] use the `._root.open_root_actor()`::`ping_tpt_socket()`
+    #      closure!
+    if _non_linux and ci_env:
+        time.sleep(1)
+
     yield proc
     sig_prog(proc, _INT_SIGNAL)
 
