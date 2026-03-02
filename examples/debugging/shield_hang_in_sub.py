@@ -3,6 +3,7 @@ Verify we can dump a `stackscope` tree on a hang.
 
 '''
 import os
+import platform
 import signal
 
 import trio
@@ -31,13 +32,26 @@ async def main(
     from_test: bool = False,
 ) -> None:
 
+    if platform.system() != 'Darwin':
+        tpt = 'uds'
+    else:
+        # XXX, precisely we can't use pytest's tmp-path generation
+        # for tests.. apparently because:
+        #
+        # > The OSError: AF_UNIX path too long in macOS Python occurs
+        # > because the path to the Unix domain socket exceeds the
+        # > operating system's maximum path length limit (around 104
+        #
+        # WHICH IS just, wtf hillarious XD
+        tpt = 'tcp'
+
     async with (
         tractor.open_nursery(
             debug_mode=True,
             enable_stack_on_sig=True,
             # maybe_enable_greenback=False,
             loglevel='devx',
-            enable_transports=['uds'],
+            enable_transports=[tpt],
         ) as an,
     ):
         ptl: tractor.Portal  = await an.start_actor(
