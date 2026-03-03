@@ -293,7 +293,7 @@ def do_ctlc(
             time.sleep(delay)
             child.expect(
                 PROMPT,
-                # timeout=1,  # TODO? if needed
+                timeout=(child.timeout * 2) if _ci_env else child.timeout,
             )
             before = str(child.before.decode())
             time.sleep(delay)
