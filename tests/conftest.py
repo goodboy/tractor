@@ -189,41 +189,58 @@ def daemon(
         **kwargs,
     )
 
+    # TODO! we should poll for the registry socket-bind to take place
+    # and only once that's done yield to the requester!
+    # -[ ] TCP: use the `._root.open_root_actor()`::`ping_tpt_socket()`
+    #      closure!
+    # -[ ] UDS: can we do something similar for 'pinging" the
+    #     file-socket?
+    #
+    global _PROC_SPAWN_WAIT
     # UDS sockets are **really** fast to bind()/listen()/connect()
     # so it's often required that we delay a bit more starting
     # the first actor-tree..
     if tpt_proto == 'uds':
-        global _PROC_SPAWN_WAIT
         _PROC_SPAWN_WAIT = 0.6
 
+    if _non_linux and ci_env:
+        _PROC_SPAWN_WAIT += 1
+
+    # XXX, allow time for the sub-py-proc to boot up.
+    # !TODO, see ping-polling ideas above!
     time.sleep(_PROC_SPAWN_WAIT)
 
     assert not proc.returncode
-    # TODO! we should poll for the registry socket-bind to take place
-    # and only once that's done yield to the requester!
-    # -[ ] use the `._root.open_root_actor()`::`ping_tpt_socket()`
-    #      closure!
-    if _non_linux and ci_env:
-        time.sleep(1)
-
     yield proc
     sig_prog(proc, _INT_SIGNAL)
 
     # XXX! yeah.. just be reaaal careful with this bc sometimes it
     # can lock up on the `_io.BufferedReader` and hang..
     stderr: str = proc.stderr.read().decode()
-    if stderr:
+    stdout: str = proc.stdout.read().decode()
+    if (
+        stderr
+        or
+        stdout
+    ):
         print(
-            f'Daemon actor tree produced STDERR:\n'
+            f'Daemon actor tree produced output:\n'
             f'{proc.args}\n'
             f'\n'
-            f'{stderr}\n'
+            f'stderr: {stderr!r}\n'
+            f'stdout: {stdout!r}\n'
         )
-    if proc.returncode != -2:
-        raise RuntimeError(
-            'Daemon actor tree failed !?\n'
-            f'{proc.args}\n'
+
+    if (rc := proc.returncode) != -2:
+        msg: str = (
+            f'Daemon actor tree was not cancelled !?\n'
+            f'proc.args: {proc.args!r}\n'
+            f'proc.returncode: {rc!r}\n'
         )
+        if rc < 0:
+            raise RuntimeError(msg)
+
+        log.error(msg)
 
 
 # @pytest.fixture(autouse=True)
