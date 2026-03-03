@@ -21,6 +21,7 @@ cancellation during REPL interaction.
 
 '''
 from __future__ import annotations
+import platform
 from typing import (
     TYPE_CHECKING,
 )
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
 
 log = get_logger()
 
+_is_macos: bool = platform.system() == 'Darwin'
 _ctlc_ignore_header: str = (
     'Ignoring SIGINT while debug REPL in use'
 )
@@ -300,6 +302,11 @@ def sigint_shield(
         # XXX: yah, mega hack, but how else do we catch this madness XD
         if (
             repl.shname == 'xonsh'
+            or (
+                repl.shname == 'bash'
+                and
+                _is_macos
+            )
         ):
             flush_status += (
                 '-> ALSO re-flushing due to `xonsh`..\n'
