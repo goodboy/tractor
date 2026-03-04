@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Write(.claude/*commit_msg*)",
+      "Write(.claude/git_commit_msg_LATEST.md)",
+      "Bash(date *)",
+      "Bash(cp .claude/*)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git status)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
