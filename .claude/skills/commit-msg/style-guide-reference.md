@@ -11,7 +11,7 @@ clarity about what changed and why.
 ## Subject Line Format
 
 ### Length and Structure
-- Target: ~49 chars (avg: 48.7, max: 50 preferred)
+- Target: ~50 chars with a hard-max of 67.
 - Use backticks around code elements (72.2% of commits)
 - Rarely use colons (5.2%), except for file prefixes
 - End with '?' for uncertain changes (rare: 0.8%)
@@ -185,16 +185,14 @@ the commit msg content:
 
 ```
 (this commit msg was generated in some part by [`claude-code`][claude-code-gh])
-
 [claude-code-gh]: https://github.com/anthropics/claude-code
 ```
 
-Further, if the patch was solely or in part written by `claude`, instead
-add:
+Further, if the patch was solely or in part written
+by `claude`, instead add:
 
 ```
 (this patch was generated in some part by [`claude-code`][claude-code-gh])
-
 [claude-code-gh]: https://github.com/anthropics/claude-code
 ```
 

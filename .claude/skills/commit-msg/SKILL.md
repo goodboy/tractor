@@ -1,27 +1,41 @@
 ---
 name: commit-msg
-description: Generate git commit messages following project style.
-             Use when user wants to create a commit or asks for a commit message.
+description: >
+  Generate git commit messages following project style. Use when user
+  wants to create a commit or asks for a commit message.
+argument-hint: "[optional-scope-or-description]"
+disable-model-invocation: true
 allowed-tools:
-  - Bash
+  - Bash(git *)
+  - Bash(date *)
+  - Bash(cp *)
   - Read
+  - Grep
+  - Glob
   - Write
 ---
 
 When generating commit messages, always follow this process:
 
-1. **Gather context**: Run, `~/repos/claude_wks/commit_gen.py`
-   to get staged changes, recent commits, and style guide rules
+0. **Check for staged changes**: if `git diff --staged` is
+   empty, STOP and tell the user "nothing is staged!" with
+   a reminder to `git add` before invoking this skill.
 
-2. **Analyze the diff**: Understand what files changed and the nature
-   of the changes (new feature, bug fix, refactor, etc.)
+1. **Gather context** from the staged diff and recent
+   history:
+
+   - Staged changes: !`git diff --staged --stat`
+   - Recent commits: !`git log --oneline -5`
+
+2. **Analyze the diff**: understand what files changed and
+   the nature of the changes (new feature, bug fix, refactor,
+   etc.)
 
 3. **Write the commit message** following these rules:
 
 **Use the accompanying style guide:**
-- Use the style guide `./style-guide-reference.md` for more details
-  on how to write the message based on analysis of past commits in
-  this repo.
+- See [style-guide-reference.md](style-guide-reference.md)
+  for detailed analysis of past commits in this repo.
 
 **Subject Line Format:**
 - Present tense verbs: Add, Drop, Fix, Use, Move, Adjust, etc.
@@ -46,9 +60,10 @@ When generating commit messages, always follow this process:
 - Minor tweaks: "Adjust `behavior` in `component`"
 
 4. **Write to TWO files**:
-   - `.claude/<timestamp>_<hash>_commit_msg.md` (timestamp from `date
-     --iso-8601=seconds`, hash from `git log -1 --format=%h` first
-     7 chars)
+   - `.claude/<timestamp>_<hash>_commit_msg.md`
+     * with `<timestamp>` from `date -u +%Y%m%dT%H%M%SZ` or similar
+       filesystem-safe format.
+     * and `<hash>` from `git log -1 --format=%h` first 7 chars.
    - `.claude/git_commit_msg_LATEST.md` (overwrite)
 
 5. **Always include credit footer**:
@@ -56,16 +71,14 @@ When generating commit messages, always follow this process:
 When no part of the patch was written by `claude`,
 ```
 (this commit msg was generated in some part by [`claude-code`][claude-code-gh])
-
 [claude-code-gh]: https://github.com/anthropics/claude-code
 ```
 
-and when some or all of the patch was written by `claude` instead
-use,
+when some or all of the patch was written by `claude`
+instead use,
 
 ```
 (this patch was generated in some part by [`claude-code`][claude-code-gh])
-
 [claude-code-gh]: https://github.com/anthropics/claude-code
 ```
 
