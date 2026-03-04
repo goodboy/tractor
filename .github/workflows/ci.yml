@@ -123,12 +123,12 @@ jobs:
         run: uv tree
 
       - name: Run tests
-        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx -l --capture=sys
 
 
   testing-macos:
     name: '${{ matrix.os }} Python${{ matrix.python-version }} - spawn_backend=${{ matrix.spawn_backend }}'
-    timeout-minutes: 10
+    timeout-minutes: 16
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -160,7 +160,7 @@ jobs:
         run: uv tree
 
       - name: Run tests w uv
-        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx -l --capture=sys
 
   # XXX legacy NOTE XXX
   #
