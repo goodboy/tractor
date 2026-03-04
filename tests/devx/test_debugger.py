@@ -37,6 +37,9 @@ from .conftest import (
     in_prompt_msg,
     assert_before,
 )
+from ..conftest import (
+    _ci_env,
+)
 
 if TYPE_CHECKING:
     from ..conftest import PexpectSpawner
@@ -259,6 +262,11 @@ def test_subactor_error(
     child.expect(EOF)
 
 
+# skip on non-Linux CI
+@pytest.mark.ctlcs_bish(
+    _non_linux,
+    _ci_env,
+)
 def test_subactor_breakpoint(
     spawn,
     ctlc: bool,
