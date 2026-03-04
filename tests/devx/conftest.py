@@ -3,8 +3,9 @@
 
 '''
 from __future__ import annotations
-import time
+import platform
 import signal
+import time
 from typing import (
     Callable,
     TYPE_CHECKING,
@@ -31,6 +32,9 @@ from ..conftest import (
 
 if TYPE_CHECKING:
     from pexpect import pty_spawn
+
+
+_non_linux: bool = platform.system() != 'Linux'
 
 
 def pytest_configure(config):
@@ -94,7 +98,10 @@ def spawn(
                 cmd,
                 **mkcmd_kwargs,
             ),
-            expect_timeout=3,
+            expect_timeout=(
+                6 if _non_linux and _ci_env
+                else 3
+            ),
             # preexec_fn=unset_colors,
             # ^TODO? get `pytest` core to expose underlying
             # `pexpect.spawn()` stuff?
