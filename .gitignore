@@ -109,16 +109,19 @@ venv.bak/
 # any commit-msg gen tmp files
 .claude/*_commit_*.md
 .claude/*_commit*.toml
+.claude/*_commit*.txt
 
 # nix develop --profile .nixdev
 .nixdev*
 
 # :Obsession .
 Session.vim
-# gitea local `.md`-files
-# TODO? would this be handy to also commit and sync with
-# wtv git hosting service tho?
+# `gish` local `.md`-files
+# TODO? better all around automation!
+# -[ ] it'd be handy to also commit and sync with wtv git service?
+# -[ ] everything should be put under a `.gish/` no?
 gitea/
+gh/
 
 # ------ macOS ------
 # Finder metadata
