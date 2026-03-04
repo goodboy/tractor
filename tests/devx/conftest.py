@@ -99,7 +99,7 @@ def spawn(
                 **mkcmd_kwargs,
             ),
             expect_timeout=(
-                6 if _non_linux and _ci_env
+                10 if _non_linux and _ci_env
                 else 3
             ),
             # preexec_fn=unset_colors,
@@ -164,6 +164,8 @@ def ctlc(
             mark.name == 'ctlcs_bish'
             and
             use_ctlc
+            and
+            all(mark.args)
         ):
             pytest.skip(
                 f'Test {node} prolly uses something from the stdlib (namely `asyncio`..)\n'

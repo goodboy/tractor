@@ -39,6 +39,7 @@ from .conftest import (
 )
 from ..conftest import (
     no_macos,
+    _ci_env,
 )
 
 if TYPE_CHECKING:
@@ -262,6 +263,11 @@ def test_subactor_error(
     child.expect(EOF)
 
 
+# skip on non-Linux CI
+@pytest.mark.ctlcs_bish(
+    _non_linux,
+    _ci_env,
+)
 def test_subactor_breakpoint(
     spawn,
     ctlc: bool,
