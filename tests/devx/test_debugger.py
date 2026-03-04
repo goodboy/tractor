@@ -198,6 +198,11 @@ def test_root_actor_bp_forever(
     child.expect(EOF)
 
 
+# skip on non-Linux CI
+@pytest.mark.ctlcs_bish(
+    _non_linux,
+    _ci_env,
+)
 @pytest.mark.parametrize(
     'do_next',
     (True, False),
@@ -969,6 +974,11 @@ def test_different_debug_mode_per_actor(
     )
 
 
+# skip on non-Linux CI
+@pytest.mark.ctlcs_bish(
+    _non_linux,
+    _ci_env,
+)
 def test_post_mortem_api(
     spawn,
     ctlc: bool,
