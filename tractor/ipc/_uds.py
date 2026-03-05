@@ -24,7 +24,6 @@ from contextlib import (
 from pathlib import Path
 import os
 import sys
-import socket as stdlib_socket
 from socket import (
     AF_UNIX,
     SOCK_STREAM,
@@ -361,10 +360,27 @@ def get_peer_pid(sock) -> int|None:
     NOTE, should work on MacOS (and others?).
 
     '''
-    # try to get the peer PID
+    # try to get the peer PID using a naive soln found from,
     # https://stackoverflow.com/a/67971484
+    #
+    # NOTE, a more correct soln is likely needed here according to
+    # the complaints of `copilot` which led to digging into the
+    # underlying `go`lang issue linked from the above SO answer,
+
+    # XXX, darwin-xnu kernel srces defining these constants,
+    # - SOL_LOCAL
+    # |_https://github.com/apple/darwin-xnu/blob/main/bsd/sys/un.h#L85
+    # - LOCAL_PEERPID
+    # |_https://github.com/apple/darwin-xnu/blob/main/bsd/sys/un.h#L89
+    #
+    SOL_LOCAL: int = 0
+    LOCAL_PEERPID: int = 0x002
+
     try:
-        pid: int = sock.getsockopt(0, 2)
+        pid: int = sock.getsockopt(
+            SOL_LOCAL,
+            LOCAL_PEERPID,
+        )
         return pid
     except socket_error as e:
         log.exception(
