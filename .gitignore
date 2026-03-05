@@ -102,3 +102,30 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# all files under
+.git/
+
+# any commit-msg gen tmp files
+.claude/*_commit_*.md
+.claude/*_commit*.toml
+.claude/*_commit*.txt
+
+# nix develop --profile .nixdev
+.nixdev*
+
+# :Obsession .
+Session.vim
+# `gish` local `.md`-files
+# TODO? better all around automation!
+# -[ ] it'd be handy to also commit and sync with wtv git service?
+# -[ ] everything should be put under a `.gish/` no?
+gitea/
+gh/
+
+# ------ macOS ------
+# Finder metadata
+**/.DS_Store
+
+# LLM conversations that should remain private
+docs/conversations/
