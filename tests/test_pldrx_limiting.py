@@ -7,7 +7,6 @@ related settings around IPC contexts.
 from contextlib import (
     asynccontextmanager as acm,
 )
-import platform
 
 from msgspec import (
     Struct,
@@ -236,11 +235,11 @@ async def child(
     'started_value',
     [
         10,
-        # PldMsg(field='yo'),
+        PldMsg(field='yo'),
     ],
     ids=[
         'Started[invalid-10]',
-        # 'Started[valid-PldMsg]',
+        'Started[valid-PldMsg]',
     ],
 )
 @pytest.mark.parametrize(

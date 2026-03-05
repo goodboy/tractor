@@ -84,7 +84,7 @@ async def simple_rpc_with_forloop(
     [simple_rpc, simple_rpc_with_forloop],
 )
 def test_simple_rpc(
-    server_func: Callabe,
+    server_func: Callable,
     use_async_for: bool,
 ):
     '''

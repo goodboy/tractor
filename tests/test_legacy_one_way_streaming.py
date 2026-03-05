@@ -242,7 +242,7 @@ def time_quad_ex(
 ):
     non_linux: bool = (_sys := platform.system()) != 'Linux'
     if ci_env and non_linux:
-        pytest.skip("Test is too flaky on {_sys!r} in CI")
+        pytest.skip(f'Test is too flaky on {_sys!r} in CI')
 
     if spawn_backend == 'mp':
         '''
