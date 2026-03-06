@@ -123,7 +123,7 @@ jobs:
         run: uv tree
 
       - name: Run tests
-        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx -l --capture=sys
+        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
 
 
   testing-macos:
@@ -160,7 +160,7 @@ jobs:
         run: uv tree
 
       - name: Run tests w uv
-        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx -l --capture=sys
+        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
 
   # XXX legacy NOTE XXX
   #
