@@ -18,6 +18,7 @@ from tractor._testing import (
 )
 
 _non_linux: bool = platform.system() != 'Linux'
+_friggin_macos: bool = platform.system() == 'Darwin'
 
 
 @pytest.fixture
@@ -122,8 +123,25 @@ def test_example(
     '''
     ex_file: str = os.path.join(*example_script)
 
-    if 'rpc_bidir_streaming' in ex_file and sys.version_info < (3, 9):
+    if (
+        'rpc_bidir_streaming' in ex_file
+        and
+        sys.version_info < (3, 9)
+    ):
         pytest.skip("2-way streaming example requires py3.9 async with syntax")
+
+    if (
+        'full_fledged_streaming_service' in ex_file
+        and
+        _friggin_macos
+        and
+        ci_env
+    ):
+        pytest.skip(
+            'Streaming example is too flaky in CI\n'
+            'AND their competitor runs this CI service..\n'
+            'This test does run just fine "in person" however..'
+        )
 
     timeout: float = (
         60
