@@ -62,6 +62,13 @@ def test_root_passes_tpt_to_sub(
     reg_addr: tuple,
     debug_mode: bool,
 ):
+    # XXX NOTE, the `reg_addr` addr won't be the same type as the
+    # `tpt_proto_key` would deliver here unless you pass `--tpt-proto
+    # <tpt_proto_key>` on the CLI.
+    #
+    # if tpt_proto_key == 'uds':
+    #     breakpoint()
+
     async def main():
         async with tractor.open_nursery(
             enable_transports=[tpt_proto_key],
