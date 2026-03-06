@@ -126,7 +126,7 @@ def test_example(
         pytest.skip("2-way streaming example requires py3.9 async with syntax")
 
     timeout: float = (
-        36
+        60
         if ci_env and _non_linux
         else 16
     )
