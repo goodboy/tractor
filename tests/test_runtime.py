@@ -3,6 +3,7 @@ Verifying internal runtime state and undocumented extras.
 
 """
 import os
+import platform
 
 import pytest
 import trio
@@ -10,6 +11,7 @@ import tractor
 
 from tractor._testing import tractor_test
 
+_non_linux: bool = platform.system() != 'Linux'
 
 _file_path: str = ''
 
@@ -51,8 +53,12 @@ async def test_lifetime_stack_wipes_tmpfile(
     assert child_tmp_file.exists()
     path = str(child_tmp_file)
 
+    timeout: float = (
+        2 if _non_linux
+        else 0.5
+    )
     try:
-        with trio.move_on_after(0.5):
+        with trio.move_on_after(timeout):
             async with tractor.open_nursery() as n:
                     await (  # inlined portal
                         await n.run_in_actor(
