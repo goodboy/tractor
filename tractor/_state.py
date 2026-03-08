@@ -104,7 +104,7 @@ def current_actor(
             msg += (
                 f'Apparently the lact active actor was\n'
                 f'|_{last}\n'
-                f'|_{last.uid}\n'
+                f'|_{last.aid.uid}\n'
             )
         # no actor runtime has (as of yet) ever been started for
         # this process.

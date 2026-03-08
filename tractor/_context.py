@@ -463,10 +463,11 @@ class Context:
 
     #     self._cancel_called = val
 
+    # TODO, use the `Actor.aid: Aid` instead!
     @property
     def canceller(self) -> tuple[str, str]|None:
         '''
-        `Actor.uid: tuple[str, str]` of the (remote)
+        `Actor.aid.uid: tuple[str, str]` of the (remote)
         actor-process who's task was cancelled thus causing this
         (side of the) context to also be cancelled.
 
@@ -499,12 +500,12 @@ class Context:
         if from_uid := re.src_uid:
             from_uid: tuple = tuple(from_uid)
 
-        our_uid: tuple = self._actor.uid
+        our_uid: tuple = self._actor.aid.uid
         our_canceller = self.canceller
 
         return bool(
             isinstance((ctxc := re), ContextCancelled)
-            and from_uid == self.chan.uid
+            and from_uid == self.chan.aid.uid
             and ctxc.canceller == our_uid
             and our_canceller == our_uid
         )
@@ -515,7 +516,7 @@ class Context:
         Records whether the task on the remote side of this IPC
         context acknowledged a cancel request via a relayed
         `ContextCancelled` with the `.canceller` attr set to the
-        `Actor.uid` of the local actor who's task entered
+        `Actor.aid.uid` of the local actor who's task entered
         `Portal.open_context()`.
 
         This will only be `True` when `.cancel()` is called and
@@ -789,8 +790,8 @@ class Context:
         # appropriately.
         log.runtime(
             'Setting remote error for ctx\n\n'
-            f'<= {self.peer_side!r}: {self.chan.uid}\n'
-            f'=> {self.side!r}: {self._actor.uid}\n\n'
+            f'<= {self.peer_side!r}: {self.chan.aid.reprol()}\n'
+            f'=> {self.side!r}: {self._actor.aid.reprol()}\n\n'
             f'{error!r}'
         )
         self._remote_error: BaseException = error
@@ -811,7 +812,7 @@ class Context:
             # cancelled.
             #
             # !TODO, switching to `Actor.aid` here!
-            if (canc := error.canceller) == self._actor.uid:
+            if (canc := error.canceller) == self._actor.aid.uid:
                 whom: str = 'us'
                 self._canceller = canc
             else:
@@ -1036,7 +1037,7 @@ class Context:
         ---------
         - after the far end cancels, the `.cancel()` calling side
           should receive a `ContextCancelled` with the
-          `.canceller: tuple` uid set to the current `Actor.uid`.
+          `.canceller: tuple` uid set to the current `Actor.aid.uid`.
 
         - timeout (quickly) on failure to rx this ACK error-msg in
           an attempt to sidestep 2-generals when the transport
@@ -1065,9 +1066,9 @@ class Context:
         )
         reminfo: str = (
             # ' =>\n'
-            # f'Context.cancel() => {self.chan.uid}\n'
+            # f'Context.cancel() => {self.chan.aid.uid}\n'
             f'\n'
-            f'c)=> {self.chan.uid}\n'
+            f'c)=> {self.chan.aid.reprol()}\n'
             f'   |_[{self.dst_maddr}\n'
             f'     >> {self.repr_rpc}\n'
             # f'    >> {self._nsf}() -> {codec}[dict]:\n\n'
@@ -1211,7 +1212,7 @@ class Context:
 
         '''
         __tracebackhide__: bool = hide_tb
-        peer_uid: tuple = self.chan.uid
+        peer_uid: tuple = self.chan.aid.uid
 
         # XXX NOTE XXX: `ContextCancelled`/`StreamOverrun` absorption
         # for "graceful cancellation" case(s):
@@ -1228,7 +1229,7 @@ class Context:
         # (`ContextCancelled`) as an expected
         # error-msg-is-cancellation-ack IFF said
         # `remote_error: ContextCancelled` has `.canceller`
-        # set to the `Actor.uid` of THIS task (i.e. the
+        # set to the `Actor.aid.uid` of THIS task (i.e. the
         # cancellation requesting task's actor is the actor
         # checking whether it should absorb the ctxc).
         self_ctxc: bool = self._is_self_cancelled(remote_error)
@@ -1679,7 +1680,7 @@ class Context:
 
         elif self._started_called:
             raise RuntimeError(
-                f'called `.started()` twice on context with {self.chan.uid}'
+                f'called `.started()` twice on context with {self.chan.aid.uid}'
             )
 
         started_msg = Started(
@@ -1812,7 +1813,7 @@ class Context:
         '''
         cid: str = self.cid
         chan: Channel = self.chan
-        from_uid: tuple[str, str]  = chan.uid
+        from_uid: tuple[str, str]  = chan.aid.uid
         send_chan: trio.MemorySendChannel = self._send_chan
         nsf: NamespacePath = self._nsf
 
@@ -1953,20 +1954,22 @@ class Context:
             # overrun state and that msg isn't stuck in an
             # overflow queue what happens?!?
 
-            local_uid = self._actor.uid
+            local_aid = self._actor.aid
             txt: str = (
                 'on IPC context:\n'
 
                 f'<= sender: {from_uid}\n'
                 f'  |_ {self._nsf}()\n\n'
 
-                f'=> overrun: {local_uid}\n'
+                f'=> overrun: {local_aid.reprol()!r}\n'
                 f'  |_cid: {cid}\n'
                 f'  |_task: {self._task}\n'
             )
             if not self._stream_opened:
                 txt += (
-                    f'\n*** No stream open on `{local_uid[0]}` side! ***\n\n'
+                    f'\n'
+                    f'*** No stream open on `{local_aid.name}` side! ***\n'
+                    f'\n'
                     f'{msg}\n'
                 )
 
@@ -2115,7 +2118,11 @@ async def open_context_from_portal(
     # XXX NOTE XXX: currenly we do NOT allow opening a contex
     # with "self" since the local feeder mem-chan processing
     # is not built for it.
-    if (uid := portal.channel.uid) == portal.actor.uid:
+    if (
+        (uid := portal.channel.aid.uid)
+        ==
+        portal.actor.aid.uid
+    ):
         raise RuntimeError(
             '** !! Invalid Operation !! **\n'
             'Can not open an IPC ctx with the local actor!\n'
@@ -2329,7 +2336,7 @@ async def open_context_from_portal(
             and
             ctxc is ctx._remote_error
             and
-            ctxc.canceller == portal.actor.uid
+            ctxc.canceller == portal.actor.aid.uid
         ):
             log.cancel(
                 f'Context (cid=[{ctx.cid[-6:]}..] cancelled gracefully with:\n'
@@ -2406,7 +2413,7 @@ async def open_context_from_portal(
         logmeth(msg)
 
         if debug_mode():
-            # async with debug.acquire_debug_lock(portal.actor.uid):
+            # async with debug.acquire_debug_lock(portal.actor.aid.uid):
             #     pass
             # TODO: factor ^ into below for non-root cases?
             #
