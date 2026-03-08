@@ -9,7 +9,7 @@ name = "tractor"
 version = "0.1.0a6dev0"
 description = 'structured concurrent `trio`-"actors"'
 authors = [{ name = "Tyler Goodlet", email = "goodboy_foss@protonmail.com" }]
-requires-python = ">= 3.11"
+requires-python = ">=3.12, <3.14"
 readme = "docs/README.rst"
 license = "AGPL-3.0-or-later"
 keywords = [
@@ -28,7 +28,8 @@ classifiers = [
   "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
@@ -42,7 +43,7 @@ dependencies = [
   "wrapt>=1.16.0,<2",
   "colorlog>=6.8.2,<7",
   # built-in multi-actor `pdb` REPL
-  "pdbp>=1.6,<2", # windows only (from `pdbp`)
+  "pdbp>=1.8.2,<2", # windows only (from `pdbp`)
   # typed IPC msging
   "msgspec>=0.19.0",
   "cffi>=1.17.1",
@@ -74,7 +75,7 @@ testing = [
 repl = [
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
-  "xonsh>=0.19.2",
+  "xonsh>=0.22.2",
   "psutil>=7.0.0",
 ]
 lint = [
@@ -86,15 +87,19 @@ lint = [
 #   "sphinx>="
 #   "sphinx_book_theme>="
 # ]
-
 # ------ dependency-groups ------
 
-# ------ dependency-groups ------
 
 [tool.uv.sources]
 # XXX NOTE, only for @goodboy's hacking on `pprint(sort_dicts=False)`
 # for the `pp` alias..
-# pdbp = { path = "../pdbp", editable = true }
+
+# [tool.uv.sources.pdbp]
+# XXX, in case we need to tmp patch again.
+# git = "https://github.com/goodboy/pdbp.git"
+# branch ="repair_stack_trace_frame_indexing"
+# path = "../pdbp"
+# editable = true
 
 # ------ tool.uv.sources ------
 # TODO, distributed (multi-host) extensions
@@ -156,6 +161,7 @@ all_bullets = true
 
 [tool.pytest.ini_options]
 minversion = '6.0'
+# https://docs.pytest.org/en/stable/reference/reference.html#configuration-options
 testpaths = [
   'tests'
 ]
@@ -166,10 +172,17 @@ addopts = [
   '--import-mode=importlib',
   # don't show frickin captured logs AGAIN in the report..
   '--show-capture=no',
+
+  # disable `xonsh` plugin
+  # https://docs.pytest.org/en/stable/how-to/plugins.html#disabling-plugins-from-autoloading
+  # https://docs.pytest.org/en/stable/how-to/plugins.html#deactivating-unregistering-a-plugin-by-name
+  '-p no:xonsh'
 ]
 log_cli = false
 # TODO: maybe some of these layout choices?
 # https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
 # pythonpath = "src"
 
+# https://docs.pytest.org/en/stable/reference/reference.html#confval-console_output_style
+console_output_style = 'progress'
 # ------ tool.pytest ------
