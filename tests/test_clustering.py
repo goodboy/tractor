@@ -56,25 +56,26 @@ async def worker(
             print(msg)
             assert msg == MESSAGE
 
-        # TODO: does this ever cause a hang
+        # ?TODO, does this ever cause a hang?
         # assert 0
 
 
 @tractor_test
-async def test_streaming_to_actor_cluster() -> None:
+async def test_streaming_to_actor_cluster():
 
-    async with (
-        open_actor_cluster(modules=[__name__]) as portals,
+    with trio.fail_after(6):
+        async with (
+            open_actor_cluster(modules=[__name__]) as portals,
 
-        gather_contexts(
-            mngrs=[p.open_context(worker) for p in portals.values()],
-        ) as contexts,
+            gather_contexts(
+                mngrs=[p.open_context(worker) for p in portals.values()],
+            ) as contexts,
 
-        gather_contexts(
-            mngrs=[ctx[0].open_stream() for ctx in contexts],
-        ) as streams,
+            gather_contexts(
+                mngrs=[ctx[0].open_stream() for ctx in contexts],
+            ) as streams,
 
-    ):
-        with trio.move_on_after(1):
-            for stream in itertools.cycle(streams):
-                await stream.send(MESSAGE)
+        ):
+            with trio.move_on_after(1):
+                for stream in itertools.cycle(streams):
+                    await stream.send(MESSAGE)
