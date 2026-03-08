@@ -545,7 +545,13 @@ class MsgpackUDSStream(MsgpackTransport):
         # NOTE known to at least works on,
         # - macos
         else:
-            peer_pid: int = get_peer_pid(sock)
+            peer_pid: int|None = get_peer_pid(sock)
+            if peer_pid is None:
+                log.warning(
+                    f'Unable to get peer PID?\n'
+                    f'sock: {sock!r}\n'
+                    f'peer_pid: {peer_pid!r}\n'
+                )
 
         filedir, filename = unwrap_sockpath(sock_path)
         laddr = UDSAddress(
