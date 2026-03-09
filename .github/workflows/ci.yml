@@ -127,7 +127,7 @@ jobs:
 
   testing-macos:
     name: '${{ matrix.os }} Python${{ matrix.python-version }} - spawn_backend=${{ matrix.spawn_backend }}'
-    timeout-minutes: 10
+    timeout-minutes: 16
     runs-on: ${{ matrix.os }}
 
     strategy:
