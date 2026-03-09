@@ -6,23 +6,16 @@ msg patterns.
 from __future__ import annotations
 from typing import (
     Callable,
-    TYPE_CHECKING,
 )
 import pytest
 import trio
 import tractor
-
-if TYPE_CHECKING:
-    from tractor import (
-        Portal,
-    )
 
 
 @tractor.context
 async def simple_rpc(
     ctx: tractor.Context,
     data: int,
-
 ) -> None:
     '''
     Test a small ping-pong server.
@@ -51,7 +44,6 @@ async def simple_rpc(
 async def simple_rpc_with_forloop(
     ctx: tractor.Context,
     data: int,
-
 ) -> None:
     '''
     Same as previous test but using `async for` syntax/api.
@@ -77,15 +69,25 @@ async def simple_rpc_with_forloop(
 
 @pytest.mark.parametrize(
     'use_async_for',
-    [True, False],
+    [
+        True,
+        False,
+    ],
+    ids='use_async_for={}'.format,
 )
 @pytest.mark.parametrize(
     'server_func',
-    [simple_rpc, simple_rpc_with_forloop],
+    [
+        simple_rpc,
+        simple_rpc_with_forloop,
+    ],
+    ids='server_func={}'.format,
 )
 def test_simple_rpc(
-    server_func: Callabe,
+    server_func: Callable,
     use_async_for: bool,
+    loglevel: str,
+    debug_mode: bool,
 ):
     '''
     The simplest request response pattern.
@@ -93,8 +95,11 @@ def test_simple_rpc(
     '''
     async def main():
         with trio.fail_after(6):
-            async with tractor.open_nursery() as an:
-                portal: Portal = await an.start_actor(
+            async with tractor.open_nursery(
+                loglevel=loglevel,
+                debug_mode=debug_mode,
+            ) as an:
+                portal: tractor.Portal = await an.start_actor(
                     'rpc_server',
                     enable_modules=[__name__],
                 )
