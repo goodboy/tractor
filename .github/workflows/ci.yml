@@ -74,9 +74,9 @@ jobs:
   #       run: mypy tractor/ --ignore-missing-imports --show-traceback
 
 
-  testing-linux:
+  testing:
     name: '${{ matrix.os }} Python${{ matrix.python-version }} - spawn_backend=${{ matrix.spawn_backend }}'
-    timeout-minutes: 10
+    timeout-minutes: 16
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -84,7 +84,7 @@ jobs:
       matrix:
         os: [
           ubuntu-latest,
-          # macos-latest,  # ?TODO, better?
+          macos-latest,
         ]
         python-version: [
           '3.13',
@@ -123,42 +123,6 @@ jobs:
         run: uv tree
 
       - name: Run tests
-        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
-
-  testing-macos:
-    name: '${{ matrix.os }} Python${{ matrix.python-version }} - spawn_backend=${{ matrix.spawn_backend }}'
-    timeout-minutes: 16
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [
-          macos-latest,
-        ]
-        python-version: [
-          '3.13',
-          # '3.14',
-        ]
-        spawn_backend: [
-          'trio',
-        ]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 'Install uv + py-${{ matrix.python-version }}'
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install the project w uv
-        run: uv sync --all-extras --dev
-
-      - name: List deps tree
-        run: uv tree
-
-      - name: Run tests w uv
         run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
 
   # XXX legacy NOTE XXX
