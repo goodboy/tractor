@@ -47,12 +47,11 @@ async def sleep_and_err(
 
     # just signature placeholders for compat with
     # ``to_asyncio.open_channel_from()``
-    to_trio: trio.MemorySendChannel|None = None,
-    from_trio: asyncio.Queue|None = None,
+    chan: to_asyncio.LinkedTaskChannel|None = None,
 
 ):
-    if to_trio:
-        to_trio.send_nowait('start')
+    if chan:
+        chan.started_nowait('start')
 
     await asyncio.sleep(sleep_for)
     assert 0
@@ -399,7 +398,7 @@ async def no_to_trio_in_args():
 
 async def push_from_aio_task(
     sequence: Iterable,
-    to_trio: trio.abc.SendChannel,
+    chan: to_asyncio.LinkedTaskChannel,
     expect_cancel: False,
     fail_early: bool,
     exit_early: bool,
@@ -407,15 +406,12 @@ async def push_from_aio_task(
 ) -> None:
 
     try:
-        # print('trying breakpoint')
-        # breakpoint()
-
         # sync caller ctx manager
-        to_trio.send_nowait(True)
+        chan.started_nowait(True)
 
         for i in sequence:
             print(f'asyncio sending {i}')
-            to_trio.send_nowait(i)
+            chan.send_nowait(i)
             await asyncio.sleep(0.001)
 
             if (
@@ -1109,13 +1105,12 @@ async def raise_before_started(
 ) -> None:
     '''
     `asyncio.Task` entry point which RTEs before calling
-    `to_trio.send_nowait()`.
+    `chan.started_nowait()`.
 
     '''
     await asyncio.sleep(0.2)
     raise RuntimeError('Some shite went wrong before `.send_nowait()`!!')
 
-    # to_trio.send_nowait('Uhh we shouldve RTE-d ^^ ??')
     chan.started_nowait('Uhh we shouldve RTE-d ^^ ??')
     await asyncio.sleep(float('inf'))
 

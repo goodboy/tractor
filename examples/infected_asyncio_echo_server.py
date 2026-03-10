@@ -11,21 +11,17 @@ import tractor
 
 
 async def aio_echo_server(
-    to_trio: trio.MemorySendChannel,
-    from_trio: asyncio.Queue,
-
+    chan: tractor.to_asyncio.LinkedTaskChannel,
 ) -> None:
 
     # a first message must be sent **from** this ``asyncio``
     # task or the ``trio`` side will never unblock from
     # ``tractor.to_asyncio.open_channel_from():``
-    to_trio.send_nowait('start')
+    chan.started_nowait('start')
 
-    # XXX: this uses an ``from_trio: asyncio.Queue`` currently but we
-    # should probably offer something better.
     while True:
         # echo the msg back
-        to_trio.send_nowait(await from_trio.get())
+        chan.send_nowait(await chan.get())
         await asyncio.sleep(0)
 
 

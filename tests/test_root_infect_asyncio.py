@@ -91,13 +91,12 @@ def test_infected_root_actor(
 async def sync_and_err(
     # just signature placeholders for compat with
     # ``to_asyncio.open_channel_from()``
-    to_trio: trio.MemorySendChannel,
-    from_trio: asyncio.Queue,
+    chan: tractor.to_asyncio.LinkedTaskChannel,
     ev: asyncio.Event,
 
 ):
-    if to_trio:
-        to_trio.send_nowait('start')
+    if chan:
+        chan.started_nowait('start')
 
     await ev.wait()
     raise RuntimeError('asyncio-side')
