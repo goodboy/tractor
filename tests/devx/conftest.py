@@ -3,8 +3,9 @@
 
 '''
 from __future__ import annotations
-import time
+import platform
 import signal
+import time
 from typing import (
     Callable,
     TYPE_CHECKING,
@@ -32,6 +33,17 @@ from ..conftest import (
 if TYPE_CHECKING:
     from pexpect import pty_spawn
 
+
+_non_linux: bool = platform.system() != 'Linux'
+
+
+def pytest_configure(config):
+    # register custom marks to avoid warnings see,
+    # https://docs.pytest.org/en/stable/how-to/writing_plugins.html#registering-custom-markers
+    config.addinivalue_line(
+        'markers',
+        'ctlcs_bish: test will (likely) not behave under SIGINT..'
+    )
 
 # a fn that sub-instantiates a `pexpect.spawn()`
 # and returns it.
@@ -68,7 +80,10 @@ def spawn(
 
         '''
         import os
+        # disable colored tbs
         os.environ['PYTHON_COLORS'] = '0'
+        # disable all ANSI color output
+        # os.environ['NO_COLOR'] = '1'
 
     spawned: PexpectSpawner|None = None
 
@@ -83,7 +98,10 @@ def spawn(
                 cmd,
                 **mkcmd_kwargs,
             ),
-            expect_timeout=3,
+            expect_timeout=(
+                10 if _non_linux and _ci_env
+                else 3
+            ),
             # preexec_fn=unset_colors,
             # ^TODO? get `pytest` core to expose underlying
             # `pexpect.spawn()` stuff?
@@ -146,6 +164,8 @@ def ctlc(
             mark.name == 'ctlcs_bish'
             and
             use_ctlc
+            and
+            all(mark.args)
         ):
             pytest.skip(
                 f'Test {node} prolly uses something from the stdlib (namely `asyncio`..)\n'
@@ -251,12 +271,13 @@ def assert_before(
         err_on_false=True,
         **kwargs
     )
+    return str(child.before.decode())
 
 
 def do_ctlc(
     child,
     count: int = 3,
-    delay: float = 0.1,
+    delay: float|None = None,
     patt: str|None = None,
 
     # expect repl UX to reprint the prompt after every
@@ -268,6 +289,7 @@ def do_ctlc(
 ) -> str|None:
 
     before: str|None = None
+    delay = delay or 0.1
 
     # make sure ctl-c sends don't do anything but repeat output
     for _ in range(count):
@@ -278,7 +300,10 @@ def do_ctlc(
         # if you run this test manually it works just fine..
         if expect_prompt:
             time.sleep(delay)
-            child.expect(PROMPT)
+            child.expect(
+                PROMPT,
+                timeout=(child.timeout * 2) if _ci_env else child.timeout,
+            )
             before = str(child.before.decode())
             time.sleep(delay)
 

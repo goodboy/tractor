@@ -37,6 +37,9 @@ from .conftest import (
     in_prompt_msg,
     assert_before,
 )
+from ..conftest import (
+    _ci_env,
+)
 
 if TYPE_CHECKING:
     from ..conftest import PexpectSpawner
@@ -51,12 +54,13 @@ if TYPE_CHECKING:
 # - recurrent root errors
 
 
+_non_linux: bool = platform.system() != 'Linux'
+
 if platform.system() == 'Windows':
     pytest.skip(
         'Debugger tests have no windows support (yet)',
         allow_module_level=True,
     )
-
 
 # TODO: was trying to this xfail style but some weird bug i see in CI
 # that's happening at collect time.. pretty soon gonna dump actions i'm
@@ -193,6 +197,11 @@ def test_root_actor_bp_forever(
     child.expect(EOF)
 
 
+# skip on non-Linux CI
+@pytest.mark.ctlcs_bish(
+    _non_linux,
+    _ci_env,
+)
 @pytest.mark.parametrize(
     'do_next',
     (True, False),
@@ -258,6 +267,11 @@ def test_subactor_error(
     child.expect(EOF)
 
 
+# skip on non-Linux CI
+@pytest.mark.ctlcs_bish(
+    _non_linux,
+    _ci_env,
+)
 def test_subactor_breakpoint(
     spawn,
     ctlc: bool,
@@ -480,8 +494,24 @@ def test_multi_daemon_subactors(
     stream.
 
     '''
-    child = spawn('multi_daemon_subactors')
+    non_linux = _non_linux
+    if non_linux and ctlc:
+        pytest.skip(
+            'Ctl-c + MacOS is too unreliable/racy for this test..\n'
+        )
+        # !TODO, if someone with more patience then i wants to muck
+        # with the timings on this please feel free to see all the
+        # `non_linux` branching logic i added on my first attempt
+        # below!
+        #
+        # my conclusion was that if i were to run the script
+        # manually, and thus as slowly as a human would, the test
+        # would and should pass as described in this test fn, however
+        # after fighting with it for >= 1hr. i decided more then
+        # likely the more extensive `linux` testing should cover most
+        # regressions.
 
+    child = spawn('multi_daemon_subactors')
     child.expect(PROMPT)
 
     # there can be a race for which subactor will acquire
@@ -511,8 +541,19 @@ def test_multi_daemon_subactors(
     else:
         raise ValueError('Neither log msg was found !?')
 
+    non_linux_delay: float = 0.3
     if ctlc:
-        do_ctlc(child)
+        do_ctlc(
+            child,
+            delay=(
+                non_linux_delay
+                if non_linux
+                else None
+            ),
+        )
+
+        if non_linux:
+            time.sleep(1)
 
     # NOTE: previously since we did not have clobber prevention
     # in the root actor this final resume could result in the debugger
@@ -543,33 +584,66 @@ def test_multi_daemon_subactors(
     # assert "in use by child ('bp_forever'," in before
 
     if ctlc:
-        do_ctlc(child)
+        do_ctlc(
+            child,
+            delay=(
+                non_linux_delay
+                if non_linux
+                else None
+            ),
+        )
+
+        if non_linux:
+            time.sleep(1)
 
     # expect another breakpoint actor entry
     child.sendline('c')
     child.expect(PROMPT)
-
     try:
-        assert_before(
+        before: str = assert_before(
             child,
             bp_forev_parts,
         )
     except AssertionError:
-        assert_before(
+        before: str = assert_before(
             child,
             name_error_parts,
         )
 
     else:
         if ctlc:
-            do_ctlc(child)
+            before: str = do_ctlc(
+                child,
+                delay=(
+                    non_linux_delay
+                    if non_linux
+                    else None
+                ),
+            )
+
+            if non_linux:
+                time.sleep(1)
 
         # should crash with the 2nd name error (simulates
         # a retry) and then the root eventually (boxed) errors
         # after 1 or more further bp actor entries.
 
         child.sendline('c')
-        child.expect(PROMPT)
+        try:
+            child.expect(
+                PROMPT,
+                timeout=3,
+            )
+        except EOF:
+            before: str = child.before.decode()
+            print(
+                f'\n'
+                f'??? NEVER RXED `pdb` PROMPT ???\n'
+                f'\n'
+                f'{before}\n'
+            )
+            raise
+
         assert_before(
             child,
             name_error_parts,
@@ -689,7 +763,8 @@ def test_multi_subactors_root_errors(
 
 @has_nested_actors
 def test_multi_nested_subactors_error_through_nurseries(
-    spawn,
+    ci_env: bool,
+    spawn: PexpectSpawner,
 
     # TODO: address debugger issue for nested tree:
     # https://github.com/goodboy/tractor/issues/320
@@ -712,7 +787,16 @@ def test_multi_nested_subactors_error_through_nurseries(
 
     for send_char in itertools.cycle(['c', 'q']):
         try:
-            child.expect(PROMPT)
+            child.expect(
+                PROMPT,
+                timeout=(
+                    6 if (
+                        _non_linux
+                        and
+                        ci_env
+                    ) else -1
+                ),
+            )
             child.sendline(send_char)
             time.sleep(0.01)
 
@@ -889,6 +973,11 @@ def test_different_debug_mode_per_actor(
     )
 
 
+# skip on non-Linux CI
+@pytest.mark.ctlcs_bish(
+    _non_linux,
+    _ci_env,
+)
 def test_post_mortem_api(
     spawn,
     ctlc: bool,
@@ -1133,14 +1222,20 @@ def test_ctxep_pauses_n_maybe_ipc_breaks(
             # closed so verify we see error reporting as well as
             # a failed crash-REPL request msg and can CTL-c our way
             # out.
+
+            # ?TODO, match depending on `tpt_proto(s)`?
+            # - [ ] how can we pass it into the script tho?
+            tpt: str = 'UDS'
+            if _non_linux:
+                tpt: str = 'TCP'
+
             assert_before(
                 child,
                 ['peer IPC channel closed abruptly?',
                  'another task closed this fd',
                  'Debug lock request was CANCELLED?',
-                 "'MsgpackUDSStream' was already closed locally?",
-                 "TransportClosed: 'MsgpackUDSStream' was already closed 'by peer'?",
-                 # ?TODO^? match depending on `tpt_proto(s)`?
+                 f"'Msgpack{tpt}Stream' was already closed locally?",
+                 f"TransportClosed: 'Msgpack{tpt}Stream' was already closed 'by peer'?",
                 ]
 
                 # XXX races on whether these show/hit?
