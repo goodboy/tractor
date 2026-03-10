@@ -74,16 +74,22 @@ jobs:
   #       run: mypy tractor/ --ignore-missing-imports --show-traceback
 
 
-  testing-linux:
-    name: '${{ matrix.os }} Python ${{ matrix.python }} - ${{ matrix.spawn_backend }}'
-    timeout-minutes: 10
+  testing:
+    name: '${{ matrix.os }} Python${{ matrix.python-version }} - spawn_backend=${{ matrix.spawn_backend }}'
+    timeout-minutes: 16
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python-version: ['3.13']
+        os: [
+          ubuntu-latest,
+          macos-latest,
+        ]
+        python-version: [
+          '3.13',
+          # '3.14',
+        ]
         spawn_backend: [
           'trio',
           # 'mp_spawn',
@@ -91,7 +97,6 @@ jobs:
         ]
 
     steps:
-
       - uses: actions/checkout@v4
 
       - name: 'Install uv + py-${{ matrix.python-version }}'

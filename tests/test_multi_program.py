@@ -35,6 +35,9 @@ if TYPE_CHECKING:
     )
 
 
+_non_linux: bool = platform.system() != 'Linux'
+
+
 def test_abort_on_sigint(
     daemon: subprocess.Popen,
 ):
@@ -137,6 +140,7 @@ def test_non_registrar_spawns_child(
     reg_addr: UnwrappedAddress,
     loglevel: str,
     debug_mode: bool,
+    ci_env: bool,
 ):
     '''
     Ensure a non-regristar (serving) root actor can spawn a sub and
@@ -148,6 +152,12 @@ def test_non_registrar_spawns_child(
 
     '''
     async def main():
+
+        # XXX, since apparently on macos in GH's CI it can be a race
+        # with the `daemon` registrar on grabbing the socket-addr..
+        if ci_env and _non_linux:
+            await trio.sleep(.5)
+
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
             loglevel=loglevel,

@@ -1,3 +1,5 @@
+import platform
+
 import tractor
 import trio
 
@@ -34,9 +36,22 @@ async def just_bp(
 
 async def main():
 
+    if platform.system() != 'Darwin':
+        tpt = 'uds'
+    else:
+        # XXX, precisely we can't use pytest's tmp-path generation
+        # for tests.. apparently because:
+        #
+        # > The OSError: AF_UNIX path too long in macOS Python occurs
+        # > because the path to the Unix domain socket exceeds the
+        # > operating system's maximum path length limit (around 104
+        #
+        # WHICH IS just, wtf hillarious XD
+        tpt = 'tcp'
+
     async with tractor.open_nursery(
         debug_mode=True,
-        enable_transports=['uds'],
+        enable_transports=[tpt],
         loglevel='devx',
     ) as n:
         p = await n.start_actor(

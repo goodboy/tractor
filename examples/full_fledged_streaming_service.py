@@ -90,7 +90,7 @@ async def main() -> list[int]:
     # yes, a nursery which spawns `trio`-"actors" B)
     an: ActorNursery
     async with tractor.open_nursery(
-        loglevel='cancel',
+        loglevel='error',
         # debug_mode=True,
     ) as an:
 
@@ -118,8 +118,10 @@ async def main() -> list[int]:
         cancelled: bool = await portal.cancel_actor()
         assert cancelled
 
-        print(f"STREAM TIME = {time.time() - start}")
-        print(f"STREAM + SPAWN TIME = {time.time() - pre_start}")
+        print(
+            f"STREAM TIME = {time.time() - start}\n"
+            f"STREAM + SPAWN TIME = {time.time() - pre_start}\n"
+        )
         assert result_stream == list(range(seed))
         return result_stream
 

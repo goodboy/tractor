@@ -23,12 +23,12 @@ from contextlib import (
 )
 from pathlib import Path
 import os
+import sys
 from socket import (
     AF_UNIX,
     SOCK_STREAM,
-    SO_PASSCRED,
-    SO_PEERCRED,
     SOL_SOCKET,
+    error as socket_error,
 )
 import struct
 from typing import (
@@ -53,7 +53,7 @@ from tractor.log import get_logger
 from tractor.ipc._transport import (
     MsgpackTransport,
 )
-from .._state import (
+from tractor._state import (
     get_rt_dir,
     current_actor,
     is_root_process,
@@ -61,6 +61,28 @@ from .._state import (
 
 if TYPE_CHECKING:
     from ._runtime import Actor
+
+
+# Platform-specific credential passing constants
+# See: https://stackoverflow.com/a/7982749
+if sys.platform == 'linux':
+    from socket import (
+        SO_PASSCRED,
+        SO_PEERCRED,
+    )
+
+else:
+    # Other (Unix) platforms - though further testing is required and
+    # others may need additional special handling?
+    SO_PASSCRED = None
+    SO_PEERCRED = None
+
+    # NOTE, macOS uses `LOCAL_PEERCRED` instead of `SO_PEERCRED` and
+    # doesn't need `SO_PASSCRED` (credential passing is always enabled).
+    # See code in <sys/un.h>: `#define LOCAL_PEERCRED 0x001`
+    #
+    # XXX INSTEAD we use the (hopefully) more generic
+    # `get_peer_pid()` below for other OSes.
 
 
 log = get_logger()
@@ -165,7 +187,11 @@ class UDSAddress(
             err_on_no_runtime=False,
         )
         if actor:
-            sockname: str = '::'.join(actor.uid) + f'@{pid}'
+            sockname: str = f'{actor.aid.name}@{pid}'
+            # XXX, orig version which broke both macOS (file-name
+            # length) and `multiaddrs` ('::' invalid separator).
+            # sockname: str = '::'.join(actor.uid) + f'@{pid}'
+            #
             # ?^TODO, for `multiaddr`'s parser we can't use the `::`
             # above^, SO maybe a `.` or something else here?
             # sockname: str = '.'.join(actor.uid) + f'@{pid}'
@@ -292,7 +318,12 @@ def close_listener(
 
 
 async def open_unix_socket_w_passcred(
-    filename: str|bytes|os.PathLike[str]|os.PathLike[bytes],
+    filename: (
+        str
+        |bytes
+        |os.PathLike[str]
+        |os.PathLike[bytes]
+    ),
 ) -> trio.SocketStream:
     '''
     Literally the exact same as `trio.open_unix_socket()` except we set the additiona
@@ -310,21 +341,66 @@ async def open_unix_socket_w_passcred(
     # much more simplified logic vs tcp sockets - one socket type and only one
     # possible location to connect to
     sock = trio.socket.socket(AF_UNIX, SOCK_STREAM)
-    sock.setsockopt(SOL_SOCKET, SO_PASSCRED, 1)
+
+    # Only set SO_PASSCRED on Linux (not needed/available on macOS)
+    if SO_PASSCRED is not None:
+        sock.setsockopt(SOL_SOCKET, SO_PASSCRED, 1)
+
     with close_on_error(sock):
         await sock.connect(os.fspath(filename))
 
     return trio.SocketStream(sock)
 
 
-def get_peer_info(sock: trio.socket.socket) -> tuple[
+def get_peer_pid(sock) -> int|None:
+    '''
+    Gets the PID of the process connected to the other end of a Unix
+    domain socket on macOS, or `None` if that fails.
+
+    NOTE, should work on MacOS (and others?).
+
+    '''
+    # try to get the peer PID using a naive soln found from,
+    # https://stackoverflow.com/a/67971484
+    #
+    # NOTE, a more correct soln is likely needed here according to
+    # the complaints of `copilot` which led to digging into the
+    # underlying `go`lang issue linked from the above SO answer,
+
+    # XXX, darwin-xnu kernel srces defining these constants,
+    # - SOL_LOCAL
+    # |_https://github.com/apple/darwin-xnu/blob/main/bsd/sys/un.h#L85
+    # - LOCAL_PEERPID
+    # |_https://github.com/apple/darwin-xnu/blob/main/bsd/sys/un.h#L89
+    #
+    SOL_LOCAL: int = 0
+    LOCAL_PEERPID: int = 0x002
+
+    try:
+        pid: int = sock.getsockopt(
+            SOL_LOCAL,
+            LOCAL_PEERPID,
+        )
+        return pid
+    except socket_error as e:
+        log.exception(
+            f"Failed to get peer PID: {e}"
+        )
+        return None
+
+
+def get_peer_info(
+    sock: trio.socket.socket,
+) -> tuple[
     int,  # pid
     int,  # uid
     int,  # guid
 ]:
     '''
     Deliver the connecting peer's "credentials"-info as defined in
-    a very Linux specific way..
+    a platform-specific way.
+
+    Linux-ONLY, uses SO_PEERCRED.
 
     For more deats see,
     - `man accept`,
@@ -337,6 +413,11 @@ def get_peer_info(sock: trio.socket.socket) -> tuple[
     - https://stackoverflow.com/a/7982749
 
     '''
+    if SO_PEERCRED is None:
+        raise RuntimeError(
+            f'Peer credential retrieval not supported on {sys.platform}!'
+        )
+
     creds: bytes = sock.getsockopt(
         SOL_SOCKET,
         SO_PEERCRED,
@@ -440,13 +521,37 @@ class MsgpackUDSStream(MsgpackTransport):
         match (peername, sockname):
             case (str(), bytes()):
                 sock_path: Path = Path(peername)
+
             case (bytes(), str()):
                 sock_path: Path = Path(sockname)
-        (
-            peer_pid,
-            _,
-            _,
-        ) = get_peer_info(sock)
+
+            case (str(), str()):  # XXX, likely macOS
+                sock_path: Path = Path(peername)
+
+            case _:
+                raise TypeError(
+                    f'Failed to match (peername, sockname) types?\n'
+                    f'peername: {peername!r}\n'
+                    f'sockname: {sockname!r}\n'
+                )
+
+        if sys.platform == 'linux':
+            (
+                peer_pid,
+                _,
+                _,
+            ) = get_peer_info(sock)
+
+        # NOTE known to at least works on,
+        # - macos
+        else:
+            peer_pid: int|None = get_peer_pid(sock)
+            if peer_pid is None:
+                log.warning(
+                    f'Unable to get peer PID?\n'
+                    f'sock: {sock!r}\n'
+                    f'peer_pid: {peer_pid!r}\n'
+                )
 
         filedir, filename = unwrap_sockpath(sock_path)
         laddr = UDSAddress(

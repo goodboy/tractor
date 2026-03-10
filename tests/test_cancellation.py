@@ -17,8 +17,8 @@ from tractor._testing import (
 from .conftest import no_windows
 
 
-def is_win():
-    return platform.system() == 'Windows'
+_non_linux: bool = platform.system() != 'Linux'
+_friggin_windows: bool = platform.system() == 'Windows'
 
 
 async def assert_err(delay=0):
@@ -431,7 +431,7 @@ async def test_nested_multierrors(loglevel, start_method):
             for subexc in err.exceptions:
 
                 # verify first level actor errors are wrapped as remote
-                if is_win():
+                if _friggin_windows:
 
                     # windows is often too slow and cancellation seems
                     # to happen before an actor is spawned
@@ -464,7 +464,7 @@ async def test_nested_multierrors(loglevel, start_method):
                     # XXX not sure what's up with this..
                     # on windows sometimes spawning is just too slow and
                     # we get back the (sent) cancel signal instead
-                    if is_win():
+                    if _friggin_windows:
                         if isinstance(subexc, tractor.RemoteActorError):
                             assert subexc.boxed_type in (
                                 BaseExceptionGroup,
@@ -507,17 +507,22 @@ def test_cancel_via_SIGINT(
 
 @no_windows
 def test_cancel_via_SIGINT_other_task(
-    loglevel,
-    start_method,
-    spawn_backend,
+    loglevel: str,
+    start_method: str,
+    spawn_backend: str,
 ):
-    """Ensure that a control-C (SIGINT) signal cancels both the parent
-    and child processes in trionic fashion even a subprocess is started
-    from a seperate ``trio`` child  task.
-    """
-    pid = os.getpid()
-    timeout: float = 2
-    if is_win():  # smh
+    '''
+    Ensure that a control-C (SIGINT) signal cancels both the parent
+    and child processes in trionic fashion even a subprocess is
+    started from a seperate ``trio`` child  task.
+
+    '''
+    pid: int = os.getpid()
+    timeout: float = (
+        4 if _non_linux
+        else 2
+    )
+    if _friggin_windows:  # smh
         timeout += 1
 
     async def spawn_and_sleep_forever(
@@ -696,7 +701,7 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
     kbi_delay = 0.5
     timeout: float = 2.9
 
-    if is_win():  # smh
+    if _friggin_windows:  # smh
         timeout += 1
 
     async def main():

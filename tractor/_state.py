@@ -22,7 +22,6 @@ from __future__ import annotations
 from contextvars import (
     ContextVar,
 )
-import os
 from pathlib import Path
 from typing import (
     Any,
@@ -30,6 +29,7 @@ from typing import (
     TYPE_CHECKING,
 )
 
+import platformdirs
 from trio.lowlevel import current_task
 
 if TYPE_CHECKING:
@@ -172,23 +172,56 @@ def current_ipc_ctx(
     return ctx
 
 
-# std ODE (mutable) app state location
-_rtdir: Path = Path(os.environ['XDG_RUNTIME_DIR'])
-
 
 def get_rt_dir(
-    subdir: str = 'tractor'
+    subdir: str|Path|None = None,
+    appname: str = 'tractor',
 ) -> Path:
     '''
-    Return the user "runtime dir" where most userspace apps stick
-    their IPC and cache related system util-files; we take hold
-    of a `'XDG_RUNTIME_DIR'/tractor/` subdir by default.
+    Return the user "runtime dir", the file-sys location where most
+    userspace apps stick their IPC and cache related system
+    util-files.
+
+    On linux we use a `${XDG_RUNTIME_DIR}/tractor/` subdir by
+    default, but equivalents are mapped for each platform using
+    the lovely `platformdirs` lib.
 
     '''
-    rtdir: Path = _rtdir / subdir
-    if not rtdir.is_dir():
-        rtdir.mkdir()
-    return rtdir
+    rt_dir: Path = Path(
+        platformdirs.user_runtime_dir(
+            appname=appname,
+        ),
+    )
+
+    # Normalize and validate that `subdir` is a relative path
+    # without any parent-directory ("..") components, to prevent
+    # escaping the runtime directory.
+    if subdir:
+        subdir_path = (
+            subdir
+            if isinstance(subdir, Path)
+            else Path(subdir)
+        )
+        if subdir_path.is_absolute():
+            raise ValueError(
+                f'`subdir` must be a relative path!\n'
+                f'{subdir!r}\n'
+            )
+        if any(part == '..' for part in subdir_path.parts):
+            raise ValueError(
+                "`subdir` must not contain '..' components!\n"
+                f'{subdir!r}\n'
+            )
+
+        rt_dir: Path = rt_dir / subdir_path
+
+    if not rt_dir.is_dir():
+        rt_dir.mkdir(
+            parents=True,
+            exist_ok=True,  # avoid `FileExistsError` from conc calls
+        )
+
+    return rt_dir
 
 
 def current_ipc_protos() -> list[str]:
