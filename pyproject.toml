@@ -24,6 +24,7 @@ keywords = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
   "Framework :: Trio",
   "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
   "Programming Language :: Python :: Implementation :: CPython",
