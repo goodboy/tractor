@@ -107,6 +107,8 @@ venv.bak/
 .git/
 
 # any commit-msg gen tmp files
+.claude/skills/commit-msg/msgs/
+.claude/git_commit_msg_LATEST.md
 .claude/*_commit_*.md
 .claude/*_commit*.toml
 .claude/*_commit*.txt
