@@ -7,7 +7,8 @@
       "Bash(cp .claude/*)",
       "Bash(git diff *)",
       "Bash(git log *)",
-      "Bash(git status)"
+      "Bash(git status)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []
