@@ -272,18 +272,16 @@ class LinkedTaskChannel(
         '''
         Receive a value `asyncio.Task` <- `trio.Task`.
 
-        This is equiv to `await self._from_trio.get()`.
+        This is equiv to `await self._to_aio.get()`.
 
         '''
         return await self._to_aio.get()
 
     async def send(self, item: Any) -> None:
         '''
-        Send a value through `trio.Task` -> `asyncio.Task`
-        presuming
-        it defines a `from_trio` argument or makes calls
-        to `chan.get()` , if it does not
-        this method will raise an error.
+        Send a value `trio.Task` -> `asyncio.Task`
+        by enqueuing `item` onto the internal
+        `asyncio.Queue` via `put_nowait()`.
 
         '''
         self._to_aio.put_nowait(item)
@@ -1301,16 +1299,17 @@ async def open_channel_from(
     **target_kwargs,
 
 ) -> AsyncIterator[
-    tuple[LinkedTaskChannel, Any]
+    tuple[Any, LinkedTaskChannel]
 ]:
     '''
-    Start an `asyncio.Task` as `target()` and open an inter-loop
-    (linked) channel for streaming between it and the current
-    `trio.Task`.
+    Start an `asyncio.Task` as `target()` and open an
+    inter-loop (linked) channel for streaming between
+    it and the current `trio.Task`.
 
-    A pair `(chan: LinkedTaskChannel, Any)` is delivered to the caller
-    where the 2nd element is the value provided by the
-    `asyncio.Task`'s unblocking call to `chan.started_nowait()`.
+    A pair `(Any, chan: LinkedTaskChannel)` is delivered
+    to the caller where the 1st element is the value
+    provided by the `asyncio.Task`'s unblocking call
+    to `chan.started_nowait()`.
 
     '''
     chan: LinkedTaskChannel = _run_asyncio_task(
