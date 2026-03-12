@@ -23,6 +23,7 @@ pytest_plugins: list[str] = [
     'tractor._testing.pytest',
 ]
 
+_ci_env: bool = os.environ.get('CI', False)
 _non_linux: bool = platform.system() != 'Linux'
 
 # Sending signal.SIGINT on subprocess fails on windows. Use CTRL_* alternatives
@@ -36,9 +37,8 @@ else:
     _INT_SIGNAL = signal.SIGINT
     _INT_RETURN_CODE = 1 if sys.version_info < (3, 8) else -signal.SIGINT.value
     _PROC_SPAWN_WAIT = (
-        0.6
-        if sys.version_info < (3, 7)
-        else 0.4
+        2 if _ci_env
+        else 1
     )
 
 
@@ -115,9 +115,6 @@ def test_log(
     yield _log
 
 
-_ci_env: bool = os.environ.get('CI', False)
-
-
 @pytest.fixture(scope='session')
 def ci_env() -> bool:
     '''
@@ -152,6 +149,7 @@ def daemon(
     reg_addr: tuple[str, int],
     tpt_proto: str,
     ci_env: bool,
+    test_log: tractor.log.StackLevelAdapter,
 
 ) -> subprocess.Popen:
     '''
@@ -240,7 +238,7 @@ def daemon(
         if rc < 0:
             raise RuntimeError(msg)
 
-        log.error(msg)
+        test_log.error(msg)
 
 
 # @pytest.fixture(autouse=True)
