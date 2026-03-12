@@ -60,10 +60,11 @@ When generating commit messages, always follow this process:
 - Minor tweaks: "Adjust `behavior` in `component`"
 
 4. **Write to TWO files**:
-   - `.claude/<timestamp>_<hash>_commit_msg.md`
-     * with `<timestamp>` from `date -u +%Y%m%dT%H%M%SZ` or similar
-       filesystem-safe format.
-     * and `<hash>` from `git log -1 --format=%h` first 7 chars.
+   - `.claude/skills/commit-msg/msgs/<timestamp>_<hash>_commit_msg.md`
+     * with `<timestamp>` from `date -u +%Y%m%dT%H%M%SZ`
+       or similar filesystem-safe format.
+     * and `<hash>` from `git log -1 --format=%h`
+       first 7 chars.
    - `.claude/git_commit_msg_LATEST.md` (overwrite)
 
 5. **Always include credit footer**:
