@@ -237,7 +237,7 @@ async def trio_ctx(
                 trio.open_nursery() as tn,
                 tractor.to_asyncio.open_channel_from(
                     sleep_and_err,
-                ) as (first, chan),
+                ) as (chan, first),
             ):
 
                 assert first == 'start'
@@ -474,7 +474,7 @@ async def stream_from_aio(
                 trio_exit_early
             ))
 
-        ) as (first, chan):
+        ) as (chan, first):
 
             assert first is True
 
@@ -768,8 +768,8 @@ async def trio_to_aio_echo_server(
     async with to_asyncio.open_channel_from(
         aio_echo_server,
     ) as (
-        first,  # value from `chan.started_nowait()` above
         chan,
+        first,  # value from `chan.started_nowait()` above
     ):
         assert first == 'start'
 

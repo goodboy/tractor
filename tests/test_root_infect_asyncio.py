@@ -49,7 +49,7 @@ def test_infected_root_actor(
                 ),
                 to_asyncio.open_channel_from(
                     aio_echo_server,
-                ) as (first, chan),
+                ) as (chan, first),
             ):
                 assert first == 'start'
 
@@ -173,7 +173,7 @@ def test_trio_prestarted_task_bubbles(
                             sync_and_err,
                             ev=aio_ev,
                         )
-                    ) as (first, chan),
+                    ) as (chan, first),
                 ):
 
                     for i in range(5):

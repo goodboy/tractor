@@ -59,7 +59,7 @@ async def trio_ctx(
         to_asyncio.open_channel_from(
             bp_then_error,
             # raise_after_bp=not bp_before_started,
-        ) as (first, chan),
+        ) as (chan, first),
 
         trio.open_nursery() as tn,
     ):

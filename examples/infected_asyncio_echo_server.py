@@ -33,7 +33,7 @@ async def trio_to_aio_echo_server(
     # message.
     async with tractor.to_asyncio.open_channel_from(
         aio_echo_server,
-    ) as (first, chan):
+    ) as (chan, first):
 
         assert first == 'start'
         await ctx.started(first)

@@ -68,7 +68,7 @@ async def wrapper_mngr(
         else:
             async with tractor.to_asyncio.open_channel_from(
                 aio_streamer,
-            ) as (first, from_aio):
+            ) as (from_aio, first):
                 assert not first
 
                 # cache it so next task uses broadcast receiver

@@ -1299,15 +1299,15 @@ async def open_channel_from(
     **target_kwargs,
 
 ) -> AsyncIterator[
-    tuple[Any, LinkedTaskChannel]
+    tuple[LinkedTaskChannel, Any]
 ]:
     '''
     Start an `asyncio.Task` as `target()` and open an
     inter-loop (linked) channel for streaming between
     it and the current `trio.Task`.
 
-    A pair `(Any, chan: LinkedTaskChannel)` is delivered
-    to the caller where the 1st element is the value
+    A pair `(chan: LinkedTaskChannel, Any)` is delivered
+    to the caller where the 2nd element is the value
     provided by the `asyncio.Task`'s unblocking call
     to `chan.started_nowait()`.
 
@@ -1333,8 +1333,7 @@ async def open_channel_from(
                     first = await chan.receive()
 
                     # deliver stream handle upward
-                    yield first, chan
-                    # ^TODO! swap these!!
+                    yield chan, first
             except trio.Cancelled as taskc:
                 if cs.cancel_called:
                     if isinstance(chan._trio_to_raise, AsyncioCancelled):
