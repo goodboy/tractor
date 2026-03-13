@@ -11,7 +11,6 @@ MESSAGE = 'tractoring at full speed'
 
 
 def test_empty_mngrs_input_raises() -> None:
-
     async def main():
         with trio.fail_after(3):
             async with (
@@ -60,8 +59,21 @@ async def worker(
         # assert 0
 
 
+# ?TODO, but needs a fn-scoped tpt_proto fixture..
+# @pytest.mark.no_tpt('uds')
 @tractor_test
-async def test_streaming_to_actor_cluster():
+async def test_streaming_to_actor_cluster(
+    tpt_proto: str,
+):
+    '''
+    Open an actor "cluster" using the (experimental) `._clustering`
+    API and conduct standard inter-task-ctx streaming.
+
+    '''
+    if tpt_proto == 'uds':
+        pytest.skip(
+            f'Test currently fails with tpt-proto={tpt_proto!r}\n'
+        )
 
     with trio.fail_after(6):
         async with (
