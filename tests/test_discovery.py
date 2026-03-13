@@ -7,6 +7,7 @@ import signal
 import platform
 from functools import partial
 import itertools
+import time
 from typing import Callable
 
 import psutil
@@ -31,7 +32,7 @@ async def test_reg_then_unreg(
     ) as n:
 
         portal = await n.start_actor('actor', enable_modules=[__name__])
-        uid = portal.channel.uid
+        uid = portal.channel.aid.uid
 
         async with tractor.get_registry(reg_addr) as aportal:
             # this local actor should be the arbiter
@@ -205,7 +206,7 @@ async def spawn_and_check_registry(
 
             # ensure current actor is registered
             registry: dict = await get_reg()
-            assert actor.uid in registry
+            assert actor.aid.uid in registry
 
             try:
                 async with tractor.open_nursery() as an:
@@ -253,8 +254,21 @@ async def spawn_and_check_registry(
 
                 # all subactors should have de-registered
                 registry = await get_reg()
-                assert len(registry) == extra
-                assert actor.uid in registry
+                start: float = time.time()
+                while (
+                    not (len(registry) == extra)
+                    and
+                    (time.time() - start) < 5
+                ):
+                    print(
+                        f'Waiting for remaining subs to dereg..\n'
+                        f'{registry!r}\n'
+                    )
+                    await trio.sleep(0.3)
+                else:
+                    assert len(registry) == extra
+
+                assert actor.aid.uid in registry
 
 
 @pytest.mark.parametrize('use_signal', [False, True])
@@ -384,8 +398,8 @@ async def close_chans_before_nursery(
 
                     # all subactors should have de-registered
                     registry = await get_reg()
-                    assert portal1.channel.uid not in registry
-                    assert portal2.channel.uid not in registry
+                    assert portal1.channel.aid.uid not in registry
+                    assert portal2.channel.aid.uid not in registry
                     assert len(registry) == entries_at_end
 
 
