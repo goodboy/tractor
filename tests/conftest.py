@@ -201,7 +201,7 @@ def daemon(
     # so it's often required that we delay a bit more starting
     # the first actor-tree..
     if tpt_proto == 'uds':
-        _PROC_SPAWN_WAIT = 0.6
+        _PROC_SPAWN_WAIT += 1.6
 
     if _non_linux and ci_env:
         _PROC_SPAWN_WAIT += 1
