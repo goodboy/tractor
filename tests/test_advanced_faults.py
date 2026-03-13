@@ -146,9 +146,6 @@ def test_ipc_channel_break_during_stream(
         # a user sending ctl-c by raising a KBI.
         if pre_aclose_msgstream:
             expect_final_exc = KeyboardInterrupt
-            if tpt_proto == 'uds':
-                expect_final_exc = TransportClosed
-                expect_final_cause = trio.BrokenResourceError
 
             # XXX OLD XXX
             # if child calls `MsgStream.aclose()` then expect EoC.
@@ -168,10 +165,6 @@ def test_ipc_channel_break_during_stream(
     ):
         if pre_aclose_msgstream:
             expect_final_exc = KeyboardInterrupt
-
-            if tpt_proto == 'uds':
-                expect_final_exc = TransportClosed
-                expect_final_cause = trio.BrokenResourceError
 
     # NOTE when the parent IPC side dies (even if the child does as well
     # but the child fails BEFORE the parent) we always expect the

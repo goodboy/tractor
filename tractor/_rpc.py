@@ -1313,12 +1313,10 @@ async def process_messages(
                 f'peer IPC channel closed abruptly?\n'
                 f'\n'
                 f'<=x[\n'
-                f'  {chan}\n'
-                f'  |_{chan.raddr}\n\n'
+                f'{chan}\n'
             )
             +
             tc.message
-
         )
 
         # transport **WAS** disconnected
