@@ -3,10 +3,6 @@ Unit tests for `tractor.msg.pretty_struct`
 private-field filtering in `pformat()`.
 
 '''
-from typing import (
-    Any,
-)
-
 import pytest
 
 from tractor.msg.pretty_struct import (
