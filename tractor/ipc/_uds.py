@@ -197,9 +197,11 @@ class UDSAddress(
             # sockname: str = '.'.join(actor.uid) + f'@{pid}'
             # -[ ] CURRENTLY using `.` BREAKS TEST SUITE tho..
         else:
-            prefix: str = '<unknown-actor>'
             if is_root_process():
-                prefix: str = 'root'
+                prefix: str = 'no_runtime_root'
+            else:
+                prefix: str = 'no_runtime_actor'
+
             sockname: str = f'{prefix}@{pid}'
 
         sockpath: Path = Path(f'{sockname}.sock')
