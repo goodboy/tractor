@@ -126,13 +126,17 @@ def iter_struct_ppfmt_lines(
             str(ft)
         ).replace(' ', '')
 
+        if k[0] == '_':
+            continue
+
         # recurse to get sub-struct's `.pformat()` output Bo
-        if isinstance(v, Struct):
+        elif isinstance(v, Struct):
             yield from iter_struct_ppfmt_lines(
                 struct=v,
                 field_indent=field_indent+field_indent,
             )
-        else:
+
+        else:  # top-level field
             val_str: str = repr(v)
 
             # XXX LOL, below just seems to be f#$%in causing
@@ -149,10 +153,10 @@ def iter_struct_ppfmt_lines(
                 # raise
                 # return _Struct.__repr__(struct)
 
-        yield (
-            ' '*field_indent,  # indented ws prefix
-            f'{k}: {typ_name} = {val_str},',  # field's repr line content
-        )
+            yield (
+                ' '*field_indent,  # indented ws prefix
+                f'{k}: {typ_name} = {val_str},',  # field's repr line content
+            )
 
 
 def pformat(
