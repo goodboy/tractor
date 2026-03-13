@@ -649,7 +649,11 @@ def test_cancel_while_childs_child_in_sync_sleep(
         #
         # delay = 1  # no AssertionError in eg, TooSlowError raised.
         # delay = 2  # is AssertionError in eg AND no TooSlowError !?
-        delay = 4  # is AssertionError in eg AND no _cs cancellation.
+        # is AssertionError in eg AND no _cs cancellation.
+        delay = (
+            6 if _non_linux
+            else 4 
+        )
 
         with trio.fail_after(delay) as _cs:
         # with trio.CancelScope() as cs:
