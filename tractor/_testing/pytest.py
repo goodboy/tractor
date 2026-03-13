@@ -232,6 +232,9 @@ def tpt_proto(
     from tractor import _state
     if _state._def_tpt_proto != proto_key:
         _state._def_tpt_proto = proto_key
+        _state._runtime_vars['_enable_tpts'] = [
+            proto_key,
+        ]
 
     yield proto_key
 

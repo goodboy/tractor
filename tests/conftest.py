@@ -165,10 +165,12 @@ def daemon(
         "import tractor; "
         "tractor.run_daemon([], "
         "registry_addrs={reg_addrs}, "
+        "enable_transports={enable_tpts}, "
         "debug_mode={debug_mode}, "
         "loglevel={ll})"
     ).format(
         reg_addrs=str([reg_addr]),
+        enable_tpts=str([tpt_proto]),
         ll="'{}'".format(loglevel) if loglevel else None,
         debug_mode=debug_mode,
     )
