@@ -632,7 +632,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
             # show frame on any (likely) internal error
             if (
-                not an.cancelled
+                not an.cancel_called
                 and an._scope_error
             ):
                 __tracebackhide__: bool = False
@@ -728,7 +728,7 @@ async def open_nursery(
         if (
             an
             and
-            not an.cancelled
+            not an.cancel_called
             and
             an._scope_error
         ):
