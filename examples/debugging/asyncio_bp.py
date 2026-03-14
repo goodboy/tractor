@@ -18,15 +18,14 @@ async def aio_sleep_forever():
 
 
 async def bp_then_error(
-    to_trio: trio.MemorySendChannel,
-    from_trio: asyncio.Queue,
+    chan: to_asyncio.LinkedTaskChannel,
 
     raise_after_bp: bool = True,
 
 ) -> None:
 
     # sync with `trio`-side (caller) task
-    to_trio.send_nowait('start')
+    chan.started_nowait('start')
 
     # NOTE: what happens here inside the hook needs some refinement..
     # => seems like it's still `.debug._set_trace()` but
@@ -60,7 +59,7 @@ async def trio_ctx(
         to_asyncio.open_channel_from(
             bp_then_error,
             # raise_after_bp=not bp_before_started,
-        ) as (first, chan),
+        ) as (chan, first),
 
         trio.open_nursery() as tn,
     ):

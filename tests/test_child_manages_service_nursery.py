@@ -18,16 +18,15 @@ from tractor import RemoteActorError
 
 
 async def aio_streamer(
-    from_trio: asyncio.Queue,
-    to_trio: trio.abc.SendChannel,
+    chan: tractor.to_asyncio.LinkedTaskChannel,
 ) -> trio.abc.ReceiveChannel:
 
     # required first msg to sync caller
-    to_trio.send_nowait(None)
+    chan.started_nowait(None)
 
     from itertools import cycle
     for i in cycle(range(10)):
-        to_trio.send_nowait(i)
+        chan.send_nowait(i)
         await asyncio.sleep(0.01)
 
 
@@ -69,7 +68,7 @@ async def wrapper_mngr(
         else:
             async with tractor.to_asyncio.open_channel_from(
                 aio_streamer,
-            ) as (first, from_aio):
+            ) as (from_aio, first):
                 assert not first
 
                 # cache it so next task uses broadcast receiver

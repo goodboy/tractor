@@ -47,12 +47,11 @@ async def sleep_and_err(
 
     # just signature placeholders for compat with
     # ``to_asyncio.open_channel_from()``
-    to_trio: trio.MemorySendChannel|None = None,
-    from_trio: asyncio.Queue|None = None,
+    chan: to_asyncio.LinkedTaskChannel|None = None,
 
 ):
-    if to_trio:
-        to_trio.send_nowait('start')
+    if chan:
+        chan.started_nowait('start')
 
     await asyncio.sleep(sleep_for)
     assert 0
@@ -238,7 +237,7 @@ async def trio_ctx(
                 trio.open_nursery() as tn,
                 tractor.to_asyncio.open_channel_from(
                     sleep_and_err,
-                ) as (first, chan),
+                ) as (chan, first),
             ):
 
                 assert first == 'start'
@@ -399,7 +398,7 @@ async def no_to_trio_in_args():
 
 async def push_from_aio_task(
     sequence: Iterable,
-    to_trio: trio.abc.SendChannel,
+    chan: to_asyncio.LinkedTaskChannel,
     expect_cancel: False,
     fail_early: bool,
     exit_early: bool,
@@ -407,15 +406,12 @@ async def push_from_aio_task(
 ) -> None:
 
     try:
-        # print('trying breakpoint')
-        # breakpoint()
-
         # sync caller ctx manager
-        to_trio.send_nowait(True)
+        chan.started_nowait(True)
 
         for i in sequence:
             print(f'asyncio sending {i}')
-            to_trio.send_nowait(i)
+            chan.send_nowait(i)
             await asyncio.sleep(0.001)
 
             if (
@@ -478,7 +474,7 @@ async def stream_from_aio(
                 trio_exit_early
             ))
 
-        ) as (first, chan):
+        ) as (chan, first):
 
             assert first is True
 
@@ -732,15 +728,21 @@ def test_aio_errors_and_channel_propagates_and_closes(
 
 
 async def aio_echo_server(
-    to_trio: trio.MemorySendChannel,
-    from_trio: asyncio.Queue,
+    chan: to_asyncio.LinkedTaskChannel,
 ) -> None:
+    '''
+    An IPC-msg "echo server" with msgs received and relayed by
+    a parent `trio.Task` into a child `asyncio.Task`
+    and then repeated back to that local parent (`trio.Task`)
+    and sent again back to the original calling remote actor.
 
-    to_trio.send_nowait('start')
+    '''
+    # same semantics as `trio.TaskStatus.started()`
+    chan.started_nowait('start')
 
     while True:
         try:
-            msg = await from_trio.get()
+            msg = await chan.get()
         except to_asyncio.TrioTaskExited:
             print(
                 'breaking aio echo loop due to `trio` exit!'
@@ -748,7 +750,7 @@ async def aio_echo_server(
             break
 
         # echo the msg back
-        to_trio.send_nowait(msg)
+        chan.send_nowait(msg)
 
         # if we get the terminate sentinel
         # break the echo loop
@@ -765,7 +767,10 @@ async def trio_to_aio_echo_server(
 ):
     async with to_asyncio.open_channel_from(
         aio_echo_server,
-    ) as (first, chan):
+    ) as (
+        chan,
+        first,  # value from `chan.started_nowait()` above
+    ):
         assert first == 'start'
 
         await ctx.started(first)
@@ -776,7 +781,8 @@ async def trio_to_aio_echo_server(
                 await chan.send(msg)
 
                 out = await chan.receive()
-                # echo back to parent actor-task
+
+                # echo back to parent-actor's remote parent-ctx-task!
                 await stream.send(out)
 
                 if out is None:
@@ -1090,24 +1096,21 @@ def test_sigint_closes_lifetime_stack(
 
 
 # ?TODO asyncio.Task fn-deco?
-# -[ ] do sig checkingat import time like @context?
-# -[ ] maybe name it @aio_task ??
 # -[ ] chan: to_asyncio.InterloopChannel ??
+# -[ ] do fn-sig checking at import time like @context?
+#  |_[ ] maybe name it @a(sync)io_task ??
+# @asyncio_task  <- not bad ??
 async def raise_before_started(
-    # from_trio: asyncio.Queue,
-    # to_trio: trio.abc.SendChannel,
     chan: to_asyncio.LinkedTaskChannel,
-
 ) -> None:
     '''
     `asyncio.Task` entry point which RTEs before calling
-    `to_trio.send_nowait()`.
+    `chan.started_nowait()`.
 
     '''
     await asyncio.sleep(0.2)
     raise RuntimeError('Some shite went wrong before `.send_nowait()`!!')
 
-    # to_trio.send_nowait('Uhh we shouldve RTE-d ^^ ??')
     chan.started_nowait('Uhh we shouldve RTE-d ^^ ??')
     await asyncio.sleep(float('inf'))
 

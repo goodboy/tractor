@@ -420,20 +420,17 @@ Check out our experimental system for `guest`_-mode controlled
 
 
     async def aio_echo_server(
-        to_trio: trio.MemorySendChannel,
-        from_trio: asyncio.Queue,
+        chan: tractor.to_asyncio.LinkedTaskChannel,
     ) -> None:
 
         # a first message must be sent **from** this ``asyncio``
         # task or the ``trio`` side will never unblock from
         # ``tractor.to_asyncio.open_channel_from():``
-        to_trio.send_nowait('start')
+        chan.started_nowait('start')
 
-        # XXX: this uses an ``from_trio: asyncio.Queue`` currently but we
-        # should probably offer something better.
         while True:
             # echo the msg back
-            to_trio.send_nowait(await from_trio.get())
+            chan.send_nowait(await chan.get())
             await asyncio.sleep(0)
 
 
@@ -445,7 +442,7 @@ Check out our experimental system for `guest`_-mode controlled
         # message.
         async with tractor.to_asyncio.open_channel_from(
             aio_echo_server,
-        ) as (first, chan):
+        ) as (chan, first):
 
             assert first == 'start'
             await ctx.started(first)
@@ -504,8 +501,10 @@ Yes, we spawn a python process, run ``asyncio``, start ``trio`` on the
 ``asyncio`` loop, then send commands to the ``trio`` scheduled tasks to
 tell ``asyncio`` tasks what to do XD
 
-We need help refining the `asyncio`-side channel API to be more
-`trio`-like. Feel free to sling your opinion in `#273`_!
+The ``asyncio``-side task receives a single
+``chan: LinkedTaskChannel`` handle providing a ``trio``-like
+API: ``.started_nowait()``, ``.send_nowait()``, ``.get()``
+and more. Feel free to sling your opinion in `#273`_!
 
 
 .. _#273: https://github.com/goodboy/tractor/issues/273
