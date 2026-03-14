@@ -391,15 +391,17 @@ class ActorNursery:
 
                     else:
                         if portal is None:  # actor hasn't fully spawned yet
-                            event: trio.Event = server._peer_connected[subactor.uid]
+                            event: trio.Event = server._peer_connected[
+                                subactor.aid.uid
+                            ]
                             log.warning(
-                                f"{subactor.uid} never 't finished spawning?"
+                                f"{subactor.aid.uid} never 't finished spawning?"
                             )
 
                             await event.wait()
 
                             # channel/portal should now be up
-                            _, _, portal = children[subactor.uid]
+                            _, _, portal = children[subactor.aid.uid]
 
                             # XXX should be impossible to get here
                             # unless method was called from within
@@ -407,7 +409,7 @@ class ActorNursery:
                             if portal is None:
                                 # cancelled while waiting on the event
                                 # to arrive
-                                chan = server._peers[subactor.uid][-1]
+                                chan = server._peers[subactor.aid.uid][-1]
                                 if chan:
                                     portal = Portal(chan)
                                 else:  # there's no other choice left
@@ -506,7 +508,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
                 except BaseException as _inner_err:
                     inner_err = _inner_err
-                    errors[actor.uid] = inner_err
+                    errors[actor.aid.uid] = inner_err
 
                     # If we error in the root but the debugger is
                     # engaged we don't want to prematurely kill (and
@@ -539,7 +541,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                             log.cancel(
                                 f'Actor-nursery cancelled by {etype}\n\n'
 
-                                f'{current_actor().uid}\n'
+                                f'{current_actor().aid.uid}\n'
                                 f' |_{an}\n\n'
 
                                 # TODO: show tb str?
@@ -630,7 +632,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
 
             # show frame on any (likely) internal error
             if (
-                not an.cancelled
+                not an.cancel_called
                 and an._scope_error
             ):
                 __tracebackhide__: bool = False
@@ -726,7 +728,7 @@ async def open_nursery(
         if (
             an
             and
-            not an.cancelled
+            not an.cancel_called
             and
             an._scope_error
         ):

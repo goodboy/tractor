@@ -61,7 +61,11 @@ def get_rando_addr(
         # NOTE, file-name uniqueness (no-collisions) will be based on
         # the runtime-directory and root (pytest-proc's) pid.
         case 'uds':
-            testrun_reg_addr = addr_type.get_random().unwrap()
+            from tractor.ipc._uds import UDSAddress
+            addr: UDSAddress = addr_type.get_random()
+            assert addr.is_valid
+            assert addr.sockpath.resolve()
+            testrun_reg_addr = addr.unwrap()
 
     # XXX, as sanity it should never the same as the default for the
     # host-singleton registry actor.

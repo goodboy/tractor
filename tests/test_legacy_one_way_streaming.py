@@ -190,7 +190,10 @@ async def aggregate(seed: int):
                         # leverage trio's built-in backpressure
                         await send_chan.send(value)
 
-            print(f"FINISHED ITERATING {portal.channel.uid}")
+            print(
+                f'FINISHED ITERATING!\n'
+                f'peer: {portal.channel.aid.uid}'
+            )
 
         # spawn 2 trio tasks to collect streams and push to a local queue
         async with trio.open_nursery() as tn:

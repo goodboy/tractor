@@ -324,6 +324,8 @@ class Start(
     # => SEE ABOVE <=
     kwargs: dict[str, Any]
     uid: tuple[str, str]  # (calling) actor-id
+    # aid: Aid
+    # ^TODO, convert stat!
 
     # TODO: enforcing a msg-spec in terms `Msg.pld`
     # parameterizable msgs to be used in the appls IPC dialog.

@@ -66,7 +66,7 @@ async def open_actor_cluster(
             trio.open_nursery() as tn,
             tractor.trionics.maybe_raise_from_masking_exc()
         ):
-            uid = tractor.current_actor().uid
+            uid = tractor.current_actor().aid.uid
 
             async def _start(name: str) -> None:
                 name = f'{uid[0]}.{name}'

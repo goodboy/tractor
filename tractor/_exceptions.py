@@ -982,6 +982,7 @@ class TransportClosed(Exception):
         '''
         __tracebackhide__: bool = hide_tb
         message: str = message or self.message
+
         # when a cause is set, slap it onto the log emission.
         if cause := self.src_exc:
             cause_tb_str: str = ''.join(
@@ -989,7 +990,7 @@ class TransportClosed(Exception):
             )
             message += (
                 f'{cause_tb_str}\n'  # tb
-                f'    {cause}\n'  # exc repr
+                f'{cause!r}\n'  # exc repr
             )
 
         getattr(

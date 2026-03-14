@@ -151,7 +151,7 @@ async def exhaust_portal(
     __tracebackhide__ = True
     try:
         log.debug(
-            f'Waiting on final result from {actor.uid}'
+            f'Waiting on final result from {actor.aid.uid}'
         )
 
         # XXX: streams should never be reaped here since they should
@@ -210,17 +210,17 @@ async def cancel_on_completion(
         actor,
     )
     if isinstance(result, Exception):
-        errors[actor.uid]: Exception = result
+        errors[actor.aid.uid]: Exception = result
         log.cancel(
             'Cancelling subactor runtime due to error:\n\n'
-            f'Portal.cancel_actor() => {portal.channel.uid}\n\n'
+            f'Portal.cancel_actor() => {portal.channel.aid}\n\n'
             f'error: {result}\n'
         )
 
     else:
         log.runtime(
             'Cancelling subactor gracefully:\n\n'
-            f'Portal.cancel_actor() => {portal.channel.uid}\n\n'
+            f'Portal.cancel_actor() => {portal.channel.aid}\n\n'
             f'result: {result}\n'
         )
 
@@ -308,7 +308,7 @@ async def hard_kill(
         #     )
         #     with trio.CancelScope(shield=True):
         #         async with debug.acquire_debug_lock(
-        #             subactor_uid=current_actor().uid,
+        #             subactor_uid=current_actor().aid.uid,
         #         ) as _ctx:
         #             log.warning(
         #                 'Acquired debug lock, child ready to be killed ??\n'
@@ -483,7 +483,7 @@ async def trio_proc(
         # TODO, how to pass this over "wire" encodings like
         # cmdline args?
         # -[ ] maybe we can add an `msgtypes.Aid.min_tuple()` ?
-        str(subactor.uid),
+        str(subactor.aid.uid),
         # Address the child must connect to on startup
         "--parent_addr",
         str(parent_addr)
@@ -514,7 +514,7 @@ async def trio_proc(
             # channel should have handshake completed by the
             # local actor by the time we get a ref to it
             event, chan = await ipc_server.wait_for_peer(
-                subactor.uid
+                subactor.aid.uid
             )
 
         except trio.Cancelled:
@@ -528,7 +528,9 @@ async def trio_proc(
                         await debug.maybe_wait_for_debugger()
 
                     elif proc is not None:
-                        async with debug.acquire_debug_lock(subactor.uid):
+                        async with debug.acquire_debug_lock(
+                            subactor_uid=subactor.aid.uid
+                        ):
                             # soft wait on the proc to terminate
                             with trio.move_on_after(0.5):
                                 await proc.wait()
@@ -538,7 +540,7 @@ async def trio_proc(
         assert proc
 
         portal = Portal(chan)
-        actor_nursery._children[subactor.uid] = (
+        actor_nursery._children[subactor.aid.uid] = (
             subactor,
             proc,
             portal,
@@ -563,7 +565,7 @@ async def trio_proc(
 
         # track subactor in current nursery
         curr_actor: Actor = current_actor()
-        curr_actor._actoruid2nursery[subactor.uid] = actor_nursery
+        curr_actor._actoruid2nursery[subactor.aid.uid] = actor_nursery
 
         # resume caller at next checkpoint now that child is up
         task_status.started(portal)
@@ -616,7 +618,9 @@ async def trio_proc(
                 # don't clobber an ongoing pdb
                 if cancelled_during_spawn:
                     # Try again to avoid TTY clobbering.
-                    async with debug.acquire_debug_lock(subactor.uid):
+                    async with debug.acquire_debug_lock(
+                        subactor_uid=subactor.aid.uid
+                    ):
                         with trio.move_on_after(0.5):
                             await proc.wait()
 
@@ -662,7 +666,7 @@ async def trio_proc(
         if not cancelled_during_spawn:
             # pop child entry to indicate we no longer managing this
             # subactor
-            actor_nursery._children.pop(subactor.uid)
+            actor_nursery._children.pop(subactor.aid.uid)
 
 
 async def mp_proc(
@@ -744,7 +748,7 @@ async def mp_proc(
     # register the process before start in case we get a cancel
     # request before the actor has fully spawned - then we can wait
     # for it to fully come up before sending a cancel request
-    actor_nursery._children[subactor.uid] = (subactor, proc, None)
+    actor_nursery._children[subactor.aid.uid] = (subactor, proc, None)
 
     proc.start()
     if not proc.is_alive():
@@ -758,7 +762,7 @@ async def mp_proc(
         # channel should have handshake completed by the
         # local actor by the time we get a ref to it
         event, chan = await ipc_server.wait_for_peer(
-            subactor.uid,
+            subactor.aid.uid,
         )
 
         # XXX: monkey patch poll API to match the ``subprocess`` API..
@@ -771,7 +775,7 @@ async def mp_proc(
         # any process we may have started.
 
         portal = Portal(chan)
-        actor_nursery._children[subactor.uid] = (subactor, proc, portal)
+        actor_nursery._children[subactor.aid.uid] = (subactor, proc, portal)
 
         # unblock parent task
         task_status.started(portal)
@@ -810,7 +814,7 @@ async def mp_proc(
             # tandem if not done already
             log.warning(
                 "Cancelling existing result waiter task for "
-                f"{subactor.uid}")
+                f"{subactor.aid.uid}")
             nursery.cancel_scope.cancel()
 
     finally:
@@ -828,7 +832,7 @@ async def mp_proc(
         log.debug(f"Joined {proc}")
 
         # pop child entry to indicate we are no longer managing subactor
-        actor_nursery._children.pop(subactor.uid)
+        actor_nursery._children.pop(subactor.aid.uid)
 
         # TODO: prolly report to ``mypy`` how this causes all sorts of
         # false errors..

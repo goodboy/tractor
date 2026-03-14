@@ -74,6 +74,7 @@ def tractor_test(fn):
         reg_addr=None,
         start_method: str|None = None,
         debug_mode: bool = False,
+        tpt_proto: str|None=None,
         **kwargs
     ):
         # __tracebackhide__ = True
@@ -102,6 +103,9 @@ def tractor_test(fn):
             # set of subprocess spawning backends
             kwargs['debug_mode'] = debug_mode
 
+        if 'tpt_proto' in inspect.signature(fn).parameters:
+            # set of subprocess spawning backends
+            kwargs['tpt_proto'] = tpt_proto
 
         if kwargs:
 
@@ -177,6 +181,13 @@ def pytest_configure(config):
     backend = config.option.spawn_backend
     tractor._spawn.try_set_start_method(backend)
 
+    # register custom marks to avoid warnings see,
+    # https://docs.pytest.org/en/stable/how-to/writing_plugins.html#registering-custom-markers
+    config.addinivalue_line(
+        'markers',
+        'no_tpt(proto_key): test will (likely) not behave with tpt backend'
+    )
+
 
 @pytest.fixture(scope='session')
 def debug_mode(request) -> bool:
@@ -225,13 +236,32 @@ def tpt_protos(request) -> list[str]:
     autouse=True,
 )
 def tpt_proto(
+    request,
     tpt_protos: list[str],
 ) -> str:
     proto_key: str = tpt_protos[0]
 
+    # ?TODO, but needs a fn-scoped tpt_proto fixture..
+    # @pytest.mark.no_tpt('uds')
+    # node = request.node
+    # markers = node.own_markers
+    # for mark in markers:
+    #     if (
+    #         mark.name == 'no_tpt'
+    #         and
+    #         proto_key in mark.args
+    #     ):
+    #         pytest.skip(
+    #             f'Test {node} normally fails with '
+    #             f'tpt-proto={proto_key!r}\n'
+    #         )
+
     from tractor import _state
     if _state._def_tpt_proto != proto_key:
         _state._def_tpt_proto = proto_key
+        _state._runtime_vars['_enable_tpts'] = [
+            proto_key,
+        ]
 
     yield proto_key
 

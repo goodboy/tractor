@@ -75,7 +75,7 @@ jobs:
 
 
   testing:
-    name: '${{ matrix.os }} Python${{ matrix.python-version }} - spawn_backend=${{ matrix.spawn_backend }}'
+    name: '${{ matrix.os }} Python${{ matrix.python-version }} spawn_backend=${{ matrix.spawn_backend }} tpt_proto=${{ matrix.tpt_proto }}'
     timeout-minutes: 16
     runs-on: ${{ matrix.os }}
 
@@ -94,7 +94,22 @@ jobs:
           'trio',
           # 'mp_spawn',
           # 'mp_forkserver',
+          # ?TODO^ is it worth it to get these running again?
+          #
+          # - [ ] next-gen backends, on 3.13+
+          #   https://github.com/goodboy/tractor/issues/379
+          # 'subinterpreter',
+          # 'subint',
         ]
+        tpt_proto: [
+          'tcp',
+          'uds',
+        ]
+        # https://github.com/orgs/community/discussions/26253#discussioncomment-3250989
+        exclude:
+          # don't do UDS run on macOS (for now)
+          - os: macos-latest
+            tpt_proto: 'uds'
 
     steps:
       - uses: actions/checkout@v4
@@ -123,7 +138,11 @@ jobs:
         run: uv tree
 
       - name: Run tests
-        run: uv run pytest tests/ --spawn-backend=${{ matrix.spawn_backend }} -rsx
+        run: >
+          uv run
+          pytest tests/ -rsx
+          --spawn-backend=${{ matrix.spawn_backend }}
+          --tpt-proto=${{ matrix.tpt_proto }}
 
   # XXX legacy NOTE XXX
   #

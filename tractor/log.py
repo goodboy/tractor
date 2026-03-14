@@ -293,7 +293,7 @@ _conc_name_getters = {
     'task': pformat_task_uid,
     'actor': lambda: _curr_actor_no_exc(),
     'actor_name': lambda: current_actor().name,
-    'actor_uid': lambda: current_actor().uid[1][:6],
+    'actor_uid': lambda: current_actor().aid.uuid[:6],
 }
 
 

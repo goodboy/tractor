@@ -89,6 +89,7 @@ def spawn(
 
     def _spawn(
         cmd: str,
+        expect_timeout: float = 4,
         **mkcmd_kwargs,
     ) -> pty_spawn.spawn:
         nonlocal spawned
@@ -98,14 +99,17 @@ def spawn(
                 cmd,
                 **mkcmd_kwargs,
             ),
-            expect_timeout=(
-                10 if _non_linux and _ci_env
-                else 3
-            ),
+            expect_timeout=(timeout:=(
+                expect_timeout + 6
+                if _non_linux and _ci_env
+                else expect_timeout
+            )),
             # preexec_fn=unset_colors,
             # ^TODO? get `pytest` core to expose underlying
             # `pexpect.spawn()` stuff?
         )
+        # sanity
+        assert spawned.timeout == timeout
         return spawned
 
     # such that test-dep can pass input script name.

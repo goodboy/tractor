@@ -581,7 +581,7 @@ def test_peer_canceller(
                             assert (
                                 re.canceller
                                 ==
-                                root.uid
+                                root.aid.uid
                             )
 
                         else:  # the other 2 ctxs
@@ -590,7 +590,7 @@ def test_peer_canceller(
                                 and (
                                     re.canceller
                                     ==
-                                    canceller.channel.uid
+                                    canceller.channel.aid.uid
                                 )
                             )
 
@@ -745,7 +745,7 @@ def test_peer_canceller(
                         # -> each context should have received
                         # a silently absorbed context cancellation
                         # in its remote nursery scope.
-                        # assert ctx.chan.uid == ctx.canceller
+                        # assert ctx.chan.aid.uid == ctx.canceller
 
                     # NOTE: when an inter-peer cancellation
                     # occurred, we DO NOT expect this
@@ -802,7 +802,7 @@ async def basic_echo_server(
 
     '''
     actor: Actor = tractor.current_actor()
-    uid: tuple = actor.uid
+    uid: tuple = actor.aid.uid
     await ctx.started(uid)
     async with ctx.open_stream() as ipc:
         async for msg in ipc:
@@ -857,7 +857,7 @@ async def serve_subactors(
                     f'|_{peer}\n'
                 )
                 await ipc.send((
-                    peer.chan.uid,
+                    peer.chan.aid.uid,
                     peer.chan.raddr.unwrap(),
                 ))
 
@@ -992,7 +992,7 @@ async def tell_little_bro(
         sub_ctx.open_stream() as echo_ipc,
     ):
         actor: Actor = current_actor()
-        uid: tuple = actor.uid
+        uid: tuple = actor.aid.uid
         for i in range(rng_seed):
             msg: tuple = (
                 uid,
@@ -1097,7 +1097,7 @@ def test_peer_spawns_and_cancels_service_subactor(
                     ) as (client_ctx, client_says),
                 ):
                     root: Actor = current_actor()
-                    spawner_uid: tuple = spawn_ctx.chan.uid
+                    spawner_uid: tuple = spawn_ctx.chan.aid.uid
                     print(
                         f'Server says: {first}\n'
                         f'Client says: {client_says}\n'
@@ -1116,7 +1116,7 @@ def test_peer_spawns_and_cancels_service_subactor(
                     print(
                         'Sub-spawn came online\n'
                         f'portal: {sub}\n'
-                        f'.uid: {sub.actor.uid}\n'
+                        f'.uid: {sub.actor.aid.uid}\n'
                         f'chan.raddr: {sub.chan.raddr}\n'
                     )
 
@@ -1150,7 +1150,7 @@ def test_peer_spawns_and_cancels_service_subactor(
 
                         assert isinstance(res, ContextCancelled)
                         assert client_ctx.cancel_acked
-                        assert res.canceller == root.uid
+                        assert res.canceller == root.aid.uid
                         assert not raise_sub_spawn_error_after
 
                         # cancelling the spawner sub should
@@ -1184,8 +1184,8 @@ def test_peer_spawns_and_cancels_service_subactor(
                         # little_bro: a `RuntimeError`.
                         #
                         check_inner_rte(rae)
-                        assert rae.relay_uid == client.chan.uid
-                        assert rae.src_uid == sub.chan.uid
+                        assert rae.relay_uid == client.chan.aid.uid
+                        assert rae.src_uid == sub.chan.aid.uid
 
                         assert not client_ctx.cancel_acked
                         assert (
@@ -1214,12 +1214,12 @@ def test_peer_spawns_and_cancels_service_subactor(
             except ContextCancelled as ctxc:
                 _ctxc = ctxc
                 print(
-                    f'{root.uid} caught ctxc from ctx with {client_ctx.chan.uid}\n'
+                    f'{root.aid.uid} caught ctxc from ctx with {client_ctx.chan.aid.uid}\n'
                     f'{repr(ctxc)}\n'
                 )
 
                 if not raise_sub_spawn_error_after:
-                    assert ctxc.canceller == root.uid
+                    assert ctxc.canceller == root.aid.uid
                 else:
                     assert ctxc.canceller == spawner_uid
 

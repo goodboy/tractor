@@ -252,8 +252,8 @@ async def _invoke_non_context(
                 ):
                     log.warning(
                         'Failed to send RPC result?\n'
-                        f'|_{func}@{actor.uid}() -> {ret_msg}\n\n'
-                        f'x=> peer: {chan.uid}\n'
+                        f'|_{func}@{actor.aid.reprol()}() -> {ret_msg}\n\n'
+                        f'x=> peer: {chan.aid.reprol()}\n'
                     )
 
 @acm
@@ -698,7 +698,7 @@ async def _invoke(
             #   which cancels the scope presuming the input error
             #   is not a `.cancel_acked` pleaser.
             if rpc_ctx_cs.cancelled_caught:
-                our_uid: tuple = actor.uid
+                our_uid: tuple = actor.aid.uid
 
                 # first check for and raise any remote error
                 # before raising any context cancelled case
@@ -730,7 +730,7 @@ async def _invoke(
                     # TODO: determine if the ctx peer task was the
                     # exact task which cancelled, vs. some other
                     # task in the same actor.
-                    elif canceller == ctx.chan.uid:
+                    elif canceller == ctx.chan.aid.uid:
                         explain += f'its {ctx.peer_side!r}-side peer'
 
                     elif canceller == our_uid:
@@ -825,7 +825,7 @@ async def _invoke(
             # associated child isn't in debug any more
             await debug.maybe_wait_for_debugger()
             ctx: Context = actor._contexts.pop((
-                chan.uid,
+                chan.aid.uid,
                 cid,
             ))
 
@@ -927,7 +927,7 @@ async def try_ship_error_to_remote(
             log.critical(
                 'IPC transport failure -> '
                 f'failed to ship error to {remote_descr}!\n\n'
-                f'{type(msg)!r}[{msg.boxed_type_str}] X=> {channel.uid}\n'
+                f'{type(msg)!r}[{msg.boxed_type_str}] X=> {channel.aid.uid}\n'
                 f'\n'
                 # TODO: use `.msg.preetty_struct` for this!
                 f'{msg}\n'
@@ -1005,7 +1005,7 @@ async def process_messages(
             async for msg in chan:
                 log.transport(   # type: ignore
                     f'IPC msg from peer\n'
-                    f'<= {chan.uid}\n\n'
+                    f'<= {chan.aid.reprol()}\n\n'
 
                     # TODO: use of the pprinting of structs is
                     # FRAGILE and should prolly not be
@@ -1109,7 +1109,7 @@ async def process_messages(
                         except BaseException:
                             log.exception(
                                 'Failed to cancel task?\n'
-                                f'<= canceller: {chan.uid}\n'
+                                f'<= canceller: {chan.aid.reprol()}\n'
                                 f'  |_{chan}\n\n'
                                 f'=> {actor}\n'
                                 f'  |_cid: {target_cid}\n'
@@ -1264,7 +1264,7 @@ async def process_messages(
 
                 log.transport(
                     'Waiting on next IPC msg from\n'
-                    f'peer: {chan.uid}\n'
+                    f'peer: {chan.aid.reprol()}\n'
                     f'|_{chan}\n'
                 )
 
@@ -1313,12 +1313,10 @@ async def process_messages(
                 f'peer IPC channel closed abruptly?\n'
                 f'\n'
                 f'<=x[\n'
-                f'  {chan}\n'
-                f'  |_{chan.raddr}\n\n'
+                f'{chan}\n'
             )
             +
             tc.message
-
         )
 
         # transport **WAS** disconnected
@@ -1341,8 +1339,8 @@ async def process_messages(
             match err:
                 case ContextCancelled():
                     log.cancel(
-                        f'Actor: {actor.uid} was context-cancelled with,\n'
-                        f'str(err)'
+                        f'Actor: {actor.aid.reprol()!r} is ctxc with,\n'
+                        f'{str(err)}'
                     )
                 case _:
                     log.exception("Actor errored:")

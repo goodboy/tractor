@@ -691,7 +691,7 @@ class Actor:
 
         '''
         # ?TODO, use Aid here as well?
-        actor_uid = chan.uid
+        actor_uid = chan.aid.uid
         assert actor_uid
         try:
             ctx = self._contexts[(
@@ -701,7 +701,7 @@ class Actor:
             )]
             log.debug(
                 f'Retreived cached IPC ctx for\n'
-                f'peer: {chan.uid}\n'
+                f'peer: {chan.aid.uid}\n'
                 f'cid:{cid}\n'
             )
             ctx._allow_overruns: bool = allow_overruns
@@ -718,7 +718,7 @@ class Actor:
         except KeyError:
             log.debug(
                 f'Allocate new IPC ctx for\n'
-                f'peer: {chan.uid}\n'
+                f'peer: {chan.aid.uid}\n'
                 f'cid: {cid}\n'
             )
             ctx = mk_context(
@@ -764,7 +764,7 @@ class Actor:
 
         '''
         cid: str = str(uuid.uuid4())
-        assert chan.uid
+        assert chan.aid.uid
         ctx = self.get_context(
             chan=chan,
             cid=cid,
@@ -791,12 +791,12 @@ class Actor:
             ns=ns,
             func=func,
             kwargs=kwargs,
-            uid=self.uid,
+            uid=self.aid.uid,  # <- !TODO use .aid!
             cid=cid,
         )
         log.runtime(
             'Sending RPC `Start`\n\n'
-            f'=> peer: {chan.uid}\n'
+            f'=> peer: {chan.aid.uid}\n'
             f'  |_ {ns}.{func}({kwargs})\n\n'
 
             f'{pretty_struct.pformat(msg)}'
@@ -1244,7 +1244,7 @@ class Actor:
                 'Cancel request for invalid RPC task.\n'
                 'The task likely already completed or was never started!\n\n'
                 f'<= canceller: {requesting_aid}\n'
-                f'=> {cid}@{parent_chan.uid}\n'
+                f'=> {cid}@{parent_chan.aid.uid}\n'
                 f'  |_{parent_chan}\n'
             )
             return True
@@ -1381,7 +1381,7 @@ class Actor:
             f'Cancelling {descr} RPC tasks\n\n'
             f'<=c) {req_aid} [canceller]\n'
             f'{rent_chan_repr}'
-            f'c)=> {self.uid} [cancellee]\n'
+            f'c)=> {self.aid.uid} [cancellee]\n'
             f'  |_{self} [with {len(tasks)} tasks]\n'
             # f'  |_tasks: {len(tasks)}\n'
             # f'{tasks_str}'
@@ -1687,7 +1687,7 @@ async def async_main(
                             await reg_portal.run_from_ns(
                                 'self',
                                 'register_actor',
-                                uid=actor.uid,
+                                uid=actor.aid.uid,
                                 addr=accept_addr.unwrap(),
                             )
 
@@ -1758,9 +1758,11 @@ async def async_main(
         # always!
         match internal_err:
             case ContextCancelled():
+                reprol: str = actor.aid.reprol()
                 log.cancel(
-                    f'Actor: {actor.uid} was task-context-cancelled with,\n'
-                    f'str(internal_err)'
+                    f'Actor {reprol!r} was task-ctx-cancelled with,\n'
+                    f'\n'
+                    f'{internal_err!r}'
                 )
             case _:
                 log.exception(
@@ -1832,7 +1834,7 @@ async def async_main(
                             await reg_portal.run_from_ns(
                                 'self',
                                 'unregister_actor',
-                                uid=actor.uid
+                                uid=actor.aid.uid,
                             )
                     except OSError:
                         failed = True

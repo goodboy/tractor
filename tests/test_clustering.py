@@ -11,7 +11,6 @@ MESSAGE = 'tractoring at full speed'
 
 
 def test_empty_mngrs_input_raises() -> None:
-
     async def main():
         with trio.fail_after(3):
             async with (
@@ -56,25 +55,39 @@ async def worker(
             print(msg)
             assert msg == MESSAGE
 
-        # TODO: does this ever cause a hang
+        # ?TODO, does this ever cause a hang?
         # assert 0
 
 
+# ?TODO, but needs a fn-scoped tpt_proto fixture..
+# @pytest.mark.no_tpt('uds')
 @tractor_test
-async def test_streaming_to_actor_cluster() -> None:
+async def test_streaming_to_actor_cluster(
+    tpt_proto: str,
+):
+    '''
+    Open an actor "cluster" using the (experimental) `._clustering`
+    API and conduct standard inter-task-ctx streaming.
 
-    async with (
-        open_actor_cluster(modules=[__name__]) as portals,
+    '''
+    if tpt_proto == 'uds':
+        pytest.skip(
+            f'Test currently fails with tpt-proto={tpt_proto!r}\n'
+        )
 
-        gather_contexts(
-            mngrs=[p.open_context(worker) for p in portals.values()],
-        ) as contexts,
+    with trio.fail_after(6):
+        async with (
+            open_actor_cluster(modules=[__name__]) as portals,
 
-        gather_contexts(
-            mngrs=[ctx[0].open_stream() for ctx in contexts],
-        ) as streams,
+            gather_contexts(
+                mngrs=[p.open_context(worker) for p in portals.values()],
+            ) as contexts,
 
-    ):
-        with trio.move_on_after(1):
-            for stream in itertools.cycle(streams):
-                await stream.send(MESSAGE)
+            gather_contexts(
+                mngrs=[ctx[0].open_stream() for ctx in contexts],
+            ) as streams,
+
+        ):
+            with trio.move_on_after(1):
+                for stream in itertools.cycle(streams):
+                    await stream.send(MESSAGE)

@@ -94,7 +94,7 @@ class Channel:
         self._transport: MsgTransport|None = transport
 
         # set after handshake - always info from peer end
-        self.aid: Aid|None = None
+        self._aid: Aid|None = None
 
         self._aiter_msgs = self._iter_msgs()
         self._exc: Exception|None = None
@@ -121,6 +121,14 @@ class Channel:
 
         '''
         return self._cancel_called
+
+    @property
+    def aid(self) -> Aid:
+        '''
+        Peer actor's ID.
+
+        '''
+        return self._aid
 
     @property
     def uid(self) -> tuple[str, str]:
@@ -505,7 +513,7 @@ class Channel:
             f'<= {peer_aid.reprol(sin_uuid=False)}\n'
         )
         # NOTE, we always are referencing the remote peer!
-        self.aid = peer_aid
+        self._aid = peer_aid
         return peer_aid
 
 
