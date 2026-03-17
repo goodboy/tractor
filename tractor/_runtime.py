@@ -2038,7 +2038,7 @@ class Arbiter(Actor):
     async def delete_addr(
         self,
         addr: tuple[str, int|str],
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str]|None:
         uid: tuple | None = self._registry.inverse.pop(
             addr,
             None,

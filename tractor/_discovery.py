@@ -222,18 +222,25 @@ async def maybe_open_portal(
         # to) indicate that the target actor can't be
         # contacted at that addr.
         except OSError:
-            # NOTE: ensure we delete the stale entry from the
-            # registar actor.
-            uid: tuple[str, str] = await reg_portal.run_from_ns(
-                'self',
-                'delete_addr',
-                addr=addr,
-            )
-            log.warning(
-                f'Deleted stale registry entry !\n'
-                f'addr: {addr!r}\n'
-                f'uid: {uid!r}\n'
-            )
+            # NOTE: ensure we delete the stale entry
+            # from the registrar actor when available.
+            if reg_portal is not None:
+                uid: tuple[str, str] = await reg_portal.run_from_ns(
+                    'self',
+                    'delete_addr',
+                    addr=addr,
+                )
+                log.warning(
+                    f'Deleted stale registry entry !\n'
+                    f'addr: {addr!r}\n'
+                    f'uid: {uid!r}\n'
+                )
+            else:
+                log.warning(
+                    f'Connection to {addr!r} failed'
+                    f' and no registry portal available'
+                    f' to delete stale entry.'
+                )
             yield None
 
 
