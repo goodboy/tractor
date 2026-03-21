@@ -187,6 +187,30 @@ _body_fields: list[str] = list(
 )
 
 
+def reg_err_types(
+    exc_types: list[Type[Exception]],
+) -> None:
+    '''
+    Register custom exception types for local lookup.
+
+    Such that error types can be registered by an external
+    `tractor`-use-app code base which are expected to be raised
+    remotely; enables them being re-raised on the recevier side of
+    some inter-actor IPC dialog.
+
+    '''
+    for exc_type in exc_types:
+        log.debug(
+            f'Register custom exception,\n'
+            f'{exc_type!r}\n'
+        )
+        setattr(
+            _this_mod,
+            exc_type.__name__,
+            exc_type,
+        )
+
+
 def get_err_type(type_name: str) -> BaseException|None:
     '''
     Look up an exception type by name from the set of locally known
