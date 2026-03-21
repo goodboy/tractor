@@ -234,3 +234,12 @@ def current_ipc_protos() -> list[str]:
 
     '''
     return _runtime_vars['_enable_tpts']
+
+
+# !TODO, convert this to the new `RuntimeVars` struct!
+def get_runtime_vars() -> dict:
+    '''
+    Deliver a **copy** of the current `Actor`'s "runtime variables".
+
+    '''
+    return dict(_runtime_vars)
