@@ -8,8 +8,12 @@
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git status)",
+      "Bash(test:*)",
+      "Bash(ls:*)",
       "Bash(grep:*)",
-      "Bash(test:*)"
+      "Bash(git mv:*)",
+      "Bash(python:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []
