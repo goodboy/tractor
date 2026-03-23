@@ -225,7 +225,7 @@ class MsgpackTransport(MsgTransport):
 
                 # not sure entirely why we need this but without it we
                 # seem to be getting racy failures here on
-                # arbiter/registry name subs..
+                # registrar name subs..
                 trio.BrokenResourceError,
 
             ) as trans_err:

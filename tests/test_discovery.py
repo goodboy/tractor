@@ -24,7 +24,7 @@ async def test_reg_then_unreg(
     reg_addr: tuple,
 ):
     actor = tractor.current_actor()
-    assert actor.is_arbiter
+    assert actor.is_registrar
     assert len(actor._registry) == 1  # only self is registered
 
     async with tractor.open_nursery(
@@ -35,7 +35,7 @@ async def test_reg_then_unreg(
         uid = portal.channel.aid.uid
 
         async with tractor.get_registry(reg_addr) as aportal:
-            # this local actor should be the arbiter
+            # this local actor should be the registrar
             assert actor is aportal.actor
 
             async with tractor.wait_for_actor('actor'):
@@ -154,7 +154,7 @@ async def unpack_reg(
     actor_or_portal: tractor.Portal|tractor.Actor,
 ):
     '''
-    Get and unpack a "registry" RPC request from the "arbiter" registry
+    Get and unpack a "registry" RPC request from the registrar
     system.
 
     '''
@@ -197,15 +197,15 @@ async def spawn_and_check_registry(
             actor = tractor.current_actor()
 
             if remote_arbiter:
-                assert not actor.is_arbiter
+                assert not actor.is_registrar
 
-            if actor.is_arbiter:
-                extra = 1  # arbiter is local root actor
+            if actor.is_registrar:
+                extra = 1  # registrar is local root actor
                 get_reg = partial(unpack_reg, actor)
 
             else:
                 get_reg = partial(unpack_reg, portal)
-                extra = 2  # local root actor + remote arbiter
+                extra = 2  # local root actor + remote registrar
 
             # ensure current actor is registered
             registry: dict = await get_reg()
@@ -285,7 +285,7 @@ def test_subactors_unregister_on_cancel(
 ):
     '''
     Verify that cancelling a nursery results in all subactors
-    deregistering themselves with the arbiter.
+    deregistering themselves with the registrar.
 
     '''
     with pytest.raises(KeyboardInterrupt):
@@ -314,7 +314,7 @@ def test_subactors_unregister_on_cancel_remote_daemon(
     '''
     Verify that cancelling a nursery results in all subactors
     deregistering themselves with a **remote** (not in the local
-    process tree) arbiter.
+    process tree) registrar.
 
     '''
     with pytest.raises(KeyboardInterrupt):
@@ -387,7 +387,7 @@ async def close_chans_before_nursery(
                                     await streamer(agen2)
                                 finally:
                                     # Kill the root nursery thus resulting in
-                                    # normal arbiter channel ops to fail during
+                                    # normal registrar channel ops to fail during
                                     # teardown. It doesn't seem like this is
                                     # reliably triggered by an external SIGINT.
                                     # tractor.current_actor()._root_nursery.cancel_scope.cancel()
@@ -420,7 +420,7 @@ def test_close_channel_explicit(
     '''
     Verify that closing a stream explicitly and killing the actor's
     "root nursery" **before** the containing nursery tears down also
-    results in subactor(s) deregistering from the arbiter.
+    results in subactor(s) deregistering from the registrar.
 
     '''
     with pytest.raises(KeyboardInterrupt):
@@ -444,7 +444,7 @@ def test_close_channel_explicit_remote_registrar(
     '''
     Verify that closing a stream explicitly and killing the actor's
     "root nursery" **before** the containing nursery tears down also
-    results in subactor(s) deregistering from the arbiter.
+    results in subactor(s) deregistering from the registrar.
 
     '''
     with pytest.raises(KeyboardInterrupt):

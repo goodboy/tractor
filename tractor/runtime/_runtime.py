@@ -68,7 +68,6 @@ import textwrap
 from types import ModuleType
 import warnings
 
-from bidict import bidict
 import trio
 from trio._core import _run as trio_runtime
 from trio import (
@@ -176,13 +175,21 @@ class Actor:
     dialog.
 
     '''
-    # ugh, we need to get rid of this and replace with a "registry" sys
-    # https://github.com/goodboy/tractor/issues/216
-    is_arbiter: bool = False
+    is_registrar: bool = False
 
     @property
-    def is_registrar(self) -> bool:
-        return self.is_arbiter
+    def is_arbiter(self) -> bool:
+        '''
+        Deprecated, use `.is_registrar`.
+
+        '''
+        warnings.warn(
+            '`Actor.is_arbiter` is deprecated.\n'
+            'Use `.is_registrar` instead.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.is_registrar
 
     @property
     def is_root(self) -> bool:
@@ -238,7 +245,6 @@ class Actor:
         registry_addrs: list[Address]|None = None,
         spawn_method: str|None = None,
 
-        # TODO: remove!
         arbiter_addr: UnwrappedAddress|None = None,
 
     ) -> None:
@@ -288,8 +294,8 @@ class Actor:
             ]
 
         # marked by the process spawning backend at startup
-        # will be None for the parent most process started manually
-        # by the user (currently called the "arbiter")
+        # will be None for the parent most process started
+        # manually by the user (the "registrar")
         self._spawn_method: str = spawn_method
 
         # RPC state
@@ -1657,7 +1663,7 @@ async def async_main(
                 # TODO, just read direct from ipc_server?
                 accept_addrs: list[UnwrappedAddress] = actor.accept_addrs
 
-                # Register with the arbiter if we're told its addr
+                # Register with the registrar if we're told its addr
                 log.runtime(
                     f'Registering `{actor.name}` => {pformat(accept_addrs)}\n'
                     # ^-TODO-^ we should instead show the maddr here^^
@@ -1881,184 +1887,8 @@ async def async_main(
     log.runtime(teardown_report)
 
 
-# TODO: rename to `Registry` and move to `.discovery._registry`!
-class Arbiter(Actor):
-    '''
-    A special registrar (and for now..) `Actor` who can contact all
-    other actors within its immediate process tree and possibly keeps
-    a registry of others meant to be discoverable in a distributed
-    application. Normally the registrar is also the "root actor" and
-    thus always has access to the top-most-level actor (process)
-    nursery.
-
-    By default, the registrar is always initialized when and if no
-    other registrar socket addrs have been specified to runtime
-    init entry-points (such as `open_root_actor()` or
-    `open_nursery()`). Any time a new main process is launched (and
-    thus thus a new root actor created) and, no existing registrar
-    can be contacted at the provided `registry_addr`, then a new
-    one is always created; however, if one can be reached it is
-    used.
-
-    Normally a distributed app requires at least registrar per
-    logical host where for that given "host space" (aka localhost
-    IPC domain of addresses) it is responsible for making all other
-    host (local address) bound actors *discoverable* to external
-    actor trees running on remote hosts.
-
-    '''
-    is_arbiter = True
-
-    # TODO, implement this as a read on there existing a `._state` of
-    # some sort setup by whenever we impl this all as
-    # a `.discovery._registry.open_registry()` API
-    def is_registry(self) -> bool:
-        return self.is_arbiter
-
-    def __init__(
-        self,
-        *args,
-        **kwargs,
-    ) -> None:
-
-        self._registry: bidict[
-            tuple[str, str],
-            UnwrappedAddress,
-        ] = bidict({})
-        self._waiters: dict[
-            str,
-            # either an event to sync to receiving an actor uid (which
-            # is filled in once the actor has sucessfully registered),
-            # or that uid after registry is complete.
-            list[trio.Event | tuple[str, str]]
-        ] = {}
-
-        super().__init__(*args, **kwargs)
-
-    async def find_actor(
-        self,
-        name: str,
-
-    ) -> UnwrappedAddress|None:
-
-        for uid, addr in self._registry.items():
-            if name in uid:
-                return addr
-
-        return None
-
-    async def get_registry(
-        self
-
-    ) -> dict[str, UnwrappedAddress]:
-        '''
-        Return current name registry.
-
-        This method is async to allow for cross-actor invocation.
-
-        '''
-        # NOTE: requires ``strict_map_key=False`` to the msgpack
-        # unpacker since we have tuples as keys (not this makes the
-        # arbiter suscetible to hashdos):
-        # https://github.com/msgpack/msgpack-python#major-breaking-changes-in-msgpack-10
-        return {
-            '.'.join(key): val
-            for key, val in self._registry.items()
-        }
-
-    async def wait_for_actor(
-        self,
-        name: str,
-
-    ) -> list[UnwrappedAddress]:
-        '''
-        Wait for a particular actor to register.
-
-        This is a blocking call if no actor by the provided name is currently
-        registered.
-
-        '''
-        addrs: list[UnwrappedAddress] = []
-        addr: UnwrappedAddress
-
-        mailbox_info: str = 'Actor registry contact infos:\n'
-        for uid, addr in self._registry.items():
-            mailbox_info += (
-                f'|_uid: {uid}\n'
-                f'|_addr: {addr}\n\n'
-            )
-            if name == uid[0]:
-                addrs.append(addr)
-
-        if not addrs:
-            waiter = trio.Event()
-            self._waiters.setdefault(name, []).append(waiter)
-            await waiter.wait()
-
-            for uid in self._waiters[name]:
-                if not isinstance(uid, trio.Event):
-                    addrs.append(self._registry[uid])
-
-        log.runtime(mailbox_info)
-        return addrs
-
-    async def register_actor(
-        self,
-        uid: tuple[str, str],
-        addr: UnwrappedAddress
-    ) -> None:
-        uid = name, hash = (str(uid[0]), str(uid[1]))
-        waddr: Address = wrap_address(addr)
-        if not waddr.is_valid:
-            # should never be 0-dynamic-os-alloc
-            await debug.pause()
-
-        # XXX NOTE, value must also be hashable AND since
-        # `._registry` is a `bidict` values must be unique; use
-        # `.forceput()` to replace any prior (stale) entries
-        # that might map a different uid to the same addr (e.g.
-        # after an unclean shutdown or actor-restart reusing
-        # the same address).
-        self._registry.forceput(uid, tuple(addr))
-
-        # pop and signal all waiter events
-        events = self._waiters.pop(name, [])
-        self._waiters.setdefault(name, []).append(uid)
-        for event in events:
-            if isinstance(event, trio.Event):
-                event.set()
-
-    async def unregister_actor(
-        self,
-        uid: tuple[str, str]
-
-    ) -> None:
-        uid = (str(uid[0]), str(uid[1]))
-        entry: tuple = self._registry.pop(uid, None)
-        if entry is None:
-            log.warning(
-                f'Request to de-register {uid!r} failed?'
-            )
-
-    async def delete_addr(
-        self,
-        addr: tuple[str, int|str]|list[str|int],
-    ) -> tuple[str, str]|None:
-        # NOTE: `addr` arrives as a `list` over IPC
-        # (msgpack deserializes tuples -> lists) so
-        # coerce to `tuple` for the bidict hash lookup.
-        uid: tuple[str, str]|None = self._registry.inverse.pop(
-            tuple(addr),
-            None,
-        )
-        if uid:
-            report: str = 'Deleting registry-entry for,\n'
-        else:
-            report: str = 'No registry entry for,\n'
-
-        log.warning(
-            report
-            +
-            f'{addr!r}@{uid!r}'
-        )
-        return uid
+# Backward compat: class moved to discovery._registry
+from ..discovery._registry import (
+    Registrar,
+    Registrar as Arbiter,
+)

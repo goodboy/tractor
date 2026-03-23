@@ -1,5 +1,5 @@
 """
-Arbiter and "local" actor api
+Registrar and "local" actor api
 """
 import time
 
@@ -12,11 +12,11 @@ from tractor._testing import tractor_test
 
 @pytest.mark.trio
 async def test_no_runtime():
-    """An arbitter must be established before any nurseries
+    """A registrar must be established before any nurseries
     can be created.
 
-    (In other words ``tractor.open_root_actor()`` must be engaged at
-    some point?)
+    (In other words ``tractor.open_root_actor()`` must be
+    engaged at some point?)
     """
     with pytest.raises(RuntimeError) :
         async with tractor.find_actor('doggy'):
@@ -25,9 +25,9 @@ async def test_no_runtime():
 
 @tractor_test
 async def test_self_is_registered(reg_addr):
-    "Verify waiting on the arbiter to register itself using the standard api."
+    "Verify waiting on the registrar to register itself using the standard api."
     actor = tractor.current_actor()
-    assert actor.is_arbiter
+    assert actor.is_registrar
     with trio.fail_after(0.2):
         async with tractor.wait_for_actor('root') as portal:
             assert portal.channel.uid[0] == 'root'
@@ -35,9 +35,9 @@ async def test_self_is_registered(reg_addr):
 
 @tractor_test
 async def test_self_is_registered_localportal(reg_addr):
-    "Verify waiting on the arbiter to register itself using a local portal."
+    "Verify waiting on the registrar to register itself using a local portal."
     actor = tractor.current_actor()
-    assert actor.is_arbiter
+    assert actor.is_registrar
     async with tractor.get_registry(reg_addr) as portal:
         assert isinstance(portal, tractor.runtime._portal.LocalPortal)
 
@@ -57,8 +57,8 @@ def test_local_actor_async_func(reg_addr):
         async with tractor.open_root_actor(
             registry_addrs=[reg_addr],
         ):
-            # arbiter is started in-proc if dne
-            assert tractor.current_actor().is_arbiter
+            # registrar is started in-proc if dne
+            assert tractor.current_actor().is_registrar
 
             for i in range(10):
                 nums.append(i)

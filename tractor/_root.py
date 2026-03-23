@@ -38,6 +38,7 @@ import warnings
 import trio
 
 from .runtime import _runtime
+from .discovery._registry import Registrar
 from .devx import (
     debug,
     _frame_stack,
@@ -267,7 +268,6 @@ async def open_root_actor(
         if start_method is not None:
             _spawn.try_set_start_method(start_method)
 
-        # TODO! remove this ASAP!
         if arbiter_addr is not None:
             warnings.warn(
                 '`arbiter_addr` is now deprecated\n'
@@ -400,7 +400,7 @@ async def open_root_actor(
                     'registry socket(s) already bound'
                 )
 
-            # we were able to connect to an arbiter
+            # we were able to connect to a registrar
             logger.info(
                 f'Registry(s) seem(s) to exist @ {ponged_addrs}'
             )
@@ -453,8 +453,7 @@ async def open_root_actor(
             # https://github.com/goodboy/tractor/pull/348
             # https://github.com/goodboy/tractor/issues/296
 
-            # TODO: rename as `RootActor` or is that even necessary?
-            actor = _runtime.Arbiter(
+            actor = Registrar(
                 name=name or 'registrar',
                 uuid=mk_uuid(),
                 registry_addrs=registry_addrs,

@@ -355,7 +355,7 @@ async def handle_stream_from_peer(
         # and `MsgpackStream._inter_packets()` on a read from the
         # stream particularly when the runtime is first starting up
         # inside `open_root_actor()` where there is a check for
-        # a bound listener on the "arbiter" addr.  the reset will be
+        # a bound listener on the registrar addr.  the reset will be
         # because the handshake was never meant took place.
         log.runtime(
             con_status

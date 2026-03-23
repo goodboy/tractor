@@ -110,7 +110,7 @@ def test_rpc_errors(
         ) as n:
 
             actor = tractor.current_actor()
-            assert actor.is_arbiter
+            assert actor.is_registrar
             await n.run_in_actor(
                 sleep_back_actor,
                 actor_name=subactor_requests_to,

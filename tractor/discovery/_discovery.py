@@ -72,8 +72,8 @@ async def get_registry(
     '''
     actor: Actor = current_actor()
     if actor.is_registrar:
-        # we're already the arbiter
-        # (likely a re-entrant call from the arbiter actor)
+        # we're already the registrar
+        # (likely a re-entrant call from the registrar actor)
         yield LocalPortal(
             actor,
             Channel(transport=None)
@@ -268,10 +268,10 @@ async def find_actor(
     None,
 ]:
     '''
-    Ask the arbiter to find actor(s) by name.
+    Ask the registrar to find actor(s) by name.
 
-    Returns a connected portal to the last registered matching actor
-    known to the arbiter.
+    Returns a connected portal to the last registered
+    matching actor known to the registrar.
 
     '''
     # optimization path, use any pre-existing peer channel

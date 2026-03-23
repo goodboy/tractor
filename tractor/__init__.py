@@ -69,4 +69,8 @@ from ._root import (
 from .ipc import Channel as Channel
 from .runtime._portal import Portal as Portal
 from .runtime._runtime import Actor as Actor
+from .discovery._registry import (
+    Registrar as Registrar,
+    Arbiter as Arbiter,
+)
 # from . import hilevel as hilevel

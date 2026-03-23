@@ -75,7 +75,7 @@ def tractor_test(
     If any of the following fixture are requested by the wrapped test
     fn (via normal func-args declaration),
 
-    - `reg_addr` (a socket addr tuple where arbiter is listening)
+    - `reg_addr` (a socket addr tuple where registrar is listening)
     - `loglevel` (logging level passed to tractor internals)
     - `start_method` (subprocess spawning backend)
 
