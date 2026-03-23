@@ -55,7 +55,7 @@ from tractor.msg import (
 )
 
 if TYPE_CHECKING:
-    from ._runtime import Actor
+    from .runtime._runtime import Actor
     from ._context import Context
     from .ipc import Channel
 

@@ -53,14 +53,14 @@ from tractor.log import get_logger
 from tractor.ipc._transport import (
     MsgpackTransport,
 )
-from tractor._state import (
+from tractor.runtime._state import (
     get_rt_dir,
     current_actor,
     is_root_process,
 )
 
 if TYPE_CHECKING:
-    from ._runtime import Actor
+    from tractor.runtime._runtime import Actor
 
 
 # Platform-specific credential passing constants

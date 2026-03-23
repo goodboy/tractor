@@ -50,26 +50,24 @@ from ..devx.pformat import (
 from .._exceptions import (
     TransportClosed,
 )
-from .. import _rpc
+from ..runtime import _rpc
 from ..msg import (
     MsgType,
     Struct,
     types as msgtypes,
 )
 from ..trionics import maybe_open_nursery
-from .. import (
-    _state,
-    log,
-)
-from .._addr import Address
+from ..runtime import _state
+from .. import log
+from ..discovery._addr import Address
 from ._chan import Channel
 from ._transport import MsgTransport
 from ._uds import UDSAddress
 from ._tcp import TCPAddress
 
 if TYPE_CHECKING:
-    from .._runtime import Actor
-    from .._supervise import ActorNursery
+    from ..runtime._runtime import Actor
+    from ..runtime._supervise import ActorNursery
 
 
 log = log.get_logger()
@@ -970,7 +968,7 @@ class Server(Struct):
         in `accept_addrs`.
 
         '''
-        from .._addr import (
+        from ..discovery._addr import (
             default_lo_addrs,
             wrap_address,
         )

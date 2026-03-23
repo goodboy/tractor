@@ -53,8 +53,8 @@ import trio
 from tractor._exceptions import (
     NoRuntime,
 )
-from tractor import _state
-from tractor._state import (
+from tractor.runtime import _state
+from tractor.runtime._state import (
     current_actor,
     debug_mode,
 )
@@ -76,7 +76,7 @@ from ._repl import (
 
 if TYPE_CHECKING:
     from trio.lowlevel import Task
-    from tractor._runtime import (
+    from tractor.runtime._runtime import (
         Actor,
     )
 

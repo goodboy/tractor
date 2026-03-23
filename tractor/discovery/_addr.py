@@ -27,15 +27,15 @@ from trio import (
     SocketListener,
 )
 
-from .log import get_logger
-from ._state import (
+from ..log import get_logger
+from ..runtime._state import (
     _def_tpt_proto,
 )
-from .ipc._tcp import TCPAddress
-from .ipc._uds import UDSAddress
+from ..ipc._tcp import TCPAddress
+from ..ipc._uds import UDSAddress
 
 if TYPE_CHECKING:
-    from ._runtime import Actor
+    from ..runtime._runtime import Actor
 
 log = get_logger()
 

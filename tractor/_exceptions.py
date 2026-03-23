@@ -43,7 +43,7 @@ from msgspec import (
     ValidationError,
 )
 
-from tractor._state import current_actor
+from tractor.runtime._state import current_actor
 from tractor.log import get_logger
 from tractor.msg import (
     Error,

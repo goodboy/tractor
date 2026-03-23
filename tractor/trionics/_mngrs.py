@@ -37,7 +37,7 @@ from typing import (
 )
 
 import trio
-from tractor._state import current_actor
+from tractor.runtime._state import current_actor
 from tractor.log import get_logger
 # from ._beg import collapse_eg
 # from ._taskc import (

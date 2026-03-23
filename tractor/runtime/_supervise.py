@@ -30,36 +30,36 @@ import warnings
 import trio
 
 
-from .devx import (
+from ..devx import (
     debug,
     pformat as _pformat,
 )
-from ._addr import (
+from ..discovery._addr import (
     UnwrappedAddress,
     mk_uuid,
 )
 from ._state import current_actor, is_main_process
-from .log import get_logger, get_loglevel
+from ..log import get_logger, get_loglevel
 from ._runtime import Actor
 from ._portal import Portal
-from .trionics import (
+from ..trionics import (
     is_multi_cancelled,
     collapse_eg,
 )
-from ._exceptions import (
+from .._exceptions import (
     ContextCancelled,
 )
-from ._root import (
+from .._root import (
     open_root_actor,
 )
 from . import _state
-from . import _spawn
+from ..spawn import _spawn
 
 
 if TYPE_CHECKING:
     import multiprocessing as mp
-    # from .ipc._server import IPCServer
-    from .ipc import IPCServer
+    # from ..ipc._server import IPCServer
+    from ..ipc import IPCServer
 
 
 log = get_logger()

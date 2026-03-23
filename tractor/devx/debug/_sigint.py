@@ -27,7 +27,7 @@ from typing import (
 )
 import trio
 from tractor.log import get_logger
-from tractor._state import (
+from tractor.runtime._state import (
     current_actor,
     is_root_process,
 )
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from tractor.ipc import (
         Channel,
     )
-    from tractor._runtime import (
+    from tractor.runtime._runtime import (
         Actor,
     )
 

@@ -84,46 +84,46 @@ from tractor.msg import (
     pretty_struct,
     types as msgtypes,
 )
-from .trionics import (
+from ..trionics import (
     collapse_eg,
     maybe_open_nursery,
 )
-from .ipc import (
+from ..ipc import (
     Channel,
     # IPCServer,  # causes cycles atm..
     _server,
 )
-from ._addr import (
+from ..discovery._addr import (
     UnwrappedAddress,
     Address,
     # default_lo_addrs,
     get_address_cls,
     wrap_address,
 )
-from ._context import (
+from .._context import (
     mk_context,
     Context,
 )
-from .log import get_logger
-from ._exceptions import (
+from ..log import get_logger
+from .._exceptions import (
     ContextCancelled,
     InternalError,
     ModuleNotExposed,
     MsgTypeError,
     unpack_error,
 )
-from .devx import (
+from ..devx import (
     debug,
     pformat as _pformat
 )
-from ._discovery import get_registry
+from ..discovery._discovery import get_registry
 from ._portal import Portal
 from . import _state
-from . import _mp_fixup_main
+from ..spawn import _mp_fixup_main
 from . import _rpc
 
 if TYPE_CHECKING:
-    from ._supervise import ActorNursery
+    from ._supervise import ActorNursery  # noqa
     from trio._channel import MemoryChannelState
 
 
@@ -908,7 +908,7 @@ class Actor:
                 # TODO! -[ ] another `Struct` for rtvs..
                 rvs: dict[str, Any] = spawnspec._runtime_vars
                 if rvs['_debug_mode']:
-                    from .devx import (
+                    from ..devx import (
                         enable_stack_on_sig,
                         maybe_init_greenback,
                     )

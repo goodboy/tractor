@@ -50,7 +50,7 @@ from tractor._exceptions import (
     _mk_recv_mte,
     pack_error,
 )
-from tractor._state import (
+from tractor.runtime._state import (
     current_ipc_ctx,
 )
 from ._codec import (

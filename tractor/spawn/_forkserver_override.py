@@ -125,7 +125,7 @@ class PatchedForkServer(ForkServer):
                 self._forkserver_pid = None
 
             # XXX only thing that changed!
-            cmd = ('from tractor._forkserver_override import main; ' +
+            cmd = ('from tractor.spawn._forkserver_override import main; ' +
                    'main(%d, %d, %r, **%r)')
 
             if self._preload_modules:

@@ -39,7 +39,7 @@ from ._types import (
     transport_from_addr,
     transport_from_stream,
 )
-from tractor._addr import (
+from tractor.discovery._addr import (
     is_wrapped_addr,
     wrap_address,
     Address,

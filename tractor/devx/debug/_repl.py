@@ -25,7 +25,7 @@ from functools import (
 import os
 
 import pdbp
-from tractor._state import (
+from tractor.runtime._state import (
     is_root_process,
 )
 

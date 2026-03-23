@@ -37,19 +37,19 @@ import warnings
 
 import trio
 
-from . import _runtime
+from .runtime import _runtime
 from .devx import (
     debug,
     _frame_stack,
     pformat as _pformat,
 )
-from . import _spawn
-from . import _state
+from .spawn import _spawn
+from .runtime import _state
 from . import log
 from .ipc import (
     _connect_chan,
 )
-from ._addr import (
+from .discovery._addr import (
     Address,
     UnwrappedAddress,
     default_lo_addrs,

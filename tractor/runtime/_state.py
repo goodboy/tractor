@@ -40,7 +40,7 @@ from msgspec import (
 
 if TYPE_CHECKING:
     from ._runtime import Actor
-    from ._context import Context
+    from .._context import Context
 
 
 # default IPC transport protocol settings
@@ -182,7 +182,7 @@ def current_actor(
         _current_actor is None
     ):
         msg: str = 'No local actor has been initialized yet?\n'
-        from ._exceptions import NoRuntime
+        from .._exceptions import NoRuntime
 
         if last := last_actor():
             msg += (
@@ -248,7 +248,7 @@ def current_ipc_ctx(
         not ctx
         and error_on_not_set
     ):
-        from ._exceptions import InternalError
+        from .._exceptions import InternalError
         raise InternalError(
             'No IPC context has been allocated for this task yet?\n'
             f'|_{current_task()}\n'

@@ -97,7 +97,7 @@ from ._streaming import (
     MsgStream,
     open_stream_from_ctx,
 )
-from ._state import (
+from .runtime._state import (
     current_actor,
     debug_mode,
     _ctxvar_Context,
@@ -107,8 +107,8 @@ from .trionics import (
 )
 # ------ - ------
 if TYPE_CHECKING:
-    from ._portal import Portal
-    from ._runtime import Actor
+    from .runtime._portal import Portal
+    from .runtime._runtime import Actor
     from .ipc._transport import MsgTransport
     from .devx._frame_stack import (
         CallerInfo,
