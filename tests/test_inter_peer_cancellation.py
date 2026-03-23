@@ -201,7 +201,7 @@ async def stream_from_peer(
 ) -> None:
 
     # sanity
-    assert tractor._state.debug_mode() == debug_mode
+    assert tractor.debug_mode() == debug_mode
 
     peer: Portal
     try:
@@ -841,7 +841,7 @@ async def serve_subactors(
     async with open_nursery() as an:
 
         # sanity
-        assert tractor._state.debug_mode() == debug_mode
+        assert tractor.debug_mode() == debug_mode
 
         await ctx.started(peer_name)
         async with ctx.open_stream() as ipc:
@@ -880,7 +880,7 @@ async def client_req_subactor(
 ) -> None:
     # sanity
     if debug_mode:
-        assert tractor._state.debug_mode()
+        assert tractor.debug_mode()
 
     # TODO: other cases to do with sub lifetimes:
     # -[ ] test that we can have the server spawn a sub

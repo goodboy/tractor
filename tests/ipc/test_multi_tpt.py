@@ -13,9 +13,9 @@ from tractor import (
     Portal,
     ipc,
     msg,
-    _state,
-    _addr,
 )
+from tractor.runtime import _state
+from tractor.discovery import _addr
 
 @tractor.context
 async def chk_tpts(

@@ -17,11 +17,11 @@ from tractor._testing import (
 )
 from tractor import (
     current_actor,
-    _state,
     Actor,
     Context,
     Portal,
 )
+from tractor.runtime import _state
 from .conftest import (
     sig_prog,
     _INT_SIGNAL,
@@ -30,7 +30,7 @@ from .conftest import (
 
 if TYPE_CHECKING:
     from tractor.msg import Aid
-    from tractor._addr import (
+    from tractor.discovery._addr import (
         UnwrappedAddress,
     )
 
@@ -122,7 +122,7 @@ async def get_root_portal(
 
     # connect back to our immediate parent which should also
     # be the actor-tree's root.
-    from tractor._discovery import get_root
+    from tractor.discovery._discovery import get_root
     ptl: Portal
     async with get_root() as ptl:
         root_aid: Aid = ptl.chan.aid

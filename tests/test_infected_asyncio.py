@@ -26,8 +26,8 @@ from tractor import (
     to_asyncio,
     RemoteActorError,
     ContextCancelled,
-    _state,
 )
+from tractor.runtime import _state
 from tractor.trionics import BroadcastReceiver
 from tractor._testing import expect_ctxc
 

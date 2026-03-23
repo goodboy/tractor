@@ -8,17 +8,16 @@ from pathlib import Path
 import pytest
 import trio
 import tractor
-from tractor import (
-    Actor,
-    _state,
-    _addr,
-)
+from tractor import Actor
+from tractor.runtime import _state
+from tractor.discovery import _addr
 
 
 @pytest.fixture
 def bindspace_dir_str() -> str:
 
-    rt_dir: Path = tractor._state.get_rt_dir()
+    from tractor.runtime._state import get_rt_dir
+    rt_dir: Path = get_rt_dir()
     bs_dir: Path = rt_dir / 'doggy'
     bs_dir_str: str = str(bs_dir)
     assert not bs_dir.is_dir()

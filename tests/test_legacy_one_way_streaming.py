@@ -353,7 +353,7 @@ def test_not_fast_enough_quad(
         assert results is None
 
 
-@tractor_test
+@tractor_test(timeout=20)
 async def test_respawn_consumer_task(
     reg_addr: tuple,
     spawn_backend: str,

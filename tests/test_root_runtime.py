@@ -94,15 +94,15 @@ def test_runtime_vars_unset(
     after the root actor-runtime exits!
 
     '''
-    assert not tractor._state._runtime_vars['_debug_mode']
+    assert not tractor.runtime._state._runtime_vars['_debug_mode']
     async def main():
-        assert not tractor._state._runtime_vars['_debug_mode']
+        assert not tractor.runtime._state._runtime_vars['_debug_mode']
         async with tractor.open_nursery(
             debug_mode=True,
         ):
-            assert tractor._state._runtime_vars['_debug_mode']
+            assert tractor.runtime._state._runtime_vars['_debug_mode']
 
         # after runtime closure, should be reverted!
-        assert not tractor._state._runtime_vars['_debug_mode']
+        assert not tractor.runtime._state._runtime_vars['_debug_mode']
 
     trio.run(main)

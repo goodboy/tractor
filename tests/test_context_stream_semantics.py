@@ -26,7 +26,7 @@ from tractor._exceptions import (
     StreamOverrun,
     ContextCancelled,
 )
-from tractor._state import current_ipc_ctx
+from tractor.runtime._state import current_ipc_ctx
 
 from tractor._testing import (
     tractor_test,
@@ -939,7 +939,7 @@ def test_one_end_stream_not_opened(
 
     '''
     overrunner, buf_size_increase, entrypoint = overrun_by
-    from tractor._runtime import Actor
+    from tractor.runtime._runtime import Actor
     buf_size = buf_size_increase + Actor.msg_buffer_size
 
     timeout: float = (

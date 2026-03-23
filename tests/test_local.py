@@ -39,7 +39,7 @@ async def test_self_is_registered_localportal(reg_addr):
     actor = tractor.current_actor()
     assert actor.is_arbiter
     async with tractor.get_registry(reg_addr) as portal:
-        assert isinstance(portal, tractor._portal.LocalPortal)
+        assert isinstance(portal, tractor.runtime._portal.LocalPortal)
 
         with trio.fail_after(0.2):
             sockaddr = await portal.run_from_ns(
