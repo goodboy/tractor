@@ -33,7 +33,6 @@ from typing import (
 import platformdirs
 from trio.lowlevel import current_task
 
-# from .msg.pretty_struct import Struct
 from msgspec import (
     field,
     Struct,
@@ -53,6 +52,7 @@ _def_tpt_proto: TransportProtocolKey = 'tcp'
 
 _current_actor: Actor|None = None  # type: ignore # noqa
 _last_actor_terminated: Actor|None = None
+
 
 # TODO: mk this a `msgspec.Struct`!
 # -[x] type out all fields obvi!
@@ -138,6 +138,23 @@ _runtime_vars: dict[str, Any] = {
     # infected-`asyncio`-mode: `trio` running as guest.
     '_is_infected_aio': False,
 }
+
+
+def get_runtime_vars(
+    as_dict: bool = True,
+) -> dict:
+    '''
+    Deliver a **copy** of the current `Actor`'s "runtime variables".
+
+    By default, for historical impl reasons, this delivers the `dict`
+    form, but the `RuntimeVars` struct should be utilized as possible
+    for future calls.
+
+    '''
+    if as_dict:
+        return dict(_runtime_vars)
+
+    return RuntimeVars(**_runtime_vars)
 
 
 def last_actor() -> Actor|None:
@@ -301,12 +318,3 @@ def current_ipc_protos() -> list[str]:
 
     '''
     return _runtime_vars['_enable_tpts']
-
-
-# !TODO, convert this to the new `RuntimeVars` struct!
-def get_runtime_vars() -> dict:
-    '''
-    Deliver a **copy** of the current `Actor`'s "runtime variables".
-
-    '''
-    return dict(_runtime_vars)

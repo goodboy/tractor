@@ -41,10 +41,12 @@ from ._supervise import (
     ActorNursery as ActorNursery,
 )
 from ._state import (
+    RuntimeVars as RuntimeVars,
     current_actor as current_actor,
-    is_root_process as is_root_process,
     current_ipc_ctx as current_ipc_ctx,
-    debug_mode as debug_mode
+    debug_mode as debug_mode,
+    get_runtime_vars as get_runtime_vars,
+    is_root_process as is_root_process,
 )
 from ._exceptions import (
     ContextCancelled as ContextCancelled,
