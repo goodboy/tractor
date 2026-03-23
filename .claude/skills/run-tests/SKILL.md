@@ -88,25 +88,44 @@ python -m pytest tests/ -x --tb=short --no-header --tpt-proto uds
 python -m pytest tests/ -x --tb=short --no-header -k "cancel and not slow"
 ```
 
-## 3. Run and report
+## 3. Pre-flight checks (before running tests)
+
+Always run these first, especially after refactors or
+module moves — they catch import errors instantly:
+
+```sh
+# 1. package import smoke check
+python -c 'import tractor; print(tractor)'
+
+# 2. verify all tests collect (no import errors)
+python -m pytest tests/ -x -q --co 2>&1 | tail -5
+```
+
+If either fails, fix the import error before running
+any actual tests.
+
+## 4. Run and report
 
 - Run the constructed command.
 - Use a timeout of **600000ms** (10min) for full suite
   runs, **120000ms** (2min) for single-file runs.
 - If the suite is large (full `tests/`), consider running
   in the background and checking output when done.
+- Use `--lf` (last-failed) to re-run only previously
+  failing tests when iterating on a fix.
 
 ### On failure:
 - Show the failing test name(s) and short traceback.
 - If the failure looks related to recent changes, point
   out the likely cause and suggest a fix.
-- If the failure looks like a pre-existing flaky test
-  (e.g. `TooSlowError`, pexpect `TIMEOUT`), note that.
+- **Check the known-flaky list** (section 8) before
+  investigating — don't waste time on pre-existing
+  timeout issues.
 
 ### On success:
 - Report the pass/fail/skip counts concisely.
 
-## 4. Test directory layout (reference)
+## 5. Test directory layout (reference)
 
 ```
 tests/
@@ -126,13 +145,63 @@ tests/
 └── ...
 ```
 
-## 5. Quick-check shortcuts
+## 6. Change-type → test mapping
 
-For fast verification after refactors, suggest running
-the "core" subset first:
+After modifying specific modules, run the corresponding
+test subset first for fast feedback:
 
+| Changed module(s) | Run these tests first |
+|---|---|
+| `runtime/_runtime.py`, `runtime/_state.py` | `test_local.py test_rpc.py test_spawning.py test_root_runtime.py` |
+| `discovery/` (`_registry`, `_discovery`, `_addr`) | `test_discovery.py test_multi_program.py test_local.py` |
+| `_context.py`, `_streaming.py` | `test_context_stream_semantics.py test_advanced_streaming.py` |
+| `ipc/` (`_chan`, `_server`, `_transport`) | `tests/ipc/ test_2way.py` |
+| `runtime/_portal.py`, `runtime/_rpc.py` | `test_rpc.py test_cancellation.py` |
+| `spawn/` (`_spawn`, `_entry`) | `test_spawning.py test_multi_program.py` |
+| `devx/debug/` | `tests/devx/test_debugger.py` (slow!) |
+| `to_asyncio.py` | `test_infected_asyncio.py test_root_infect_asyncio.py` |
+| `msg/` | `tests/msg/` |
+| `_exceptions.py` | `test_remote_exc_relay.py test_inter_peer_cancellation.py` |
+| `runtime/_supervise.py` | `test_cancellation.py test_spawning.py` |
+
+## 7. Quick-check shortcuts
+
+### After refactors (fastest first-pass):
 ```sh
+# import + collect check
+python -c 'import tractor' && python -m pytest tests/ -x -q --co 2>&1 | tail -3
+
+# core subset (~10s)
 python -m pytest tests/test_local.py tests/test_rpc.py tests/test_spawning.py tests/test_discovery.py -x --tb=short --no-header
 ```
 
-Then expand to the full suite if those pass.
+### Re-run last failures only:
+```sh
+python -m pytest --lf -x --tb=short --no-header
+```
+
+### Full suite in background:
+When core tests pass and you want full coverage while
+continuing other work, run in background:
+```sh
+python -m pytest tests/ -x --tb=short --no-header -q
+```
+(use `run_in_background=true` on the Bash tool)
+
+## 8. Known flaky tests
+
+These tests have **pre-existing** timing/environment
+sensitivity. If they fail with `TooSlowError` or
+pexpect `TIMEOUT`, they are almost certainly NOT caused
+by your changes — note them and move on.
+
+| Test | Typical error | Notes |
+|---|---|---|
+| `devx/test_debugger.py::test_multi_nested_subactors_error_through_nurseries` | pexpect TIMEOUT | Debugger pexpect timing |
+| `test_cancellation.py::test_cancel_via_SIGINT_other_task` | TooSlowError | Signal handling race |
+| `test_inter_peer_cancellation.py::test_peer_spawns_and_cancels_service_subactor` | TooSlowError | Async timing (both param variants) |
+| `test_docs_examples.py::test_example[we_are_processes.py]` | `assert None == 0` | `__main__` missing `__file__` in subproc |
+
+**Rule of thumb**: if a test fails with `TooSlowError`,
+`trio.TooSlowError`, or `pexpect.TIMEOUT` and you didn't
+touch the relevant code path, it's flaky — skip it.
