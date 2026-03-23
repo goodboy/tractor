@@ -94,8 +94,10 @@ def run_example_in_subproc(
         for f in p[2]
 
         if (
-            '__' not in f
-            and f[0] != '_'
+            '__' not in f  # ignore any pkg-mods
+            # ignore any `__pycache__` subdir
+            and '__pycache__' not in str(p[0])
+            and f[0] != '_'  # ignore any WIP "examplel mods"
             and 'debugging' not in p[0]
             and 'integration' not in p[0]
             and 'advanced_faults' not in p[0]
