@@ -1889,6 +1889,6 @@ async def async_main(
 
 # Backward compat: class moved to discovery._registry
 from ..discovery._registry import (
-    Registrar,
-    Registrar as Arbiter,
+    Registrar as Registrar,
 )
+Arbiter = Registrar
