@@ -257,29 +257,23 @@ def test_registered_another_err_relayed(
     assert rae.boxed_type is AnotherAppError
 
 
-@pytest.mark.xfail(
-    reason=(
-        'Unregistered custom error types are not '
-        'resolvable by `get_err_type()` and thus '
-        '`.boxed_type` will be `None`, indicating '
-        'the framework cannot reconstruct the '
-        'original remote error type - the user '
-        'must call `reg_err_types()` to fix this.'
-    ),
-)
-def test_unregistered_custom_err_fails_lookup(
+def test_unregistered_err_still_relayed(
     debug_mode: bool,
     tpt_proto: str,
 ):
     '''
-    When a custom error type is NOT registered the
-    received `RemoteActorError.boxed_type` should NOT
-    match the original error type.
+    Verify that even when a custom error type is NOT registered via
+    `reg_err_types()`, the remote error is still relayed as
+    a `RemoteActorError` with all string-level info preserved
+    (traceback, type name, source actor uid).
 
-    This test is `xfail` to document the expected
-    failure mode and to alert the user that
-    `reg_err_types()` must be called for custom
-    error types to relay correctly.
+    The `.boxed_type` will be `None` (type obj can't be resolved) but
+    `.boxed_type_str` and `.src_type_str` still report the original
+    type name from the IPC msg.
+
+    This document the expected limitation: without `reg_err_types()`
+    the `.boxed_type` property can NOT resolve to the original Python
+    type.
 
     '''
     # NOTE: intentionally do NOT call
@@ -307,7 +301,25 @@ def test_unregistered_custom_err_fails_lookup(
 
     rae = excinfo.value
 
-    # XXX this SHOULD fail bc the type was never
-    # registered and thus `get_err_type()` returns
-    # `None` for the boxed type lookup.
-    assert rae.boxed_type is UnregisteredAppError
+    # the error IS relayed even without
+    # registration; type obj is unresolvable but
+    # all string-level info is preserved.
+    assert rae.boxed_type is None # NOT `UnregisteredAppError`
+    assert rae.src_type is None
+
+    # string names survive the IPC round-trip
+    # via the `Error` msg fields.
+    assert (
+        rae.src_type_str
+        ==
+        'UnregisteredAppError'
+    )
+    assert (
+        rae.boxed_type_str
+        ==
+        'UnregisteredAppError'
+    )
+
+    # original traceback content is preserved
+    assert 'this error type is unknown' in rae.tb_str
+    assert 'UnregisteredAppError' in rae.tb_str
