@@ -165,6 +165,16 @@ class TestRegErrTypesPlumbing:
             is tractor.ContextCancelled
         )
 
+    def test_boxed_type_str_without_ipc_msg(self):
+        '''
+        When a `RemoteActorError` is constructed
+        without an IPC msg (and no resolvable type),
+        `.boxed_type_str` should return `'<unknown>'`.
+
+        '''
+        rae = RemoteActorError('test')
+        assert rae.boxed_type_str == '<unknown>'
+
 
 # -- IPC-level integration tests --
 

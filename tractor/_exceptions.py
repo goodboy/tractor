@@ -491,7 +491,7 @@ class RemoteActorError(Exception):
         if self._ipc_msg:
             return self._ipc_msg.boxed_type_str
 
-        return ''
+        return '<unknown>'
 
     @property
     def boxed_type(self) -> Type[BaseException]:
