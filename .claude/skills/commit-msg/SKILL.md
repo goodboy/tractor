@@ -17,9 +17,19 @@ allowed-tools:
 
 When generating commit messages, always follow this process:
 
-0. **Check for staged changes**: if `git diff --staged` is
-   empty, STOP and tell the user "nothing is staged!" with
-   a reminder to `git add` before invoking this skill.
+0. **Detect working context**: run
+   `git rev-parse --show-toplevel` to find the repo
+   root and `git rev-parse --git-common-dir` to check
+   if the cwd is inside a worktree. If the common-dir
+   differs from the git-dir, you are in a worktree.
+   Tell the user which tree you're operating on
+   (e.g. "generating commit msg for worktree
+   `remote-exc-registry-tests`").
+
+   Then check for staged changes: if
+   `git diff --staged` is empty, STOP and tell the
+   user "nothing is staged!" with a reminder to
+   `git add` before invoking this skill.
 
 1. **Gather context** from the staged diff and recent
    history:
@@ -59,13 +69,24 @@ When generating commit messages, always follow this process:
 - Adoption: "Use `new_tool` for `task`"
 - Minor tweaks: "Adjust `behavior` in `component`"
 
-4. **Write to TWO files**:
+4. **Write to TWO files** relative to the repo root
+   detected in step 0 (i.e. `git rev-parse
+   --show-toplevel`; in a worktree this is the
+   *worktree* root, NOT the main repo):
    - `.claude/skills/commit-msg/msgs/<timestamp>_<hash>_commit_msg.md`
      * with `<timestamp>` from `date -u +%Y%m%dT%H%M%SZ`
        or similar filesystem-safe format.
      * and `<hash>` from `git log -1 --format=%h`
        first 7 chars.
+     * `mkdir -p` the `msgs/` dir if it doesn't exist.
    - `.claude/git_commit_msg_LATEST.md` (overwrite)
+
+   This ensures
+   `git commit --edit --file .claude/git_commit_msg_LATEST.md`
+   always works regardless of whether we're in the
+   main checkout or a worktree. The `msgs/` backups
+   are nice-to-have; if a worktree gets cleaned up
+   they're not critical.
 
 5. **Always include credit footer**:
 
