@@ -160,8 +160,12 @@ async def query_actor(
     Lookup a transport address (by actor name) via querying a registrar
     listening @ `regaddr`.
 
-    Returns the transport protocol (socket) address or `None` if no
-    entry under that name exists.
+    Yields a `tuple` of `(addr, reg_portal)` where,
+    - `addr` is the transport protocol (socket) address or `None` if
+      no entry under that name exists,
+    - `reg_portal` is the `Portal` to the registrar used for the
+      lookup (or `None` when the peer was found locally via
+      `get_peer_by_name()`).
 
     '''
     actor: Actor = current_actor()
@@ -225,16 +229,21 @@ async def maybe_open_portal(
             # NOTE: ensure we delete the stale entry
             # from the registrar actor when available.
             if reg_portal is not None:
-                uid: tuple[str, str] = await reg_portal.run_from_ns(
+                uid: tuple[str, str]|None = await reg_portal.run_from_ns(
                     'self',
                     'delete_addr',
                     addr=addr,
                 )
-                log.warning(
-                    f'Deleted stale registry entry !\n'
-                    f'addr: {addr!r}\n'
-                    f'uid: {uid!r}\n'
-                )
+                if uid:
+                    log.warning(
+                        f'Deleted stale registry entry !\n'
+                        f'addr: {addr!r}\n'
+                        f'uid: {uid!r}\n'
+                    )
+                else:
+                    log.warning(
+                        f'No registry entry found for addr: {addr!r}'
+                    )
             else:
                 log.warning(
                     f'Connection to {addr!r} failed'

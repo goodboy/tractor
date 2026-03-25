@@ -2013,8 +2013,13 @@ class Arbiter(Actor):
             # should never be 0-dynamic-os-alloc
             await debug.pause()
 
-        # XXX NOTE, value must also be hashable.
-        self._registry[uid] = tuple(addr)
+        # XXX NOTE, value must also be hashable AND since
+        # `._registry` is a `bidict` values must be unique; use
+        # `.forceput()` to replace any prior (stale) entries
+        # that might map a different uid to the same addr (e.g.
+        # after an unclean shutdown or actor-restart reusing
+        # the same address).
+        self._registry.forceput(uid, tuple(addr))
 
         # pop and signal all waiter events
         events = self._waiters.pop(name, [])

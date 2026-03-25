@@ -491,6 +491,7 @@ def test_stale_entry_is_deleted(
         async with (
             tractor.open_nursery(
                 debug_mode=debug_mode,
+                registry_addrs=[reg_addr],
             ) as an,
             tractor.get_registry(reg_addr) as _reg_ptl,
         ):
@@ -501,7 +502,10 @@ def test_stale_entry_is_deleted(
             async with ptl.open_context(
                 kill_transport,
             ) as (first, ctx):
-                async with tractor.find_actor(name) as maybe_portal:
+                async with tractor.find_actor(
+                    name,
+                    registry_addrs=[reg_addr],
+                ) as maybe_portal:
                     # because the transitive
                     # `._discovery.maybe_open_portal()` call should
                     # fail and implicitly call `.delete_addr()`
