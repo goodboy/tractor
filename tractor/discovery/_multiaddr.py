@@ -50,7 +50,14 @@ def mk_maddr(
     multiaddr-spec-compliant protocol path.
 
     '''
-    match addr.proto_key:
+    proto_key: str = addr.proto_key
+    maddr_proto: str|None = _tpt_proto_to_maddr.get(proto_key)
+    if maddr_proto is None:
+        raise ValueError(
+            f'Unsupported proto_key: {proto_key!r}'
+        )
+
+    match proto_key:
         case 'tcp':
             host, port = addr.unwrap()
             ip = ipaddress.ip_address(host)
@@ -59,17 +66,12 @@ def mk_maddr(
                 else 'ip6'
             )
             return Multiaddr(
-                f'/{net_proto}/{host}/tcp/{port}'
+                f'/{net_proto}/{host}/{maddr_proto}/{port}'
             )
 
         case 'uds':
             filedir, filename = addr.unwrap()
             filepath = Path(filedir) / filename
             return Multiaddr(
-                f'/unix/{filepath}'
-            )
-
-        case _:
-            raise ValueError(
-                f'Unsupported proto_key: {addr.proto_key!r}'
+                f'/{maddr_proto}/{filepath}'
             )
