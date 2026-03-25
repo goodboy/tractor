@@ -48,8 +48,10 @@ from trio._highlevel_open_unix_stream import (
     has_unix,
 )
 
+from multiaddr import Multiaddr
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
+from tractor.discovery._multiaddr import mk_maddr
 from tractor.ipc._transport import (
     MsgpackTransport,
 )
@@ -442,19 +444,11 @@ class MsgpackUDSStream(MsgpackTransport):
     layer_key: int = 4
 
     @property
-    def maddr(self) -> str:
+    def maddr(self) -> Multiaddr|str:
         if not self.raddr:
             return '<unknown-peer>'
 
-        filepath: Path = Path(self.raddr.unwrap()[0])
-        return (
-            f'/{self.address_type.proto_key}/{filepath}'
-            # f'/{self.chan.uid[0]}'
-            # f'/{self.cid}'
-
-            # f'/cid={cid_head}..{cid_tail}'
-            # TODO: ? not use this ^ right ?
-        )
+        return mk_maddr(self.raddr)
 
     def connected(self) -> bool:
         return self.stream.socket.fileno() != -1
