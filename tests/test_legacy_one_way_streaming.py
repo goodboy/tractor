@@ -4,8 +4,12 @@ Streaming via the, now legacy, "async-gen API".
 """
 import time
 from functools import partial
+from pathlib import Path
 import platform
-from typing import Callable
+from typing import (
+    Callable,
+    Literal,
+)
 
 import trio
 import tractor
@@ -296,23 +300,103 @@ def time_quad_ex(
     return results, diff
 
 
+def get_cpu_state(
+    icpu: int = 0,
+    setting: Literal[
+        'scaling_governor',
+        '*_pstate_max_freq',
+        'scaling_max_freq',
+        # 'scaling_cur_freq',
+    ] = '*_pstate_max_freq',
+) -> tuple[
+    Path,
+    str|int,
+]|None:
+    '''
+    Attempt to read the (first) CPU's setting according
+    to the set `setting` from under the file-sys,
+
+    /sys/devices/system/cpu/cpu0/cpufreq/{setting}
+
+    Useful to determine latency limits for various perf affected test
+    suites.
+
+    '''
+    try:
+        # Read governor for core 0 (usually same for all)
+        setting_path: Path = list(
+            Path(f'/sys/devices/system/cpu/cpu{icpu}/cpufreq/')
+            .glob(f'{setting}')
+        )[0]  # <- XXX must be single match!
+        with open(
+            setting_path,
+            'r',
+        ) as f:
+            return (
+                setting_path,
+                f.read().strip(),
+            )
+    except FileNotFoundError:
+        return None
+
+
 def test_a_quadruple_example(
     time_quad_ex: tuple[list[int], float],
     ci_env: bool,
     spawn_backend: str,
+    test_log: tractor.log.StackLevelAdapter,
 ):
     '''
-    This also serves as a kind of "we'd like to be this fast test".
+    This also serves as a "we'd like to be this fast" smoke test
+    given past empirical eval of this suite.
 
     '''
     non_linux: bool = (_sys := platform.system()) != 'Linux'
 
-    results, diff = time_quad_ex
-    assert results
+    this_fast_on_linux: float = 3
     this_fast = (
         6 if non_linux
-        else 3
+        else this_fast_on_linux
     )
+    # ^ XXX NOTE,
+    # i've noticed that tweaking the CPU governor setting
+    # to not "always" enable "turbo" mode can result in latency
+    # which causes this limit to be too little. Not sure if it'd
+    # be worth it to adjust the linux value based on reading the
+    # CPU conf from the sys?
+    #
+    # For ex, see the `auto-cpufreq` docs on such settings,
+    # https://github.com/AdnanHodzic/auto-cpufreq?tab=readme-ov-file#example-config-file-contents
+    #
+    # HENCE this below auxiliary compensation logic..
+    if not non_linux:
+        mx_pth, max_freq = get_cpu_state()
+        cur_pth, cur_freq = get_cpu_state(
+            setting='scaling_max_freq',
+        )
+        cpu_scaled: float = (
+            int(cur_freq) / int(max_freq)
+        )
+
+        if cpu_scaled != 1.:
+            this_fast = (
+                this_fast_on_linux / (
+                    cpu_scaled * 2  # <- bc likely "dual threaded"
+                    # ^TODO, calc the thr-per-core val?
+                )
+            )
+            test_log.warning(
+                f'Increasing time-limit on linux bc CPU scaling,\n'
+                f'\n'
+                f'{mx_pth} = {max_freq}\n'
+                f'{cur_pth} = {cur_freq}\n'
+                f'\n'
+                f'cpu_scaled = {cpu_scaled}\n'
+                f'this_fast_on_linux: {this_fast_on_linux} -> {this_fast}\n'
+            )
+
+    results, diff = time_quad_ex
+    assert results
     assert diff < this_fast
 
 
