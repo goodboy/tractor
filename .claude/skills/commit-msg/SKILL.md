@@ -7,6 +7,7 @@ argument-hint: "[optional-scope-or-description]"
 disable-model-invocation: true
 allowed-tools:
   - Bash(git *)
+  - Bash(gh *)
   - Bash(date *)
   - Bash(cp *)
   - Read
@@ -140,16 +141,13 @@ The `Review:` line is terse — PR number +
 reviewer login. The URL goes on the next line
 for click-through. Keeps the 67-char line limit.
 
-If the context file contains `reply_ids`, tell
-the user after writing the commit message:
-"These GH review reply comments still have
-`📎 commit pending` placeholders and should be
-PATCHed with the new commit hash: <ids>".
-This is informational only — do NOT auto-PATCH.
-
-Delete `.claude/review_context.md` after the
-commit message is written (single-use, same
-lifecycle as `review_regression.md`).
+If the context file contains `reply_ids`, hold
+off on deleting it — step 6 will PATCH those
+GH comments after the user commits, then delete
+the file. If no `reply_ids` are present, delete
+`.claude/review_context.md` right after the
+message is written (single-use, same lifecycle
+as `review_regression.md`).
 
 4. **Write to TWO files** relative to the repo root
    detected in step 0 (i.e. `git rev-parse
@@ -188,3 +186,47 @@ instead use,
 
 Keep it concise. Match the tone of recent commits. For simple
 changes, use subject line only.
+
+6. **PATCH review reply placeholders** (only when
+   `reply_ids` was present in `review_context.md`):
+
+   After writing the commit message files, tell the
+   user to commit:
+   ```
+   git commit --edit --file \
+     .claude/git_commit_msg_LATEST.md
+   ```
+
+   Once the user confirms the commit (or you detect
+   a new HEAD via `git log -1 --format=%h` differing
+   from the hash seen in step 1), the real commit
+   hash is known. For each reply ID:
+
+   - Fetch the current comment body:
+     ```
+     gh api \
+       repos/<owner>/<repo>/pulls/comments/<id> \
+       --jq '.body'
+     ```
+   - Replace `> 📎 commit pending` with:
+     ```
+     > 📎 fixed in [`<hash>`](<commit-url>)
+     ```
+     where `<commit-url>` =
+     `https://github.com/<repo>/commit/<hash>`
+     (derive `<repo>` from the `repo` field in
+     `review_context.md`).
+   - PATCH the comment:
+     ```
+     gh api \
+       repos/<owner>/<repo>/pulls/comments/<id> \
+       -X PATCH -f body="<updated-body>"
+     ```
+
+   After all PATCHes succeed, delete
+   `.claude/review_context.md`.
+
+   If the user declines to commit now (e.g. wants
+   to review further), remind them that the
+   `reply_ids` are saved in `.claude/review_context.md`
+   and can be PATCHed in a follow-up session.
