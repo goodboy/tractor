@@ -37,7 +37,7 @@ treat it as the test target. Examples:
 
 - `/run-tests` → full suite
 - `/run-tests test_local.py` → single file
-- `/run-tests test_discovery -v` → file + verbose
+- `/run-tests test_registrar -v` → file + verbose
 - `/run-tests -k cancel` → keyword filter
 - `/run-tests tests/ipc/ --tpt-proto uds` → subdir + UDS
 
@@ -81,7 +81,7 @@ python -m pytest tests/test_local.py tests/test_rpc.py -x --tb=short --no-header
 python -m pytest tests/ -x --tb=short --no-header
 
 # specific test with debug
-python -m pytest tests/test_discovery.py::test_reg_then_unreg -x -s --tpdb --ll debug
+python -m pytest tests/discovery/test_registrar.py::test_reg_then_unreg -x -s --tpdb --ll debug
 
 # run with UDS transport
 python -m pytest tests/ -x --tb=short --no-header --tpt-proto uds
@@ -173,8 +173,10 @@ tests/
 ├── devx/                # debugger/tooling tests
 ├── ipc/                 # transport protocol tests
 ├── msg/                 # messaging layer tests
+├── discovery/           # discovery subsystem tests
+│   ├── test_multiaddr.py  # multiaddr construction
+│   └── test_registrar.py  # registry/discovery protocol
 ├── test_local.py        # registrar + local actor basics
-├── test_discovery.py    # registry/discovery protocol
 ├── test_rpc.py          # RPC error handling
 ├── test_spawning.py     # subprocess spawning
 ├── test_multi_program.py  # multi-process tree tests
@@ -193,7 +195,7 @@ test subset first for fast feedback:
 | Changed module(s) | Run these tests first |
 |---|---|
 | `runtime/_runtime.py`, `runtime/_state.py` | `test_local.py test_rpc.py test_spawning.py test_root_runtime.py` |
-| `discovery/` (`_registry`, `_discovery`, `_addr`) | `test_discovery.py test_multi_program.py test_local.py` |
+| `discovery/` (`_registry`, `_discovery`, `_addr`) | `tests/discovery/ test_multi_program.py test_local.py` |
 | `_context.py`, `_streaming.py` | `test_context_stream_semantics.py test_advanced_streaming.py` |
 | `ipc/` (`_chan`, `_server`, `_transport`) | `tests/ipc/ test_2way.py` |
 | `runtime/_portal.py`, `runtime/_rpc.py` | `test_rpc.py test_cancellation.py` |
@@ -212,7 +214,7 @@ test subset first for fast feedback:
 python -c 'import tractor' && python -m pytest tests/ -x -q --co 2>&1 | tail -3
 
 # core subset (~10s)
-python -m pytest tests/test_local.py tests/test_rpc.py tests/test_spawning.py tests/test_discovery.py -x --tb=short --no-header
+python -m pytest tests/test_local.py tests/test_rpc.py tests/test_spawning.py tests/discovery/test_registrar.py -x --tb=short --no-header
 ```
 
 ### Re-run last failures only:
