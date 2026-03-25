@@ -112,6 +112,11 @@ venv.bak/
 .claude/*_commit_*.md
 .claude/*_commit*.toml
 .claude/*_commit*.txt
+.claude/skills/commit-msg/msgs/*
+
+.claude/skills/pr-msg/msgs/*
+# XXX, for rn, so i can telescope this file.
+!/.claude/skills/pr-msg/msgs/pr_msg_LATEST.md
 
 # nix develop --profile .nixdev
 .nixdev*
