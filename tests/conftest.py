@@ -9,6 +9,8 @@ import os
 import signal
 import platform
 import time
+from pathlib import Path
+from typing import Literal
 
 import pytest
 import tractor
@@ -50,6 +52,76 @@ no_macos = pytest.mark.skipif(
     platform.system() == "Darwin",
     reason="Test is unsupported on MacOS",
 )
+
+
+def get_cpu_state(
+    icpu: int = 0,
+    setting: Literal[
+        'scaling_governor',
+        '*_pstate_max_freq',
+        'scaling_max_freq',
+        # 'scaling_cur_freq',
+    ] = '*_pstate_max_freq',
+) -> tuple[
+    Path,
+    str|int,
+]|None:
+    '''
+    Attempt to read the (first) CPU's setting according
+    to the set `setting` from under the file-sys,
+
+    /sys/devices/system/cpu/cpu0/cpufreq/{setting}
+
+    Useful to determine latency headroom for various perf affected
+    test suites.
+
+    '''
+    try:
+        # Read governor for core 0 (usually same for all)
+        setting_path: Path = list(
+            Path(f'/sys/devices/system/cpu/cpu{icpu}/cpufreq/')
+            .glob(f'{setting}')
+        )[0]  # <- XXX must be single match!
+        with open(
+            setting_path,
+            'r',
+        ) as f:
+            return (
+                setting_path,
+                f.read().strip(),
+            )
+    except (FileNotFoundError, IndexError):
+        return None
+
+
+def cpu_scaling_factor() -> float:
+    '''
+    Return a latency-headroom multiplier (>= 1.0) reflecting how
+    much to inflate time-limits when CPU-freq scaling is active on
+    linux.
+
+    When no scaling info is available (non-linux, missing sysfs),
+    returns 1.0 (i.e. no headroom adjustment needed).
+
+    '''
+    if _non_linux:
+        return 1.
+
+    mx = get_cpu_state()
+    cur = get_cpu_state(setting='scaling_max_freq')
+    if mx is None or cur is None:
+        return 1.
+
+    _mx_pth, max_freq = mx
+    _cur_pth, cur_freq = cur
+    cpu_scaled: float = int(cur_freq) / int(max_freq)
+
+    if cpu_scaled != 1.:
+        return 1. / (
+            cpu_scaled * 2  # <- bc likely "dual threaded"
+        )
+
+    return 1.
 
 
 def pytest_addoption(

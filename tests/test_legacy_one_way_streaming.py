@@ -4,12 +4,8 @@ Streaming via the, now legacy, "async-gen API".
 """
 import time
 from functools import partial
-from pathlib import Path
 import platform
-from typing import (
-    Callable,
-    Literal,
-)
+from typing import Callable
 
 import trio
 import tractor
@@ -300,46 +296,6 @@ def time_quad_ex(
     return results, diff
 
 
-def get_cpu_state(
-    icpu: int = 0,
-    setting: Literal[
-        'scaling_governor',
-        '*_pstate_max_freq',
-        'scaling_max_freq',
-        # 'scaling_cur_freq',
-    ] = '*_pstate_max_freq',
-) -> tuple[
-    Path,
-    str|int,
-]|None:
-    '''
-    Attempt to read the (first) CPU's setting according
-    to the set `setting` from under the file-sys,
-
-    /sys/devices/system/cpu/cpu0/cpufreq/{setting}
-
-    Useful to determine latency limits for various perf affected test
-    suites.
-
-    '''
-    try:
-        # Read governor for core 0 (usually same for all)
-        setting_path: Path = list(
-            Path(f'/sys/devices/system/cpu/cpu{icpu}/cpufreq/')
-            .glob(f'{setting}')
-        )[0]  # <- XXX must be single match!
-        with open(
-            setting_path,
-            'r',
-        ) as f:
-            return (
-                setting_path,
-                f.read().strip(),
-            )
-    except FileNotFoundError:
-        return None
-
-
 def test_a_quadruple_example(
     time_quad_ex: tuple[list[int], float],
     ci_env: bool,
@@ -368,32 +324,16 @@ def test_a_quadruple_example(
     # For ex, see the `auto-cpufreq` docs on such settings,
     # https://github.com/AdnanHodzic/auto-cpufreq?tab=readme-ov-file#example-config-file-contents
     #
-    # HENCE this below auxiliary compensation logic..
-    if not non_linux:
-        mx_pth, max_freq = get_cpu_state()
-        cur_pth, cur_freq = get_cpu_state(
-            setting='scaling_max_freq',
+    # HENCE this below latency-headroom compensation logic..
+    from .conftest import cpu_scaling_factor
+    headroom: float = cpu_scaling_factor()
+    if headroom != 1.:
+        this_fast = this_fast_on_linux * headroom
+        test_log.warning(
+            f'Adding latency headroom on linux bc CPU scaling,\n'
+            f'headroom: {headroom}\n'
+            f'this_fast_on_linux: {this_fast_on_linux} -> {this_fast}\n'
         )
-        cpu_scaled: float = (
-            int(cur_freq) / int(max_freq)
-        )
-
-        if cpu_scaled != 1.:
-            this_fast = (
-                this_fast_on_linux / (
-                    cpu_scaled * 2  # <- bc likely "dual threaded"
-                    # ^TODO, calc the thr-per-core val?
-                )
-            )
-            test_log.warning(
-                f'Increasing time-limit on linux bc CPU scaling,\n'
-                f'\n'
-                f'{mx_pth} = {max_freq}\n'
-                f'{cur_pth} = {cur_freq}\n'
-                f'\n'
-                f'cpu_scaled = {cpu_scaled}\n'
-                f'this_fast_on_linux: {this_fast_on_linux} -> {this_fast}\n'
-            )
 
     results, diff = time_quad_ex
     assert results
