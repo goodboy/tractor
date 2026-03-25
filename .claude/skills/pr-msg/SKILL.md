@@ -64,10 +64,11 @@ always follow this process:
 4. **Write the PR description** following these
    rules:
 
-**Line length: 72 char max** for ALL prose content
-(Summary bullets, Motivation paragraphs, Scopes
-bullets). Only raw URLs in reference-link defs
-may exceed this.
+**Line length: wrap at 72 chars** for ALL prose
+content (Summary bullets, Motivation paragraphs,
+Scopes bullets). Fill lines *to* 72 — don't stop
+short at 50-65. Only raw URLs in reference-link
+defs may exceed this.
 
 **Title:**
 - Present tense verb (Add, Fix, Drop, Use, etc.)
@@ -104,7 +105,7 @@ may exceed this.
   reference-style.
 - End each bullet with a period for prose-y feel.
 - Use backticks for all code elements.
-- **72 char line limit** — wrap long bullets.
+- **Wrap at 72 chars** — fill lines to 72.
 - When a single bullet covers multiple commits,
   chain the hash refs:
   `[abc1234][abc1234] [def5678][def5678]`.
@@ -113,7 +114,7 @@ may exceed this.
 - 1-2 paragraphs explaining *why* the change exists.
 - Describe the problem/limitation before the
   solution.
-- **72 char line limit** — hard-wrap paragraphs.
+- **Wrap at 72 chars** — hard-wrap paragraphs.
 - Casual yet technically precise tone (match the
   project's commit-msg style).
 
@@ -126,7 +127,7 @@ may exceed this.
 - Sub-bullets (`*`) for secondary changes within
   the same module/namespace.
 - For test modules use `tests.<module_name>` style.
-- **72 char line limit** on each bullet line.
+- **Wrap at 72 chars** — fill lines to 72.
 
 ### Cross-references (commented out)
 - Always include a commented-out cross-references

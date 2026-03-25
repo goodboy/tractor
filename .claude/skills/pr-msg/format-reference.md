@@ -4,10 +4,11 @@ Canonical structure for `tractor` patch-request
 descriptions, designed to work across GitHub,
 Gitea, SourceHut, and GitLab markdown renderers.
 
-**Line length: 72 char max** for all prose content
-(Summary bullets, Motivation paragraphs, Scopes
-bullets, etc.). Only raw URLs in reference-link
-definitions may exceed this.
+**Line length: wrap at 72 chars** for all prose
+content (Summary bullets, Motivation paragraphs,
+Scopes bullets, etc.). Fill lines *to* 72 — don't
+stop short at 50-65. Only raw URLs in
+reference-link definitions may exceed this.
 
 ## Template
 
