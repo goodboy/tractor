@@ -15,12 +15,14 @@
       "Bash(git mv:*)",
       "Bash(python:*)",
       "Bash(find:*)",
+      "Bash(python3:*)",
       "Bash(git stash:*)",
       "Bash(ln:*)",
       "Bash(UV_PROJECT_ENVIRONMENT=py313 uv sync:*)",
       "Bash(gh pr:*)",
       "Bash(cat:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Skill(run-tests)"
     ],
     "deny": [],
     "ask": []
