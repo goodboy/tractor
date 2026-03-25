@@ -1,4 +1,6 @@
+from pathlib import Path
 from multiaddr import Multiaddr
+
 # construct from a string
 m1 = Multiaddr("/ip4/127.0.0.1/udp/1234")
 m2 =  Multiaddr("/unix/run/user/1000/sway-ipc.1000.1557.sock")
