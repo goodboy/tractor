@@ -81,7 +81,8 @@ repl = [
   "psutil>=7.0.0",
 ]
 lint = [
-  "ruff>=0.9.6"
+  "ruff>=0.14.0",
+  "ty>=0.0.25",
 ]
 # TODO, add these with sane versions; were originally in
 # `requirements-docs.txt`..
