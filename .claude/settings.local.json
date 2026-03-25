@@ -8,6 +8,7 @@
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git status)",
+      "Bash(git remote:*)",
       "Bash(test:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
