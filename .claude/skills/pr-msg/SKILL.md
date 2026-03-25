@@ -64,10 +64,9 @@ always follow this process:
 4. **Write the PR description** following these
    rules:
 
-**Line length: 67 char max** for ALL prose content
+**Line length: 72 char max** for ALL prose content
 (Summary bullets, Motivation paragraphs, Scopes
-bullets). Same rule as commit-msg body and project
-code style. Only raw URLs in reference-link defs
+bullets). Only raw URLs in reference-link defs
 may exceed this.
 
 **Title:**
@@ -105,7 +104,7 @@ may exceed this.
   reference-style.
 - End each bullet with a period for prose-y feel.
 - Use backticks for all code elements.
-- **67 char line limit** — wrap long bullets.
+- **72 char line limit** — wrap long bullets.
 - When a single bullet covers multiple commits,
   chain the hash refs:
   `[abc1234][abc1234] [def5678][def5678]`.
@@ -114,7 +113,7 @@ may exceed this.
 - 1-2 paragraphs explaining *why* the change exists.
 - Describe the problem/limitation before the
   solution.
-- **67 char line limit** — hard-wrap paragraphs.
+- **72 char line limit** — hard-wrap paragraphs.
 - Casual yet technically precise tone (match the
   project's commit-msg style).
 
@@ -127,7 +126,7 @@ may exceed this.
 - Sub-bullets (`*`) for secondary changes within
   the same module/namespace.
 - For test modules use `tests.<module_name>` style.
-- **67 char line limit** on each bullet line.
+- **72 char line limit** on each bullet line.
 
 ### Cross-references (commented out)
 - Always include a commented-out cross-references
@@ -228,3 +227,30 @@ tho, ofc
 Keep it terse but detailed. Match the project's
 casual-technical tone. Every bullet should carry
 signal — no filler.
+
+## TODO: factor into generic + repo-specific layers
+
+Currently this skill lives in-repo and bakes in
+`tractor`-specific conventions (Python namespace
+scoping syntax, abbreviation vocabulary, tone
+guidelines). This should be split similar to how
+`/commit-msg` has a generic `SKILL.md` in
+`~/.claude/skills/commit-msg/` with a per-repo
+`style-guide-reference.md`:
+
+- **Generic layer** (`~/.claude/skills/pr-msg/`):
+  the structural template (metadata comment,
+  Summary/Motivation/Scopes sections, cross-service
+  ref-link strategy, post-submission workflow,
+  file-output conventions). Shared across all repos.
+
+- **Repo-specific layer** (`.claude/skills/pr-msg/`
+  per repo): a `style-guide-reference.md` containing
+  scope-naming conventions (e.g. Python namespace
+  syntax vs Go pkg paths), abbreviation glossary,
+  tone/slang preferences, and any repo-specific
+  section additions.
+
+The generic skill would `See` the local style-guide
+the same way `/commit-msg` does, falling back to
+sane defaults when no repo-specific guide exists.
