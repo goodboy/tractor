@@ -17,7 +17,10 @@
       "Bash(find:*)",
       "Bash(git stash:*)",
       "Bash(ln:*)",
-      "Bash(UV_PROJECT_ENVIRONMENT=py313 uv sync:*)"
+      "Bash(UV_PROJECT_ENVIRONMENT=py313 uv sync:*)",
+      "Bash(gh pr:*)",
+      "Bash(cat:*)",
+      "Bash(gh api:*)"
     ],
     "deny": [],
     "ask": []
