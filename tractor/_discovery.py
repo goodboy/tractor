@@ -60,7 +60,7 @@ log = get_logger()
 async def get_registry(
     addr: UnwrappedAddress|None = None,
 ) -> AsyncGenerator[
-    Portal | LocalPortal | None,
+    Portal|LocalPortal|None,
     None,
 ]:
     '''
@@ -153,21 +153,27 @@ async def query_actor(
     regaddr: UnwrappedAddress|None = None,
 
 ) -> AsyncGenerator[
-    UnwrappedAddress|None,
+    tuple[UnwrappedAddress|None, Portal|LocalPortal|None],
     None,
 ]:
     '''
     Lookup a transport address (by actor name) via querying a registrar
     listening @ `regaddr`.
 
-    Returns the transport protocol (socket) address or `None` if no
-    entry under that name exists.
+    Yields a `tuple` of `(addr, reg_portal)` where,
+    - `addr` is the transport protocol (socket) address or `None` if
+      no entry under that name exists,
+    - `reg_portal` is the `Portal` (or `LocalPortal` when the
+      current actor is the registrar) used for the lookup (or
+      `None` when the peer was found locally via
+      `get_peer_by_name()`).
 
     '''
     actor: Actor = current_actor()
     if (
         name == 'registrar'
-        and actor.is_registrar
+        and
+        actor.is_registrar
     ):
         raise RuntimeError(
             'The current actor IS the registry!?'
@@ -175,10 +181,10 @@ async def query_actor(
 
     maybe_peers: list[Channel]|None = get_peer_by_name(name)
     if maybe_peers:
-        yield maybe_peers[0].raddr
+        yield maybe_peers[0].raddr, None
         return
 
-    reg_portal: Portal
+    reg_portal: Portal|LocalPortal
     regaddr: Address = wrap_address(regaddr) or actor.reg_addrs[0]
     async with get_registry(regaddr) as reg_portal:
         # TODO: return portals to all available actors - for now
@@ -188,8 +194,7 @@ async def query_actor(
             'find_actor',
             name=name,
         )
-        yield addr
-
+        yield addr, reg_portal
 
 @acm
 async def maybe_open_portal(
@@ -204,15 +209,49 @@ async def maybe_open_portal(
     async with query_actor(
         name=name,
         regaddr=addr,
-    ) as addr:
-        pass
+    ) as (addr, reg_portal):
+        if not addr:
+            yield None
+            return
 
-    if addr:
-        async with _connect_chan(addr) as chan:
-            async with open_portal(chan) as portal:
-                yield portal
-    else:
-        yield None
+        try:
+            async with _connect_chan(addr) as chan:
+                async with open_portal(chan) as portal:
+                    yield portal
+
+        # most likely we were unable to connect the
+        # transport and there is likely a stale entry in
+        # the registry actor's table, thus we need to
+        # instruct it to clear that stale entry and then
+        # more silently (pretend there was no reason but
+        # to) indicate that the target actor can't be
+        # contacted at that addr.
+        except OSError:
+            # NOTE: ensure we delete the stale entry
+            # from the registrar actor when available.
+            if reg_portal is not None:
+                uid: tuple[str, str]|None = await reg_portal.run_from_ns(
+                    'self',
+                    'delete_addr',
+                    addr=addr,
+                )
+                if uid:
+                    log.warning(
+                        f'Deleted stale registry entry !\n'
+                        f'addr: {addr!r}\n'
+                        f'uid: {uid!r}\n'
+                    )
+                else:
+                    log.warning(
+                        f'No registry entry found for addr: {addr!r}'
+                    )
+            else:
+                log.warning(
+                    f'Connection to {addr!r} failed'
+                    f' and no registry portal available'
+                    f' to delete stale entry.'
+                )
+            yield None
 
 
 @acm
@@ -280,7 +319,7 @@ async def find_actor(
         if not any(portals):
             if raise_on_none:
                 raise RuntimeError(
-                    f'No actor "{name}" found registered @ {registry_addrs}'
+                    f'No actor {name!r} found registered @ {registry_addrs!r}'
                 )
             yield None
             return
