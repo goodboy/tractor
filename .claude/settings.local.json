@@ -23,7 +23,10 @@
       "Bash(cat:*)",
       "Bash(gh api:*)",
       "Skill(run-tests)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:datatracker.ietf.org)",
+      "Bash(mkdir:*)",
     ],
     "deny": [],
     "ask": []
