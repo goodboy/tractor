@@ -49,6 +49,17 @@ When generating commit messages, always follow this process:
    message body (see step 3). Delete the file after
    the message is written — it's single-use context.
 
+   **Check for review context**: look for
+   `.claude/review_context.md` (written by the
+   `/code-review-changes` skill after applying
+   review fixes). If present, read it and extract
+   `pr`, `reviewer`, `review_url`, and optionally
+   `reply_ids`. These are used in step 3 to add a
+   `Review:` trailer. Delete the file after the
+   message is written — it's single-use context.
+   If the file is absent, this is not a
+   review-motivated commit; skip the trailer.
+
 3. **Write the commit message** following these rules:
 
 **Use the accompanying style guide:**
@@ -98,6 +109,47 @@ Found-via: `/run-tests` test_stale_entry_is_deleted
 Keep it minimal - one line each for
 `Regressed-by` and `Found-via`. The commit hash
 and test name(s) are the essential signal.
+
+**Review trailer** (when
+`.claude/review_context.md` exists):
+
+Add a `Review:` block at the end of the body,
+just before the credit footer. Format:
+
+```
+Review: PR #<N> (<reviewer>)
+<review_url>
+```
+
+Example:
+
+```
+Tighten `uid` and `addr` type annotations
+
+Broaden `addr` param to accept `list` from IPC;
+narrow `uid` from bare `tuple` to
+`tuple[str, str]`.
+
+Review: PR #366 (copilot-pull-request-reviewer)
+https://github.com/goodboy/tractor/pull/366#pullrequestreview-4004156812
+
+(this patch was generated in some part by ...)
+```
+
+The `Review:` line is terse — PR number +
+reviewer login. The URL goes on the next line
+for click-through. Keeps the 67-char line limit.
+
+If the context file contains `reply_ids`, tell
+the user after writing the commit message:
+"These GH review reply comments still have
+`📎 commit pending` placeholders and should be
+PATCHed with the new commit hash: <ids>".
+This is informational only — do NOT auto-PATCH.
+
+Delete `.claude/review_context.md` after the
+commit message is written (single-use, same
+lifecycle as `review_regression.md`).
 
 4. **Write to TWO files** relative to the repo root
    detected in step 0 (i.e. `git rev-parse
