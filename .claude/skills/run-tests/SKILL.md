@@ -121,6 +121,13 @@ any actual tests.
 - **Check the known-flaky list** (section 8) before
   investigating — don't waste time on pre-existing
   timeout issues.
+- **NEVER auto-commit fixes.** If you apply a code fix
+  during test iteration, leave it unstaged. Tell the
+  user what changed and suggest they review the
+  worktree state, stage files manually, and use
+  `/commit-msg` (inline or in a separate session) to
+  generate the commit message. The human drives all
+  `git add` and `git commit` operations.
 
 ### On success:
 - Report the pass/fail/skip counts concisely.
