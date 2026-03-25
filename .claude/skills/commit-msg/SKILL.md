@@ -41,6 +41,14 @@ When generating commit messages, always follow this process:
    the nature of the changes (new feature, bug fix, refactor,
    etc.)
 
+   **Check for regression context**: look for
+   `.claude/review_regression.md` (written by the
+   `/code-review-changes` skill when a self-caused
+   regression was found and fixed). If present, read
+   it and incorporate its fields into the commit
+   message body (see step 3). Delete the file after
+   the message is written — it's single-use context.
+
 3. **Write the commit message** following these rules:
 
 **Use the accompanying style guide:**
@@ -68,6 +76,28 @@ When generating commit messages, always follow this process:
 - Code moves: "Move `thing` to `new_location`"
 - Adoption: "Use `new_tool` for `task`"
 - Minor tweaks: "Adjust `behavior` in `component`"
+
+**Regression fix messages** (when
+`.claude/review_regression.md` exists):
+
+The subject line should describe the actual fix,
+not the regression itself. In the body, add a
+terse `Regressed-by:` + `Found-via:` block, e.g.:
+
+```
+Coerce `addr` to `tuple` in `delete_addr()`
+
+Msgpack deserializes tuples as lists; the
+`bidict.inverse.pop()` lookup needs a hashable
+key.
+
+Regressed-by: 85457cb (`registry_addrs` change)
+Found-via: `/run-tests` test_stale_entry_is_deleted
+```
+
+Keep it minimal - one line each for
+`Regressed-by` and `Found-via`. The commit hash
+and test name(s) are the essential signal.
 
 4. **Write to TWO files** relative to the repo root
    detected in step 0 (i.e. `git rev-parse
