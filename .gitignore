@@ -136,3 +136,7 @@ gh/
 
 # LLM conversations that should remain private
 docs/conversations/
+
+# Claude worktrees
+.claude/wkts/
+claude_wkts
