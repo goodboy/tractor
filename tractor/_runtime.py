@@ -2044,8 +2044,11 @@ class Arbiter(Actor):
         self,
         addr: tuple[str, int|str],
     ) -> tuple[str, str]|None:
+        # NOTE: `addr` arrives as a `list` over IPC
+        # (msgpack deserializes tuples -> lists) so
+        # coerce to `tuple` for the bidict hash lookup.
         uid: tuple | None = self._registry.inverse.pop(
-            addr,
+            tuple(addr),
             None,
         )
         if uid:
