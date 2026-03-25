@@ -14,7 +14,10 @@
       "Bash(grep:*)",
       "Bash(git mv:*)",
       "Bash(python:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git stash:*)",
+      "Bash(ln:*)",
+      "Bash(UV_PROJECT_ENVIRONMENT=py313 uv sync:*)"
     ],
     "deny": [],
     "ask": []
