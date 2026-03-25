@@ -2042,12 +2042,12 @@ class Arbiter(Actor):
 
     async def delete_addr(
         self,
-        addr: tuple[str, int|str],
+        addr: tuple[str, int|str]|list[str|int],
     ) -> tuple[str, str]|None:
         # NOTE: `addr` arrives as a `list` over IPC
         # (msgpack deserializes tuples -> lists) so
         # coerce to `tuple` for the bidict hash lookup.
-        uid: tuple | None = self._registry.inverse.pop(
+        uid: tuple[str, str]|None = self._registry.inverse.pop(
             tuple(addr),
             None,
         )

@@ -153,7 +153,7 @@ async def query_actor(
     regaddr: UnwrappedAddress|None = None,
 
 ) -> AsyncGenerator[
-    tuple[UnwrappedAddress|None, Portal|None],
+    tuple[UnwrappedAddress|None, Portal|LocalPortal|None],
     None,
 ]:
     '''
@@ -163,8 +163,9 @@ async def query_actor(
     Yields a `tuple` of `(addr, reg_portal)` where,
     - `addr` is the transport protocol (socket) address or `None` if
       no entry under that name exists,
-    - `reg_portal` is the `Portal` to the registrar used for the
-      lookup (or `None` when the peer was found locally via
+    - `reg_portal` is the `Portal` (or `LocalPortal` when the
+      current actor is the registrar) used for the lookup (or
+      `None` when the peer was found locally via
       `get_peer_by_name()`).
 
     '''
@@ -183,7 +184,7 @@ async def query_actor(
         yield maybe_peers[0].raddr, None
         return
 
-    reg_portal: Portal
+    reg_portal: Portal|LocalPortal
     regaddr: Address = wrap_address(regaddr) or actor.reg_addrs[0]
     async with get_registry(regaddr) as reg_portal:
         # TODO: return portals to all available actors - for now
