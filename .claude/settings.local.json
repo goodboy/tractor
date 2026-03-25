@@ -22,7 +22,8 @@
       "Bash(gh pr:*)",
       "Bash(cat:*)",
       "Bash(gh api:*)",
-      "Skill(run-tests)"
+      "Skill(run-tests)",
+      "Bash(git:*)"
     ],
     "deny": [],
     "ask": []
