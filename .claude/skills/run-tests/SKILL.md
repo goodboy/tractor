@@ -90,7 +90,38 @@ python -m pytest tests/ -x --tb=short --no-header -k "cancel and not slow"
 
 ## 3. Pre-flight checks (before running tests)
 
-Always run these first, especially after refactors or
+### Worktree venv detection
+
+If running inside a git worktree (`git rev-parse
+--git-common-dir` differs from `--git-dir`), verify
+the Python being used is from the **worktree's own
+venv**, not the main repo's. Check:
+
+```sh
+python -c "import tractor; print(tractor.__file__)"
+```
+
+If the path points outside the worktree (e.g. to
+the main repo), set up a local venv first:
+
+```sh
+UV_PROJECT_ENVIRONMENT=py<MINOR> uv sync
+```
+
+where `<MINOR>` matches the active cpython minor
+version (detect via `python --version`, e.g.
+`py313` for 3.13, `py314` for 3.14). Then use
+`py<MINOR>/bin/python` for all subsequent commands.
+
+**Why this matters**: without a worktree-local venv,
+subprocesses spawned by tractor resolve modules from
+the main repo's editable install, causing spurious
+`AttributeError` / `ModuleNotFoundError` for code
+that only exists on the worktree's branch.
+
+### Import + collection checks
+
+Always run these, especially after refactors or
 module moves — they catch import errors instantly:
 
 ```sh
