@@ -15,145 +15,61 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Multiaddress parser and utils according the spec(s) defined by
-`libp2p` and used in dependent project such as `ipfs`:
+Multiaddress support using the upstream `py-multiaddr` lib
+(a `libp2p` community standard) instead of our own NIH parser.
 
-- https://docs.libp2p.io/concepts/fundamentals/addressing/
-- https://github.com/libp2p/specs/blob/master/addressing/README.md
+- https://github.com/multiformats/multiaddr
+- https://github.com/multiformats/py-multiaddr
+- https://github.com/multiformats/multiaddr/blob/master/protocols.csv
+- https://github.com/multiformats/multiaddr/blob/master/protocols/unix.md
 
 '''
-from typing import Iterator
+import ipaddress
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-from bidict import bidict
+from multiaddr import Multiaddr
 
-# TODO: see if we can leverage libp2p ecosys projects instead of
-# rolling our own (parser) impls of the above addressing specs:
-# - https://github.com/libp2p/py-libp2p
-# - https://docs.libp2p.io/concepts/nat/circuit-relay/#relay-addresses
-# prots: bidict[int, str] = bidict({
-prots: bidict[int, str] = {
-    'ipv4': 3,
-    'ipv6': 3,
-    'wg': 3,
+if TYPE_CHECKING:
+    from tractor.discovery._addr import Address
 
-    'tcp': 4,
-    'udp': 4,
-    'uds': 4,
-
-    # TODO: support the next-gen shite Bo
-    # 'quic': 4,
-    # 'ssh': 7,  # via rsyscall bootstrapping
-}
-
-prot_params: dict[str, tuple[str]] = {
-    'ipv4': ('addr',),
-    'ipv6': ('addr',),
-    'wg': ('addr', 'port', 'pubkey'),
-
-    'tcp': ('port',),
-    'udp': ('port',),
-    'uds': ('path',),
-
-    # 'quic': ('port',),
-    # 'ssh': ('port',),
+# map from tractor-internal `proto_key` identifiers
+# to the standard multiaddr protocol name strings.
+_tpt_proto_to_maddr: dict[str, str] = {
+    'tcp': 'tcp',
+    'uds': 'unix',
 }
 
 
-def iter_prot_layers(
-    multiaddr: str,
-) -> Iterator[
-    tuple[
-        int,
-        list[str]
-    ]
-]:
+def mk_maddr(
+    addr: 'Address',
+) -> Multiaddr:
     '''
-    Unpack a libp2p style "multiaddress" into multiple "segments"
-    for each "layer" of the protocoll stack (in OSI terms).
+    Construct a `Multiaddr` from a tractor `Address` instance,
+    dispatching on the `.proto_key` to build the correct
+    multiaddr-spec-compliant protocol path.
 
     '''
-    tokens: list[str] = multiaddr.split('/')
-    root, tokens = tokens[0], tokens[1:]
-    assert not root  # there is a root '/' on LHS
-    itokens = iter(tokens)
+    match addr.proto_key:
+        case 'tcp':
+            host, port = addr.unwrap()
+            ip = ipaddress.ip_address(host)
+            net_proto: str = (
+                'ip4' if ip.version == 4
+                else 'ip6'
+            )
+            return Multiaddr(
+                f'/{net_proto}/{host}/tcp/{port}'
+            )
 
-    prot: str|None = None
-    params: list[str] = []
-    for token in itokens:
-        # every prot path should start with a known
-        # key-str.
-        if token in prots:
-            if prot is None:
-                prot: str = token
-            else:
-                yield prot, params
-                prot = token
+        case 'uds':
+            filedir, filename = addr.unwrap()
+            filepath = Path(filedir) / filename
+            return Multiaddr(
+                f'/unix/{filepath}'
+            )
 
-            params = []
-
-        elif token not in prots:
-            params.append(token)
-
-    else:
-        yield prot, params
-
-
-def parse_maddr(
-    multiaddr: str,
-) -> dict[
-    str,
-    str|int|dict,
-]:
-    '''
-    Parse a libp2p style "multiaddress" into its distinct protocol
-    segments where each segment is of the form:
-
-        `../<protocol>/<param0>/<param1>/../<paramN>`
-
-    and is loaded into a (order preserving) `layers: dict[str,
-    dict[str, Any]` which holds each protocol-layer-segment of the
-    original `str` path as a separate entry according to its approx
-    OSI "layer number".
-
-    Any `paramN` in the path must be distinctly defined by a str-token in the
-    (module global) `prot_params` table.
-
-    For eg. for wireguard which requires an address, port number and publickey
-    the protocol params are specified as the entry:
-
-        'wg': ('addr', 'port', 'pubkey'),
-
-    and are thus parsed from a maddr in that order:
-        `'/wg/1.1.1.1/51820/<pubkey>'`
-
-    '''
-    layers: dict[str, str|int|dict] = {}
-    for (
-        prot_key,
-        params,
-    ) in iter_prot_layers(multiaddr):
-
-        layer: int = prots[prot_key]  # OSI layer used for sorting
-        ep: dict[str, int|str] = {
-            'layer': layer,
-            'proto': prot_key,
-        }
-        layers[prot_key] = ep
-
-        # TODO; validation and resolving of names:
-        # - each param via a validator provided as part of the
-        #   prot_params def? (also see `"port"` case below..)
-        # - do a resolv step that will check addrs against
-        #   any loaded network.resolv: dict[str, str]
-        rparams: list = list(reversed(params))
-        for key in prot_params[prot_key]:
-            val: str|int = rparams.pop()
-
-            # TODO: UGHH, dunno what we should do for validation
-            # here, put it in the params spec somehow?
-            if key == 'port':
-                val = int(val)
-
-            ep[key] = val
-
-    return layers
+        case _:
+            raise ValueError(
+                f'Unsupported proto_key: {addr.proto_key!r}'
+            )

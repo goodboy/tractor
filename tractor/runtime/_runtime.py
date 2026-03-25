@@ -1370,7 +1370,7 @@ class Actor:
             #   - `Channel.maddr() -> str:` obvi!
             #   - `Context.maddr() -> str:`
             tasks_str += (
-                f' |_@ /ipv4/tcp/cid="{ctx.cid[-16:]} .."\n'
+                f' |_@ /ip4/tcp/cid="{ctx.cid[-16:]} .."\n'
                 f'   |>> {ctx._nsf}() -> dict:\n'
             )
 
