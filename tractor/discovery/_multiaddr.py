@@ -40,6 +40,12 @@ _tpt_proto_to_maddr: dict[str, str] = {
     'uds': 'unix',
 }
 
+# reverse mapping: multiaddr protocol name -> tractor proto_key
+_maddr_to_tpt_proto: dict[str, str] = {
+    v: k for k, v in _tpt_proto_to_maddr.items()
+}
+# {'tcp': 'tcp', 'unix': 'uds'}
+
 
 def mk_maddr(
     addr: 'Address',
@@ -74,4 +80,47 @@ def mk_maddr(
             filepath = Path(filedir) / filename
             return Multiaddr(
                 f'/{maddr_proto}/{filepath}'
+            )
+
+
+def parse_maddr(
+    maddr_str: str,
+) -> 'Address':
+    '''
+    Parse a multiaddr string into a tractor `Address`.
+
+    Inverse of `mk_maddr()`.
+
+    '''
+    # lazy imports to avoid circular deps
+    from tractor.ipc._tcp import TCPAddress
+    from tractor.ipc._uds import UDSAddress
+
+    maddr = Multiaddr(maddr_str)
+    proto_names: list[str] = [
+        p.name for p in maddr.protocols()
+    ]
+
+    match proto_names:
+        case [('ip4' | 'ip6') as net_proto, 'tcp']:
+            host: str = maddr.value_for_protocol(net_proto)
+            port: int = int(maddr.value_for_protocol('tcp'))
+            return TCPAddress(host, port)
+
+        case ['unix']:
+            # NOTE, the multiaddr lib prepends a `/` to the
+            # unix protocol value; strip it to recover the
+            # original relative path.
+            raw: str = maddr.value_for_protocol('unix')
+            sockpath = Path(raw.lstrip('/'))
+            return UDSAddress(
+                filedir=str(sockpath.parent),
+                filename=str(sockpath.name),
+            )
+
+        case _:
+            raise ValueError(
+                f'Unsupported multiaddr protocol combo: '
+                f'{proto_names!r}\n'
+                f'from maddr: {maddr_str!r}\n'
             )
