@@ -1,6 +1,7 @@
 '''
-Multiaddr construction and round-trip tests for
-`tractor.discovery._multiaddr.mk_maddr()`.
+Multiaddr construction, parsing, and round-trip tests for
+`tractor.discovery._multiaddr.mk_maddr()` and
+`tractor.discovery._multiaddr.parse_maddr()`.
 
 '''
 from pathlib import Path
@@ -13,8 +14,11 @@ from tractor.ipc._tcp import TCPAddress
 from tractor.ipc._uds import UDSAddress
 from tractor.discovery._multiaddr import (
     mk_maddr,
+    parse_maddr,
     _tpt_proto_to_maddr,
+    _maddr_to_tpt_proto,
 )
+from tractor.discovery._addr import wrap_address
 
 
 def test_tpt_proto_to_maddr_mapping():
@@ -134,3 +138,110 @@ def test_mk_maddr_roundtrip(addr):
 
     assert reparsed == maddr
     assert str(reparsed) == str(maddr)
+
+
+# ------ parse_maddr() tests ------
+
+def test_maddr_to_tpt_proto_mapping():
+    '''
+    `_maddr_to_tpt_proto` is the exact inverse of
+    `_tpt_proto_to_maddr`.
+
+    '''
+    assert _maddr_to_tpt_proto == {
+        'tcp': 'tcp',
+        'unix': 'uds',
+    }
+
+
+def test_parse_maddr_tcp_ipv4():
+    '''
+    `parse_maddr()` on an IPv4 TCP multiaddr string
+    produce a `TCPAddress` with the correct host and port.
+
+    '''
+    result = parse_maddr('/ip4/127.0.0.1/tcp/1234')
+
+    assert isinstance(result, TCPAddress)
+    assert result.unwrap() == ('127.0.0.1', 1234)
+
+
+def test_parse_maddr_tcp_ipv6():
+    '''
+    `parse_maddr()` on an IPv6 TCP multiaddr string
+    produce a `TCPAddress` with the correct host and port.
+
+    '''
+    result = parse_maddr('/ip6/::1/tcp/5678')
+
+    assert isinstance(result, TCPAddress)
+    assert result.unwrap() == ('::1', 5678)
+
+
+def test_parse_maddr_uds():
+    '''
+    `parse_maddr()` on a `/unix/...` multiaddr string
+    produce a `UDSAddress` with the correct dir and filename.
+
+    '''
+    result = parse_maddr('/unix/tractor_test/test.sock')
+
+    assert isinstance(result, UDSAddress)
+    filedir, filename = result.unwrap()
+    assert filename == 'test.sock'
+    assert 'tractor_test' in str(filedir)
+
+
+def test_parse_maddr_unsupported():
+    '''
+    `parse_maddr()` raise `ValueError` for an unsupported
+    protocol combination like UDP.
+
+    '''
+    with pytest.raises(
+        ValueError,
+        match='Unsupported multiaddr protocol combo',
+    ):
+        parse_maddr('/ip4/127.0.0.1/udp/1234')
+
+
+@pytest.mark.parametrize(
+    'addr',
+    [
+        pytest.param(
+            TCPAddress('127.0.0.1', 9999),
+            id='tcp-ipv4',
+        ),
+        pytest.param(
+            UDSAddress(
+                filedir='tractor_rt',
+                filename='roundtrip.sock',
+            ),
+            id='uds',
+        ),
+    ],
+)
+def test_parse_maddr_roundtrip(addr):
+    '''
+    Full round-trip: `addr -> mk_maddr -> str -> parse_maddr`
+    produce an `Address` whose `.unwrap()` matches the original.
+
+    '''
+    maddr: Multiaddr = mk_maddr(addr)
+    maddr_str: str = str(maddr)
+    parsed = parse_maddr(maddr_str)
+
+    assert type(parsed) is type(addr)
+    assert parsed.unwrap() == addr.unwrap()
+
+
+def test_wrap_address_maddr_str():
+    '''
+    `wrap_address()` accept a multiaddr-format string and
+    return the correct `Address` type.
+
+    '''
+    result = wrap_address('/ip4/127.0.0.1/tcp/9999')
+
+    assert isinstance(result, TCPAddress)
+    assert result.unwrap() == ('127.0.0.1', 9999)

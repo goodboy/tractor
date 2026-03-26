@@ -16,6 +16,8 @@ import subprocess
 import tractor
 from tractor.trionics import collapse_eg
 from tractor._testing import tractor_test
+from tractor.discovery._addr import wrap_address
+from tractor.discovery._multiaddr import mk_maddr
 import trio
 
 
@@ -46,6 +48,49 @@ async def test_reg_then_unreg(
                 assert sockaddrs
 
         await n.cancel()  # tear down nursery
+
+        await trio.sleep(0.1)
+        assert uid not in aportal.actor._registry
+        sockaddrs = actor._registry.get(uid)
+        assert not sockaddrs
+
+
+@tractor_test
+async def test_reg_then_unreg_maddr(
+    reg_addr: tuple,
+):
+    '''
+    Same as `test_reg_then_unreg` but pass the registry
+    address as a multiaddr string to verify `wrap_address()`
+    multiaddr parsing end-to-end through the runtime.
+
+    '''
+    # tuple -> Address -> multiaddr string
+    addr_obj = wrap_address(reg_addr)
+    maddr_str: str = str(mk_maddr(addr_obj))
+
+    actor = tractor.current_actor()
+    assert actor.is_registrar
+
+    async with tractor.open_nursery(
+        registry_addrs=[maddr_str],
+    ) as n:
+
+        portal = await n.start_actor(
+            'actor_maddr',
+            enable_modules=[__name__],
+        )
+        uid = portal.channel.aid.uid
+
+        async with tractor.get_registry(maddr_str) as aportal:
+            assert actor is aportal.actor
+
+            async with tractor.wait_for_actor('actor_maddr'):
+                assert uid in aportal.actor._registry
+                sockaddrs = actor._registry[uid]
+                assert sockaddrs
+
+        await n.cancel()
 
         await trio.sleep(0.1)
         assert uid not in aportal.actor._registry
