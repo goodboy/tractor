@@ -20,9 +20,10 @@ When generating commit messages, always follow this process:
 
 0. **Detect working context**: run
    `git rev-parse --show-toplevel` to find the repo
-   root and `git rev-parse --git-common-dir` to check
-   if the cwd is inside a worktree. If the common-dir
-   differs from the git-dir, you are in a worktree.
+   root, then run both `git rev-parse --git-common-dir`
+   and `git rev-parse --git-dir` to check if the cwd
+   is inside a worktree. If the common-dir differs
+   from the git-dir, you are in a worktree.
    Tell the user which tree you're operating on
    (e.g. "generating commit msg for worktree
    `remote-exc-registry-tests`").

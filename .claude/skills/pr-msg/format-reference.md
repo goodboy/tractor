@@ -154,8 +154,8 @@ cross-reference the others.
 ### Post-submission file layout
 
 ```
+pr_msg_LATEST.md                    # latest draft (skill root)
 msgs/
-  pr_msg_LATEST.md                  # latest draft
   20260325T002027Z_mybranch_pr_msg.md  # timestamped
   github/
     42_pr_msg.md        # github PR #42

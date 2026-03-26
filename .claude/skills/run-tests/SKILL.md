@@ -68,7 +68,6 @@ python -m pytest
 | `-k <expr>` | pytest keyword filter |
 | `-v` / `-vv` | Verbosity |
 | `-s` | No output capture (useful with `--tpdb`) |
-| `--timeout <secs>` | Override default 30s test timeout |
 
 ### Common combos:
 ```sh

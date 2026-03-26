@@ -116,7 +116,7 @@ venv.bak/
 
 .claude/skills/pr-msg/msgs/*
 # XXX, for rn, so i can telescope this file.
-!/.claude/skills/pr-msg/msgs/pr_msg_LATEST.md
+!/.claude/skills/pr-msg/pr_msg_LATEST.md
 
 # nix develop --profile .nixdev
 .nixdev*
