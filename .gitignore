@@ -118,6 +118,9 @@ venv.bak/
 # XXX, for rn, so i can telescope this file.
 !/.claude/skills/pr-msg/pr_msg_LATEST.md
 
+# per-skill session/conf (machine-local)
+.claude/skills/*/conf.toml
+
 # nix develop --profile .nixdev
 .nixdev*
 
