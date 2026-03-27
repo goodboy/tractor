@@ -114,13 +114,14 @@ def parse_maddr(
 
         case ['unix']:
             # NOTE, the multiaddr lib prepends a `/` to the
-            # unix protocol value; strip it to recover the
-            # original relative path.
+            # unix protocol value which effectively restores
+            # the absolute-path semantics that `mk_maddr()`
+            # strips when building the multiaddr string.
             raw: str = maddr.value_for_protocol('unix')
-            sockpath = Path(raw.lstrip('/'))
+            sockpath = Path(raw)
             return UDSAddress(
-                filedir=str(sockpath.parent),
-                filename=str(sockpath.name),
+                filedir=sockpath.parent,
+                filename=sockpath.name,
             )
 
         case _:

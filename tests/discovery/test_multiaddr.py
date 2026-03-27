@@ -74,10 +74,11 @@ def test_mk_maddr_uds():
     multiaddr containing the full socket path.
 
     '''
-    # NOTE, use a relative `filedir` since the multiaddr
-    # parser rejects the double-slash from absolute paths
-    # (i.e. `/unix//tmp/..` -> "empty protocol path").
-    filedir = 'tractor_test'
+    # NOTE, use an absolute `filedir` to match real runtime
+    # UDS paths; `mk_maddr()` strips the leading `/` to avoid
+    # the double-slash `/unix//run/..` that py-multiaddr
+    # rejects as "empty protocol path".
+    filedir = '/tmp/tractor_test'
     filename = 'test_sock.sock'
     addr = UDSAddress(
         filedir=filedir,
@@ -89,12 +90,14 @@ def test_mk_maddr_uds():
 
     result_str: str = str(result)
     assert result_str.startswith('/unix/')
+    # verify the leading `/` was stripped to avoid double-slash
+    assert '/unix/tmp/tractor_test/' in result_str
 
-    sockpath: str = str(Path(filedir) / filename)
-    # NOTE, the multiaddr lib prepends a `/` to the
-    # unix protocol value when parsing back out.
+    sockpath_rel: str = str(
+        Path(filedir) / filename
+    ).lstrip('/')
     unix_val: str = result.value_for_protocol('unix')
-    assert unix_val.endswith(sockpath)
+    assert unix_val.endswith(sockpath_rel)
 
 
 def test_mk_maddr_unsupported_proto_key():
@@ -120,7 +123,7 @@ def test_mk_maddr_unsupported_proto_key():
         ),
         pytest.param(
             UDSAddress(
-                filedir='tractor_rt',
+                filedir='/tmp/tractor_rt',
                 filename='roundtrip.sock',
             ),
             id='uds',
@@ -181,15 +184,16 @@ def test_parse_maddr_tcp_ipv6():
 def test_parse_maddr_uds():
     '''
     `parse_maddr()` on a `/unix/...` multiaddr string
-    produce a `UDSAddress` with the correct dir and filename.
+    produce a `UDSAddress` with the correct dir and filename,
+    preserving absolute path semantics.
 
     '''
-    result = parse_maddr('/unix/tractor_test/test.sock')
+    result = parse_maddr('/unix/tmp/tractor_test/test.sock')
 
     assert isinstance(result, UDSAddress)
     filedir, filename = result.unwrap()
     assert filename == 'test.sock'
-    assert 'tractor_test' in str(filedir)
+    assert str(filedir) == '/tmp/tractor_test'
 
 
 def test_parse_maddr_unsupported():
@@ -214,7 +218,7 @@ def test_parse_maddr_unsupported():
         ),
         pytest.param(
             UDSAddress(
-                filedir='tractor_rt',
+                filedir='/tmp/tractor_rt',
                 filename='roundtrip.sock',
             ),
             id='uds',
