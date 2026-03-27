@@ -78,8 +78,13 @@ def mk_maddr(
         case 'uds':
             filedir, filename = addr.unwrap()
             filepath = Path(filedir) / filename
+            # NOTE, strip any leading `/` to avoid
+            # double-slash `/unix//run/..` which the
+            # multiaddr parser rejects as "empty
+            # protocol path".
+            fpath_str: str = str(filepath).lstrip('/')
             return Multiaddr(
-                f'/{maddr_proto}/{filepath}'
+                f'/{maddr_proto}/{fpath_str}'
             )
 
 
