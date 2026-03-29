@@ -118,18 +118,13 @@ def tractor_test(
             'timeout',
         ]:
             if kw in inspect.signature(wrapped).parameters:
-                assert kwargs[kw]
+                assert kw in kwargs
 
-        if (
-            (start_method := kwargs.get('start_method'))
-            is
-            None
-        ):
-            if (
-                platform.system() == "Windows"
-                and
-                start_method != 'trio'
-            ):
+        start_method = kwargs.get('start_method')
+        if platform.system() == "Windows":
+            if start_method is None:
+                kwargs['start_method'] = 'trio'
+            elif start_method != 'trio':
                 raise ValueError(
                     'ONLY the `start_method="trio"` is supported on Windows.'
                 )
