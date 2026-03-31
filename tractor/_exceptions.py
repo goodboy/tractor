@@ -195,7 +195,7 @@ def reg_err_types(
 
     Such that error types can be registered by an external
     `tractor`-use-app code base which are expected to be raised
-    remotely; enables them being re-raised on the recevier side of
+    remotely; enables them being re-raised on the receiver side of
     some inter-actor IPC dialog.
 
     '''
@@ -211,7 +211,7 @@ def reg_err_types(
         )
 
 
-def get_err_type(type_name: str) -> BaseException|None:
+def get_err_type(type_name: str) -> Type[BaseException]|None:
     '''
     Look up an exception type by name from the set of locally known
     namespaces:
@@ -325,7 +325,8 @@ class RemoteActorError(Exception):
         # also pertains to our long long oustanding issue XD
         # https://github.com/goodboy/tractor/issues/5
         self._boxed_type: BaseException = boxed_type
-        self._src_type: BaseException|None = None
+        self._src_type: Type[BaseException]|None = None
+        self._src_type_resolved: bool = False
         self._ipc_msg: Error|None = ipc_msg
         self._extra_msgdata = extra_msgdata
 
@@ -450,7 +451,12 @@ class RemoteActorError(Exception):
         `.tb_str`, etc.) remains available.
 
         '''
-        if self._src_type is None:
+        if not self._src_type_resolved:
+            self._src_type_resolved = True
+
+            if self._ipc_msg is None:
+                return None
+
             self._src_type = get_err_type(
                 self._ipc_msg.src_type_str
             )
@@ -480,7 +486,7 @@ class RemoteActorError(Exception):
 
         '''
         # TODO, maybe support also serializing the
-        # `ExceptionGroup.exeptions: list[BaseException]`
+        # `ExceptionGroup.exceptions: list[BaseException]`
         # set under certain conditions?
         bt: Type[BaseException] = self.boxed_type
         if bt:
@@ -494,7 +500,7 @@ class RemoteActorError(Exception):
         return '<unknown>'
 
     @property
-    def boxed_type(self) -> Type[BaseException]:
+    def boxed_type(self) -> Type[BaseException]|None:
         '''
         Error type boxed by last actor IPC hop.
 
@@ -1271,7 +1277,7 @@ def unpack_error(
     # local runtime env then use it to construct a
     # local instance.
     boxed_type_str: str = msg.boxed_type_str
-    boxed_type: Type[BaseException] = get_err_type(
+    boxed_type: Type[BaseException]|None = get_err_type(
         boxed_type_str
     )
 
