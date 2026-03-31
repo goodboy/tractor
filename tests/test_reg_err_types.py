@@ -215,8 +215,6 @@ def test_registered_custom_err_relayed(
                     )
                     raise
 
-            await an.cancel()
-
     with pytest.raises(RemoteActorError) as excinfo:
         trio.run(main)
 
@@ -281,7 +279,7 @@ def test_unregistered_err_still_relayed(
     `.boxed_type_str` and `.src_type_str` still report the original
     type name from the IPC msg.
 
-    This document the expected limitation: without `reg_err_types()`
+    This documents the expected limitation: without `reg_err_types()`
     the `.boxed_type` property can NOT resolve to the original Python
     type.
 
