@@ -106,20 +106,25 @@ release, targeting 6 major milestones:
    strategies (one-for-one, one-for-all, rest-for-one) via context
    manager composition, enabling robust fault recovery without manual
    restart logic (#22).
+   * https://github.com/goodboy/tractor/issues?q=state%3Aopen%20label%3Asupervision
 
 4. **Next-gen discovery system + addressing** - implementation of
    a non-naive builtin discovery sub-system with support for
    "multi-addresses" as an alternative (and arguably superior)
    mechanism for service discovery on the internet (#216, #367,
-   #410, #424).
+   #410, #424, #429).
 
 5. **Encrypted transport backend(s)** - either via plain ol
    TLS-equivalents or via composition with tunnel protocols such
-   as wireguard, SSH or QUIC (#420).
+   as wireguard, SSH or QUIC (#136, #353, #382, #420).
 
 6. **Supporting super high-perf ng IPC transports** - namely native
-   support for `eventfd` + shared-mem channels for local-host and
-   TIPC for multi-host setups (#423).
+   support for `eventfd` + shared-mem channels for local-host (#339) and
+   TIPC for multi-host setups (#378).
+
+7. **A sub-interpreter spawning backend** - leveraging the new
+   semi-isolated cpython VM as a built-in local-host (actor) spawner
+   (#379).
 
 Secondary outcomes include improved a stabilized public API surface,
 possible inter-language integration (once the SCP pattern is better
@@ -212,21 +217,23 @@ across 6 work packages matching the milestones above:
   enabling protocol-agnostic service location (#216, #367)
 - Integrate typed `Address` structs into the IPC codec (#410)
 - Add registrar/daemon fixture hardening for CI (#424)
-- Refs: #216, #367, #410, #424
+- Refs: #216, #367, #410, #424, #429
 
 **WP5: Encrypted transport backends (EUR 8,000)**
-- Add TLS encryption for TCP-based inter-host actor links
+- Add TLS encryption alts for TCP-based inter-host actor links.
 - Investigate and prototype composition with tunnel protocols
-  (wireguard, SSH, QUIC) for zero-config encryption
-- Extend transport-matrix CI to cover encrypted paths (#420)
-- Audit and fix edge cases in remote exception relay and
-  cancellation under encrypted channels
+  (wireguard, SSH, QUIC) for zero-config encryption.
+- Extend transport-matrix CI to cover encrypted paths (#420).
+- Audit and fix edge cases in remote exception relay and cancellation
+  under encrypted channels types.
 
 **WP6: High-performance IPC transports (EUR 8,000)**
-- Harden existing `eventfd` + shared-memory ring buffer
-  channels for local-host zero-copy IPC
-- Achieve macOS parity for shared-memory key handling (#423)
-- Investigate TIPC as a kernel-native multi-host transport
+- Harden existing `eventfd` + shared-memory ring buffer channels for
+  local-host zero-copy IPC,
+  * initial core-dev WIP patch: https://pikers.dev/goodboy/tractor/pulls/10
+  * formalizing extension repo: https://github.com/guilledk/hotbaud
+- Achieve macOS parity for shared-memory key handling (#423).
+- Investigate TIPC as a kernel-native multi-host transport (#378).
 - Benchmark and optimize against baseline TCP/UDS paths to
   quantify throughput gains
 
@@ -377,6 +384,9 @@ primarily adjacent to the `trio` community:
 - Scientific computing users wanting robust process supervision
   without Dask/Ray's deployment complexity.
 - FOSS computational trader via the aforementioned `piker`.
+- AI model users, emphasizing the need for SC to ensure reliable (and
+  graceful) "kill signals" in supporting runtimes in an effort to
+  avoid a real world "skynet".
 
 **Engagement plan:**
 - Maintain active Matrix channel (`#tractor:matrix.org`) for user
@@ -422,7 +432,8 @@ guidance text. All draft responses were then reviewed, edited, and
 refined by the project maintainer before submission.
 
 The unedited AI output and prompts are available in the project
-repository under `funding/`.
+repository under `funding/` on the `ngi0_submission` branch,
+<link-to-gh-branch>.
 
 `[TODO: attach prompt log before submission]`
 
@@ -433,20 +444,21 @@ repository under `funding/`.
 ### Before submitting, address these TODOs:
 
 - [ ] Fill in phone number
-- [ ] Fill in organisation (or confirm "Independent")
-- [ ] Fill in country
-- [ ] Review and refine the **Abstract** - is the scope right? Too
+- [x] Fill in organisation (or confirm "Independent")
+- [x] Fill in country
+- [x] Review and refine the **Abstract** - is the scope right? Too
       ambitious? Trim or expand milestones as needed.
-- [ ] Validate the **budget breakdown** - are the hourly rate and
+- [x] Validate the **budget breakdown** - are the hourly rate and
       hour estimates reasonable? Adjust WP allocations.
-- [ ] Review **requested amount** - EUR 50,000 is the max; consider
+- [x] Review **requested amount** - EUR 50,000 is the max; consider
       whether a smaller, more focused ask is strategically better.
-- [ ] Decide which **issues/PRs** to highlight most prominently
+- [x] Decide which **issues/PRs** to highlight most prominently
 - [ ] Consider whether to attach a **roadmap PDF** with more detail
-- [ ] Review the **comparison section** - add/remove competitors as
+- [x] Review the **comparison section** - add/remove competitors as
       appropriate
-- [ ] Refine the **ecosystem** section with specific community
+- [x] Refine the **ecosystem** section with specific community
       contacts or partnerships
 - [ ] Save prompt logs for AI disclosure attachment
 - [ ] Proofread everything for accuracy and tone
+- [ ] ensure all field char-limits met.
 - [ ] **Submit before April 1, 2026 12:00 CEST**
