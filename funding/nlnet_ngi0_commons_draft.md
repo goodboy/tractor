@@ -126,7 +126,7 @@ release, targeting 6 major milestones:
    semi-isolated cpython VM as a built-in local-host (actor) spawner
    (#379).
 
-Secondary outcomes include improved a stabilized public API surface,
+Secondary outcomes include a stabilized public API surface,
 possible inter-language integration (once the SCP pattern is better
 defined) and obviously a (at least) beta-quality release on PyPI.
 
@@ -177,9 +177,9 @@ EUR 50,000
 Work is performed by the core maintainer (EUR 50/hr) and vetted
 contributors delegated specific sub-tasks (EUR 35/hr). Hour
 estimates below use a blended average. The budget breaks down
-across 6 work packages matching the milestones above:
+across 7 work packages matching the milestones above:
 
-**WP1: Typed messaging and dialog protocols (EUR 11,000)**
+**WP1: Typed messaging and dialog protocols (EUR 10,000)**
 - Define `msgspec.Struct`-based message schemas for all IPC
   primitives (RPC calls, streaming, context dialogs)
 - Implement runtime type validation at IPC boundaries with
@@ -199,7 +199,7 @@ across 6 work packages matching the milestones above:
 - Publish beta release to PyPI with changelog and migration
   notes
 
-**WP3: Erlang-style supervision strategies (EUR 9,000)**
+**WP3: Erlang-style supervision strategies (EUR 7,000)**
 - Design and implement composable supervisor context managers
   supporting one-for-one, one-for-all, and rest-for-one
   restart strategies
@@ -210,7 +210,7 @@ across 6 work packages matching the milestones above:
 - Test under chaos-engineering fault injection scenarios
 - Ref: #22
 
-**WP4: Discovery system + multi-addressing (EUR 8,000)**
+**WP4: Discovery system + multi-addressing (EUR 7,000)**
 - Replace naive `Registrar` with a pluggable discovery
   sub-system supporting multiple backends
 - Implement `multiaddr`-based addressing for actor endpoints
@@ -219,15 +219,17 @@ across 6 work packages matching the milestones above:
 - Add registrar/daemon fixture hardening for CI (#424)
 - Refs: #216, #367, #410, #424, #429
 
-**WP5: Encrypted transport backends (EUR 8,000)**
-- Add TLS encryption alts for TCP-based inter-host actor links.
+**WP5: Encrypted transport backends (EUR 7,000)**
+- Add TLS encryption alts for TCP-based inter-host actor links
+  (#136, #353).
 - Investigate and prototype composition with tunnel protocols
-  (wireguard, SSH, QUIC) for zero-config encryption.
+  (wireguard, SSH, QUIC) for zero-config encryption (#382).
 - Extend transport-matrix CI to cover encrypted paths (#420).
-- Audit and fix edge cases in remote exception relay and cancellation
-  under encrypted channels types.
+- Audit and fix edge cases in remote exception relay and
+  cancellation under encrypted channel types.
+- Refs: #136, #353, #382, #420
 
-**WP6: High-performance IPC transports (EUR 8,000)**
+**WP6: High-performance IPC transports (EUR 7,000)**
 - Harden existing `eventfd` + shared-memory ring buffer channels for
   local-host zero-copy IPC,
   * initial core-dev WIP patch: https://pikers.dev/goodboy/tractor/pulls/10
@@ -235,7 +237,19 @@ across 6 work packages matching the milestones above:
 - Achieve macOS parity for shared-memory key handling (#423).
 - Investigate TIPC as a kernel-native multi-host transport (#378).
 - Benchmark and optimize against baseline TCP/UDS paths to
-  quantify throughput gains
+  quantify throughput gains.
+- Refs: #339, #378, #423
+
+**WP7: Sub-interpreter spawning backend (EUR 6,000)**
+- Implement a `trio`-compatible spawning backend using CPython
+  3.13+ sub-interpreters (PEP 554/734) as an alternative to
+  full process isolation for local-host actors.
+- Design the isolation boundary: determine which `tractor`
+  IPC primitives can leverage shared-memory within a single
+  OS process vs. requiring the existing msg-passing path.
+- Benchmark latency and throughput vs. subprocess spawning to
+  quantify the overhead reduction.
+- Ref: #379
 
 ---
 
@@ -267,7 +281,7 @@ external brokers (Redis, RabbitMQ), operate on a fire-and-forget
 model, and provide no structured error propagation. `tractor`
 eliminates the broker dependency, provides bidirectional streaming,
 and guarantees that remote errors propagate to the calling scope. It
-can be thought of as the 0mq of runtimes to the AMQP, it take
+can be thought of as the 0mq of runtimes to the AMQP; it takes
 sophistication to a lower level allowing for easily building any
 distributed architecture you can imagine.
 
@@ -275,7 +289,7 @@ distributed architecture you can imagine.
 cluster schedulers and also contain no adherence to SC. They use
 proxy objects and shared-memory abstractions in ways that break SC
 guarantees. `tractor` targets general distributed programming and can
-easily accomplish similar feats with arguably with less code and
+easily accomplish similar feats arguably with less code and
 surrounding tooling.
 
 **vs. Erlang/OTP (BEAM)**: `tractor` is directly inspired by OTP's
@@ -354,7 +368,17 @@ is SC from the ground up.
    the debugging experience, requiring careful layering of
    debug-control messages and/or requiring embedded tunnelling.
 
-7. **API stabilization without breaking SC invariants**: Moving
+7. **Sub-interpreter isolation boundaries**: CPython 3.13+
+   sub-interpreters (#379) share an OS process but provide
+   semi-isolated VMs. Determining which `tractor` IPC primitives
+   can safely operate within a shared address space - and which
+   require the existing process-boundary msg-passing path - is
+   uncharted territory. The spawning backend must present the
+   same `ActorNursery` interface regardless of whether the child
+   is a subprocess or a sub-interpreter, preserving SC semantics
+   while exploiting reduced spawn overhead.
+
+8. **API stabilization without breaking SC invariants**: Moving
    from alpha to beta means committing to a public API surface.
    The challenge is identifying which internal interfaces can be
    safely frozen vs. which need further iteration, while ensuring
@@ -458,7 +482,7 @@ repository under `funding/` on the `ngi0_submission` branch,
       appropriate
 - [x] Refine the **ecosystem** section with specific community
       contacts or partnerships
-- [ ] Save prompt logs for AI disclosure attachment
-- [ ] Proofread everything for accuracy and tone
-- [ ] ensure all field char-limits met.
+- [x] Save prompt logs for AI disclosure attachment
+- [x] Proofread everything for accuracy and tone
+- [x] ensure all field char-limits met (none enforced).
 - [ ] **Submit before April 1, 2026 12:00 CEST**
