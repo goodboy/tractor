@@ -96,7 +96,7 @@ release, targeting 6 major milestones:
 
 1. **Typed messaging protocols** - formalizing capability-based dialog
    protocols using `msgspec.Struct` types so inter-actor contracts are
-   statically verifiable (issues #36, #196, #311).
+   statically verifiable (#36, #196, #311, #410).
 
 2. **Real documentation** - actually providing a set of tutorials,
    accompanying diagrams (ideally auto-generated with D2) and general
@@ -105,20 +105,21 @@ release, targeting 6 major milestones:
 3. **Erlang-style supervision APIs** - composable supervisor
    strategies (one-for-one, one-for-all, rest-for-one) via context
    manager composition, enabling robust fault recovery without manual
-   restart logic (issue #22).
+   restart logic (#22).
 
 4. **Next-gen discovery system + addressing** - implementation of
    a non-naive builtin discovery sub-system with support for
    "multi-addresses" as an alternative (and arguably superior)
-   mechanism for service discovery on the internet.
+   mechanism for service discovery on the internet (#216, #367,
+   #410, #424).
 
 5. **Encrypted transport backend(s)** - either via plain ol
    TLS-equivalents or via composition with tunnel protocols such
-   as wireguard, SSH or QUIC.
+   as wireguard, SSH or QUIC (#420).
 
 6. **Supporting super high-perf ng IPC transports** - namely native
    support for `eventfd` + shared-mem channels for local-host and
-   TIPC for multi-host setups.
+   TIPC for multi-host setups (#423).
 
 Secondary outcomes include improved a stabilized public API surface,
 possible inter-language integration (once the SCP pattern is better
@@ -168,42 +169,66 @@ EUR 50,000
 > breakdown of main tasks and effort with explicit rates. Full budget
 > may be attached.**
 
-All work is performed by the sole core maintainer and extremely
-trusted/vetted core contributors at a rate of EUR 50/hr. The budget
-breaks down across the 6 primary work packages:
+Work is performed by the core maintainer (EUR 50/hr) and vetted
+contributors delegated specific sub-tasks (EUR 35/hr). Hour
+estimates below use a blended average. The budget breaks down
+across 6 work packages matching the milestones above:
 
-**WP1: Typed messaging and dialog protocols (EUR 18,000 / ~360 hrs)**
+**WP1: Typed messaging and dialog protocols (EUR 11,000)**
 - Define `msgspec.Struct`-based message schemas for all IPC
   primitives (RPC calls, streaming, context dialogs)
-- Implement compile-time and runtime type validation at IPC boundaries
-- Build capability-based dialog protocol negotiation between actors
+- Implement runtime type validation at IPC boundaries with
+  `Address` types in the builtin codec (#410)
+- Build capability-based dialog protocol negotiation between
+  actors via typed "dialog specs" (#196, #311)
 - Write comprehensive test coverage and migration guide
-- Refs: #36, #196, #311
+- Refs: #36, #196, #311, #410
 
-**WP2: Erlang-style supervision strategies (EUR 14,000 / ~280 hrs)**
+**WP2: Documentation and tutorials (EUR 6,000)**
+- Write Sphinx-based user guide covering core APIs, patterns,
+  and deployment
+- Create tutorial series (single-host, multi-host, asyncio
+  integration) with D2-generated architecture diagrams
+- Update and expand existing examples to demonstrate new typed
+  protocols and supervisors
+- Publish beta release to PyPI with changelog and migration
+  notes
+
+**WP3: Erlang-style supervision strategies (EUR 9,000)**
 - Design and implement composable supervisor context managers
-  supporting one-for-one, one-for-all, and rest-for-one restart
-  strategies
+  supporting one-for-one, one-for-all, and rest-for-one
+  restart strategies
 - Integrate with existing `ActorNursery` and error propagation
-  machinery
-- Add configurable restart limits, backoff policies, and supervision
-  tree introspection
+  machinery including Python 3.11+ exception groups
+- Add configurable restart limits, backoff policies, and
+  supervision tree introspection
 - Test under chaos-engineering fault injection scenarios
 - Ref: #22
 
-**WP3: Transport security and stabilization (EUR 10,000 / ~200 hrs)**
-- Add TLS encryption for TCP-based inter-host actor links
-- Harden the UDS (Unix Domain Socket) transport path
-- Stabilize the public API surface and deprecate internal interfaces
-- Audit and fix edge cases in remote exception relay and cancellation
+**WP4: Discovery system + multi-addressing (EUR 8,000)**
+- Replace naive `Registrar` with a pluggable discovery
+  sub-system supporting multiple backends
+- Implement `multiaddr`-based addressing for actor endpoints
+  enabling protocol-agnostic service location (#216, #367)
+- Integrate typed `Address` structs into the IPC codec (#410)
+- Add registrar/daemon fixture hardening for CI (#424)
+- Refs: #216, #367, #410, #424
 
-**WP4: Documentation and release (EUR 8,000 / ~160 hrs)**
-- Write Sphinx-based user guide covering core APIs, patterns, and
-  deployment
-- Create tutorial series (single-host, multi-host, asyncio
-  integration)
-- Publish beta release to PyPI with changelog and migration notes
-- Update examples to demonstrate new typed protocols and supervisors
+**WP5: Encrypted transport backends (EUR 8,000)**
+- Add TLS encryption for TCP-based inter-host actor links
+- Investigate and prototype composition with tunnel protocols
+  (wireguard, SSH, QUIC) for zero-config encryption
+- Extend transport-matrix CI to cover encrypted paths (#420)
+- Audit and fix edge cases in remote exception relay and
+  cancellation under encrypted channels
+
+**WP6: High-performance IPC transports (EUR 8,000)**
+- Harden existing `eventfd` + shared-memory ring buffer
+  channels for local-host zero-copy IPC
+- Achieve macOS parity for shared-memory key handling (#423)
+- Investigate TIPC as a kernel-native multi-host transport
+- Benchmark and optimize against baseline TCP/UDS paths to
+  quantify throughput gains
 
 ---
 
@@ -272,34 +297,63 @@ is SC from the ground up.
 
 1. **Type-safe IPC without performance regression**: Introducing
    `msgspec.Struct`-based typed message validation at every IPC
-   boundary must not degrade throughput. The challenge is designing a
-   schema layer that enables zero-copy deserialization while providing
-   meaningful compile-time and runtime type checking.
+   boundary must not degrade throughput. The challenge is designing
+   a schema layer that enables zero-copy deserialization while
+   providing meaningful runtime type checking. Further, encoding
+   `Address` types (#410) into the builtin codec requires careful
+   interaction with `msgspec`'s extension type system to avoid
+   per-message allocation overhead.
 
 2. **Composable supervision under SC constraints**: Erlang's OTP
    supervisors rely on process linking and message-based monitoring.
    Translating these patterns into `trio`'s task-nursery and
    cancellation-scope model - where parent scopes *must* outlive
    children - requires novel composition of context managers and
-   careful interaction with Python's exception groups.
+   careful interaction with Python 3.11+ exception groups. The
+   `ActorNursery` must support restart strategies without violating
+   the SC invariant that a crashed child's resources are fully
+   reclaimed before any restart attempt.
 
-3. **TLS in a dynamic actor topology**: Actors spawn and connect
+3. **Discovery without a single point of failure**: The current
+   `Registrar` is a single root-actor service; replacing it with
+   a distributed or pluggable discovery backend (potentially via
+   `multiaddr` endpoint negotiation, #216, #367) must not introduce
+   split-brain or stale-entry races. Achieving this while keeping
+   the bootstrap path simple (a new actor needs *some* way to find
+   its first peer) is an open design problem, particularly across
+   heterogeneous transports (TCP vs. UDS vs. QUIC).
+
+4. **TLS in a dynamic actor topology**: Actors spawn and connect
    dynamically. Implementing mutual TLS authentication without a
-   centralized certificate authority, while supporting both long-lived
-   daemons and ephemeral workers, requires a lightweight trust model
-   compatible with ad-hoc process tree formation.
+   centralized certificate authority, while supporting both
+   long-lived daemons and ephemeral workers, requires a lightweight
+   trust model compatible with ad-hoc process tree formation.
+   Composition with tunnel protocols (wireguard, SSH) adds another
+   axis: the transport layer must remain pluggable so encryption
+   can be provided externally rather than baked into every channel.
 
-4. **API stabilization without breaking SC invariants**: Moving from
-   alpha to beta means committing to a public API surface. The
-   challenge is identifying which internal interfaces can be safely
-   frozen vs. which need further iteration, while ensuring that any
-   API changes preserve the runtime's SC guarantees.
+5. **Zero-copy shared-memory IPC across platforms**: The existing
+   `eventfd` + `SharedMemory` ring buffer implementation
+   (`tractor.ipc._ringbuf`) is Linux-specific. Achieving macOS
+   parity (#423) requires dealing with platform differences in
+   POSIX shared-memory key formats and synchronization primitives.
+   Beyond portability, ensuring the ring buffer remains safe under
+   actor cancellation (partial writes, interrupted reads) without
+   leaking shared-memory segments is non-trivial.
 
-5. **Cross-platform debugging under encrypted transports**: The
-   multi-process `pdbp` debugger currently relies on unencrypted IPC
-   for TTY lock coordination. Adding naive TLS must not break the
-   debugging experience, requiring careful layering of debug-control
-   messages and/or requiring embedded tunnelling.
+6. **Cross-platform debugging under encrypted transports**: The
+   multi-process `pdbp` debugger currently relies on unencrypted
+   IPC for TTY lock coordination. Adding naive TLS must not break
+   the debugging experience, requiring careful layering of
+   debug-control messages and/or requiring embedded tunnelling.
+
+7. **API stabilization without breaking SC invariants**: Moving
+   from alpha to beta means committing to a public API surface.
+   The challenge is identifying which internal interfaces can be
+   safely frozen vs. which need further iteration, while ensuring
+   that any API changes preserve the runtime's SC guarantees.
+   Documenting this surface clearly (WP2) is itself a forcing
+   function for resolving ambiguities in the current internal API.
 
 ---
 
