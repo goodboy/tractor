@@ -456,10 +456,15 @@ guidance text. All draft responses were then reviewed, edited, and
 refined by the project maintainer before submission.
 
 The unedited AI output and prompts are available in the project
-repository under `funding/` on the `ngi0_submission` branch,
-<link-to-gh-branch>.
+repository under `funding/` on the `ngi0_submission` branch:
 
-`[TODO: attach prompt log before submission]`
+https://github.com/goodboy/tractor/tree/ngi0_submission/funding
+
+Prompt logs per revision:
+- initial draft: funding/nlnet_ngi0_commons_draft.prompt.md
+- milestone expansion: funding/nlnet_ngi0_commons_draft_rework.prompt.md
+- WP7/proofread pass: funding/nlnet_ngi0_commons_draft_pass3.prompt.md
+- final paste-ready pass: funding/nlnet_ngi0_commons_draft_final.prompt.md
 
 ---
 
@@ -468,7 +473,7 @@ repository under `funding/` on the `ngi0_submission` branch,
 ### Before submitting, address these TODOs:
 
 - [ ] Fill in phone number
-- [x] Fill in organisation (or confirm "Independent")
+- [x] Fill in organization (or confirm "Independent")
 - [x] Fill in country
 - [x] Review and refine the **Abstract** - is the scope right? Too
       ambitious? Trim or expand milestones as needed.
