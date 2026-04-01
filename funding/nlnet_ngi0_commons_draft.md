@@ -58,77 +58,33 @@ https://github.com/goodboy/tractor
 > why.**
 
 `tractor` is a distributed structured concurrency (SC)
-multi-processing runtime for Python built on (and effectively
-extending) the marvel that is `trio` for distributed computing. It
-provides a novel approach to what some might define as an
-"actor-model" by applying SC throughout a (distributed) Python
-process tree, effectively implementing a "Single program system"
-(SPS) akin to the EVM.
+multi-processing runtime for Python built on `trio`. It applies SC
+throughout a distributed process tree, implementing a "Single
+program system" (SPS) akin to the EVM. Actors interact via a
+"supervision-control protocol" (SCP) enforced by typed IPC
+messaging, ensuring no child can outlive or zombie its parent
+despite memory-domain separation.
 
-`tractor` "actors" interact rigorously via a "supervision-control
-protocol" (SCP) enforced via a "typed IPC messaging spec" allowing
-for the implementation of and "end-to-end-SC-adhering (optionally
-distributed) multi-process embedded `trio.Task` tree". 
+Capabilities: infinitely nestable actor nurseries, bi-directional
+streaming with reliable teardown, modular IPC (TCP, UDS, QUIC via
+`msgspec`), multi-process debugging (`pdbp`), and cross-framework
+(`asyncio`, Qt) guest-mode hosting.
 
-The primary outcome of this design is rigorous adherence to SC within
-parallel compute and distributed systems more generally.
+This grant funds 7 milestones toward a stable 1.0:
+1. Typed messaging protocols - `msgspec.Struct` dialog specs
+2. Documentation - tutorials, D2 diagrams, usage guides
+3. Erlang-style supervision APIs - composable restart strategies
+4. Next-gen discovery + multiaddr addressing
+5. Encrypted transports - TLS, wireguard, QUIC
+6. High-perf IPC - `eventfd` + shm ring buffers, TIPC
+7. Sub-interpreter spawning backend (PEP 734)
 
-In a one liner, the primary desired outcome is that "no concurrency
-primitive child (thread) can outlive or "zombie" its parent
-(supervisor)" despite separation of execution-scope in the memory
-domain.
+Secondary: stabilized API, cross-language SCP potential, beta
+PyPI release.
 
-The surprising benefits of this design include,
-- support for infinitely nestable "actor nurseries" and thus SC
-  supervised process trees.
-- bi-directional streaming with extremely reliable setup/teardown and
-  error propagation across complex architectures.
-- modular IPC with pluggable, composed transports (TCP, UDS, QUIC)
-  and serialized interchange formats (currently via `msgspec`).
-- a deterministic UX for multi-process debugging/tracing (currently
-  via a builtint `pdbp` integration).
-- cross "async framework" (`asyncio`, Qt) embedded event-loop hosting
-  thanks to `trio`'s "guest mode" which provides for `asyncio` code
-  controlled by `trio`-supervised actors.
-
-This grant funds the push from alpha/beta toward a stable 1.0
-release, targeting 6 major milestones:
-
-1. **Typed messaging protocols** - formalizing capability-based dialog
-   protocols using `msgspec.Struct` types so inter-actor contracts are
-   statically verifiable (#36, #196, #311, #410).
-
-2. **Real documentation** - actually providing a set of tutorials,
-   accompanying diagrams (ideally auto-generated with D2) and general
-   usage guides outside our lone readme + examples.
-
-3. **Erlang-style supervision APIs** - composable supervisor
-   strategies (one-for-one, one-for-all, rest-for-one) via context
-   manager composition, enabling robust fault recovery without manual
-   restart logic (#22).
-   * https://github.com/goodboy/tractor/issues?q=state%3Aopen%20label%3Asupervision
-
-4. **Next-gen discovery system + addressing** - implementation of
-   a non-naive builtin discovery sub-system with support for
-   "multi-addresses" as an alternative (and arguably superior)
-   mechanism for service discovery on the internet (#216, #367,
-   #410, #424, #429).
-
-5. **Encrypted transport backend(s)** - either via plain ol
-   TLS-equivalents or via composition with tunnel protocols such
-   as wireguard, SSH or QUIC (#136, #353, #382, #420).
-
-6. **Supporting super high-perf ng IPC transports** - namely native
-   support for `eventfd` + shared-mem channels for local-host (#339) and
-   TIPC for multi-host setups (#378).
-
-7. **A sub-interpreter spawning backend** - leveraging the new
-   semi-isolated cpython VM as a built-in local-host (actor) spawner
-   (#379).
-
-Secondary outcomes include a stabilized public API surface,
-possible inter-language integration (once the SCP pattern is better
-defined) and obviously a (at least) beta-quality release on PyPI.
+<!-- NOTE: abstract is char-limited to 1200 on the NLnet form.
+     The full milestone detail with issue refs lives in the
+     budget/WP breakdown and the PASTE_READY.txt version. -->
 
 ---
 
