@@ -39,30 +39,30 @@ import warnings
 
 import trio
 
-from .trionics import (
+from ..trionics import (
     maybe_open_nursery,
     collapse_eg,
 )
 from ._state import (
     current_actor,
 )
-from .ipc import Channel
-from .log import get_logger
-from .msg import (
+from ..ipc import Channel
+from ..log import get_logger
+from ..msg import (
     # Error,
     PayloadMsg,
     NamespacePath,
     Return,
 )
-from ._exceptions import (
+from .._exceptions import (
     NoResult,
     TransportClosed,
 )
-from ._context import (
+from .._context import (
     Context,
     open_context_from_portal,
 )
-from ._streaming import (
+from .._streaming import (
     MsgStream,
 )
 

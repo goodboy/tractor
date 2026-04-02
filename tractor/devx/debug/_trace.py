@@ -55,12 +55,12 @@ import tractor
 from tractor.log import get_logger
 from tractor.to_asyncio import run_trio_task_in_future
 from tractor._context import Context
-from tractor import _state
+from tractor.runtime import _state
 from tractor._exceptions import (
     NoRuntime,
     InternalError,
 )
-from tractor._state import (
+from tractor.runtime._state import (
     current_actor,
     current_ipc_ctx,
     is_root_process,
@@ -87,7 +87,7 @@ from ..pformat import (
 if TYPE_CHECKING:
     from trio.lowlevel import Task
     from threading import Thread
-    from tractor._runtime import (
+    from tractor.runtime._runtime import (
         Actor,
     )
     # from ._post_mortem import BoxedMaybeException

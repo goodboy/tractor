@@ -21,17 +21,27 @@ and applications.
 '''
 from functools import (
     partial,
-    wraps,
 )
 import inspect
 import platform
+from typing import (
+    Callable,
+    Type,
+)
 
 import pytest
 import tractor
 import trio
+import wrapt
 
 
-def tractor_test(fn):
+def tractor_test(
+    wrapped: Callable|None = None,
+    *,
+    # @tractor_test(<deco-params>)
+    timeout:float = 30,
+    hide_tb: bool = True,
+):
     '''
     Decorator for async test fns to decorator-wrap them as "native"
     looking sync funcs runnable by `pytest` and auto invoked with
@@ -45,8 +55,18 @@ def tractor_test(fn):
     Basic deco use:
     ---------------
 
-      @tractor_test
-      async def test_whatever():
+      @tractor_test(
+        timeout=10,
+      )
+      async def test_whatever(
+          # fixture param declarations
+          loglevel: str,
+          start_method: str,
+          reg_addr: tuple,
+          tpt_proto: str,
+          debug_mode: bool,
+      ):
+          # already inside a root-actor runtime `trio.Task`
           await ...
 
 
@@ -55,7 +75,7 @@ def tractor_test(fn):
     If any of the following fixture are requested by the wrapped test
     fn (via normal func-args declaration),
 
-    - `reg_addr` (a socket addr tuple where arbiter is listening)
+    - `reg_addr` (a socket addr tuple where registrar is listening)
     - `loglevel` (logging level passed to tractor internals)
     - `start_method` (subprocess spawning backend)
 
@@ -67,52 +87,69 @@ def tractor_test(fn):
     `tractor.open_root_actor()` funcargs.
 
     '''
-    @wraps(fn)
+    __tracebackhide__: bool = hide_tb
+
+    # handle the decorator not called with () case.
+    # i.e. in `wrapt` support a deco-with-optional-args,
+    # https://wrapt.readthedocs.io/en/master/decorators.html#decorators-with-optional-arguments
+    if wrapped is None:
+        return wrapt.PartialCallableObjectProxy(
+            tractor_test,
+            timeout=timeout,
+            hide_tb=hide_tb
+        )
+
+    @wrapt.decorator
     def wrapper(
-        *args,
-        loglevel=None,
-        reg_addr=None,
-        start_method: str|None = None,
-        debug_mode: bool = False,
-        tpt_proto: str|None=None,
-        **kwargs
+        wrapped: Callable,
+        instance: object|Type|None,
+        args: tuple,
+        kwargs: dict,
     ):
-        # __tracebackhide__ = True
+        __tracebackhide__: bool = hide_tb
 
-        # NOTE: inject ant test func declared fixture
-        # names by manually checking!
-        if 'reg_addr' in inspect.signature(fn).parameters:
-            # injects test suite fixture value to test as well
-            # as `run()`
-            kwargs['reg_addr'] = reg_addr
+        # NOTE, ensure we inject any test-fn declared fixture names.
+        for kw in [
+            'reg_addr',
+            'loglevel',
+            'start_method',
+            'debug_mode',
+            'tpt_proto',
+            'timeout',
+        ]:
+            if kw in inspect.signature(wrapped).parameters:
+                assert kw in kwargs
 
-        if 'loglevel' in inspect.signature(fn).parameters:
-            # allows test suites to define a 'loglevel' fixture
-            # that activates the internal logging
-            kwargs['loglevel'] = loglevel
+        start_method = kwargs.get('start_method')
+        if platform.system() == "Windows":
+            if start_method is None:
+                kwargs['start_method'] = 'trio'
+            elif start_method != 'trio':
+                raise ValueError(
+                    'ONLY the `start_method="trio"` is supported on Windows.'
+                )
 
-        if start_method is None:
-            if platform.system() == "Windows":
-                start_method = 'trio'
+        # open a root-actor, passing certain
+        # `tractor`-runtime-settings, then invoke the test-fn body as
+        # the root-most task.
+        #
+        # https://wrapt.readthedocs.io/en/master/decorators.html#processing-function-arguments
+        async def _main(
+            *args,
 
-        if 'start_method' in inspect.signature(fn).parameters:
-            # set of subprocess spawning backends
-            kwargs['start_method'] = start_method
+            # runtime-settings
+            loglevel:str|None = None,
+            reg_addr:tuple|None = None,
+            start_method: str|None = None,
+            debug_mode: bool = False,
+            tpt_proto: str|None = None,
 
-        if 'debug_mode' in inspect.signature(fn).parameters:
-            # set of subprocess spawning backends
-            kwargs['debug_mode'] = debug_mode
+            **kwargs,
+        ):
+            __tracebackhide__: bool = hide_tb
 
-        if 'tpt_proto' in inspect.signature(fn).parameters:
-            # set of subprocess spawning backends
-            kwargs['tpt_proto'] = tpt_proto
-
-        if kwargs:
-
-            # use explicit root actor start
-            async def _main():
+            with trio.fail_after(timeout):
                 async with tractor.open_root_actor(
-                    # **kwargs,
                     registry_addrs=[reg_addr] if reg_addr else None,
                     loglevel=loglevel,
                     start_method=start_method,
@@ -121,17 +158,31 @@ def tractor_test(fn):
                     debug_mode=debug_mode,
 
                 ):
-                    await fn(*args, **kwargs)
+                    # invoke test-fn body IN THIS task
+                    await wrapped(
+                        *args,
+                        **kwargs,
+                    )
 
-            main = _main
+        funcname = wrapped.__name__
+        if not inspect.iscoroutinefunction(wrapped):
+            raise TypeError(
+                f"Test-fn {funcname!r} must be an async-function !!"
+            )
 
-        else:
-            # use implicit root actor start
-            main = partial(fn, *args, **kwargs)
+        # invoke runtime via a root task.
+        return trio.run(
+            partial(
+                _main,
+                *args,
+                **kwargs,
+            )
+        )
 
-        return trio.run(main)
 
-    return wrapper
+    return wrapper(
+        wrapped,
+    )
 
 
 def pytest_addoption(
@@ -179,7 +230,8 @@ def pytest_addoption(
 
 def pytest_configure(config):
     backend = config.option.spawn_backend
-    tractor._spawn.try_set_start_method(backend)
+    from tractor.spawn._spawn import try_set_start_method
+    try_set_start_method(backend)
 
     # register custom marks to avoid warnings see,
     # https://docs.pytest.org/en/stable/how-to/writing_plugins.html#registering-custom-markers
@@ -225,7 +277,8 @@ def tpt_protos(request) -> list[str]:
 
     # XXX ensure we support the protocol by name via lookup!
     for proto_key in proto_keys:
-        addr_type = tractor._addr._address_types[proto_key]
+        from tractor.discovery import _addr
+        addr_type = _addr._address_types[proto_key]
         assert addr_type.proto_key == proto_key
 
     yield proto_keys
@@ -256,7 +309,7 @@ def tpt_proto(
     #             f'tpt-proto={proto_key!r}\n'
     #         )
 
-    from tractor import _state
+    from tractor.runtime import _state
     if _state._def_tpt_proto != proto_key:
         _state._def_tpt_proto = proto_key
         _state._runtime_vars['_enable_tpts'] = [

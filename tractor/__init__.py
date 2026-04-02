@@ -30,21 +30,23 @@ from ._streaming import (
     MsgStream as MsgStream,
     stream as stream,
 )
-from ._discovery import (
+from .discovery._discovery import (
     get_registry as get_registry,
     find_actor as find_actor,
     wait_for_actor as wait_for_actor,
     query_actor as query_actor,
 )
-from ._supervise import (
+from .runtime._supervise import (
     open_nursery as open_nursery,
     ActorNursery as ActorNursery,
 )
-from ._state import (
+from .runtime._state import (
+    RuntimeVars as RuntimeVars,
     current_actor as current_actor,
-    is_root_process as is_root_process,
     current_ipc_ctx as current_ipc_ctx,
-    debug_mode as debug_mode
+    debug_mode as debug_mode,
+    get_runtime_vars as get_runtime_vars,
+    is_root_process as is_root_process,
 )
 from ._exceptions import (
     ContextCancelled as ContextCancelled,
@@ -65,6 +67,10 @@ from ._root import (
     open_root_actor as open_root_actor,
 )
 from .ipc import Channel as Channel
-from ._portal import Portal as Portal
-from ._runtime import Actor as Actor
+from .runtime._portal import Portal as Portal
+from .runtime._runtime import Actor as Actor
+from .discovery._registry import (
+    Registrar as Registrar,
+    Arbiter as Arbiter,
+)
 # from . import hilevel as hilevel

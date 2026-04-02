@@ -55,12 +55,12 @@ import tractor
 from tractor.to_asyncio import run_trio_task_in_future
 from tractor.log import get_logger
 from tractor._context import Context
-from tractor import _state
+from tractor.runtime import _state
 from tractor._exceptions import (
     DebugRequestError,
     InternalError,
 )
-from tractor._state import (
+from tractor.runtime._state import (
     current_actor,
     is_root_process,
 )
@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from tractor.ipc import (
         IPCServer,
     )
-    from tractor._runtime import (
+    from tractor.runtime._runtime import (
         Actor,
     )
     from ._repl import (
@@ -1013,7 +1013,7 @@ async def request_root_stdio_lock(
     DebugStatus.req_task = current_task()
     req_err: BaseException|None = None
     try:
-        from tractor._discovery import get_root
+        from tractor.discovery._discovery import get_root
         # NOTE: we need this to ensure that this task exits
         # BEFORE the REPl instance raises an error like
         # `bdb.BdbQuit` directly, OW you get a trio cs stack

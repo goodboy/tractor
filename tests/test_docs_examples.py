@@ -94,8 +94,10 @@ def run_example_in_subproc(
         for f in p[2]
 
         if (
-            '__' not in f
-            and f[0] != '_'
+            '__' not in f  # ignore any pkg-mods
+            # ignore any `__pycache__` subdir
+            and '__pycache__' not in str(p[0])
+            and f[0] != '_'  # ignore any WIP "examplel mods"
             and 'debugging' not in p[0]
             and 'integration' not in p[0]
             and 'advanced_faults' not in p[0]
@@ -143,11 +145,18 @@ def test_example(
             'This test does run just fine "in person" however..'
         )
 
+    from .conftest import cpu_scaling_factor
+
     timeout: float = (
         60
         if ci_env and _non_linux
         else 16
     )
+
+    # add latency headroom for CPU freq scaling (auto-cpufreq et al.)
+    headroom: float = cpu_scaling_factor()
+    if headroom != 1.:
+        timeout *= headroom
 
     with open(ex_file, 'r') as ex:
         code = ex.read()

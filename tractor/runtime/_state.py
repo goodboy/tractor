@@ -25,6 +25,7 @@ from contextvars import (
 from pathlib import Path
 from typing import (
     Any,
+    Callable,
     Literal,
     TYPE_CHECKING,
 )
@@ -32,9 +33,14 @@ from typing import (
 import platformdirs
 from trio.lowlevel import current_task
 
+from msgspec import (
+    field,
+    Struct,
+)
+
 if TYPE_CHECKING:
     from ._runtime import Actor
-    from ._context import Context
+    from .._context import Context
 
 
 # default IPC transport protocol settings
@@ -47,9 +53,70 @@ _def_tpt_proto: TransportProtocolKey = 'tcp'
 _current_actor: Actor|None = None  # type: ignore # noqa
 _last_actor_terminated: Actor|None = None
 
+
 # TODO: mk this a `msgspec.Struct`!
-# -[ ] type out all fields obvi!
+# -[x] type out all fields obvi!
 # -[ ] (eventually) mk wire-ready for monitoring?
+class RuntimeVars(Struct):
+    '''
+    Actor-(and thus process)-global runtime state.
+
+    This struct is relayed from parent to child during sub-actor
+    spawning and is a singleton instance per process.
+
+    Generally contains,
+    - root-actor indicator.
+    - comms-info: addrs for both (public) process/service-discovery
+      and in-tree contact with other actors.
+    - transport-layer IPC protocol server(s) settings.
+    - debug-mode settings for enabling sync breakpointing and any
+      surrounding REPL-fixture hooking.
+    - infected-`asyncio` via guest-mode toggle(s)/cohfig.
+
+    '''
+    _is_root: bool = False  # bool
+    _root_mailbox: tuple[str, str|int] = (None, None)  # tuple[str|None, str|None]
+    _root_addrs: list[
+        tuple[str, str|int],
+    ] = []  # tuple[str|None, str|None]
+
+    # parent->chld ipc protocol caps
+    _enable_tpts: list[TransportProtocolKey] = field(
+        default_factory=lambda: [_def_tpt_proto],
+    )
+
+    # registrar info
+    _registry_addrs: list[tuple] = []
+
+    # `debug_mode: bool` settings
+    _debug_mode: bool = False  # bool
+    repl_fixture: bool|Callable = False  # |AbstractContextManager[bool]
+    # for `tractor.pause_from_sync()` & `breakpoint()` support
+    use_greenback: bool = False
+
+    # infected-`asyncio`-mode: `trio` running as guest.
+    _is_infected_aio: bool = False
+
+    def __setattr__(
+        self,
+        key,
+        val,
+    ) -> None:
+        breakpoint()
+        super().__setattr__(key, val)
+
+    def update(
+        self,
+        from_dict: dict|Struct,
+    ) -> None:
+        for attr, val in from_dict.items():
+            setattr(
+                self,
+                attr,
+                val,
+            )
+
+
 _runtime_vars: dict[str, Any] = {
     # root of actor-process tree info
     '_is_root': False,  # bool
@@ -71,6 +138,23 @@ _runtime_vars: dict[str, Any] = {
     # infected-`asyncio`-mode: `trio` running as guest.
     '_is_infected_aio': False,
 }
+
+
+def get_runtime_vars(
+    as_dict: bool = True,
+) -> dict:
+    '''
+    Deliver a **copy** of the current `Actor`'s "runtime variables".
+
+    By default, for historical impl reasons, this delivers the `dict`
+    form, but the `RuntimeVars` struct should be utilized as possible
+    for future calls.
+
+    '''
+    if as_dict:
+        return dict(_runtime_vars)
+
+    return RuntimeVars(**_runtime_vars)
 
 
 def last_actor() -> Actor|None:
@@ -98,7 +182,7 @@ def current_actor(
         _current_actor is None
     ):
         msg: str = 'No local actor has been initialized yet?\n'
-        from ._exceptions import NoRuntime
+        from .._exceptions import NoRuntime
 
         if last := last_actor():
             msg += (
@@ -164,7 +248,7 @@ def current_ipc_ctx(
         not ctx
         and error_on_not_set
     ):
-        from ._exceptions import InternalError
+        from .._exceptions import InternalError
         raise InternalError(
             'No IPC context has been allocated for this task yet?\n'
             f'|_{current_task()}\n'

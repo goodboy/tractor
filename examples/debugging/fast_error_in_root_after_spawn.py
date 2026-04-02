@@ -20,7 +20,7 @@ async def sleep(
 
 
 async def open_ctx(
-    n: tractor._supervise.ActorNursery
+    n: tractor.runtime._supervise.ActorNursery
 ):
 
     # spawn both actors

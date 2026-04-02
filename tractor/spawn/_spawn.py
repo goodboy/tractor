@@ -34,11 +34,11 @@ from typing import (
 import trio
 from trio import TaskStatus
 
-from .devx import (
+from ..devx import (
     debug,
     pformat as _pformat
 )
-from tractor._state import (
+from tractor.runtime._state import (
     current_actor,
     is_main_process,
     is_root_process,
@@ -46,10 +46,10 @@ from tractor._state import (
     _runtime_vars,
 )
 from tractor.log import get_logger
-from tractor._addr import UnwrappedAddress
-from tractor._portal import Portal
-from tractor._runtime import Actor
-from tractor._entry import _mp_main
+from tractor.discovery._addr import UnwrappedAddress
+from tractor.runtime._portal import Portal
+from tractor.runtime._runtime import Actor
+from ._entry import _mp_main
 from tractor._exceptions import ActorFailure
 from tractor.msg import (
     types as msgtypes,
@@ -58,11 +58,11 @@ from tractor.msg import (
 
 
 if TYPE_CHECKING:
-    from ipc import (
+    from tractor.ipc import (
         _server,
         Channel,
     )
-    from ._supervise import ActorNursery
+    from tractor.runtime._supervise import ActorNursery
     ProcessType = TypeVar('ProcessType', mp.Process, trio.Process)
 
 

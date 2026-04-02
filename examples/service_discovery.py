@@ -10,7 +10,7 @@ async def main(service_name):
         await an.start_actor(service_name)
 
         async with tractor.get_registry() as portal:
-            print(f"Arbiter is listening on {portal.channel}")
+            print(f"Registrar is listening on {portal.channel}")
 
         async with tractor.wait_for_actor(service_name) as sockaddr:
             print(f"my_service is found at {sockaddr}")

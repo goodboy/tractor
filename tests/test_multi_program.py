@@ -17,11 +17,11 @@ from tractor._testing import (
 )
 from tractor import (
     current_actor,
-    _state,
     Actor,
     Context,
     Portal,
 )
+from tractor.runtime import _state
 from .conftest import (
     sig_prog,
     _INT_SIGNAL,
@@ -30,7 +30,7 @@ from .conftest import (
 
 if TYPE_CHECKING:
     from tractor.msg import Aid
-    from tractor._addr import (
+    from tractor.discovery._addr import (
         UnwrappedAddress,
     )
 
@@ -53,19 +53,19 @@ def test_abort_on_sigint(
 
 
 @tractor_test
-async def test_cancel_remote_arbiter(
+async def test_cancel_remote_registrar(
     daemon: subprocess.Popen,
     reg_addr: UnwrappedAddress,
 ):
-    assert not current_actor().is_arbiter
+    assert not current_actor().is_registrar
     async with tractor.get_registry(reg_addr) as portal:
         await portal.cancel_actor()
 
     time.sleep(0.1)
-    # the arbiter channel server is cancelled but not its main task
+    # the registrar channel server is cancelled but not its main task
     assert daemon.returncode is None
 
-    # no arbiter socket should exist
+    # no registrar socket should exist
     with pytest.raises(OSError):
         async with tractor.get_registry(reg_addr) as portal:
             pass
@@ -80,7 +80,7 @@ def test_register_duplicate_name(
             registry_addrs=[reg_addr],
         ) as an:
 
-            assert not current_actor().is_arbiter
+            assert not current_actor().is_registrar
 
             p1 = await an.start_actor('doggy')
             p2 = await an.start_actor('doggy')
@@ -122,7 +122,7 @@ async def get_root_portal(
 
     # connect back to our immediate parent which should also
     # be the actor-tree's root.
-    from tractor._discovery import get_root
+    from tractor.discovery._discovery import get_root
     ptl: Portal
     async with get_root() as ptl:
         root_aid: Aid = ptl.chan.aid

@@ -40,7 +40,7 @@ from trio.lowlevel import (
     Task,
 )
 from tractor._context import Context
-from tractor._state import (
+from tractor.runtime._state import (
     current_actor,
     debug_mode,
     is_root_process,

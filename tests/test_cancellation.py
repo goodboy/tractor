@@ -490,7 +490,7 @@ def test_cancel_via_SIGINT(
     """Ensure that a control-C (SIGINT) signal cancels both the parent and
     child processes in trionic fashion
     """
-    pid = os.getpid()
+    pid: int = os.getpid()
 
     async def main():
         with trio.fail_after(2):
@@ -517,6 +517,8 @@ def test_cancel_via_SIGINT_other_task(
     started from a seperate ``trio`` child  task.
 
     '''
+    from .conftest import cpu_scaling_factor
+
     pid: int = os.getpid()
     timeout: float = (
         4 if _non_linux
@@ -524,6 +526,11 @@ def test_cancel_via_SIGINT_other_task(
     )
     if _friggin_windows:  # smh
         timeout += 1
+
+    # add latency headroom for CPU freq scaling (auto-cpufreq et al.)
+    headroom: float = cpu_scaling_factor()
+    if headroom != 1.:
+        timeout *= headroom
 
     async def spawn_and_sleep_forever(
         task_status=trio.TASK_STATUS_IGNORED

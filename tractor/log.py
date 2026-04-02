@@ -47,7 +47,7 @@ import colorlog  # type: ignore
 # import colored_traceback.auto  # ?TODO, need better config?
 import trio
 
-from ._state import current_actor
+from .runtime._state import current_actor
 
 
 _default_loglevel: str = 'ERROR'

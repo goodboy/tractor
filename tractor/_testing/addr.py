@@ -26,9 +26,7 @@ import random
 from typing import (
     Type,
 )
-from tractor import (
-    _addr,
-)
+from tractor.discovery import _addr
 
 
 def get_rando_addr(

@@ -28,29 +28,29 @@ from typing import (
 from contextlib import asynccontextmanager as acm
 
 from tractor.log import get_logger
-from .trionics import (
+from ..trionics import (
     gather_contexts,
     collapse_eg,
 )
-from .ipc import _connect_chan, Channel
+from ..ipc import _connect_chan, Channel
 from ._addr import (
     UnwrappedAddress,
     Address,
     wrap_address
 )
-from ._portal import (
+from ..runtime._portal import (
     Portal,
     open_portal,
     LocalPortal,
 )
-from ._state import (
+from ..runtime._state import (
     current_actor,
     _runtime_vars,
     _def_tpt_proto,
 )
 
 if TYPE_CHECKING:
-    from ._runtime import Actor
+    from ..runtime._runtime import Actor
 
 
 log = get_logger()
@@ -72,8 +72,8 @@ async def get_registry(
     '''
     actor: Actor = current_actor()
     if actor.is_registrar:
-        # we're already the arbiter
-        # (likely a re-entrant call from the arbiter actor)
+        # we're already the registrar
+        # (likely a re-entrant call from the registrar actor)
         yield LocalPortal(
             actor,
             Channel(transport=None)
@@ -268,10 +268,10 @@ async def find_actor(
     None,
 ]:
     '''
-    Ask the arbiter to find actor(s) by name.
+    Ask the registrar to find actor(s) by name.
 
-    Returns a connected portal to the last registered matching actor
-    known to the arbiter.
+    Returns a connected portal to the last registered
+    matching actor known to the registrar.
 
     '''
     # optimization path, use any pre-existing peer channel

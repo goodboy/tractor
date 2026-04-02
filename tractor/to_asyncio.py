@@ -43,7 +43,7 @@ from tractor._exceptions import (
     AsyncioTaskExited,
     AsyncioCancelled,
 )
-from tractor._state import (
+from tractor.runtime._state import (
     debug_mode,
     _runtime_vars,
 )

@@ -54,7 +54,7 @@ from tractor.msg import (
 )
 
 if TYPE_CHECKING:
-    from tractor._addr import Address
+    from tractor.discovery._addr import Address
 
 log = get_logger()
 
@@ -225,7 +225,7 @@ class MsgpackTransport(MsgTransport):
 
                 # not sure entirely why we need this but without it we
                 # seem to be getting racy failures here on
-                # arbiter/registry name subs..
+                # registrar name subs..
                 trio.BrokenResourceError,
 
             ) as trans_err:

@@ -22,8 +22,8 @@ import argparse
 
 from ast import literal_eval
 
-from ._runtime import Actor
-from ._entry import _trio_main
+from .runtime._runtime import Actor
+from .spawn._entry import _trio_main
 
 
 def parse_uid(arg):

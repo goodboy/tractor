@@ -43,11 +43,11 @@ from trio import (
     TaskStatus,
 )
 
-from .ipc import Channel
-from ._context import (
+from ..ipc import Channel
+from .._context import (
     Context,
 )
-from ._exceptions import (
+from .._exceptions import (
     ContextCancelled,
     RemoteActorError,
     ModuleNotExposed,
@@ -56,19 +56,19 @@ from ._exceptions import (
     pack_error,
     unpack_error,
 )
-from .trionics import (
+from ..trionics import (
     collapse_eg,
     is_multi_cancelled,
     maybe_raise_from_masking_exc,
 )
-from .devx import (
+from ..devx import (
     debug,
     add_div,
     pformat as _pformat,
 )
 from . import _state
-from .log import get_logger
-from .msg import (
+from ..log import get_logger
+from ..msg import (
     current_codec,
     MsgCodec,
     PayloadT,

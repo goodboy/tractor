@@ -29,19 +29,19 @@ from typing import (
 
 import trio  # type: ignore
 
-from .log import (
+from ..log import (
     get_console_log,
     get_logger,
 )
-from . import _state
-from .devx import (
+from ..runtime import _state
+from ..devx import (
     _frame_stack,
     pformat,
 )
-# from .msg import pretty_struct
-from .to_asyncio import run_as_asyncio_guest
-from ._addr import UnwrappedAddress
-from ._runtime import (
+# from ..msg import pretty_struct
+from ..to_asyncio import run_as_asyncio_guest
+from ..discovery._addr import UnwrappedAddress
+from ..runtime._runtime import (
     async_main,
     Actor,
 )

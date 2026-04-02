@@ -61,7 +61,7 @@ async def maybe_expect_raises(
     Async wrapper for ensuring errors propagate from the inner scope.
 
     '''
-    if tractor._state.debug_mode():
+    if tractor.debug_mode():
         timeout += 999
 
     with trio.fail_after(timeout):

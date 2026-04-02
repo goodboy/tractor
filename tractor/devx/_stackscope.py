@@ -45,17 +45,15 @@ from typing import (
 )
 
 import trio
-from tractor import (
-    _state,
-    log as logmod,
-)
+from tractor.runtime import _state
+from tractor import log as logmod
 from tractor.devx import debug
 
 log = logmod.get_logger()
 
 
 if TYPE_CHECKING:
-    from tractor._spawn import ProcessType
+    from tractor.spawn._spawn import ProcessType
     from tractor import (
         Actor,
         ActorNursery,

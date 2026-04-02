@@ -146,7 +146,7 @@ _pubtask2lock: dict[str, trio.StrictFIFOLock] = {}
 
 
 def pub(
-    wrapped: typing.Callable | None = None,
+    wrapped: typing.Callable|None = None,
     *,
     tasks: set[str] = set(),
 ):
@@ -244,8 +244,12 @@ def pub(
         task2lock[name] = trio.StrictFIFOLock()
 
     @wrapt.decorator
-    async def wrapper(agen, instance, args, kwargs):
-
+    async def wrapper(
+        agen,
+        instance,
+        args,
+        kwargs,
+    ):
         # XXX: this is used to extract arguments properly as per the
         # `wrapt` docs
         async def _execute(

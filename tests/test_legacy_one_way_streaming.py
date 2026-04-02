@@ -300,19 +300,43 @@ def test_a_quadruple_example(
     time_quad_ex: tuple[list[int], float],
     ci_env: bool,
     spawn_backend: str,
+    test_log: tractor.log.StackLevelAdapter,
 ):
     '''
-    This also serves as a kind of "we'd like to be this fast test".
+    This also serves as a "we'd like to be this fast" smoke test
+    given past empirical eval of this suite.
 
     '''
     non_linux: bool = (_sys := platform.system()) != 'Linux'
 
-    results, diff = time_quad_ex
-    assert results
+    this_fast_on_linux: float = 3
     this_fast = (
         6 if non_linux
-        else 3
+        else this_fast_on_linux
     )
+    # ^ XXX NOTE,
+    # i've noticed that tweaking the CPU governor setting
+    # to not "always" enable "turbo" mode can result in latency
+    # which causes this limit to be too little. Not sure if it'd
+    # be worth it to adjust the linux value based on reading the
+    # CPU conf from the sys?
+    #
+    # For ex, see the `auto-cpufreq` docs on such settings,
+    # https://github.com/AdnanHodzic/auto-cpufreq?tab=readme-ov-file#example-config-file-contents
+    #
+    # HENCE this below latency-headroom compensation logic..
+    from .conftest import cpu_scaling_factor
+    headroom: float = cpu_scaling_factor()
+    if headroom != 1.:
+        this_fast = this_fast_on_linux * headroom
+        test_log.warning(
+            f'Adding latency headroom on linux bc CPU scaling,\n'
+            f'headroom: {headroom}\n'
+            f'this_fast_on_linux: {this_fast_on_linux} -> {this_fast}\n'
+        )
+
+    results, diff = time_quad_ex
+    assert results
     assert diff < this_fast
 
 
@@ -353,7 +377,7 @@ def test_not_fast_enough_quad(
         assert results is None
 
 
-@tractor_test
+@tractor_test(timeout=20)
 async def test_respawn_consumer_task(
     reg_addr: tuple,
     spawn_backend: str,

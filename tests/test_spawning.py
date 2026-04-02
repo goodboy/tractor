@@ -39,7 +39,7 @@ async def spawn(
         ):
             # now runtime exists
             actor: tractor.Actor = tractor.current_actor()
-            assert actor.is_arbiter == should_be_root
+            assert actor.is_registrar == should_be_root
 
             # spawns subproc here
             portal: tractor.Portal = await an.run_in_actor(
@@ -68,7 +68,7 @@ async def spawn(
             assert result == 10
             return result
     else:
-        assert actor.is_arbiter == should_be_root
+        assert actor.is_registrar == should_be_root
         return 10
 
 
@@ -181,7 +181,7 @@ def test_loglevel_propagated_to_subactor(
 
     async def main():
         async with tractor.open_nursery(
-            name='arbiter',
+            name='registrar',
             start_method=start_method,
             arbiter_addr=reg_addr,
 
