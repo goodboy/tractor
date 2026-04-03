@@ -195,7 +195,7 @@ def reg_err_types(
 
     Such that error types can be registered by an external
     `tractor`-use-app code base which are expected to be raised
-    remotely; enables them being re-raised on the recevier side of
+    remotely; enables them being re-raised on the receiver side of
     some inter-actor IPC dialog.
 
     '''
@@ -211,7 +211,7 @@ def reg_err_types(
         )
 
 
-def get_err_type(type_name: str) -> BaseException|None:
+def get_err_type(type_name: str) -> Type[BaseException]|None:
     '''
     Look up an exception type by name from the set of locally known
     namespaces:
@@ -325,7 +325,8 @@ class RemoteActorError(Exception):
         # also pertains to our long long oustanding issue XD
         # https://github.com/goodboy/tractor/issues/5
         self._boxed_type: BaseException = boxed_type
-        self._src_type: BaseException|None = None
+        self._src_type: Type[BaseException]|None = None
+        self._src_type_resolved: bool = False
         self._ipc_msg: Error|None = ipc_msg
         self._extra_msgdata = extra_msgdata
 
@@ -434,24 +435,41 @@ class RemoteActorError(Exception):
         return self._ipc_msg.src_type_str
 
     @property
-    def src_type(self) -> str:
+    def src_type(self) -> Type[BaseException]|None:
         '''
-        Error type raised by original remote faulting actor.
+        Error type raised by original remote faulting
+        actor.
 
-        When the error has only been relayed a single actor-hop
-        this will be the same as the `.boxed_type`.
+        When the error has only been relayed a single
+        actor-hop this will be the same as
+        `.boxed_type`.
+
+        If the type can not be resolved locally (i.e.
+        it was not registered via `reg_err_types()`)
+        a warning is logged and `None` is returned;
+        all string-level error info (`.src_type_str`,
+        `.tb_str`, etc.) remains available.
 
         '''
-        if self._src_type is None:
+        if not self._src_type_resolved:
+            self._src_type_resolved = True
+
+            if self._ipc_msg is None:
+                return None
+
             self._src_type = get_err_type(
                 self._ipc_msg.src_type_str
             )
-
             if not self._src_type:
-                raise TypeError(
-                    f'Failed to lookup src error type with '
-                    f'`tractor._exceptions.get_err_type()` :\n'
-                    f'{self.src_type_str}'
+                log.warning(
+                    f'Failed to lookup src error type via\n'
+                    f'`tractor._exceptions.get_err_type()`:\n'
+                    f'\n'
+                    f'`{self._ipc_msg.src_type_str}`'
+                    f' is not registered!\n'
+                    f'\n'
+                    f'Call `reg_err_types()` to enable'
+                    f' full type reconstruction.\n'
                 )
 
         return self._src_type
@@ -459,20 +477,30 @@ class RemoteActorError(Exception):
     @property
     def boxed_type_str(self) -> str:
         '''
-        String-name of the (last hop's) boxed error type.
+        String-name of the (last hop's) boxed error
+        type.
+
+        Falls back to the IPC-msg-encoded type-name
+        str when the type can not be resolved locally
+        (e.g. unregistered custom errors).
 
         '''
         # TODO, maybe support also serializing the
-        # `ExceptionGroup.exeptions: list[BaseException]` set under
-        # certain conditions?
+        # `ExceptionGroup.exceptions: list[BaseException]`
+        # set under certain conditions?
         bt: Type[BaseException] = self.boxed_type
         if bt:
             return str(bt.__name__)
 
-        return ''
+        # fallback to the str name from the IPC msg
+        # when the type obj can't be resolved.
+        if self._ipc_msg:
+            return self._ipc_msg.boxed_type_str
+
+        return '<unknown>'
 
     @property
-    def boxed_type(self) -> Type[BaseException]:
+    def boxed_type(self) -> Type[BaseException]|None:
         '''
         Error type boxed by last actor IPC hop.
 
@@ -701,10 +729,22 @@ class RemoteActorError(Exception):
         failing actor's remote env.
 
         '''
-        # TODO: better tb insertion and all the fancier dunder
-        # metadata stuff as per `.__context__` etc. and friends:
+        # TODO: better tb insertion and all the fancier
+        # dunder metadata stuff as per `.__context__`
+        # etc. and friends:
         # https://github.com/python-trio/trio/issues/611
-        src_type_ref: Type[BaseException] = self.src_type
+        src_type_ref: Type[BaseException]|None = (
+            self.src_type
+        )
+        if src_type_ref is None:
+            # unresolvable type: fall back to
+            # a `RuntimeError` preserving original
+            # traceback + type name.
+            return RuntimeError(
+                f'{self.src_type_str}: '
+                f'{self.tb_str}'
+            )
+
         return src_type_ref(self.tb_str)
 
     # TODO: local recontruction of nested inception for a given
@@ -1233,14 +1273,31 @@ def unpack_error(
     if not isinstance(msg, Error):
         return None
 
-    # try to lookup a suitable error type from the local runtime
-    # env then use it to construct a local instance.
-    # boxed_type_str: str = error_dict['boxed_type_str']
+    # try to lookup a suitable error type from the
+    # local runtime env then use it to construct a
+    # local instance.
     boxed_type_str: str = msg.boxed_type_str
-    boxed_type: Type[BaseException] = get_err_type(boxed_type_str)
+    boxed_type: Type[BaseException]|None = get_err_type(
+        boxed_type_str
+    )
 
-    # retrieve the error's msg-encoded remotoe-env info
-    message: str = f'remote task raised a {msg.boxed_type_str!r}\n'
+    if boxed_type is None:
+        log.warning(
+            f'Failed to resolve remote error type\n'
+            f'`{boxed_type_str}` - boxing as\n'
+            f'`RemoteActorError` with original\n'
+            f'traceback preserved.\n'
+            f'\n'
+            f'Call `reg_err_types()` to enable\n'
+            f'full type reconstruction.\n'
+        )
+
+    # retrieve the error's msg-encoded remote-env
+    # info
+    message: str = (
+        f'remote task raised a '
+        f'{msg.boxed_type_str!r}\n'
+    )
 
     # TODO: do we even really need these checks for RAEs?
     if boxed_type_str in [
