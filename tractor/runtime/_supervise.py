@@ -247,6 +247,7 @@ class ActorNursery:
             # modules allowed to invoked funcs from
             enable_modules=enable_modules,
             loglevel=loglevel,
+            replay_parent_main=replay_parent_main,
 
             # verbatim relay this actor's registrar addresses
             registry_addrs=current_actor().registry_addrs,
@@ -270,7 +271,6 @@ class ActorNursery:
                 parent_addr,
                 _rtv,  # run time vars
                 infect_asyncio=infect_asyncio,
-                replay_parent_main=replay_parent_main,
                 proc_kwargs=proc_kwargs
             )
         )
