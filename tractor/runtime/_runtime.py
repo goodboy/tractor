@@ -217,6 +217,8 @@ class Actor:
         '''
         return self._ipc_server
 
+    # Information about `__main__` from parent
+    _parent_main_data: dict[str, str]
     _parent_chan_cs: CancelScope|None = None
     _spawn_spec: msgtypes.SpawnSpec|None = None
 
@@ -242,6 +244,7 @@ class Actor:
         loglevel: str|None = None,
         registry_addrs: list[Address]|None = None,
         spawn_method: str|None = None,
+        replay_parent_main: bool = True,
 
         arbiter_addr: UnwrappedAddress|None = None,
 
@@ -262,6 +265,12 @@ class Actor:
         self._cancel_complete = trio.Event()
         self._cancel_called_by: tuple[str, tuple]|None = None
         self._cancel_called: bool = False
+
+        # retrieve and store parent `__main__` data which
+        # will be passed to children
+        self._parent_main_data = _mp_fixup_main._mp_figure_out_main(
+            replay_parent_main,
+        )
 
         # TODO? only add this when `is_debug_mode() == True` no?
         # always include debugging tools module
@@ -529,7 +538,6 @@ class Actor:
 
     def load_modules(
         self,
-        parent_main_data: dict[str, str]|None = None,
 
     ) -> None:
         '''
@@ -543,20 +551,13 @@ class Actor:
         '''
         try:
             if self._spawn_method == 'trio':
-                if (
-                    parent_main_data is not None
-                    and
-                    'init_main_from_name' in parent_main_data
-                ):
+                parent_data = self._parent_main_data
+                if 'init_main_from_name' in parent_data:
                     _mp_fixup_main._fixup_main_from_name(
-                        parent_main_data['init_main_from_name'])
-                elif (
-                    parent_main_data is not None
-                    and
-                    'init_main_from_path' in parent_main_data
-                ):
+                        parent_data['init_main_from_name'])
+                elif 'init_main_from_path' in parent_data:
                     _mp_fixup_main._fixup_main_from_path(
-                        parent_main_data['init_main_from_path'])
+                        parent_data['init_main_from_path'])
 
             status: str = 'Attempting to import enabled modules:\n'
 
@@ -842,7 +843,6 @@ class Actor:
         Channel,
         list[UnwrappedAddress]|None,
         list[str]|None,  # preferred tpts
-        dict[str, str]|None,
     ]:
         '''
         Bootstrap this local actor's runtime config from its parent by
@@ -863,7 +863,6 @@ class Actor:
             await chan._do_handshake(aid=self.aid)
 
             accept_addrs: list[UnwrappedAddress]|None = None
-            parent_main_data: dict[str, str]|None = None
 
             if self._spawn_method == "trio":
 
@@ -1024,13 +1023,12 @@ class Actor:
                     spawnspec.enable_modules
                 )
 
-                parent_main_data = spawnspec._parent_main_data
+                self._parent_main_data = spawnspec._parent_main_data
 
             return (
                 chan,
                 accept_addrs,
-                _state._runtime_vars['_enable_tpts'],
-                parent_main_data,
+                _state._runtime_vars['_enable_tpts']
             )
 
         # failed to connect back?
@@ -1523,7 +1521,6 @@ async def async_main(
 
         # establish primary connection with immediate parent
         actor._parent_chan: Channel|None = None
-        parent_main_data: dict[str, str]|None = None
 
         # is this a sub-actor?
         # get runtime info from parent.
@@ -1532,7 +1529,6 @@ async def async_main(
                 actor._parent_chan,
                 set_accept_addr_says_rent,
                 maybe_preferred_transports_says_rent,
-                parent_main_data,
             ) = await actor._from_parent(parent_addr)
 
             accept_addrs: list[UnwrappedAddress] = []
@@ -1612,9 +1608,7 @@ async def async_main(
                 # XXX: do this **after** establishing a channel to the parent
                 # but **before** starting the message loop for that channel
                 # such that import errors are properly propagated upwards
-                actor.load_modules(
-                    parent_main_data=parent_main_data,
-                )
+                actor.load_modules()
 
                 # XXX TODO XXX: figuring out debugging of this
                 # would somemwhat guarantee "self-hosted" runtime

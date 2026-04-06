@@ -218,7 +218,11 @@ def test_start_actor_can_skip_parent_main_replay(
     monkeypatch.setattr(
         _mp_fixup_main,
         '_mp_figure_out_main',
-        lambda: {'init_main_from_name': __name__},
+        lambda replay_parent_main=True: (
+            {'init_main_from_name': __name__}
+            if replay_parent_main
+            else {}
+        ),
     )
 
     async def main() -> None:

@@ -33,11 +33,16 @@ import runpy
 ORIGINAL_DIR = os.path.abspath(os.getcwd())
 
 
-def _mp_figure_out_main() -> dict[str, str]:
+def _mp_figure_out_main(
+    replay_parent_main: bool = True,
+) -> dict[str, str]:
     """Taken from ``multiprocessing.spawn.get_preparation_data()``.
 
     Retrieve parent actor `__main__` module data.
     """
+    if not replay_parent_main:
+        return {}
+
     d = {}
     # Figure out whether to initialise main in the subprocess as a module
     # or through direct execution (or to leave it alone entirely)
