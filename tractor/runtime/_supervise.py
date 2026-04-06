@@ -251,8 +251,6 @@ class ActorNursery:
             # verbatim relay this actor's registrar addresses
             registry_addrs=current_actor().registry_addrs,
         )
-        if not replay_parent_main:
-            subactor._parent_main_data = {}
         parent_addr: UnwrappedAddress = self._actor.accept_addr
         assert parent_addr
 
@@ -272,6 +270,7 @@ class ActorNursery:
                 parent_addr,
                 _rtv,  # run time vars
                 infect_asyncio=infect_asyncio,
+                replay_parent_main=replay_parent_main,
                 proc_kwargs=proc_kwargs
             )
         )

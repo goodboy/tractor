@@ -50,6 +50,7 @@ from tractor.discovery._addr import UnwrappedAddress
 from tractor.runtime._portal import Portal
 from tractor.runtime._runtime import Actor
 from ._entry import _mp_main
+from . import _mp_fixup_main
 from tractor._exceptions import ActorFailure
 from tractor.msg import (
     types as msgtypes,
@@ -420,6 +421,7 @@ async def new_proc(
     *,
 
     infect_asyncio: bool = False,
+    replay_parent_main: bool = True,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
     proc_kwargs: dict[str, any] = {}
 
@@ -440,6 +442,7 @@ async def new_proc(
         parent_addr,
         _runtime_vars,  # run time vars
         infect_asyncio=infect_asyncio,
+        replay_parent_main=replay_parent_main,
         task_status=task_status,
         proc_kwargs=proc_kwargs
     )
@@ -457,6 +460,7 @@ async def trio_proc(
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
+    replay_parent_main: bool = True,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
     proc_kwargs: dict[str, any] = {}
 
@@ -549,7 +553,11 @@ async def trio_proc(
         # send a "spawning specification" which configures the
         # initial runtime state of the child.
         sspec = msgtypes.SpawnSpec(
-            _parent_main_data=subactor._parent_main_data,
+            _parent_main_data=(
+                _mp_fixup_main._mp_figure_out_main()
+                if replay_parent_main
+                else {}
+            ),
             enable_modules=subactor.enable_modules,
             reg_addrs=subactor.reg_addrs,
             bind_addrs=bind_addrs,
@@ -680,6 +688,7 @@ async def mp_proc(
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
     infect_asyncio: bool = False,
+    replay_parent_main: bool = True,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
     proc_kwargs: dict[str, any] = {}
 
