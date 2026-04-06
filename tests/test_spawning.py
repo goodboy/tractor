@@ -204,6 +204,53 @@ def test_loglevel_propagated_to_subactor(
     assert 'yoyoyo' in captured.err
 
 
+def test_run_in_actor_can_skip_parent_main_inheritance(
+    start_method,
+    reg_addr,
+    monkeypatch,
+):
+    if start_method != 'trio':
+        pytest.skip(
+            'parent main inheritance opt-out only affects the trio spawn backend'
+        )
+    from tractor.spawn import _mp_fixup_main
+
+    monkeypatch.setattr(
+        _mp_fixup_main,
+        '_mp_figure_out_main',
+        lambda inherit_parent_main=True: (
+            {'init_main_from_name': __name__}
+            if inherit_parent_main
+            else {}
+        ),
+    )
+
+    async def main():
+        async with tractor.open_nursery(
+            name='registrar',
+            start_method=start_method,
+            registry_addrs=[reg_addr],
+        ) as an:
+            replaying = await an.run_in_actor(
+                get_main_mod_name,
+                name='replaying-parent-main',
+            )
+            isolated = await an.run_in_actor(
+                get_main_mod_name,
+                name='isolated-parent-main',
+                inherit_parent_main=False,
+            )
+
+            # Stdlib spawn re-runs an importable parent ``__main__`` as
+            # ``__mp_main__``; opting out should leave the child bootstrap
+            # module alone instead.
+            # https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
+            assert await replaying.result() == '__mp_main__'
+            assert await isolated.result() == '__main__'
+
+    trio.run(main)
+
+
 def test_start_actor_can_skip_parent_main_inheritance(
     start_method,
     reg_addr,
@@ -225,23 +272,32 @@ def test_start_actor_can_skip_parent_main_inheritance(
         ),
     )
 
-    async def main() -> None:
+    async def main():
         async with tractor.open_nursery(
             name='registrar',
             start_method=start_method,
             registry_addrs=[reg_addr],
         ) as an:
-            replaying = await an.run_in_actor(
-                get_main_mod_name,
-                name='replaying-parent-main',
+            replaying = await an.start_actor(
+                'replaying-parent-main',
+                enable_modules=[__name__],
             )
-            isolated = await an.run_in_actor(
-                get_main_mod_name,
-                name='isolated-parent-main',
+            isolated = await an.start_actor(
+                'isolated-parent-main',
+                enable_modules=[__name__],
                 inherit_parent_main=False,
             )
-
-            assert await replaying.result() == '__mp_main__'
-            assert await isolated.result() == '__main__'
+            try:
+                assert await replaying.run_from_ns(
+                    __name__,
+                    'get_main_mod_name',
+                ) == '__mp_main__'
+                assert await isolated.run_from_ns(
+                    __name__,
+                    'get_main_mod_name',
+                ) == '__main__'
+            finally:
+                await replaying.cancel_actor()
+                await isolated.cancel_actor()
 
     trio.run(main)

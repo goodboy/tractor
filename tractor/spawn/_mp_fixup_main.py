@@ -22,20 +22,34 @@ These helpers are needed for any spawing backend that doesn't already
 handle this. For example when using ``trio_run_in_process`` it is needed
 but obviously not when we're already using ``multiprocessing``.
 
+These helpers mirror the stdlib spawn/forkserver bootstrap that rebuilds
+the parent's `__main__` in a fresh child interpreter. In particular, we
+capture enough info to later replay the parent's main module as
+`__mp_main__` (or by path) in the child process.
+
+See:
+https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
 """
 import os
 import sys
 import platform
 import types
 import runpy
+from typing import NotRequired
+from typing import TypedDict
 
 
 ORIGINAL_DIR = os.path.abspath(os.getcwd())
 
 
+class ParentMainData(TypedDict):
+    init_main_from_name: NotRequired[str]
+    init_main_from_path: NotRequired[str]
+
+
 def _mp_figure_out_main(
     inherit_parent_main: bool = True,
-) -> dict[str, str]:
+) -> ParentMainData:
     """Taken from ``multiprocessing.spawn.get_preparation_data()``.
 
     Retrieve parent actor `__main__` module data.
@@ -43,7 +57,7 @@ def _mp_figure_out_main(
     if not inherit_parent_main:
         return {}
 
-    d = {}
+    d: ParentMainData = {}
     # Figure out whether to initialise main in the subprocess as a module
     # or through direct execution (or to leave it alone entirely)
     main_module = sys.modules['__main__']
