@@ -168,6 +168,11 @@ async def check_loglevel(level):
     log.critical('yoyoyo')
 
 
+async def get_main_mod_name() -> str:
+    import sys
+    return sys.modules['__main__'].__name__
+
+
 def test_loglevel_propagated_to_subactor(
     start_method,
     capfd,
@@ -199,48 +204,40 @@ def test_loglevel_propagated_to_subactor(
     assert 'yoyoyo' in captured.err
 
 
-def test_start_actor_can_skip_parent_main_replay(monkeypatch, reg_addr):
-    captured_parent_main_data: list[dict[str, str]] = []
-    from tractor.runtime import _supervise as supervise_module
-
-    async def fake_new_proc(
-        name: str,
-        actor_nursery,
-        subactor,
-        errors,
-        bind_addrs,
-        parent_addr,
-        _runtime_vars,
-        *,
-        infect_asyncio: bool = False,
-        task_status=trio.TASK_STATUS_IGNORED,
-        proc_kwargs: dict[str, Any] = {},
-    ) -> None:
-        captured_parent_main_data.append(dict(subactor._parent_main_data))
-        task_status.started(object())
+def test_start_actor_can_skip_parent_main_replay(
+    start_method,
+    reg_addr,
+    monkeypatch,
+):
+    if start_method != 'trio':
+        pytest.skip(
+            'parent main replay opt-out only affects the trio spawn backend'
+        )
+    from tractor.spawn import _mp_fixup_main
 
     monkeypatch.setattr(
-        supervise_module._spawn,
-        'new_proc',
-        fake_new_proc,
+        _mp_fixup_main,
+        '_mp_figure_out_main',
+        lambda: {'init_main_from_name': __name__},
     )
 
     async def main() -> None:
-        async with tractor.open_root_actor(
+        async with tractor.open_nursery(
+            name='registrar',
+            start_method=start_method,
             registry_addrs=[reg_addr],
-        ):
-            async with tractor.open_nursery() as an:
-                await an.start_actor(
-                    'replaying-parent-main',
-                    enable_modules=[__name__],
-                )
-                await an.start_actor(
-                    'isolated-parent-main',
-                    enable_modules=[__name__],
-                    replay_parent_main=False,
-                )
+        ) as an:
+            replaying = await an.run_in_actor(
+                get_main_mod_name,
+                name='replaying-parent-main',
+            )
+            isolated = await an.run_in_actor(
+                get_main_mod_name,
+                name='isolated-parent-main',
+                replay_parent_main=False,
+            )
+
+            assert await replaying.result() == '__mp_main__'
+            assert await isolated.result() == '__main__'
 
     trio.run(main)
-
-    assert captured_parent_main_data[0]
-    assert captured_parent_main_data[1] == {}
