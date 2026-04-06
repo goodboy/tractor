@@ -318,7 +318,7 @@ def test_open_local_sub_to_stream(
 
 
 @acm
-async def cancel_outer_cs(
+async def maybe_cancel_outer_cs(
     cs: trio.CancelScope|None = None,
     delay: float = 0,
 ):
@@ -332,12 +332,31 @@ async def cancel_outer_cs(
     if cs:
         log.info('task calling cs.cancel()')
         cs.cancel()
-    trio.lowlevel.checkpoint()
+
     yield
-    await trio.sleep_forever()
+
+    if cs:
+        await trio.sleep_forever()
+
+    # XXX, if not cancelled we'll leak this inf-blocking
+    # subtask to the actor's service tn..
+    else:
+        await trio.lowlevel.checkpoint()
 
 
+@pytest.mark.parametrize(
+    'delay',
+    [0.05, 0.5, 1],
+    ids="pre_sleep_delay={}".format,
+)
+@pytest.mark.parametrize(
+    'cancel_by_cs',
+    [True, False],
+    ids="cancel_by_cs={}".format,
+)
 def test_lock_not_corrupted_on_fast_cancel(
+    delay: float,
+    cancel_by_cs: bool,
     debug_mode: bool,
     loglevel: str,
 ):
@@ -354,17 +373,14 @@ def test_lock_not_corrupted_on_fast_cancel(
       due to it having erronously exited without calling
       `lock.release()`.
 
-
     '''
-    delay: float = 1.
-
     async def use_moc(
-        cs: trio.CancelScope|None,
         delay: float,
+        cs: trio.CancelScope|None = None,
     ):
         log.info('task entering moc')
         async with maybe_open_context(
-            cancel_outer_cs,
+            maybe_cancel_outer_cs,
             kwargs={
                 'cs': cs,
                 'delay': delay,
@@ -375,7 +391,13 @@ def test_lock_not_corrupted_on_fast_cancel(
             else:
                 log.info('1st task entered')
 
-            await trio.sleep_forever()
+            if cs:
+                await trio.sleep_forever()
+
+            else:
+                await trio.sleep(delay)
+
+        # ^END, exit shared ctx.
 
     async def main():
         with trio.fail_after(delay + 2):
@@ -384,6 +406,7 @@ def test_lock_not_corrupted_on_fast_cancel(
                     debug_mode=debug_mode,
                     loglevel=loglevel,
                 ),
+                # ?TODO, pass this as the parent tn?
                 trio.open_nursery() as tn,
             ):
                 get_console_log('info')
@@ -391,15 +414,14 @@ def test_lock_not_corrupted_on_fast_cancel(
                 cs = tn.cancel_scope
                 tn.start_soon(
                     use_moc,
-                    cs,
                     delay,
+                    cs if cancel_by_cs else None,
                     name='child',
                 )
                 with trio.CancelScope() as rent_cs:
                     await use_moc(
-                        cs=rent_cs,
                         delay=delay,
+                        cs=rent_cs if cancel_by_cs else None,
                     )
-
 
     trio.run(main)
