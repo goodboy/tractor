@@ -244,7 +244,7 @@ class Actor:
         loglevel: str|None = None,
         registry_addrs: list[Address]|None = None,
         spawn_method: str|None = None,
-        replay_parent_main: bool = True,
+        inherit_parent_main: bool = True,
 
         arbiter_addr: UnwrappedAddress|None = None,
 
@@ -269,7 +269,7 @@ class Actor:
         # retrieve and store parent `__main__` data which
         # will be passed to children
         self._parent_main_data = _mp_fixup_main._mp_figure_out_main(
-            replay_parent_main,
+            inherit_parent_main,
         )
 
         # TODO? only add this when `is_debug_mode() == True` no?
@@ -1024,6 +1024,11 @@ class Actor:
                 )
 
                 self._parent_main_data = spawnspec._parent_main_data
+                # XXX QUESTION(s)^^^
+                # -[ ] already set in `.__init__()` right, but how is
+                #      it diff from this blatant parent copy?
+                #    -[ ] do we need/want the .__init__() value in
+                #       just the root case orr?
 
             return (
                 chan,
