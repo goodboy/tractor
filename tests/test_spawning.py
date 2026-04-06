@@ -3,6 +3,11 @@ Spawning basics
 
 """
 from functools import partial
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 from typing import (
     Any,
 )
@@ -17,6 +22,11 @@ data_to_pass_down = {
     'doggy': 10,
     'kitty': 4,
 }
+_tests_dir = Path(__file__).resolve().parent
+_repo_root = _tests_dir.parent
+_parent_main_case_script = (
+    _tests_dir / 'spawn_test_support' / 'parent_main_inheritance_case.py'
+)
 
 
 async def spawn(
@@ -173,6 +183,38 @@ async def get_main_mod_name() -> str:
     return sys.modules['__main__'].__name__
 
 
+def _run_parent_main_inheritance_script(
+    tmp_path: Path,
+    *,
+    api: str,
+) -> dict[str, str]:
+    output_file = tmp_path / 'out.json'
+
+    env = os.environ.copy()
+    old_pythonpath = env.get('PYTHONPATH')
+    env['PYTHONPATH'] = (
+        f'{_tests_dir}{os.pathsep}{_repo_root}{os.pathsep}{old_pythonpath}'
+        if old_pythonpath
+        else f'{_tests_dir}{os.pathsep}{_repo_root}'
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_parent_main_case_script),
+            api,
+            str(output_file),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, (
+        f'stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}'
+    )
+    return json.loads(output_file.read_text())
+
+
 def test_loglevel_propagated_to_subactor(
     start_method,
     capfd,
@@ -206,98 +248,33 @@ def test_loglevel_propagated_to_subactor(
 
 def test_run_in_actor_can_skip_parent_main_inheritance(
     start_method,
-    reg_addr,
-    monkeypatch,
+    tmp_path,
 ):
     if start_method != 'trio':
         pytest.skip(
             'parent main inheritance opt-out only affects the trio spawn backend'
         )
-    from tractor.spawn import _mp_fixup_main
-
-    monkeypatch.setattr(
-        _mp_fixup_main,
-        '_mp_figure_out_main',
-        lambda inherit_parent_main=True: (
-            {'init_main_from_name': __name__}
-            if inherit_parent_main
-            else {}
-        ),
-    )
-
-    async def main():
-        async with tractor.open_nursery(
-            name='registrar',
-            start_method=start_method,
-            registry_addrs=[reg_addr],
-        ) as an:
-            replaying = await an.run_in_actor(
-                get_main_mod_name,
-                name='replaying-parent-main',
-            )
-            isolated = await an.run_in_actor(
-                get_main_mod_name,
-                name='isolated-parent-main',
-                inherit_parent_main=False,
-            )
-
-            # Stdlib spawn re-runs an importable parent ``__main__`` as
-            # ``__mp_main__``; opting out should leave the child bootstrap
-            # module alone instead.
-            # https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
-            assert await replaying.result() == '__mp_main__'
-            assert await isolated.result() == '__main__'
-
-    trio.run(main)
+    assert _run_parent_main_inheritance_script(
+        tmp_path,
+        api='run_in_actor',
+    ) == {
+        'replaying': '__mp_main__',
+        'isolated': '__main__',
+    }
 
 
 def test_start_actor_can_skip_parent_main_inheritance(
     start_method,
-    reg_addr,
-    monkeypatch,
+    tmp_path,
 ):
     if start_method != 'trio':
         pytest.skip(
             'parent main inheritance opt-out only affects the trio spawn backend'
         )
-    from tractor.spawn import _mp_fixup_main
-
-    monkeypatch.setattr(
-        _mp_fixup_main,
-        '_mp_figure_out_main',
-        lambda inherit_parent_main=True: (
-            {'init_main_from_name': __name__}
-            if inherit_parent_main
-            else {}
-        ),
-    )
-
-    async def main():
-        async with tractor.open_nursery(
-            name='registrar',
-            start_method=start_method,
-            registry_addrs=[reg_addr],
-        ) as an:
-            replaying = await an.start_actor(
-                'replaying-parent-main',
-                enable_modules=[__name__],
-            )
-            isolated = await an.start_actor(
-                'isolated-parent-main',
-                enable_modules=[__name__],
-                inherit_parent_main=False,
-            )
-            try:
-                assert await replaying.run_from_ns(
-                    __name__,
-                    'get_main_mod_name',
-                ) == '__mp_main__'
-                assert await isolated.run_from_ns(
-                    __name__,
-                    'get_main_mod_name',
-                ) == '__main__'
-            finally:
-                await replaying.cancel_actor()
-                await isolated.cancel_actor()
-
-    trio.run(main)
+    assert _run_parent_main_inheritance_script(
+        tmp_path,
+        api='start_actor',
+    ) == {
+        'replaying': '__mp_main__',
+        'isolated': '__main__',
+    }
