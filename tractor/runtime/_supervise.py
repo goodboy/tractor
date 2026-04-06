@@ -194,7 +194,7 @@ class ActorNursery:
         loglevel: str|None = None,  # set log level per subactor
         debug_mode: bool|None = None,
         infect_asyncio: bool = False,
-        replay_parent_main: bool = True,
+        inherit_parent_main: bool = True,
 
         # TODO: ideally we can rm this once we no longer have
         # a `._ria_nursery` since the dependent APIs have been
@@ -207,7 +207,7 @@ class ActorNursery:
         Start a (daemon) actor: an process that has no designated
         "main task" besides the runtime.
 
-        Pass ``replay_parent_main=False`` to keep this child on its own
+        Pass ``inherit_parent_main=False`` to keep this child on its own
         bootstrap module instead of re-running the parent's ``__main__``
         during startup.
 
@@ -247,7 +247,7 @@ class ActorNursery:
             # modules allowed to invoked funcs from
             enable_modules=enable_modules,
             loglevel=loglevel,
-            replay_parent_main=replay_parent_main,
+            inherit_parent_main=inherit_parent_main,
 
             # verbatim relay this actor's registrar addresses
             registry_addrs=current_actor().registry_addrs,
@@ -295,7 +295,7 @@ class ActorNursery:
         enable_modules: list[str] | None = None,
         loglevel: str | None = None,  # set log level per subactor
         infect_asyncio: bool = False,
-        replay_parent_main: bool = True,
+        inherit_parent_main: bool = True,
         proc_kwargs: dict[str, any] = {},
 
         **kwargs,  # explicit args to ``fn``
@@ -327,7 +327,7 @@ class ActorNursery:
             # use the run_in_actor nursery
             nursery=self._ria_nursery,
             infect_asyncio=infect_asyncio,
-            replay_parent_main=replay_parent_main,
+            inherit_parent_main=inherit_parent_main,
             proc_kwargs=proc_kwargs
         )
 

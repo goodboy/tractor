@@ -204,23 +204,23 @@ def test_loglevel_propagated_to_subactor(
     assert 'yoyoyo' in captured.err
 
 
-def test_start_actor_can_skip_parent_main_replay(
+def test_start_actor_can_skip_parent_main_inheritance(
     start_method,
     reg_addr,
     monkeypatch,
 ):
     if start_method != 'trio':
         pytest.skip(
-            'parent main replay opt-out only affects the trio spawn backend'
+            'parent main inheritance opt-out only affects the trio spawn backend'
         )
     from tractor.spawn import _mp_fixup_main
 
     monkeypatch.setattr(
         _mp_fixup_main,
         '_mp_figure_out_main',
-        lambda replay_parent_main=True: (
+        lambda inherit_parent_main=True: (
             {'init_main_from_name': __name__}
-            if replay_parent_main
+            if inherit_parent_main
             else {}
         ),
     )
@@ -238,7 +238,7 @@ def test_start_actor_can_skip_parent_main_replay(
             isolated = await an.run_in_actor(
                 get_main_mod_name,
                 name='isolated-parent-main',
-                replay_parent_main=False,
+                inherit_parent_main=False,
             )
 
             assert await replaying.result() == '__mp_main__'
