@@ -537,3 +537,93 @@ def test_per_ctx_key_resource_lifecycle(
                 a_exit.set()
 
     trio.run(main)
+
+
+@pytest.mark.xfail(
+    reason=(
+        'Demonstrates the `_Cache.run_ctx` teardown race: '
+        'a re-entering task hits '
+        '`assert not resources.get(ctx_key)` because '
+        '`values` was popped but `resources` was not yet '
+        '(acm `__aexit__` checkpoint in between). '
+        'Fixed by per-`ctx_key` locking in 9e49eddd.'
+    ),
+    raises=AssertionError,
+)
+def test_moc_reentry_during_teardown(
+    debug_mode: bool,
+    loglevel: str,
+):
+    '''
+    Reproduce the piker `open_cached_client('kraken')` race:
+
+    - same `acm_func`, NO kwargs (identical `ctx_key`)
+    - multiple tasks share the cached resource
+    - all users exit -> teardown starts
+    - a NEW task enters during `_Cache.run_ctx.__aexit__`
+    - `values[ctx_key]` is gone (popped in inner finally)
+      but `resources[ctx_key]` still exists (outer finally
+      hasn't run yet bc the acm cleanup has checkpoints)
+    - old code: `assert not resources.get(ctx_key)` FIRES
+
+    This models the real-world scenario where `brokerd.kraken`
+    tasks concurrently call `open_cached_client('kraken')`
+    (same `acm_func`, empty kwargs, shared `ctx_key`) and
+    the teardown/re-entry race triggers intermittently.
+
+    '''
+    async def main():
+        in_aexit = trio.Event()
+
+        @acm
+        async def cached_client():
+            '''
+            Simulates `kraken.api.get_client()`:
+            - no params (all callers share one `ctx_key`)
+            - slow-ish cleanup to widen the race window
+              between `values.pop()` and `resources.pop()`
+              inside `_Cache.run_ctx`.
+
+            '''
+            yield 'the-client'
+            # Signal that we're in __aexit__ — at this
+            # point `values` has already been popped by
+            # `run_ctx`'s inner finally, but `resources`
+            # is still alive (outer finally hasn't run).
+            in_aexit.set()
+            await trio.sleep(10)
+
+        first_done = trio.Event()
+
+        async def use_and_exit():
+            async with maybe_open_context(
+                cached_client,
+            ) as (cache_hit, value):
+                assert value == 'the-client'
+            first_done.set()
+
+        async def reenter_during_teardown():
+            '''
+            Wait for the acm's `__aexit__` to start (meaning
+            `values` is popped but `resources` still exists),
+            then re-enter — triggering the assert.
+
+            '''
+            await in_aexit.wait()
+            async with maybe_open_context(
+                cached_client,
+            ) as (cache_hit, value):
+                assert value == 'the-client'
+
+        with trio.fail_after(5):
+            async with (
+                tractor.open_root_actor(
+                    debug_mode=debug_mode,
+                    loglevel=loglevel,
+                ),
+                trio.open_nursery() as tn,
+            ):
+                tn.start_soon(use_and_exit)
+                tn.start_soon(reenter_during_teardown)
+
+    trio.run(main)
