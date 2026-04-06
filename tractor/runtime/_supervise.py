@@ -200,7 +200,7 @@ class ActorNursery:
         # a `._ria_nursery` since the dependent APIs have been
         # removed!
         nursery: trio.Nursery|None = None,
-        proc_kwargs: dict[str, any] = {}
+        proc_kwargs: dict[str, typing.Any] | None = None,
 
     ) -> Portal:
         '''
@@ -229,7 +229,8 @@ class ActorNursery:
             _rtv['_debug_mode'] = debug_mode
             self._at_least_one_child_in_debug = True
 
-        enable_modules = enable_modules or []
+        enable_modules = list(enable_modules or [])
+        proc_kwargs = dict(proc_kwargs or {})
 
         if rpc_module_paths:
             warnings.warn(
@@ -296,7 +297,7 @@ class ActorNursery:
         loglevel: str | None = None,  # set log level per subactor
         infect_asyncio: bool = False,
         inherit_parent_main: bool = True,
-        proc_kwargs: dict[str, any] = {},
+        proc_kwargs: dict[str, typing.Any] | None = None,
 
         **kwargs,  # explicit args to ``fn``
 
@@ -317,6 +318,7 @@ class ActorNursery:
             # use the explicit function name if not provided
             name = fn.__name__
 
+        proc_kwargs = dict(proc_kwargs or {})
         portal: Portal = await self.start_actor(
             name,
             enable_modules=[mod_path] + (
