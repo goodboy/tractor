@@ -1,11 +1,14 @@
 name: CI
 
 on:
-  # any time someone pushes a new branch to origin
+  # any time a new branch pushed to origin
   push:
 
-  # Allows you to run this workflow manually from the Actions tab
+  # to run workflow manually from the "Actions" tab
   workflow_dispatch:
+
+  # for on all (forked) PRs to repo
+  pull_request:
 
 jobs:
   # ------ sdist ------
