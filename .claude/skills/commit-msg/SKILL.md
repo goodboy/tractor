@@ -1,1 +1,1 @@
-/home/goodboy/.claude/skills/commit-msg/SKILL.md
+/home/goodboy/repos/ai.skillz/skills/commit-msg/SKILL.md
