@@ -1,13 +1,32 @@
 {
   "permissions": {
     "allow": [
-      "Write(.claude/*commit_msg*)",
-      "Write(.claude/git_commit_msg_LATEST.md)",
       "Bash(date *)",
       "Bash(cp .claude/*)",
       "Bash(git diff *)",
       "Bash(git log *)",
-      "Bash(git status)"
+      "Bash(git status)",
+      "Bash(git remote:*)",
+      "Bash(git stash:*)",
+      "Bash(git mv:*)",
+      "Bash(test:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(ln:*)",
+      "Bash(cat:*)",
+      "Bash(mkdir:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh api:*)",
+      "Bash(UV_PROJECT_ENVIRONMENT=py313 uv sync:*)",
+      "Bash(UV_PROJECT_ENVIRONMENT=py313 uv run:*)",
+      "Write(.claude/*commit_msg*)",
+      "Write(.claude/git_commit_msg_LATEST.md)",
+      "Skill(run-tests)",
+      "Bash(echo EXIT:$?:*)",
+      "Bash(gh api:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh issue:*)"
     ],
     "deny": [],
     "ask": []
