@@ -3,11 +3,6 @@ Spawning basics
 
 """
 from functools import partial
-import json
-import os
-from pathlib import Path
-import subprocess
-import sys
 from typing import (
     Any,
 )
@@ -22,11 +17,6 @@ data_to_pass_down = {
     'doggy': 10,
     'kitty': 4,
 }
-_tests_dir = Path(__file__).resolve().parent
-_repo_root = _tests_dir.parent
-_parent_main_case_script = (
-    _tests_dir / 'spawn_test_support' / 'parent_main_inheritance_case.py'
-)
 
 
 async def spawn(
@@ -178,41 +168,41 @@ async def check_loglevel(level):
     log.critical('yoyoyo')
 
 
-async def get_main_mod_name() -> str:
-    import sys
-    return sys.modules['__main__'].__name__
+async def check_parent_main_inheritance(
+    expect_inherited: bool,
+) -> bool:
+    '''
+    Assert that the child actor's ``_parent_main_data`` matches the
+    ``inherit_parent_main`` flag it was spawned with.
 
+    With the trio spawn backend the parent's ``__main__`` bootstrap
+    data is captured and forwarded to each child so it can replay
+    the parent's ``__main__`` as ``__mp_main__``, mirroring the
+    stdlib ``multiprocessing`` bootstrap:
+    https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
 
-def _run_parent_main_inheritance_script(
-    tmp_path: Path,
-    *,
-    api: str,
-) -> dict[str, str]:
-    output_file = tmp_path / 'out.json'
+    When ``inherit_parent_main=False`` the data dict is empty
+    (``{}``) so no fixup ever runs and the child keeps its own
+    ``__main__`` untouched.
 
-    env = os.environ.copy()
-    old_pythonpath = env.get('PYTHONPATH')
-    env['PYTHONPATH'] = (
-        f'{_tests_dir}{os.pathsep}{_repo_root}{os.pathsep}{old_pythonpath}'
-        if old_pythonpath
-        else f'{_tests_dir}{os.pathsep}{_repo_root}'
+    NOTE: under pytest the parent ``__main__`` is
+    ``pytest.__main__`` whose ``_fixup_main_from_name()`` is a
+    no-op (the name ends with ``.__main__``), so we cannot observe
+    a difference in ``sys.modules['__main__'].__name__`` between
+    the two modes.  Checking ``_parent_main_data`` directly is the
+    most reliable verification that the flag is threaded through
+    correctly; a ``RemoteActorError[AssertionError]`` propagates
+    on mismatch.
+    '''
+    import tractor
+    actor = tractor.current_actor()
+    has_data: bool = bool(actor._parent_main_data)
+    assert has_data == expect_inherited, (
+        f'Expected _parent_main_data to be '
+        f'{"non-empty" if expect_inherited else "empty"}, '
+        f'got: {actor._parent_main_data!r}'
     )
-    proc = subprocess.run(
-        [
-            sys.executable,
-            str(_parent_main_case_script),
-            api,
-            str(output_file),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
-    assert proc.returncode == 0, (
-        f'stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}'
-    )
-    return json.loads(output_file.read_text())
+    return has_data
 
 
 def test_loglevel_propagated_to_subactor(
@@ -248,33 +238,79 @@ def test_loglevel_propagated_to_subactor(
 
 def test_run_in_actor_can_skip_parent_main_inheritance(
     start_method,
-    tmp_path,
 ):
+    '''
+    Verify ``inherit_parent_main=False`` on ``run_in_actor()``
+    prevents parent ``__main__`` data from reaching the child.
+
+    '''
     if start_method != 'trio':
         pytest.skip(
             'parent main inheritance opt-out only affects the trio spawn backend'
         )
-    assert _run_parent_main_inheritance_script(
-        tmp_path,
-        api='run_in_actor',
-    ) == {
-        'replaying': '__mp_main__',
-        'isolated': '__main__',
-    }
+
+    async def main():
+        async with tractor.open_nursery(start_method='trio') as an:
+
+            # Default: child receives parent __main__ bootstrap data
+            replaying = await an.run_in_actor(
+                check_parent_main_inheritance,
+                name='replaying-parent-main',
+                expect_inherited=True,
+            )
+            await replaying.result()
+
+            # Opt-out: child gets no parent __main__ data
+            isolated = await an.run_in_actor(
+                check_parent_main_inheritance,
+                name='isolated-parent-main',
+                inherit_parent_main=False,
+                expect_inherited=False,
+            )
+            await isolated.result()
+
+    trio.run(main)
 
 
 def test_start_actor_can_skip_parent_main_inheritance(
     start_method,
-    tmp_path,
 ):
+    '''
+    Verify ``inherit_parent_main=False`` on ``start_actor()``
+    prevents parent ``__main__`` data from reaching the child.
+
+    '''
     if start_method != 'trio':
         pytest.skip(
             'parent main inheritance opt-out only affects the trio spawn backend'
         )
-    assert _run_parent_main_inheritance_script(
-        tmp_path,
-        api='start_actor',
-    ) == {
-        'replaying': '__mp_main__',
-        'isolated': '__main__',
-    }
+
+    async def main():
+        async with tractor.open_nursery(start_method='trio') as an:
+
+            # Default: child receives parent __main__ bootstrap data
+            replaying = await an.start_actor(
+                'replaying-parent-main',
+                enable_modules=[__name__],
+            )
+            result = await replaying.run(
+                check_parent_main_inheritance,
+                expect_inherited=True,
+            )
+            assert result is True
+            await replaying.cancel_actor()
+
+            # Opt-out: child gets no parent __main__ data
+            isolated = await an.start_actor(
+                'isolated-parent-main',
+                enable_modules=[__name__],
+                inherit_parent_main=False,
+            )
+            result = await isolated.run(
+                check_parent_main_inheritance,
+                expect_inherited=False,
+            )
+            assert result is False
+            await isolated.cancel_actor()
+
+    trio.run(main)
