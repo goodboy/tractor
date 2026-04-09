@@ -364,14 +364,11 @@ async def maybe_open_context(
                 f'ctx_key={ctx_key}\n'
                 f'acm_func={acm_func}\n'
             )
-            # await tractor.pause()
             mngr = acm_func(**kwargs)
             resources = _Cache.resources
             entry: tuple|None = resources.get(ctx_key)
             if entry:
                 service_tn, ev = entry
-                # XXX, trace this.
-                # await tractor.pause(shield=True)
                 raise RuntimeError(
                     f'Caching resources ALREADY exist?!\n'
                     f'ctx_key={ctx_key!r}\n'
@@ -460,8 +457,6 @@ async def maybe_open_context(
                 f'acm_func={acm_func}\n'
 
             )
-            # XXX, trace it.
-            # await tractor.pause(shield=True)
 
         if user_registered:
             _Cache.users[ctx_key] -= 1
