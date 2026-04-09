@@ -23,7 +23,10 @@
       "Write(.claude/*commit_msg*)",
       "Write(.claude/git_commit_msg_LATEST.md)",
       "Skill(run-tests)",
-      "Bash(echo EXIT:$?:*)"
+      "Bash(echo EXIT:$?:*)",
+      "Bash(gh api:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh issue:*)"
     ],
     "deny": [],
     "ask": []
