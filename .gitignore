@@ -118,6 +118,10 @@ venv.bak/
 # XXX, for rn, so i can telescope this file.
 !/.claude/skills/pr-msg/pr_msg_LATEST.md
 
+# review-skill ephemeral ctx (per-PR, single-use)
+.claude/review_context.md
+.claude/review_regression.md
+
 # per-skill session/conf (machine-local)
 .claude/skills/*/conf.toml
 
