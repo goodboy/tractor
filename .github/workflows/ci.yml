@@ -1,10 +1,18 @@
 name: CI
 
+# NOTE distilled from,
+# https://github.com/orgs/community/discussions/26276
 on:
-  # any time someone pushes a new branch to origin
+  # any time a new update to 'main'
   push:
+    branches:
+      - main
 
-  # Allows you to run this workflow manually from the Actions tab
+  # for on all (forked) PRs to repo
+  # NOTE, use a draft PR if you just want CI triggered..
+  pull_request:
+
+  # to run workflow manually from the "Actions" tab
   workflow_dispatch:
 
 jobs:

@@ -318,7 +318,7 @@ def test_open_local_sub_to_stream(
 
 
 @acm
-async def cancel_outer_cs(
+async def maybe_cancel_outer_cs(
     cs: trio.CancelScope|None = None,
     delay: float = 0,
 ):
@@ -332,12 +332,31 @@ async def cancel_outer_cs(
     if cs:
         log.info('task calling cs.cancel()')
         cs.cancel()
-    trio.lowlevel.checkpoint()
+
     yield
-    await trio.sleep_forever()
+
+    if cs:
+        await trio.sleep_forever()
+
+    # XXX, if not cancelled we'll leak this inf-blocking
+    # subtask to the actor's service tn..
+    else:
+        await trio.lowlevel.checkpoint()
 
 
+@pytest.mark.parametrize(
+    'delay',
+    [0.05, 0.5, 1],
+    ids="pre_sleep_delay={}".format,
+)
+@pytest.mark.parametrize(
+    'cancel_by_cs',
+    [True, False],
+    ids="cancel_by_cs={}".format,
+)
 def test_lock_not_corrupted_on_fast_cancel(
+    delay: float,
+    cancel_by_cs: bool,
     debug_mode: bool,
     loglevel: str,
 ):
@@ -354,17 +373,14 @@ def test_lock_not_corrupted_on_fast_cancel(
       due to it having erronously exited without calling
       `lock.release()`.
 
-
     '''
-    delay: float = 1.
-
     async def use_moc(
-        cs: trio.CancelScope|None,
         delay: float,
+        cs: trio.CancelScope|None = None,
     ):
         log.info('task entering moc')
         async with maybe_open_context(
-            cancel_outer_cs,
+            maybe_cancel_outer_cs,
             kwargs={
                 'cs': cs,
                 'delay': delay,
@@ -375,7 +391,13 @@ def test_lock_not_corrupted_on_fast_cancel(
             else:
                 log.info('1st task entered')
 
-            await trio.sleep_forever()
+            if cs:
+                await trio.sleep_forever()
+
+            else:
+                await trio.sleep(delay)
+
+        # ^END, exit shared ctx.
 
     async def main():
         with trio.fail_after(delay + 2):
@@ -384,6 +406,7 @@ def test_lock_not_corrupted_on_fast_cancel(
                     debug_mode=debug_mode,
                     loglevel=loglevel,
                 ),
+                # ?TODO, pass this as the parent tn?
                 trio.open_nursery() as tn,
             ):
                 get_console_log('info')
@@ -391,15 +414,216 @@ def test_lock_not_corrupted_on_fast_cancel(
                 cs = tn.cancel_scope
                 tn.start_soon(
                     use_moc,
-                    cs,
                     delay,
+                    cs if cancel_by_cs else None,
                     name='child',
                 )
                 with trio.CancelScope() as rent_cs:
                     await use_moc(
-                        cs=rent_cs,
                         delay=delay,
+                        cs=rent_cs if cancel_by_cs else None,
                     )
 
+    trio.run(main)
+
+
+@acm
+async def acm_with_resource(resource_id: str):
+    '''
+    Yield `resource_id` as the cached value.
+
+    Used to verify per-`ctx_key` isolation when the same
+    `acm_func` is called with different kwargs.
+
+    '''
+    yield resource_id
+
+
+def test_per_ctx_key_resource_lifecycle(
+    debug_mode: bool,
+    loglevel: str,
+):
+    '''
+    Verify that `maybe_open_context()` correctly isolates resource
+    lifecycle **per `ctx_key`** when the same `acm_func` is called
+    with different kwargs.
+
+    Previously `_Cache.users` was a single global `int` and
+    `_Cache.locks` was keyed on `fid` (function ID), so calling
+    the same `acm_func` with different kwargs (producing different
+    `ctx_key`s) meant:
+
+    - teardown for one key was skipped bc the *other* key's users
+      kept the global count > 0,
+    - and re-entry could hit the old
+      `assert not resources.get(ctx_key)` crash during the
+      teardown window.
+
+    This was the root cause of a long-standing bug in piker's
+    `brokerd.kraken` backend.
+
+    '''
+    timeout: float = 6
+    if debug_mode:
+        timeout = 999
+
+    async def main():
+        a_ready = trio.Event()
+        a_exit = trio.Event()
+
+        async def hold_resource_a():
+            '''
+            Open resource 'a' and keep it alive until signalled.
+
+            '''
+            async with maybe_open_context(
+                acm_with_resource,
+                kwargs={'resource_id': 'a'},
+            ) as (cache_hit, value):
+                assert not cache_hit
+                assert value == 'a'
+                log.info("resource 'a' entered (holding)")
+                a_ready.set()
+                await a_exit.wait()
+                log.info("resource 'a' exiting")
+
+        with trio.fail_after(timeout):
+            async with (
+                tractor.open_root_actor(
+                    debug_mode=debug_mode,
+                    loglevel=loglevel,
+                ),
+                trio.open_nursery() as tn,
+            ):
+                # Phase 1: bg task holds resource 'a' open.
+                tn.start_soon(hold_resource_a)
+                await a_ready.wait()
+
+                # Phase 2: open resource 'b' (different kwargs,
+                # same acm_func) then exit it while 'a' is still
+                # alive.
+                async with maybe_open_context(
+                    acm_with_resource,
+                    kwargs={'resource_id': 'b'},
+                ) as (cache_hit, value):
+                    assert not cache_hit
+                    assert value == 'b'
+                    log.info("resource 'b' entered")
+
+                log.info("resource 'b' exited, waiting for teardown")
+                await trio.lowlevel.checkpoint()
+
+                # Phase 3: re-open 'b'; must be a fresh cache MISS
+                # proving 'b' was torn down independently of 'a'.
+                #
+                # With the old global `_Cache.users` counter this
+                # would be a stale cache HIT (leaked resource) or
+                # trigger `assert not resources.get(ctx_key)`.
+                async with maybe_open_context(
+                    acm_with_resource,
+                    kwargs={'resource_id': 'b'},
+                ) as (cache_hit, value):
+                    assert not cache_hit, (
+                        "resource 'b' was NOT torn down despite "
+                        "having zero users! (global user count bug)"
+                    )
+                    assert value == 'b'
+                    log.info(
+                        "resource 'b' re-entered "
+                        "(cache miss, correct)"
+                    )
+
+                # Phase 4: let 'a' exit, clean shutdown.
+                a_exit.set()
+
+    trio.run(main)
+
+
+@pytest.mark.xfail(
+    reason=(
+        'Demonstrates the `_Cache.run_ctx` teardown race: '
+        'a re-entering task hits '
+        '`assert not resources.get(ctx_key)` because '
+        '`values` was popped but `resources` was not yet '
+        '(acm `__aexit__` checkpoint in between). '
+        'Fixed by per-`ctx_key` locking in 9e49eddd.'
+    ),
+    raises=AssertionError,
+)
+def test_moc_reentry_during_teardown(
+    debug_mode: bool,
+    loglevel: str,
+):
+    '''
+    Reproduce the piker `open_cached_client('kraken')` race:
+
+    - same `acm_func`, NO kwargs (identical `ctx_key`)
+    - multiple tasks share the cached resource
+    - all users exit -> teardown starts
+    - a NEW task enters during `_Cache.run_ctx.__aexit__`
+    - `values[ctx_key]` is gone (popped in inner finally)
+      but `resources[ctx_key]` still exists (outer finally
+      hasn't run yet bc the acm cleanup has checkpoints)
+    - old code: `assert not resources.get(ctx_key)` FIRES
+
+    This models the real-world scenario where `brokerd.kraken`
+    tasks concurrently call `open_cached_client('kraken')`
+    (same `acm_func`, empty kwargs, shared `ctx_key`) and
+    the teardown/re-entry race triggers intermittently.
+
+    '''
+    async def main():
+        in_aexit = trio.Event()
+
+        @acm
+        async def cached_client():
+            '''
+            Simulates `kraken.api.get_client()`:
+            - no params (all callers share one `ctx_key`)
+            - slow-ish cleanup to widen the race window
+              between `values.pop()` and `resources.pop()`
+              inside `_Cache.run_ctx`.
+
+            '''
+            yield 'the-client'
+            # Signal that we're in __aexit__ — at this
+            # point `values` has already been popped by
+            # `run_ctx`'s inner finally, but `resources`
+            # is still alive (outer finally hasn't run).
+            in_aexit.set()
+            await trio.sleep(10)
+
+        first_done = trio.Event()
+
+        async def use_and_exit():
+            async with maybe_open_context(
+                cached_client,
+            ) as (cache_hit, value):
+                assert value == 'the-client'
+            first_done.set()
+
+        async def reenter_during_teardown():
+            '''
+            Wait for the acm's `__aexit__` to start (meaning
+            `values` is popped but `resources` still exists),
+            then re-enter — triggering the assert.
+
+            '''
+            await in_aexit.wait()
+            async with maybe_open_context(
+                cached_client,
+            ) as (cache_hit, value):
+                assert value == 'the-client'
+
+        with trio.fail_after(5):
+            async with (
+                tractor.open_root_actor(
+                    debug_mode=debug_mode,
+                    loglevel=loglevel,
+                ),
+                trio.open_nursery() as tn,
+            ):
+                tn.start_soon(use_and_exit)
+                tn.start_soon(reenter_during_teardown)
 
     trio.run(main)
