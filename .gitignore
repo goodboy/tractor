@@ -125,6 +125,22 @@ venv.bak/
 # per-skill session/conf (machine-local)
 .claude/skills/*/conf.toml
 
+# ai.skillz symlinks (machine-local, deploy via deploy-skill.sh)
+.claude/skills/py-codestyle
+.claude/skills/code-review-changes
+.claude/skills/close-wkt
+.claude/skills/open-wkt
+.claude/skills/plan-io
+.claude/skills/prompt-io
+.claude/skills/resolve-conflicts
+.claude/skills/inter-skill-review
+.claude/skills/yt-url-lookup
+
+# hybrid skills — symlinked SKILL.md + references
+.claude/skills/commit-msg/SKILL.md
+.claude/skills/pr-msg/SKILL.md
+.claude/skills/pr-msg/references
+
 # nix develop --profile .nixdev
 .nixdev*
 
