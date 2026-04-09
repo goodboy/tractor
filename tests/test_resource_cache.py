@@ -12,6 +12,7 @@ import trio
 import tractor
 from tractor.trionics import (
     maybe_open_context,
+    collapse_eg,
 )
 from tractor.log import (
     get_console_log,
@@ -539,17 +540,6 @@ def test_per_ctx_key_resource_lifecycle(
     trio.run(main)
 
 
-@pytest.mark.xfail(
-    reason=(
-        'Demonstrates the `_Cache.run_ctx` teardown race: '
-        'a re-entering task hits '
-        '`assert not resources.get(ctx_key)` because '
-        '`values` was popped but `resources` was not yet '
-        '(acm `__aexit__` checkpoint in between). '
-        'Fixed by per-`ctx_key` locking in 9e49eddd.'
-    ),
-    raises=AssertionError,
-)
 def test_moc_reentry_during_teardown(
     debug_mode: bool,
     loglevel: str,
@@ -621,6 +611,7 @@ def test_moc_reentry_during_teardown(
                     debug_mode=debug_mode,
                     loglevel=loglevel,
                 ),
+                collapse_eg(),
                 trio.open_nursery() as tn,
             ):
                 tn.start_soon(use_and_exit)
