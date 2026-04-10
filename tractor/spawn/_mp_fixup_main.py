@@ -14,32 +14,40 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""
-Helpers pulled mostly verbatim from ``multiprocessing.spawn``
+'''
+(Originally) Helpers pulled verbatim from ``multiprocessing.spawn``
 to aid with "fixing up" the ``__main__`` module in subprocesses.
 
-These helpers are needed for any spawing backend that doesn't already
-handle this. For example when using ``trio_run_in_process`` it is needed
-but obviously not when we're already using ``multiprocessing``.
+Now just delegates directly to appropriate `mp.spawn` fns.
 
-These helpers mirror the stdlib spawn/forkserver bootstrap that rebuilds
-the parent's `__main__` in a fresh child interpreter. In particular, we
-capture enough info to later replay the parent's main module as
-`__mp_main__` (or by path) in the child process.
+Note
+----
+These helpers are needed for any spawing backend that doesn't already
+handle this. For example it's needed when using our
+`start_method='trio' backend but not when we're already using
+a ``multiprocessing`` backend such as 'mp_spawn', 'mp_forkserver'.
+
+?TODO?
+- what will be required for an eventual subint backend?
+
+The helpers imported from `mp.spawn` provide the stdlib's
+spawn/forkserver bootstrap that rebuilds the parent's `__main__` in
+a fresh child interpreter. In particular, we capture enough info to
+later replay the parent's main module as `__mp_main__` (or by path)
+in the child process.
 
 See:
 https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
-"""
-import os
-import sys
-import platform
-import types
-import runpy
+
+'''
+import multiprocessing as mp
+from multiprocessing.spawn import (
+    _fixup_main_from_name as _fixup_main_from_name,
+    _fixup_main_from_path as _fixup_main_from_path,
+    get_preparation_data,
+)
 from typing import NotRequired
 from typing import TypedDict
-
-
-ORIGINAL_DIR = os.path.abspath(os.getcwd())
 
 
 class ParentMainData(TypedDict):
@@ -50,86 +58,22 @@ class ParentMainData(TypedDict):
 def _mp_figure_out_main(
     inherit_parent_main: bool = True,
 ) -> ParentMainData:
-    """Taken from ``multiprocessing.spawn.get_preparation_data()``.
+    '''
+    Delegate to `multiprocessing.spawn.get_preparation_data()`
+    when `inherit_parent_main=True`.
 
-    Retrieve parent actor `__main__` module data.
-    """
+    Retrieve parent (actor) proc's  `__main__` module data.
+
+    '''
     if not inherit_parent_main:
         return {}
 
-    d: ParentMainData = {}
-    # Figure out whether to initialise main in the subprocess as a module
-    # or through direct execution (or to leave it alone entirely)
-    main_module = sys.modules['__main__']
-    main_mod_name = getattr(main_module.__spec__, "name", None)
-    if main_mod_name is not None:
-        d['init_main_from_name'] = main_mod_name
-    # elif sys.platform != 'win32' or (not WINEXE and not WINSERVICE):
-    elif platform.system() != 'Windows':
-        main_path = getattr(main_module, '__file__', None)
-        if main_path is not None:
-            if (
-                not os.path.isabs(main_path) and (
-                    ORIGINAL_DIR is not None)
-            ):
-                # process.ORIGINAL_DIR is not None):
-                # main_path = os.path.join(process.ORIGINAL_DIR, main_path)
-                main_path = os.path.join(ORIGINAL_DIR, main_path)
-            d['init_main_from_path'] = os.path.normpath(main_path)
-
+    d: ParentMainData
+    proc: mp.Process = mp.current_process()
+    d: dict = get_preparation_data(
+        name=proc.name,
+    )
+    # XXX, unserializable (and uneeded by us) by default
+    # see `mp.spawn.get_preparation_data()` impl deats.
+    d.pop('authkey')
     return d
-
-
-# Multiprocessing module helpers to fix up the main module in
-# spawned subprocesses
-def _fixup_main_from_name(mod_name: str) -> None:
-    # __main__.py files for packages, directories, zip archives, etc, run
-    # their "main only" code unconditionally, so we don't even try to
-    # populate anything in __main__, nor do we make any changes to
-    # __main__ attributes
-    current_main = sys.modules['__main__']
-    if mod_name == "__main__" or mod_name.endswith(".__main__"):
-        return
-
-    # If this process was forked, __main__ may already be populated
-    if getattr(current_main.__spec__, "name", None) == mod_name:
-        return
-
-    # Otherwise, __main__ may contain some non-main code where we need to
-    # support unpickling it properly. We rerun it as __mp_main__ and make
-    # the normal __main__ an alias to that
-    # old_main_modules.append(current_main)
-    main_module = types.ModuleType("__mp_main__")
-    main_content = runpy.run_module(mod_name,
-                                    run_name="__mp_main__",
-                                    alter_sys=True)  # type: ignore
-    main_module.__dict__.update(main_content)
-    sys.modules['__main__'] = sys.modules['__mp_main__'] = main_module
-
-
-def _fixup_main_from_path(main_path: str) -> None:
-    # If this process was forked, __main__ may already be populated
-    current_main = sys.modules['__main__']
-
-    # Unfortunately, the main ipython launch script historically had no
-    # "if __name__ == '__main__'" guard, so we work around that
-    # by treating it like a __main__.py file
-    # See https://github.com/ipython/ipython/issues/4698
-    main_name = os.path.splitext(os.path.basename(main_path))[0]
-    if main_name == 'ipython':
-        return
-
-    # Otherwise, if __file__ already has the setting we expect,
-    # there's nothing more to do
-    if getattr(current_main, '__file__', None) == main_path:
-        return
-
-    # If the parent process has sent a path through rather than a module
-    # name we assume it is an executable script that may contain
-    # non-main code that needs to be executed
-    # old_main_modules.append(current_main)
-    main_module = types.ModuleType("__mp_main__")
-    main_content = runpy.run_path(main_path,
-                                  run_name="__mp_main__")  # type: ignore
-    main_module.__dict__.update(main_content)
-    sys.modules['__main__'] = sys.modules['__mp_main__'] = main_module
