@@ -21,25 +21,24 @@ and applications.
 '''
 from functools import (
     partial,
+    wraps,
 )
 import inspect
 import platform
 from typing import (
     Callable,
-    Type,
 )
 
 import pytest
 import tractor
 import trio
-import wrapt
 
 
 def tractor_test(
     wrapped: Callable|None = None,
     *,
     # @tractor_test(<deco-params>)
-    timeout:float = 30,
+    timeout: float = 30,
     hide_tb: bool = True,
 ):
     '''
@@ -89,26 +88,34 @@ def tractor_test(
     '''
     __tracebackhide__: bool = hide_tb
 
-    # handle the decorator not called with () case.
-    # i.e. in `wrapt` support a deco-with-optional-args,
-    # https://wrapt.readthedocs.io/en/master/decorators.html#decorators-with-optional-arguments
+    # handle @tractor_test (no parens) vs @tractor_test(timeout=10)
     if wrapped is None:
-        return wrapt.PartialCallableObjectProxy(
+        return partial(
             tractor_test,
             timeout=timeout,
-            hide_tb=hide_tb
+            hide_tb=hide_tb,
         )
 
-    @wrapt.decorator
-    def wrapper(
-        wrapped: Callable,
-        instance: object|Type|None,
-        args: tuple,
-        kwargs: dict,
-    ):
+    funcname: str = wrapped.__name__
+    if not inspect.iscoroutinefunction(wrapped):
+        raise TypeError(
+            f'Test-fn {funcname!r} must be an async-function !!'
+        )
+
+    # NOTE: we intentionally use `functools.wraps` instead of
+    # `@wrapt.decorator` here bc wrapt's transparent proxy makes
+    # `inspect.iscoroutinefunction(wrapper)` return `True` (it
+    # proxies `__code__` from the wrapped async fn), which causes
+    # pytest to skip the test as an "unhandled coroutine".
+    # `functools.wraps` preserves the signature for fixture
+    # injection (via `__wrapped__`) without leaking the async
+    # nature.
+    @wraps(wrapped)
+    def wrapper(**kwargs):
         __tracebackhide__: bool = hide_tb
 
-        # NOTE, ensure we inject any test-fn declared fixture names.
+        # NOTE, ensure we inject any test-fn declared fixture
+        # names.
         for kw in [
             'reg_addr',
             'loglevel',
@@ -120,69 +127,57 @@ def tractor_test(
             if kw in inspect.signature(wrapped).parameters:
                 assert kw in kwargs
 
+        # Extract runtime settings as locals for
+        # `open_root_actor()`; these must NOT leak into
+        # `kwargs` when the test fn doesn't declare them
+        # (the original pre-wrapt code had the same guard).
+        reg_addr = kwargs.get('reg_addr')
+        loglevel = kwargs.get('loglevel')
+        debug_mode = kwargs.get('debug_mode', False)
         start_method = kwargs.get('start_method')
-        if platform.system() == "Windows":
+        if platform.system() == 'Windows':
             if start_method is None:
-                kwargs['start_method'] = 'trio'
+                start_method = 'trio'
             elif start_method != 'trio':
                 raise ValueError(
                     'ONLY the `start_method="trio"` is supported on Windows.'
                 )
 
-        # open a root-actor, passing certain
-        # `tractor`-runtime-settings, then invoke the test-fn body as
-        # the root-most task.
+        # Open a root-actor, passing runtime-settings
+        # extracted above as closure locals, then invoke
+        # the test-fn body as the root-most task.
         #
-        # https://wrapt.readthedocs.io/en/master/decorators.html#processing-function-arguments
-        async def _main(
-            *args,
-
-            # runtime-settings
-            loglevel:str|None = None,
-            reg_addr:tuple|None = None,
-            start_method: str|None = None,
-            debug_mode: bool = False,
-            tpt_proto: str|None = None,
-
-            **kwargs,
-        ):
+        # NOTE: `kwargs` is forwarded as-is to
+        # `wrapped()` — it only contains what pytest
+        # injected based on the test fn's signature.
+        async def _main(**kwargs):
             __tracebackhide__: bool = hide_tb
 
             with trio.fail_after(timeout):
                 async with tractor.open_root_actor(
-                    registry_addrs=[reg_addr] if reg_addr else None,
+                    registry_addrs=(
+                        [reg_addr] if reg_addr else None
+                    ),
                     loglevel=loglevel,
                     start_method=start_method,
 
-                    # TODO: only enable when pytest is passed --pdb
+                    # TODO: only enable when pytest is passed
+                    # --pdb
                     debug_mode=debug_mode,
 
                 ):
                     # invoke test-fn body IN THIS task
-                    await wrapped(
-                        *args,
-                        **kwargs,
-                    )
-
-        funcname = wrapped.__name__
-        if not inspect.iscoroutinefunction(wrapped):
-            raise TypeError(
-                f"Test-fn {funcname!r} must be an async-function !!"
-            )
+                    await wrapped(**kwargs)
 
         # invoke runtime via a root task.
         return trio.run(
             partial(
                 _main,
-                *args,
                 **kwargs,
             )
         )
 
-
-    return wrapper(
-        wrapped,
-    )
+    return wrapper
 
 
 def pytest_addoption(
