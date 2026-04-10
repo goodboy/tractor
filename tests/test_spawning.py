@@ -1,5 +1,12 @@
 """
-Spawning basics
+Spawning basics including audit of,
+
+- subproc boostrap, such as subactor runtime-data/config inheritance,
+- basic (and mostly legacy) `ActorNursery` subactor starting and
+  cancel APIs.
+
+Simple (and generally legacy) examples from the original
+API design.
 
 """
 from functools import partial
@@ -98,7 +105,9 @@ async def movie_theatre_question():
 
 
 @tractor_test
-async def test_movie_theatre_convo(start_method):
+async def test_movie_theatre_convo(
+    start_method: str,
+):
     '''
     The main ``tractor`` routine.
 
@@ -157,7 +166,9 @@ async def test_most_beautiful_word(
 
     # this should pull the cached final result already captured during
     # the nursery block exit.
-    print(await portal.result())
+    res: Any = await portal.wait_for_result()
+    assert res == return_value
+    print(res)
 
 
 async def check_loglevel(level):
@@ -168,53 +179,24 @@ async def check_loglevel(level):
     log.critical('yoyoyo')
 
 
-async def check_parent_main_inheritance(
-    expect_inherited: bool,
-) -> bool:
-    '''
-    Assert that the child actor's ``_parent_main_data`` matches the
-    ``inherit_parent_main`` flag it was spawned with.
-
-    With the trio spawn backend the parent's ``__main__`` bootstrap
-    data is captured and forwarded to each child so it can replay
-    the parent's ``__main__`` as ``__mp_main__``, mirroring the
-    stdlib ``multiprocessing`` bootstrap:
-    https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
-
-    When ``inherit_parent_main=False`` the data dict is empty
-    (``{}``) so no fixup ever runs and the child keeps its own
-    ``__main__`` untouched.
-
-    NOTE: under pytest the parent ``__main__`` is
-    ``pytest.__main__`` whose ``_fixup_main_from_name()`` is a
-    no-op (the name ends with ``.__main__``), so we cannot observe
-    a difference in ``sys.modules['__main__'].__name__`` between
-    the two modes.  Checking ``_parent_main_data`` directly is the
-    most reliable verification that the flag is threaded through
-    correctly; a ``RemoteActorError[AssertionError]`` propagates
-    on mismatch.
-    '''
-    import tractor
-    actor = tractor.current_actor()
-    has_data: bool = bool(actor._parent_main_data)
-    assert has_data == expect_inherited, (
-        f'Expected _parent_main_data to be '
-        f'{"non-empty" if expect_inherited else "empty"}, '
-        f'got: {actor._parent_main_data!r}'
-    )
-    return has_data
-
-
+@pytest.mark.parametrize(
+    'level', [
+        'debug',
+        'cancel',
+        'critical'
+    ],
+    ids='loglevel={}'.format,
+)
 def test_loglevel_propagated_to_subactor(
-    start_method,
-    capfd,
-    reg_addr,
+    capfd: pytest.CaptureFixture,
+    start_method: str,
+    reg_addr: tuple,
+    level: str,
 ):
     if start_method == 'mp_forkserver':
         pytest.skip(
-            "a bug with `capfd` seems to make forkserver capture not work?")
-
-    level = 'critical'
+            "a bug with `capfd` seems to make forkserver capture not work?"
+        )
 
     async def main():
         async with tractor.open_nursery(
@@ -236,8 +218,46 @@ def test_loglevel_propagated_to_subactor(
     assert 'yoyoyo' in captured.err
 
 
+async def check_parent_main_inheritance(
+    expect_inherited: bool,
+) -> bool:
+    '''
+    Assert that the child actor's ``_parent_main_data`` matches the
+    ``inherit_parent_main`` flag it was spawned with.
+
+    With the trio spawn backend the parent's ``__main__`` bootstrap
+    data is captured and forwarded to each child so it can replay
+    the parent's ``__main__`` as ``__mp_main__``, mirroring the
+    stdlib ``multiprocessing`` bootstrap:
+    https://docs.python.org/3/library/multiprocessing.html#the-spawn-and-forkserver-start-methods
+
+    When ``inherit_parent_main=False`` the data dict is empty
+    (``{}``) so no fixup ever runs and the child keeps its own
+    ``__main__`` untouched.
+
+    NOTE: under `pytest` the parent ``__main__`` is
+    ``pytest.__main__`` whose ``_fixup_main_from_name()`` is a no-op
+    (the name ends with ``.__main__``), so we cannot observe
+    a difference in ``sys.modules['__main__'].__name__`` between the
+    two modes.  Checking ``_parent_main_data`` directly is the most
+    reliable verification that the flag is threaded through
+    correctly; a ``RemoteActorError[AssertionError]`` propagates on
+    mismatch.
+
+    '''
+    import tractor
+    actor: tractor.Actor = tractor.current_actor()
+    has_data: bool = bool(actor._parent_main_data)
+    assert has_data == expect_inherited, (
+        f'Expected _parent_main_data to be '
+        f'{"non-empty" if expect_inherited else "empty"}, '
+        f'got: {actor._parent_main_data!r}'
+    )
+    return has_data
+
+
 def test_run_in_actor_can_skip_parent_main_inheritance(
-    start_method,
+    start_method: str,  # <- only support on `trio` backend rn.
 ):
     '''
     Verify ``inherit_parent_main=False`` on ``run_in_actor()``
@@ -246,7 +266,7 @@ def test_run_in_actor_can_skip_parent_main_inheritance(
     '''
     if start_method != 'trio':
         pytest.skip(
-            'parent main inheritance opt-out only affects the trio spawn backend'
+            'parent main-inheritance opt-out only affects the trio backend'
         )
 
     async def main():
@@ -273,7 +293,7 @@ def test_run_in_actor_can_skip_parent_main_inheritance(
 
 
 def test_start_actor_can_skip_parent_main_inheritance(
-    start_method,
+    start_method: str,  # <- only support on `trio` backend rn.
 ):
     '''
     Verify ``inherit_parent_main=False`` on ``start_actor()``
@@ -282,7 +302,7 @@ def test_start_actor_can_skip_parent_main_inheritance(
     '''
     if start_method != 'trio':
         pytest.skip(
-            'parent main inheritance opt-out only affects the trio spawn backend'
+            'parent main-inheritance opt-out only affects the trio backend'
         )
 
     async def main():
