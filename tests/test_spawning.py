@@ -1,7 +1,7 @@
 """
 Spawning basics including audit of,
 
-- subproc boostrap, such as subactor runtime-data/config inheritance,
+- subproc bootstrap, such as subactor runtime-data/config inheritance,
 - basic (and mostly legacy) `ActorNursery` subactor starting and
   cancel APIs.
 
@@ -160,7 +160,8 @@ async def test_most_beautiful_word(
                 name='some_linguist',
             )
 
-            print(await portal.result())
+            res: Any = await portal.wait_for_result()
+            assert res == return_value
     # The ``async with`` will unblock here since the 'some_linguist'
     # actor has completed its main task ``cellar_door``.
 
