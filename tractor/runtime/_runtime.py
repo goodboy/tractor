@@ -552,11 +552,15 @@ class Actor:
 
         '''
         try:
-            if self._spawn_method == 'trio':
-                parent_data = self._parent_main_data
+            if (
+                self._spawn_method == 'trio'
+                and
+                (parent_data := self._parent_main_data)
+            ):
                 if 'init_main_from_name' in parent_data:
                     _mp_fixup_main._fixup_main_from_name(
                         parent_data['init_main_from_name'])
+
                 elif 'init_main_from_path' in parent_data:
                     _mp_fixup_main._fixup_main_from_path(
                         parent_data['init_main_from_path'])
