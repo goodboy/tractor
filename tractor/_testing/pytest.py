@@ -127,38 +127,43 @@ def tractor_test(
             if kw in inspect.signature(wrapped).parameters:
                 assert kw in kwargs
 
+        # Extract runtime settings as locals for
+        # `open_root_actor()`; these must NOT leak into
+        # `kwargs` when the test fn doesn't declare them
+        # (the original pre-wrapt code had the same guard).
+        reg_addr = kwargs.get('reg_addr')
+        loglevel = kwargs.get('loglevel')
+        debug_mode = kwargs.get('debug_mode', False)
         start_method = kwargs.get('start_method')
         if platform.system() == 'Windows':
             if start_method is None:
-                kwargs['start_method'] = 'trio'
+                start_method = 'trio'
             elif start_method != 'trio':
                 raise ValueError(
                     'ONLY the `start_method="trio"` is supported on Windows.'
                 )
 
-        # Open a root-actor, passing certain runtime-settings
-        # extracted from the fixture kwargs, then invoke the
-        # test-fn body as the root-most task.
+        # Open a root-actor, passing runtime-settings
+        # extracted above as closure locals, then invoke
+        # the test-fn body as the root-most task.
         #
-        # NOTE: we use `kwargs.get()` (not named params) so that
-        # the fixture values remain in `kwargs` and are forwarded
-        # to `wrapped()` — the test fn may declare the same
-        # fixtures in its own signature.
+        # NOTE: `kwargs` is forwarded as-is to
+        # `wrapped()` — it only contains what pytest
+        # injected based on the test fn's signature.
         async def _main(**kwargs):
             __tracebackhide__: bool = hide_tb
 
-            reg_addr = kwargs.get('reg_addr')
             with trio.fail_after(timeout):
                 async with tractor.open_root_actor(
                     registry_addrs=(
                         [reg_addr] if reg_addr else None
                     ),
-                    loglevel=kwargs.get('loglevel'),
-                    start_method=kwargs.get('start_method'),
+                    loglevel=loglevel,
+                    start_method=start_method,
 
                     # TODO: only enable when pytest is passed
                     # --pdb
-                    debug_mode=kwargs.get('debug_mode', False),
+                    debug_mode=debug_mode,
 
                 ):
                     # invoke test-fn body IN THIS task
