@@ -207,9 +207,12 @@ class ActorNursery:
         Start a (daemon) actor: an process that has no designated
         "main task" besides the runtime.
 
-        Pass ``inherit_parent_main=False`` to keep this child on its own
-        bootstrap module instead of re-running the parent's ``__main__``
-        during startup.
+        Pass ``inherit_parent_main=False`` to keep this child on its
+        own bootstrap module for the trio spawn backend instead of
+        applying the parent ``__main__`` re-exec fixup during startup.
+        This does not affect ``multiprocessing`` ``spawn`` or
+        ``forkserver`` which reconstruct the parent's ``__main__`` as
+        part of their normal stdlib bootstrap.
 
         '''
         __runtimeframe__: int = 1  # noqa
