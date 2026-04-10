@@ -106,6 +106,13 @@ venv.bak/
 # all files under
 .git/
 
+# require very explicit staging for anything we **really**
+# want put/kept in repo.
+notes_to_self/
+snippets/
+
+
+# ------- AI shiz -------
 # any commit-msg gen tmp files
 .claude/skills/commit-msg/msgs/
 .claude/git_commit_msg_LATEST.md
