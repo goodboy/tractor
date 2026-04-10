@@ -22,9 +22,9 @@ Now just delegates directly to appropriate `mp.spawn` fns.
 
 Note
 ----
-These helpers are needed for any spawing backend that doesn't already
+These helpers are needed for any spawning backend that doesn't already
 handle this. For example it's needed when using our
-`start_method='trio' backend but not when we're already using
+`start_method='trio'` backend but not when we're already using
 a ``multiprocessing`` backend such as 'mp_spawn', 'mp_forkserver'.
 
 ?TODO?
@@ -68,12 +68,18 @@ def _mp_figure_out_main(
     if not inherit_parent_main:
         return {}
 
-    d: ParentMainData
     proc: mp.Process = mp.current_process()
-    d: dict = get_preparation_data(
+    prep_data: dict = get_preparation_data(
         name=proc.name,
     )
-    # XXX, unserializable (and uneeded by us) by default
-    # see `mp.spawn.get_preparation_data()` impl deats.
-    d.pop('authkey')
+    # XXX, unserializable (and unneeded by us) by default
+    # see `mp.spawn.get_preparation_data()` impl details.
+    prep_data.pop('authkey', None)
+
+    d: ParentMainData = {}
+    if 'init_main_from_name' in prep_data:
+        d['init_main_from_name'] = prep_data['init_main_from_name']
+    if 'init_main_from_path' in prep_data:
+        d['init_main_from_path'] = prep_data['init_main_from_path']
+
     return d
