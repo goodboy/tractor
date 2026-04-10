@@ -7,6 +7,9 @@ argument-hint: "[test-path-or-pattern] [--opts]"
 allowed-tools:
   - Bash(python -m pytest *)
   - Bash(python -c *)
+  - Bash(python --version *)
+  - Bash(git rev-parse *)
+  - Bash(UV_PROJECT_ENVIRONMENT=py* uv sync *)
   - Bash(ls *)
   - Bash(cat *)
   - Read
