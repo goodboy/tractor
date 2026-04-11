@@ -119,6 +119,7 @@ from ..discovery._discovery import get_registry
 from ._portal import Portal
 from . import _state
 from ..spawn import _mp_fixup_main
+from ..spawn._mp_fixup_main import ParentMainData
 from . import _rpc
 
 if TYPE_CHECKING:
@@ -218,7 +219,7 @@ class Actor:
         return self._ipc_server
 
     # Information about `__main__` from parent
-    _parent_main_data: dict[str, str]
+    _parent_main_data: ParentMainData
     _parent_chan_cs: CancelScope|None = None
     _spawn_spec: msgtypes.SpawnSpec|None = None
 
@@ -240,10 +241,11 @@ class Actor:
         name: str,
         uuid: str,
         *,
-        enable_modules: list[str] = [],
+        enable_modules: list[str] | None = None,
         loglevel: str|None = None,
         registry_addrs: list[Address]|None = None,
         spawn_method: str|None = None,
+        inherit_parent_main: bool = True,
 
         arbiter_addr: UnwrappedAddress|None = None,
 
@@ -265,12 +267,15 @@ class Actor:
         self._cancel_called_by: tuple[str, tuple]|None = None
         self._cancel_called: bool = False
 
-        # retreive and store parent `__main__` data which
+        # retrieve and store parent `__main__` data which
         # will be passed to children
-        self._parent_main_data = _mp_fixup_main._mp_figure_out_main()
+        self._parent_main_data: ParentMainData = _mp_fixup_main._mp_figure_out_main(
+            inherit_parent_main=inherit_parent_main,
+        )
 
         # TODO? only add this when `is_debug_mode() == True` no?
         # always include debugging tools module
+        enable_modules = list(enable_modules or [])
         if _state.is_root_process():
             enable_modules.append('tractor.devx.debug._tty_lock')
 
@@ -547,11 +552,15 @@ class Actor:
 
         '''
         try:
-            if self._spawn_method == 'trio':
-                parent_data = self._parent_main_data
+            if (
+                self._spawn_method == 'trio'
+                and
+                (parent_data := self._parent_main_data)
+            ):
                 if 'init_main_from_name' in parent_data:
                     _mp_fixup_main._fixup_main_from_name(
                         parent_data['init_main_from_name'])
+
                 elif 'init_main_from_path' in parent_data:
                     _mp_fixup_main._fixup_main_from_path(
                         parent_data['init_main_from_path'])
