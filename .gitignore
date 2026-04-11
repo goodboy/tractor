@@ -111,48 +111,50 @@ venv.bak/
 notes_to_self/
 snippets/
 
-
 # ------- AI shiz -------
-# any commit-msg gen tmp files
-.claude/skills/commit-msg/msgs/
-.claude/git_commit_msg_LATEST.md
-.claude/*_commit_*.md
-.claude/*_commit*.toml
-.claude/*_commit*.txt
-.claude/skills/commit-msg/msgs/*
-
-.claude/skills/pr-msg/msgs/*
-# XXX, for rn, so i can telescope this file.
-!/.claude/skills/pr-msg/pr_msg_LATEST.md
-
-# review-skill ephemeral ctx (per-PR, single-use)
-.claude/review_context.md
-.claude/review_regression.md
-
-# per-skill session/conf (machine-local)
-.claude/skills/*/conf.toml
-
-# ai.skillz symlinks (machine-local, deploy via deploy-skill.sh)
+# `ai.skillz` symlinks,
+# (machine-local, deploy via deploy-skill.sh)
 .claude/skills/py-codestyle
-.claude/skills/code-review-changes
 .claude/skills/close-wkt
-.claude/skills/open-wkt
 .claude/skills/plan-io
 .claude/skills/prompt-io
 .claude/skills/resolve-conflicts
 .claude/skills/inter-skill-review
-.claude/skills/yt-url-lookup
 
-# hybrid skills — symlinked SKILL.md + references
-.claude/skills/commit-msg/SKILL.md
-.claude/skills/pr-msg/SKILL.md
-.claude/skills/pr-msg/references
+# /open-wkt specifics
+.claude/skills/open-wkt
+.claude/wkts/
+claude_wkts
+
+# /code-review-changes specifics
+.claude/skills/code-review-changes
+# review-skill ephemeral ctx (per-PR, single-use)
+.claude/review_context.md
+.claude/review_regression.md
+
+# /pr-msg specifics
+.claude/skills/pr-msg/*
+# repo-specific
+!.claude/skills/pr-msg/format-reference.md
+# XXX, so u can nvim-telescope this file.
+# !.claude/skills/pr-msg/pr_msg_LATEST.md
+
+# /commit-msg specifics
+# - any commit-msg gen tmp files
+.claude/*_commit_*.md
+.claude/*_commit*.txt
+.claude/skills/commit-msg/*
+!.claude/skills/commit-msg/style-duie-reference.md
+
+# use prompt-io instead?
+.claude/plans
 
 # nix develop --profile .nixdev
 .nixdev*
 
 # :Obsession .
 Session.vim
+
 # `gish` local `.md`-files
 # TODO? better all around automation!
 # -[ ] it'd be handy to also commit and sync with wtv git service?
@@ -166,7 +168,3 @@ gh/
 
 # LLM conversations that should remain private
 docs/conversations/
-
-# Claude worktrees
-.claude/wkts/
-claude_wkts
