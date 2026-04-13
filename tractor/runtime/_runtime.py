@@ -1564,7 +1564,15 @@ async def async_main(
                     addr: Address = transport_cls.get_random()
                     accept_addrs.append(addr.unwrap())
 
-        assert accept_addrs
+        # XXX, either passed in by caller or delivered
+        # in post spawn-spec handshake for subs.
+        if not accept_addrs:
+            RuntimeError(
+                f'No tpt bind addresses provided to actor!?\n'
+                f'parent_addr={parent_addr!r}\n'
+                f'accept_addrs={accept_addrs!r}\n'
+                f'enable_transports={enable_transports!r}\n'
+            )
 
         ya_root_tn: bool = bool(actor._root_tn)
         ya_service_tn: bool = bool(actor._service_tn)
