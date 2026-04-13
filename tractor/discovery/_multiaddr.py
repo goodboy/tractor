@@ -130,3 +130,61 @@ def parse_maddr(
                 f'{proto_names!r}\n'
                 f'from maddr: {maddr_str!r}\n'
             )
+
+
+# type aliases for service-endpoint config tables
+#
+# input table: actor/service name -> list of maddr strings
+# or raw unwrapped-address tuples (as accepted by
+# `wrap_address()`).
+EndpointsTable = dict[
+    str,                    # actor/service name
+    list[str|tuple],        # maddr strs or UnwrappedAddress
+]
+
+# output table: actor/service name -> list of wrapped
+# `Address` instances ready for transport binding.
+ParsedEndpoints = dict[
+    str,                    # actor/service name
+    list['Address'],
+]
+
+
+def parse_endpoints(
+    service_table: EndpointsTable,
+) -> ParsedEndpoints:
+    '''
+    Parse a service-endpoint config table into wrapped
+    `Address` instances suitable for transport binding.
+
+    Each key is an actor/service name and each value is
+    a list of addresses in any format accepted by
+    `wrap_address()`:
+
+    - multiaddr strings: ``'/ip4/127.0.0.1/tcp/1616'``
+    - UDS multiaddr strings using the **multiaddr spec
+      name** ``/unix/...`` (NOT the tractor-internal
+      ``/uds/`` proto_key)
+    - raw unwrapped tuples: ``('127.0.0.1', 1616)``
+    - pre-wrapped `Address` objects (passed through)
+
+    Returns a new `dict` with the same keys, where each
+    value list contains the corresponding `Address`
+    instances.
+
+    Raises `ValueError` for unsupported multiaddr
+    protocols (e.g. ``/udp/``).
+
+    '''
+    from tractor.discovery._addr import wrap_address
+
+    parsed: ParsedEndpoints = {}
+    for (
+        actor_name,
+        addr_entries,
+    ) in service_table.items():
+        parsed[actor_name] = [
+            wrap_address(entry)
+            for entry in addr_entries
+        ]
+    return parsed

@@ -15,6 +15,7 @@ from tractor.ipc._uds import UDSAddress
 from tractor.discovery._multiaddr import (
     mk_maddr,
     parse_maddr,
+    parse_endpoints,
     _tpt_proto_to_maddr,
     _maddr_to_tpt_proto,
 )
@@ -249,3 +250,127 @@ def test_wrap_address_maddr_str():
 
     assert isinstance(result, TCPAddress)
     assert result.unwrap() == ('127.0.0.1', 9999)
+
+
+# ------ parse_endpoints() tests ------
+
+def test_parse_endpoints_tcp_only():
+    '''
+    `parse_endpoints()` with a single TCP maddr per actor
+    produce the correct `TCPAddress` instances.
+
+    '''
+    table = {
+        'registry': ['/ip4/127.0.0.1/tcp/1616'],
+        'data_feed': ['/ip4/0.0.0.0/tcp/5555'],
+    }
+    result = parse_endpoints(table)
+
+    assert set(result.keys()) == {'registry', 'data_feed'}
+
+    reg_addr = result['registry'][0]
+    assert isinstance(reg_addr, TCPAddress)
+    assert reg_addr.unwrap() == ('127.0.0.1', 1616)
+
+    feed_addr = result['data_feed'][0]
+    assert isinstance(feed_addr, TCPAddress)
+    assert feed_addr.unwrap() == ('0.0.0.0', 5555)
+
+
+def test_parse_endpoints_mixed_tpts():
+    '''
+    `parse_endpoints()` with both TCP and UDS maddrs for
+    the same actor produce the correct mixed `Address` list.
+
+    '''
+    table = {
+        'broker': [
+            '/ip4/127.0.0.1/tcp/4040',
+            '/unix/tmp/tractor/broker.sock',
+        ],
+    }
+    result = parse_endpoints(table)
+    addrs = result['broker']
+
+    assert len(addrs) == 2
+    assert isinstance(addrs[0], TCPAddress)
+    assert addrs[0].unwrap() == ('127.0.0.1', 4040)
+
+    assert isinstance(addrs[1], UDSAddress)
+    filedir, filename = addrs[1].unwrap()
+    assert filename == 'broker.sock'
+    assert str(filedir) == '/tmp/tractor'
+
+
+def test_parse_endpoints_unwrapped_tuples():
+    '''
+    `parse_endpoints()` accept raw `(host, port)` tuples
+    and wrap them as `TCPAddress`.
+
+    '''
+    table = {
+        'ems': [('127.0.0.1', 6666)],
+    }
+    result = parse_endpoints(table)
+
+    addr = result['ems'][0]
+    assert isinstance(addr, TCPAddress)
+    assert addr.unwrap() == ('127.0.0.1', 6666)
+
+
+def test_parse_endpoints_mixed_str_and_tuple():
+    '''
+    `parse_endpoints()` accept a mix of maddr strings and
+    raw tuples in the same actor entry list.
+
+    '''
+    table = {
+        'quoter': [
+            '/ip4/127.0.0.1/tcp/7777',
+            ('127.0.0.1', 8888),
+        ],
+    }
+    result = parse_endpoints(table)
+    addrs = result['quoter']
+
+    assert len(addrs) == 2
+    assert isinstance(addrs[0], TCPAddress)
+    assert addrs[0].unwrap() == ('127.0.0.1', 7777)
+
+    assert isinstance(addrs[1], TCPAddress)
+    assert addrs[1].unwrap() == ('127.0.0.1', 8888)
+
+
+def test_parse_endpoints_unsupported_proto():
+    '''
+    `parse_endpoints()` raise `ValueError` when a maddr
+    string uses an unsupported protocol like `/udp/`.
+
+    '''
+    table = {
+        'bad_actor': ['/ip4/127.0.0.1/udp/9999'],
+    }
+    with pytest.raises(
+        ValueError,
+        match='Unsupported multiaddr protocol combo',
+    ):
+        parse_endpoints(table)
+
+
+def test_parse_endpoints_empty_table():
+    '''
+    `parse_endpoints()` on an empty table return an empty
+    dict.
+
+    '''
+    assert parse_endpoints({}) == {}
+
+
+def test_parse_endpoints_empty_actor_list():
+    '''
+    `parse_endpoints()` with an actor mapped to an empty
+    list preserve the key with an empty list value.
+
+    '''
+    result = parse_endpoints({'x': []})
+    assert result == {'x': []}
