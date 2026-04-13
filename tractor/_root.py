@@ -446,7 +446,7 @@ async def open_root_actor(
             tpt_bind_addrs = list(set(
                 tpt_bind_addrs
                 +
-                uw_reg_addrs
+                [wrap_address(a) for a in uw_reg_addrs]
             ))
 
             # - it is normally desirable for any registrar to stay up
