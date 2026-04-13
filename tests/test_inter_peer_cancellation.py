@@ -24,6 +24,8 @@ from tractor._testing import (
     expect_ctxc,
 )
 
+from .conftest import cpu_scaling_factor
+
 # XXX TODO cases:
 # - [x] WE cancelled the peer and thus should not see any raised
 #   `ContextCancelled` as it should be reaped silently?
@@ -1030,6 +1032,7 @@ def test_peer_spawns_and_cancels_service_subactor(
     reg_addr: tuple[str, int],
     raise_sub_spawn_error_after: float|None,
     loglevel: str,
+    test_log: tractor.log.StackLevelAdapter,
     # ^XXX, set to 'warning' to see masked-exc warnings
     # that may transpire during actor-nursery teardown.
 ):
@@ -1250,9 +1253,20 @@ def test_peer_spawns_and_cancels_service_subactor(
 
                 # assert spawn_ctx.cancelled_caught
 
+
     async def _main():
+        headroom: float = cpu_scaling_factor()
+        this_fast_on_linux: float = 3
+        this_fast = this_fast_on_linux * headroom
+        if headroom != 1.:
+            test_log.warning(
+                f'Adding latency headroom on linux bc CPU scaling,\n'
+                f'headroom: {headroom}\n'
+                f'this_fast_on_linux: {this_fast_on_linux} -> {this_fast}\n'
+            )
         with trio.fail_after(
-            3 if not debug_mode
+            this_fast
+            if not debug_mode
             else 999
         ):
             await main()

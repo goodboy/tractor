@@ -40,7 +40,7 @@ async def spawn(
         assert actor is None  # no runtime yet
         async with (
             tractor.open_root_actor(
-                arbiter_addr=reg_addr,
+                registry_addrs=[reg_addr],
             ),
             tractor.open_nursery() as an,
         ):
@@ -203,7 +203,7 @@ def test_loglevel_propagated_to_subactor(
         async with tractor.open_nursery(
             name='registrar',
             start_method=start_method,
-            arbiter_addr=reg_addr,
+            registry_addrs=[reg_addr],
 
         ) as tn:
             await tn.run_in_actor(
