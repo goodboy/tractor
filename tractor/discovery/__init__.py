@@ -24,3 +24,8 @@ module paths like ``tractor.discovery._addr`` or
 ``tractor.discovery._discovery`` instead.
 
 '''
+from ._multiaddr import (
+    parse_endpoints as parse_endpoints,
+    parse_maddr as parse_maddr,
+    mk_maddr as mk_maddr,
+)

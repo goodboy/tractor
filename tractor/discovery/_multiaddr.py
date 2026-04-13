@@ -44,7 +44,7 @@ _tpt_proto_to_maddr: dict[str, str] = {
 _maddr_to_tpt_proto: dict[str, str] = {
     v: k for k, v in _tpt_proto_to_maddr.items()
 }
-# {'tcp': 'tcp', 'unix': 'uds'}
+# -> {'tcp': 'tcp', 'unix': 'uds'}
 
 
 def mk_maddr(
