@@ -115,7 +115,7 @@ from ..devx import (
     debug,
     pformat as _pformat
 )
-from ..discovery._discovery import get_registry
+from ..discovery._api import get_registry
 from ._portal import Portal
 from . import _state
 from ..spawn import _mp_fixup_main

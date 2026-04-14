@@ -30,7 +30,7 @@ from ._streaming import (
     MsgStream as MsgStream,
     stream as stream,
 )
-from .discovery._discovery import (
+from .discovery._api import (
     get_registry as get_registry,
     find_actor as find_actor,
     wait_for_actor as wait_for_actor,

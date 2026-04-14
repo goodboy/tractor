@@ -552,7 +552,7 @@ def test_stale_entry_is_deleted(
                     registry_addrs=[reg_addr],
                 ) as maybe_portal:
                     # because the transitive
-                    # `._discovery.maybe_open_portal()` call should
+                    # `._api.maybe_open_portal()` call should
                     # fail and implicitly call `.delete_addr()`
                     assert maybe_portal is None
                     registry: dict = await unpack_reg(_reg_ptl)

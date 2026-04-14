@@ -21,7 +21,7 @@ and location management of (service) actors.
 NOTE: to avoid circular imports, this ``__init__``
 does NOT eagerly import submodules. Use direct
 module paths like ``tractor.discovery._addr`` or
-``tractor.discovery._discovery`` instead.
+``tractor.discovery._api`` instead.
 
 '''
 from ._multiaddr import (
