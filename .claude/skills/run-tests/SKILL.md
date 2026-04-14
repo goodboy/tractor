@@ -12,6 +12,7 @@ allowed-tools:
   - Bash(UV_PROJECT_ENVIRONMENT=py* uv sync *)
   - Bash(ls *)
   - Bash(cat *)
+  - Bash(jq * .pytest_cache/*)
   - Read
   - Grep
   - Glob
@@ -217,7 +218,48 @@ python -c 'import tractor' && python -m pytest tests/ -x -q --co 2>&1 | tail -3
 python -m pytest tests/test_local.py tests/test_rpc.py tests/test_spawning.py tests/discovery/test_registrar.py -x --tb=short --no-header
 ```
 
-### Re-run last failures only:
+### Inspect last failures (without re-running):
+
+When the user asks "what failed?", "show failures",
+or wants to check the last-failed set before
+re-running — read the pytest cache directly. This
+is instant and avoids test collection overhead.
+
+```sh
+python -c "
+import json, pathlib, sys
+p = pathlib.Path('.pytest_cache/v/cache/lastfailed')
+if not p.exists():
+    print('No lastfailed cache found.'); sys.exit()
+data = json.loads(p.read_text())
+# filter to real test node IDs (ignore junk
+# entries that can accumulate from system paths)
+tests = sorted(k for k in data if k.startswith('tests/'))
+if not tests:
+    print('No failures recorded.')
+else:
+    print(f'{len(tests)} last-failed test(s):')
+    for t in tests:
+        print(f'  {t}')
+"
+```
+
+**Why not `--cache-show` or `--co --lf`?**
+
+- `pytest --cache-show 'cache/lastfailed'` works
+  but dumps raw dict repr including junk entries
+  (stale system paths that leak into the cache).
+- `pytest --co --lf` actually *collects* tests which
+  triggers import resolution and is slow (~0.5s+).
+  Worse, when cached node IDs don't exactly match
+  current parametrize IDs (e.g. param names changed
+  between runs), pytest falls back to collecting
+  the *entire file*, giving false positives.
+- Reading the JSON directly is instant, filterable
+  to `tests/`-prefixed entries, and shows exactly
+  what pytest recorded — no interpretation.
+
+**After inspecting**, re-run the failures:
 ```sh
 python -m pytest --lf -x --tb=short --no-header
 ```
