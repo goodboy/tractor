@@ -1845,27 +1845,61 @@ async def async_main(
             and
             not actor.is_registrar
         ):
-            failed: bool = False
+            failed_unreg: bool = False
+            rent_chan: Channel|None = actor._parent_chan
+
+            # XXX check if the parent IS the registrar so we can
+            # reuse the existing channel (avoids opening a new
+            # connection which fails when the listener socket is
+            # already closed, e.g. UDS transport unlinks the socket
+            # file during teardown).
+            parent_is_reg: bool = False
+            if (
+                rent_chan is not None
+                and
+                rent_chan.connected()
+            ):
+                pchan_raddr: Address|None = rent_chan.raddr
+                if pchan_raddr is not None:
+                    reg_addr: Address
+                    for reg_addr in actor.reg_addrs:
+                        if (
+                            pchan_raddr.unwrap()
+                            ==
+                            tuple(reg_addr)
+                        ):
+                            parent_is_reg = True
+                            break
+
             for addr in actor.reg_addrs:
                 waddr = wrap_address(addr)
                 assert waddr.is_valid
                 with trio.move_on_after(0.5) as cs:
                     cs.shield = True
                     try:
-                        async with get_registry(
-                            addr,
-                        ) as reg_portal:
+                        if parent_is_reg:
+                            reg_portal = Portal(rent_chan)
                             await reg_portal.run_from_ns(
                                 'self',
                                 'unregister_actor',
                                 uid=actor.aid.uid,
                             )
+                        else:
+                            async with get_registry(
+                                addr,
+                            ) as reg_portal:
+                                await reg_portal.run_from_ns(
+                                    'self',
+                                    'unregister_actor',
+                                    uid=actor.aid.uid,
+                                )
                     except OSError:
-                        failed = True
-                if cs.cancelled_caught:
-                    failed = True
+                        failed_unreg = True
 
-                if failed:
+                if cs.cancelled_caught:
+                    failed_unreg = True
+
+                if failed_unreg:
                     teardown_report += (
                         f'-> Failed to unregister {actor.name} from '
                         f'registar @ {addr}\n'
