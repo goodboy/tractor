@@ -1848,11 +1848,17 @@ async def async_main(
             failed_unreg: bool = False
             rent_chan: Channel|None = actor._parent_chan
 
-            # XXX check if the parent IS the registrar so we can
-            # reuse the existing channel (avoids opening a new
-            # connection which fails when the listener socket is
-            # already closed, e.g. UDS transport unlinks the socket
-            # file during teardown).
+            # XXX check if the parent IS the registrar so we
+            # can reuse the existing `_parent_chan` (avoids
+            # opening a new connection which fails when the
+            # listener socket is already closed, e.g. UDS
+            # transport `os.unlink()`s the socket file during
+            # teardown).
+            #
+            # See `ipc._uds.close_listener()` for details on
+            # the UDS socket-file lifecycle and why this
+            # optimization is necessary for the local-registrar
+            # case.
             parent_is_reg: bool = False
             if (
                 rent_chan is not None
