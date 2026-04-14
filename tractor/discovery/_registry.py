@@ -27,7 +27,6 @@ name-to-address mappings so peers can discover each other.
 '''
 from __future__ import annotations
 
-from bidict import bidict
 import trio
 
 from ..runtime._runtime import Actor
@@ -83,10 +82,10 @@ class Registrar(Actor):
         **kwargs,
     ) -> None:
 
-        self._registry: bidict[
+        self._registry: dict[
             tuple[str, str],
-            UnwrappedAddress,
-        ] = bidict({})
+            list[UnwrappedAddress],
+        ] = {}
         self._waiters: dict[
             str,
             # either an event to sync to receiving an
@@ -104,16 +103,15 @@ class Registrar(Actor):
 
     ) -> UnwrappedAddress|None:
 
-        for uid, addr in self._registry.items():
+        for uid, addrs in self._registry.items():
             if name in uid:
-                return addr
+                return addrs[0] if addrs else None
 
         return None
 
     async def get_registry(
         self
-
-    ) -> dict[str, UnwrappedAddress]:
+    ) -> dict[str, list[UnwrappedAddress]]:
         '''
         Return current name registry.
 
@@ -144,18 +142,17 @@ class Registrar(Actor):
 
         '''
         addrs: list[UnwrappedAddress] = []
-        addr: UnwrappedAddress
 
         mailbox_info: str = (
             'Actor registry contact infos:\n'
         )
-        for uid, addr in self._registry.items():
+        for uid, uid_addrs in self._registry.items():
             mailbox_info += (
                 f'|_uid: {uid}\n'
-                f'|_addr: {addr}\n\n'
+                f'|_addrs: {uid_addrs}\n\n'
             )
             if name == uid[0]:
-                addrs.append(addr)
+                addrs.extend(uid_addrs)
 
         if not addrs:
             waiter = trio.Event()
@@ -166,7 +163,7 @@ class Registrar(Actor):
 
             for uid in self._waiters[name]:
                 if not isinstance(uid, trio.Event):
-                    addrs.append(
+                    addrs.extend(
                         self._registry[uid]
                     )
 
@@ -187,13 +184,24 @@ class Registrar(Actor):
             # should never be 0-dynamic-os-alloc
             await debug.pause()
 
-        # XXX NOTE, value must also be hashable AND since
-        # `._registry` is a `bidict` values must be unique;
-        # use `.forceput()` to replace any prior (stale)
-        # entries that might map a different uid to the same
-        # addr (e.g. after an unclean shutdown or
-        # actor-restart reusing the same address).
-        self._registry.forceput(uid, tuple(addr))
+        addr_tup: tuple = tuple(addr)
+
+        # Evict stale entries: if a *different* uid claims
+        # this addr (e.g. after unclean shutdown or
+        # actor-restart reusing the same address), remove
+        # it from the old uid's addr list.
+        for other_uid, other_addrs in self._registry.items():
+            if (
+                other_uid != uid
+                and addr_tup in other_addrs
+            ):
+                other_addrs.remove(addr_tup)
+                break
+
+        # Append to this uid's addr list (avoid duplicates)
+        entry: list = self._registry.setdefault(uid, [])
+        if addr_tup not in entry:
+            entry.append(addr_tup)
 
         # pop and signal all waiter events
         events = self._waiters.pop(name, [])
@@ -210,7 +218,7 @@ class Registrar(Actor):
 
     ) -> None:
         uid = (str(uid[0]), str(uid[1]))
-        entry: tuple = self._registry.pop(
+        entry: list|None = self._registry.pop(
             uid, None
         )
         if entry is None:
@@ -225,13 +233,20 @@ class Registrar(Actor):
     ) -> tuple[str, str]|None:
         # NOTE: `addr` arrives as a `list` over IPC
         # (msgpack deserializes tuples -> lists) so
-        # coerce to `tuple` for the bidict hash lookup.
-        uid: tuple[str, str]|None = (
-            self._registry.inverse.pop(
-                tuple(addr),
-                None,
-            )
-        )
+        # coerce to `tuple` for the linear scan.
+        addr = tuple(addr)
+        uid: tuple[str, str]|None = None
+
+        for _uid, addrs in self._registry.items():
+            if addr in addrs:
+                addrs.remove(addr)
+                uid = _uid
+                # remove the uid entry entirely when it
+                # has no remaining addrs.
+                if not addrs:
+                    del self._registry[_uid]
+                break
+
         if uid:
             report: str = (
                 'Deleting registry-entry for,\n'
