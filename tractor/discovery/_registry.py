@@ -196,6 +196,8 @@ class Registrar(Actor):
                 and addr_tup in other_addrs
             ):
                 other_addrs.remove(addr_tup)
+                if not other_addrs:
+                    del self._registry[other_uid]
                 break
 
         # Append to this uid's addr list (avoid duplicates)

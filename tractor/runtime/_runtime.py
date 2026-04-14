@@ -1567,7 +1567,7 @@ async def async_main(
         # XXX, either passed in by caller or delivered
         # in post spawn-spec handshake for subs.
         if not accept_addrs:
-            RuntimeError(
+            raise RuntimeError(
                 f'No tpt bind addresses provided to actor!?\n'
                 f'parent_addr={parent_addr!r}\n'
                 f'accept_addrs={accept_addrs!r}\n'
@@ -1926,7 +1926,7 @@ async def async_main(
                 if failed_unreg:
                     teardown_report += (
                         f'-> Failed to unregister {actor.name} from '
-                        f'registar @ {addr}\n'
+                        f'registrar @ {addr}\n'
                     )
 
         # Ensure all peers (actors connected to us as clients) are finished

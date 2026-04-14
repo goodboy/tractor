@@ -212,7 +212,7 @@ def sig_prog(
     '''
     for i in range(tries):
         proc.send_signal(sig)
-        if not proc.poll():
+        if proc.poll() is None:
             print(
                 f'WARNING, proc still alive after,\n'
                 f'canc_timeout={canc_timeout!r}\n'
@@ -224,8 +224,7 @@ def sig_prog(
     else:
         # TODO: why sometimes does SIGINT not work on teardown?
         # seems to happen only when trace logging enabled?
-        if not proc.poll():
-            breakpoint()
+        if proc.poll() is None:
             print(
                 f'XXX WARNING KILLING PROG WITH SIGINT XXX\n'
                 f'canc_timeout={canc_timeout!r}\n'
