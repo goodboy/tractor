@@ -432,6 +432,8 @@ async def open_root_actor(
                         )
                     )
 
+            header: str = '-> Contacting existing registry @ '
+
         # ------ REGISTRAR ------
         # create a new "registry providing" root-actor instance.
         #
@@ -469,6 +471,7 @@ async def open_root_actor(
             # `tractor.to_asyncio.run_as_asyncio_guest()` and NOT
             # `.trio.run()`.
             actor._infected_aio = _state._runtime_vars['_is_infected_aio']
+            header: str = '-> Opening new registry @ '
 
         # Start up main task set via core actor-runtime nurseries.
         try:
@@ -480,7 +483,7 @@ async def open_root_actor(
             report: str = f'Starting actor-runtime for {actor.aid.reprol()!r}\n'
             if reg_addrs := actor.registry_addrs:
                 report += (
-                    '-> Opening new registry @ '
+                    header
                     +
                     '\n'.join(
                         f'{addr}' for addr in reg_addrs
