@@ -232,7 +232,7 @@ class UDSAddress(
             pid: str = '<unknown-peer-pid>'
 
         body: str = (
-            f'({self.filedir}, {self.filename}, {pid})'
+            f'({self.filedir}/, {self.filename}, {pid})'
         )
         return (
             f'{type(self).__name__}'
