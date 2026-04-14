@@ -9,8 +9,6 @@ bind-address selection in `_root.py`:
 3. Explicit bind given -> wraps via `wrap_address()` and uses them
 
 '''
-from functools import partial
-
 import pytest
 import trio
 import tractor
@@ -283,6 +281,15 @@ def test_registrar_merge_binds_union(
     )
     bind_addrs = [rando.unwrap()]
 
+    # NOTE: for UDS, `get_random()` produces the same
+    # filename for the same pid+actor-state, so the
+    # "disjoint" premise only holds when the addrs
+    # actually differ (always true for TCP, may
+    # collide for UDS).
+    expect_disjoint: bool = (
+        tuple(reg_addr) != rando.unwrap()
+    )
+
     async def _main():
         async with tractor.open_root_actor(
             registry_addrs=[reg_addr],
@@ -295,8 +302,9 @@ def test_registrar_merge_binds_union(
             bound = actor.accept_addrs
             bound_w = _bound_wrapped(actor)
 
-            # must have at least 2 (registry + bind)
-            assert len(bound) >= 2
+            if expect_disjoint:
+                # must have at least 2 (registry + bind)
+                assert len(bound) >= 2
 
             # registry addr must appear in bound set
             assert reg_wrapped in bound_w
