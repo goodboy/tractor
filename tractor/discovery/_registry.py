@@ -101,11 +101,11 @@ class Registrar(Actor):
         self,
         name: str,
 
-    ) -> UnwrappedAddress|None:
+    ) -> list[UnwrappedAddress]|None:
 
         for uid, addrs in self._registry.items():
             if name in uid:
-                return addrs[0] if addrs else None
+                return addrs if addrs else None
 
         return None
 
