@@ -1848,17 +1848,21 @@ async def async_main(
             failed_unreg: bool = False
             rent_chan: Channel|None = actor._parent_chan
 
-            # XXX check if the parent IS the registrar so we
-            # can reuse the existing `_parent_chan` (avoids
-            # opening a new connection which fails when the
-            # listener socket is already closed, e.g. UDS
-            # transport `os.unlink()`s the socket file during
-            # teardown).
+            # XXX, detect whether the parent IS the registrar
+            # so we can FALL BACK to `_parent_chan` when a new
+            # connection attempt fails (e.g. UDS transport
+            # `os.unlink()`s the socket file during teardown).
+            #
+            # IMPORTANT: we do NOT eagerly reuse `_parent_chan`
+            # because it may still be carrying context/stream
+            # teardown protocol traffic — sending an
+            # `unregister_actor` RPC over it concurrently
+            # causes protocol-level conflicts. Instead we try
+            # a fresh `get_registry()` connection first and
+            # only fall back to the parent channel on failure.
             #
             # See `ipc._uds.close_listener()` for details on
-            # the UDS socket-file lifecycle and why this
-            # optimization is necessary for the local-registrar
-            # case.
+            # the UDS socket-file lifecycle.
             parent_is_reg: bool = False
             if (
                 rent_chan is not None
@@ -1867,7 +1871,6 @@ async def async_main(
             ):
                 pchan_raddr: Address|None = rent_chan.raddr
                 if pchan_raddr is not None:
-                    reg_addr: Address
                     for reg_addr in actor.reg_addrs:
                         if (
                             pchan_raddr.unwrap()
@@ -1883,24 +1886,39 @@ async def async_main(
                 with trio.move_on_after(0.5) as cs:
                     cs.shield = True
                     try:
-                        if parent_is_reg:
-                            reg_portal = Portal(rent_chan)
+                        async with get_registry(
+                            addr,
+                        ) as reg_portal:
                             await reg_portal.run_from_ns(
                                 'self',
                                 'unregister_actor',
                                 uid=actor.aid.uid,
                             )
-                        else:
-                            async with get_registry(
-                                addr,
-                            ) as reg_portal:
+                    except OSError:
+                        # Connection to registrar failed
+                        # (listener socket likely already
+                        # closed/unlinked). Fall back to
+                        # parent channel if parent IS the
+                        # registrar.
+                        if (
+                            parent_is_reg
+                            and
+                            rent_chan.connected()
+                        ):
+                            try:
+                                reg_portal = Portal(rent_chan)
                                 await reg_portal.run_from_ns(
                                     'self',
                                     'unregister_actor',
                                     uid=actor.aid.uid,
                                 )
-                    except OSError:
-                        failed_unreg = True
+                            except (
+                                OSError,
+                                trio.ClosedResourceError,
+                            ):
+                                failed_unreg = True
+                        else:
+                            failed_unreg = True
 
                 if cs.cancelled_caught:
                     failed_unreg = True
