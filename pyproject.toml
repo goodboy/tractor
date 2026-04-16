@@ -78,7 +78,7 @@ testing = [
 repl = [
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
-  "xonsh>=0.22.2",
+  "xonsh>=0.22.8",
   "psutil>=7.0.0",
 ]
 lint = [
