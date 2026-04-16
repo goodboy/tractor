@@ -699,7 +699,7 @@ dev = [
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "stackscope", specifier = ">=0.2.2,<0.3" },
     { name = "typing-extensions", specifier = ">=4.14.1" },
-    { name = "xonsh", specifier = ">=0.22.2" },
+    { name = "xonsh", specifier = ">=0.22.8" },
 ]
 devx = [
     { name = "greenback", specifier = ">=1.2.1,<2" },
@@ -711,7 +711,7 @@ repl = [
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyperclip", specifier = ">=1.9.0" },
-    { name = "xonsh", specifier = ">=0.22.2" },
+    { name = "xonsh", specifier = ">=0.22.8" },
 ]
 testing = [
     { name = "pexpect", specifier = ">=4.9.0,<5" },
@@ -832,13 +832,13 @@ wheels = [
 
 [[package]]
 name = "xonsh"
-version = "0.22.4"
+version = "0.22.8"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/48/df/1fc9ed62b3d7c14612e1713e9eb7bd41d54f6ad1028a8fbb6b7cddebc345/xonsh-0.22.4.tar.gz", hash = "sha256:6be346563fec2db75778ba5d2caee155525e634e99d9cc8cc347626025c0b3fa", size = 826665, upload-time = "2026-02-17T07:53:39.424Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/d7/269a167722c8cea95204add643664a7dcb445ef50f5810a924ca7fd3e3f2/xonsh-0.22.8.tar.gz", hash = "sha256:5eedf7822f1655eb4f29a7c3916b0dcc7b8fe548b4b83001afe79f3bd39be28c", size = 830111, upload-time = "2026-03-17T11:58:35.193Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/00/7cbc0c1fb64365a0a317c54ce3a151c9644eea5a509d9cbaae61c9fd1426/xonsh-0.22.4-py311-none-any.whl", hash = "sha256:38b29b29fa85aa756462d9d9bbcaa1d85478c2108da3de6cc590a69a4bcd1a01", size = 654375, upload-time = "2026-02-17T07:53:37.702Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/c2/3dd498dc28d8f89cdd52e39950c5e591499ae423f61694c0bb4d03ed1d82/xonsh-0.22.4-py312-none-any.whl", hash = "sha256:4e538fac9f4c3d866ddbdeca068f0c0515469c997ed58d3bfee963878c6df5a5", size = 654300, upload-time = "2026-02-17T07:53:35.813Z" },
-    { url = "https://files.pythonhosted.org/packages/82/7d/1f9c7147518e9f03f6ce081b5bfc4f1aceb6ec5caba849024d005e41d3be/xonsh-0.22.4-py313-none-any.whl", hash = "sha256:cc5fabf0ad0c56a2a11bed1e6a43c4ec6416a5b30f24f126b8e768547c3793e2", size = 654818, upload-time = "2026-02-17T07:53:33.477Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/32/7c3b686da03121f5efd7a70e54dd2bd306baf7f9c052040f21e9840c41d9/xonsh-0.22.8-py311-none-any.whl", hash = "sha256:e6eda3606ef0eb35d6a82ef2323f7887d786de82250b8a4f5139773e8c14cc9a", size = 655394, upload-time = "2026-03-17T11:58:33.334Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/f8/25be838bc171dadae10e7bba9a2d4dad47ad3c9828665398d5314494c33d/xonsh-0.22.8-py312-none-any.whl", hash = "sha256:15a175c9930ab23d810632ef2dbb82ba6d366f8d0d5cf8c24a1f3442be2e9497", size = 655395, upload-time = "2026-03-17T11:58:30.003Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/c7/156cdc5e93acb80bbd345201eb82bba940914365bd2cd44508f1a87bc568/xonsh-0.22.8-py313-none-any.whl", hash = "sha256:b2e2545b532a4a96349d0151df2441323fea2ded0043fc8e96dd69f3a6309d00", size = 655853, upload-time = "2026-03-17T11:58:26.924Z" },
 ]
 
 [[package]]
