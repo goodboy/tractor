@@ -96,6 +96,11 @@ lint = [
 [tool.uv.sources]
 # XXX NOTE, only for @goodboy's hacking on `pprint(sort_dicts=False)`
 # for the `pp` alias..
+# ------ gh upstream ------
+# xonsh = { git = 'https://github.com/anki-code/xonsh.git', branch = 'prompt_next_suggestion' }
+# ^ https://github.com/xonsh/xonsh/pull/6048
+# xonsh = { git = 'https://github.com/xonsh/xonsh.git', branch = 'main' }
+xonsh = { path = "../xonsh", editable = true }
 
 # [tool.uv.sources.pdbp]
 # XXX, in case we need to tmp patch again.
