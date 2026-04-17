@@ -17,10 +17,20 @@
 Linux specifics, for now we are only exposing EventFD
 
 '''
-import os
 import errno
+import os
+import sys
 
-import cffi
+try:
+    import cffi
+except ImportError as ie:
+    if sys.version_info < (3, 14):
+        ie.add_note(
+            f'The `cffi` pkg has no 3.14 support yet.\n'
+        )
+
+    raise ie
+
 import trio
 
 ffi = cffi.FFI()
