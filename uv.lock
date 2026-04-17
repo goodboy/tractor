@@ -680,7 +680,7 @@ requires-dist = [
     { name = "bidict", specifier = ">=0.23.1" },
     { name = "cffi", specifier = ">=1.17.1" },
     { name = "colorlog", specifier = ">=6.8.2,<7" },
-    { name = "msgspec", specifier = ">=0.19.0" },
+    { name = "msgspec", specifier = ">=0.21.0" },
     { name = "multiaddr", specifier = ">=0.2.0" },
     { name = "pdbp", specifier = ">=1.8.2,<2" },
     { name = "platformdirs", specifier = ">=4.4.0" },
