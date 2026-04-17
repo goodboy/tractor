@@ -4,6 +4,10 @@ import trio
 import pytest
 
 import tractor
+
+# XXX `cffi` dun build on py3.14 yet..
+cffi = pytest.importorskip("cffi")
+
 from tractor.ipc._ringbuf import (
     open_ringbuf,
     RBToken,
@@ -14,7 +18,7 @@ from tractor._testing.samples import (
     generate_sample_messages,
 )
 
-# in case you don't want to melt your cores, uncomment dis!
+# XXX, in case you want to melt your cores, comment this skip line XD
 pytestmark = pytest.mark.skip
 
 
