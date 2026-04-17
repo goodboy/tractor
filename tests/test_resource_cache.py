@@ -213,9 +213,12 @@ def test_open_local_sub_to_stream(
     N local tasks using `trionics.maybe_open_context()`.
 
     '''
-    timeout: float = 3.6
-    if platform.system() == "Windows":
-        timeout: float = 10
+    from .conftest import cpu_scaling_factor
+    timeout: float = (
+        4
+        if not platform.system() == "Windows"
+        else 10
+    ) * cpu_scaling_factor()
 
     if debug_mode:
         timeout = 999
