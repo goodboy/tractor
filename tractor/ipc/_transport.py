@@ -27,6 +27,8 @@ from typing import (
     ClassVar,
     TYPE_CHECKING,
 )
+if TYPE_CHECKING:
+    from multiaddr import Multiaddr
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -118,7 +120,7 @@ class MsgTransport(Protocol):
         ...
 
     @property
-    def maddr(self) -> str:
+    def maddr(self) -> Multiaddr|str:
         ...
 
     @classmethod

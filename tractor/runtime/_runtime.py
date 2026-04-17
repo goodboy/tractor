@@ -115,7 +115,7 @@ from ..devx import (
     debug,
     pformat as _pformat
 )
-from ..discovery._discovery import get_registry
+from ..discovery._api import get_registry
 from ._portal import Portal
 from . import _state
 from ..spawn import _mp_fixup_main
@@ -1379,7 +1379,7 @@ class Actor:
             #   - `Channel.maddr() -> str:` obvi!
             #   - `Context.maddr() -> str:`
             tasks_str += (
-                f' |_@ /ipv4/tcp/cid="{ctx.cid[-16:]} .."\n'
+                f' |_@ /ip4/tcp/cid="{ctx.cid[-16:]} .."\n'
                 f'   |>> {ctx._nsf}() -> dict:\n'
             )
 
@@ -1564,7 +1564,15 @@ async def async_main(
                     addr: Address = transport_cls.get_random()
                     accept_addrs.append(addr.unwrap())
 
-        assert accept_addrs
+        # XXX, either passed in by caller or delivered
+        # in post spawn-spec handshake for subs.
+        if not accept_addrs:
+            raise RuntimeError(
+                f'No tpt bind addresses provided to actor!?\n'
+                f'parent_addr={parent_addr!r}\n'
+                f'accept_addrs={accept_addrs!r}\n'
+                f'enable_transports={enable_transports!r}\n'
+            )
 
         ya_root_tn: bool = bool(actor._root_tn)
         ya_service_tn: bool = bool(actor._service_tn)
@@ -1837,7 +1845,41 @@ async def async_main(
             and
             not actor.is_registrar
         ):
-            failed: bool = False
+            failed_unreg: bool = False
+            rent_chan: Channel|None = actor._parent_chan
+
+            # XXX, detect whether the parent IS the registrar
+            # so we can FALL BACK to `_parent_chan` when a new
+            # connection attempt fails (e.g. UDS transport
+            # `os.unlink()`s the socket file during teardown).
+            #
+            # IMPORTANT: we do NOT eagerly reuse `_parent_chan`
+            # because it may still be carrying context/stream
+            # teardown protocol traffic — sending an
+            # `unregister_actor` RPC over it concurrently
+            # causes protocol-level conflicts. Instead we try
+            # a fresh `get_registry()` connection first and
+            # only fall back to the parent channel on failure.
+            #
+            # See `ipc._uds.close_listener()` for details on
+            # the UDS socket-file lifecycle.
+            parent_is_reg: bool = False
+            if (
+                rent_chan is not None
+                and
+                rent_chan.connected()
+            ):
+                pchan_raddr: Address|None = rent_chan.raddr
+                if pchan_raddr is not None:
+                    for reg_addr in actor.reg_addrs:
+                        if (
+                            pchan_raddr.unwrap()
+                            ==
+                            tuple(reg_addr)
+                        ):
+                            parent_is_reg = True
+                            break
+
             for addr in actor.reg_addrs:
                 waddr = wrap_address(addr)
                 assert waddr.is_valid
@@ -1853,14 +1895,38 @@ async def async_main(
                                 uid=actor.aid.uid,
                             )
                     except OSError:
-                        failed = True
-                if cs.cancelled_caught:
-                    failed = True
+                        # Connection to registrar failed
+                        # (listener socket likely already
+                        # closed/unlinked). Fall back to
+                        # parent channel if parent IS the
+                        # registrar.
+                        if (
+                            parent_is_reg
+                            and
+                            rent_chan.connected()
+                        ):
+                            try:
+                                reg_portal = Portal(rent_chan)
+                                await reg_portal.run_from_ns(
+                                    'self',
+                                    'unregister_actor',
+                                    uid=actor.aid.uid,
+                                )
+                            except (
+                                OSError,
+                                trio.ClosedResourceError,
+                            ):
+                                failed_unreg = True
+                        else:
+                            failed_unreg = True
 
-                if failed:
+                if cs.cancelled_caught:
+                    failed_unreg = True
+
+                if failed_unreg:
                     teardown_report += (
                         f'-> Failed to unregister {actor.name} from '
-                        f'registar @ {addr}\n'
+                        f'registrar @ {addr}\n'
                     )
 
         # Ensure all peers (actors connected to us as clients) are finished

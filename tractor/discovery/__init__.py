@@ -18,9 +18,15 @@
 Discovery (protocols) API for automatic addressing
 and location management of (service) actors.
 
-NOTE: to avoid circular imports, this ``__init__``
-does NOT eagerly import submodules. Use direct
-module paths like ``tractor.discovery._addr`` or
-``tractor.discovery._discovery`` instead.
+NOTE: this ``__init__`` only eagerly imports the
+``._multiaddr`` submodule (for public re-exports).
+Heavier submodules like ``._addr`` and ``._api``
+are NOT imported here to avoid circular imports;
+use direct module paths for those.
 
 '''
+from ._multiaddr import (
+    parse_endpoints as parse_endpoints,
+    parse_maddr as parse_maddr,
+    mk_maddr as mk_maddr,
+)

@@ -33,8 +33,10 @@ from trio import (
     open_tcp_listeners,
 )
 
+from multiaddr import Multiaddr
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
+from tractor.discovery._multiaddr import mk_maddr
 from tractor.ipc._transport import (
     MsgTransport,
     MsgpackTransport,
@@ -198,21 +200,8 @@ class MsgpackTCPStream(MsgpackTransport):
     layer_key: int = 4
 
     @property
-    def maddr(self) -> str:
-        host, port = self.raddr.unwrap()
-        return (
-            # TODO, use `ipaddress` from stdlib to handle
-            # first detecting which of `ipv4/6` before
-            # choosing the routing prefix part.
-            f'/ipv4/{host}'
-
-            f'/{self.address_type.proto_key}/{port}'
-            # f'/{self.chan.uid[0]}'
-            # f'/{self.cid}'
-
-            # f'/cid={cid_head}..{cid_tail}'
-            # TODO: ? not use this ^ right ?
-        )
+    def maddr(self) -> Multiaddr:
+        return mk_maddr(self.raddr)
 
     def connected(self) -> bool:
         return self.stream.socket.fileno() != -1

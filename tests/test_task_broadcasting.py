@@ -75,7 +75,7 @@ async def open_sequence_streamer(
 ) -> tractor.MsgStream:
 
     async with tractor.open_nursery(
-        arbiter_addr=reg_addr,
+        registry_addrs=[reg_addr],
         start_method=start_method,
     ) as an:
 

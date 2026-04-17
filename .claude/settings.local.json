@@ -27,7 +27,8 @@
       "Write(.claude/git_commit_msg_LATEST.md)",
       "Skill(run-tests)",
       "Skill(close-wkt)",
-      "Skill(open-wkt)"
+      "Skill(open-wkt)",
+      "Skill(prompt-io)"
     ],
     "deny": [],
     "ask": []

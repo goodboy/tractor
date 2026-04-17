@@ -199,15 +199,39 @@ def ci_env() -> bool:
 def sig_prog(
     proc: subprocess.Popen,
     sig: int,
-    canc_timeout: float = 0.1,
+    canc_timeout: float = 0.2,
+    tries: int = 3,
 ) -> int:
-    "Kill the actor-process with ``sig``."
-    proc.send_signal(sig)
-    time.sleep(canc_timeout)
-    if not proc.poll():
+    '''
+    Kill the actor-process with `sig`.
+
+    Prefer to kill with the provided signal and
+    failing a `canc_timeout`, send a `SIKILL`-like
+    to ensure termination.
+
+    '''
+    for i in range(tries):
+        proc.send_signal(sig)
+        if proc.poll() is None:
+            print(
+                f'WARNING, proc still alive after,\n'
+                f'canc_timeout={canc_timeout!r}\n'
+                f'sig={sig!r}\n'
+                f'\n'
+                f'{proc.args!r}\n'
+            )
+            time.sleep(canc_timeout)
+    else:
         # TODO: why sometimes does SIGINT not work on teardown?
         # seems to happen only when trace logging enabled?
-        proc.send_signal(_KILL_SIGNAL)
+        if proc.poll() is None:
+            print(
+                f'XXX WARNING KILLING PROG WITH SIGINT XXX\n'
+                f'canc_timeout={canc_timeout!r}\n'
+                f'{proc.args!r}\n'
+            )
+            proc.send_signal(_KILL_SIGNAL)
+
     ret: int = proc.wait()
     assert ret
 

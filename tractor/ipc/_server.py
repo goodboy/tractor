@@ -274,7 +274,7 @@ async def maybe_wait_on_canced_subs(
                     # ephemeral `.register_actor()` request!
                     # -[ ] also, that should be avoidable by
                     #   re-using any existing chan from the
-                    #   `._discovery.get_registry()` call as
+                    #   `._api.get_registry()` call as
                     #   well..
                     log.runtime(
                         f'Peer IPC broke but subproc is alive?\n\n'

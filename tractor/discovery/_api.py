@@ -20,6 +20,8 @@ management of (service) actors.
 
 """
 from __future__ import annotations
+import ipaddress
+import socket
 from typing import (
     AsyncGenerator,
     AsyncContextManager,
@@ -33,10 +35,12 @@ from ..trionics import (
     collapse_eg,
 )
 from ..ipc import _connect_chan, Channel
+from ..ipc._tcp import TCPAddress
+from ..ipc._uds import UDSAddress
 from ._addr import (
     UnwrappedAddress,
     Address,
-    wrap_address
+    wrap_address,
 )
 from ..runtime._portal import (
     Portal,
@@ -54,6 +58,94 @@ if TYPE_CHECKING:
 
 
 log = get_logger()
+
+
+def _is_local_addr(addr: Address) -> bool:
+    '''
+    Determine whether `addr` is reachable on the
+    local host by inspecting address type and
+    comparing hostnames/PIDs.
+
+    - `UDSAddress` is always local (filesystem-bound)
+    - `TCPAddress` is local when its host is a
+      loopback IP or matches one of the machine's
+      own interface addresses.
+
+    '''
+    if isinstance(addr, UDSAddress):
+        return True
+
+    if isinstance(addr, TCPAddress):
+        try:
+            ip = ipaddress.ip_address(addr._host)
+        except ValueError:
+            return False
+
+        if ip.is_loopback:
+            return True
+
+        # check if this IP belongs to any of our
+        # local network interfaces.
+        try:
+            local_ips: set[str] = {
+                info[4][0]
+                for info in socket.getaddrinfo(
+                    socket.gethostname(),
+                    None,
+                )
+            }
+            return addr._host in local_ips
+        except socket.gaierror:
+            return False
+
+    return False
+
+
+def prefer_addr(
+    addrs: list[UnwrappedAddress],
+) -> UnwrappedAddress:
+    '''
+    Select the "best" transport address from a
+    multihomed actor's address list based on
+    locality heuristics.
+
+    Preference order (highest -> lowest):
+    1. UDS (same-host guaranteed, lowest overhead)
+    2. TCP loopback / same-host IP
+    3. TCP remote (only option for distributed)
+
+    When multiple addrs share the same priority
+    tier, the last-registered (latest) entry is
+    preferred.
+
+    '''
+    if len(addrs) == 1:
+        return addrs[0]
+
+    local_uds: list[UnwrappedAddress] = []
+    local_tcp: list[UnwrappedAddress] = []
+    remote: list[UnwrappedAddress] = []
+
+    for unwrapped in addrs:
+        wrapped: Address = wrap_address(unwrapped)
+        if isinstance(wrapped, UDSAddress):
+            local_uds.append(unwrapped)
+        elif _is_local_addr(wrapped):
+            local_tcp.append(unwrapped)
+        else:
+            remote.append(unwrapped)
+
+    # prefer UDS > local TCP > remote TCP;
+    # within each tier take the latest entry.
+    if local_uds:
+        return local_uds[-1]
+    if local_tcp:
+        return local_tcp[-1]
+    if remote:
+        return remote[-1]
+
+    # fallback: last registered addr
+    return addrs[-1]
 
 
 @acm
@@ -187,13 +279,17 @@ async def query_actor(
     reg_portal: Portal|LocalPortal
     regaddr: Address = wrap_address(regaddr) or actor.reg_addrs[0]
     async with get_registry(regaddr) as reg_portal:
-        # TODO: return portals to all available actors - for now
-        # just the last one that registered
-        addr: UnwrappedAddress = await reg_portal.run_from_ns(
-            'self',
-            'find_actor',
-            name=name,
+        addrs: list[UnwrappedAddress]|None = (
+            await reg_portal.run_from_ns(
+                'self',
+                'find_actor',
+                name=name,
+            )
         )
+        if addrs:
+            addr: UnwrappedAddress = prefer_addr(addrs)
+        else:
+            addr = None
         yield addr, reg_portal
 
 @acm
@@ -370,9 +466,9 @@ async def wait_for_actor(
             name=name,
         )
 
-        # get latest registered addr by default?
-        # TODO: offer multi-portal yields in multi-homed case?
-        addr: UnwrappedAddress = addrs[-1]
+        # select the best transport addr from
+        # the (possibly multihomed) addr list.
+        addr: UnwrappedAddress = prefer_addr(addrs)
 
         async with _connect_chan(addr) as chan:
             async with open_portal(chan) as portal:

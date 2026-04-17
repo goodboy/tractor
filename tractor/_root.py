@@ -145,11 +145,16 @@ async def maybe_block_bp(
 @acm
 async def open_root_actor(
     *,
-    # defaults are above
-    registry_addrs: list[UnwrappedAddress]|None = None,
+    tpt_bind_addrs: list[
+        Address  # `Address.get_random()` case
+        |UnwrappedAddress  # registrar case `= uw_reg_addrs`
+    ]|None = None,
 
     # defaults are above
-    arbiter_addr: tuple[UnwrappedAddress]|None = None,
+    registry_addrs: list[
+        Address
+        |UnwrappedAddress
+    ]|None = None,
 
     enable_transports: list[
         # TODO, this should eventually be the pairs as
@@ -268,15 +273,7 @@ async def open_root_actor(
         if start_method is not None:
             _spawn.try_set_start_method(start_method)
 
-        if arbiter_addr is not None:
-            warnings.warn(
-                '`arbiter_addr` is now deprecated\n'
-                'Use `registry_addrs: list[tuple]` instead..',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            uw_reg_addrs = [arbiter_addr]
-
+        # XXX expect pre-unwrapped registrar addrs.
         uw_reg_addrs = registry_addrs
         if not uw_reg_addrs:
             uw_reg_addrs: list[UnwrappedAddress] = default_lo_addrs(
@@ -289,7 +286,6 @@ async def open_root_actor(
             wrap_address(uw_addr)
             for uw_addr in uw_reg_addrs
         ]
-
         loglevel: str = (
             loglevel
             or
@@ -386,10 +382,14 @@ async def open_root_actor(
                     addr,
                 )
 
-        tpt_bind_addrs: list[
-            Address  # `Address.get_random()` case
-            |UnwrappedAddress  # registrar case `= uw_reg_addrs`
-        ] = []
+        if tpt_bind_addrs is None:
+            tpt_bind_addrs: list[Address] = []
+        else:
+            input_bind_addrs = list(tpt_bind_addrs)
+            tpt_bind_addrs: list[Address] = []
+            for addr in input_bind_addrs:
+                addr: Address = wrap_address(addr)
+                tpt_bind_addrs.append(addr)
 
         # ------ NON-REGISTRAR ------
         # create a new root-actor instance.
@@ -417,19 +417,22 @@ async def open_root_actor(
             # a new NON-registrar, ROOT-actor.
             #
             # XXX INSTEAD, bind random addrs using the same tpt
-            # proto.
-            for addr in ponged_addrs:
-                tpt_bind_addrs.append(
-                    # XXX, these are `Address` NOT `UnwrappedAddress`.
-                    #
-                    # NOTE, in the case of posix/berkley socket
-                    # protos we allocate port=0 such that the system
-                    # allocates a random value at bind time; this
-                    # happens in the `.ipc.*` stack's backend.
-                    addr.get_random(
-                        bindspace=addr.bindspace,
+            # proto if not already provided.
+            if not tpt_bind_addrs:
+                for addr in ponged_addrs:
+                    tpt_bind_addrs.append(
+                        # XXX, these are `Address` NOT `UnwrappedAddress`.
+                        #
+                        # NOTE, in the case of posix/berkley socket
+                        # protos we allocate port=0 such that the system
+                        # allocates a random value at bind time; this
+                        # happens in the `.ipc.*` stack's backend.
+                        addr.get_random(
+                            bindspace=addr.bindspace,
+                        )
                     )
-                )
+
+            header: str = '-> Contacting existing registry @ '
 
         # ------ REGISTRAR ------
         # create a new "registry providing" root-actor instance.
@@ -442,7 +445,11 @@ async def open_root_actor(
             # following init steps are taken:
             # - the tranport layer server is bound to each addr
             #   pair defined in provided registry_addrs, or the default.
-            tpt_bind_addrs = uw_reg_addrs
+            tpt_bind_addrs = list(set(
+                tpt_bind_addrs
+                +
+                [wrap_address(a) for a in uw_reg_addrs]
+            ))
 
             # - it is normally desirable for any registrar to stay up
             #   indefinitely until either all registered (child/sub)
@@ -464,6 +471,7 @@ async def open_root_actor(
             # `tractor.to_asyncio.run_as_asyncio_guest()` and NOT
             # `.trio.run()`.
             actor._infected_aio = _state._runtime_vars['_is_infected_aio']
+            header: str = '-> Opening new registry @ '
 
         # Start up main task set via core actor-runtime nurseries.
         try:
@@ -475,7 +483,7 @@ async def open_root_actor(
             report: str = f'Starting actor-runtime for {actor.aid.reprol()!r}\n'
             if reg_addrs := actor.registry_addrs:
                 report += (
-                    '-> Opening new registry @ '
+                    header
                     +
                     '\n'.join(
                         f'{addr}' for addr in reg_addrs

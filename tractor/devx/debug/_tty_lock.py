@@ -1013,7 +1013,7 @@ async def request_root_stdio_lock(
     DebugStatus.req_task = current_task()
     req_err: BaseException|None = None
     try:
-        from tractor.discovery._discovery import get_root
+        from tractor.discovery._api import get_root
         # NOTE: we need this to ensure that this task exits
         # BEFORE the REPl instance raises an error like
         # `bdb.BdbQuit` directly, OW you get a trio cs stack

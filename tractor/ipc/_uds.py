@@ -48,8 +48,10 @@ from trio._highlevel_open_unix_stream import (
     has_unix,
 )
 
+from multiaddr import Multiaddr
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
+from tractor.discovery._multiaddr import mk_maddr
 from tractor.ipc._transport import (
     MsgpackTransport,
 )
@@ -230,7 +232,7 @@ class UDSAddress(
             pid: str = '<unknown-peer-pid>'
 
         body: str = (
-            f'({self.filedir}, {self.filename}, {pid})'
+            f'({self.filedir}/, {self.filename}, {pid})'
         )
         return (
             f'{type(self).__name__}'
@@ -298,7 +300,23 @@ async def start_listener(
     ):
         await sock.bind(str(bindpath))
 
-    sock.listen(1)
+    # NOTE, the backlog must be large enough to handle
+    # concurrent connection attempts during actor teardown.
+    # Previously this was `listen(1)` which caused
+    # deregistration failures in the remote-daemon registrar
+    # case: when multiple sub-actors simultaneously try to
+    # connect to deregister, a backlog of 1 overflows and
+    # connections get ECONNREFUSED. This matches the TCP
+    # transport which uses `trio.open_tcp_listeners()` with
+    # a default backlog of ~128.
+    #
+    # For details see the `close_listener()` below which
+    # `os.unlink()`s the socket file on teardown — meaning
+    # any NEW connection attempts after that point will fail
+    # with `FileNotFoundError` regardless of backlog size.
+    # The backlog only matters while the listener is alive
+    # and accepting.
+    sock.listen(128)
     log.info(
         f'Listening on UDS socket\n'
         f'[>\n'
@@ -313,6 +331,16 @@ def close_listener(
 ) -> None:
     '''
     Close and remove the listening unix socket's path.
+
+    NOTE, the `os.unlink()` here removes the socket file from
+    the filesystem immediately, which means any subsequent
+    connection attempts (e.g. sub-actors trying to deregister
+    with a registrar whose listener is tearing down) will fail
+    with `FileNotFoundError`. For the local-registrar case
+    (parent IS the registrar), `_runtime.async_main()` works
+    around this by reusing the existing `_parent_chan` instead
+    of opening a new connection; see the `parent_is_reg` logic
+    in the deregistration path.
 
     '''
     lstnr.socket.close()
@@ -442,19 +470,11 @@ class MsgpackUDSStream(MsgpackTransport):
     layer_key: int = 4
 
     @property
-    def maddr(self) -> str:
+    def maddr(self) -> Multiaddr|str:
         if not self.raddr:
             return '<unknown-peer>'
 
-        filepath: Path = Path(self.raddr.unwrap()[0])
-        return (
-            f'/{self.address_type.proto_key}/{filepath}'
-            # f'/{self.chan.uid[0]}'
-            # f'/{self.cid}'
-
-            # f'/cid={cid_head}..{cid_tail}'
-            # TODO: ? not use this ^ right ?
-        )
+        return mk_maddr(self.raddr)
 
     def connected(self) -> bool:
         return self.stream.socket.fileno() != -1

@@ -206,7 +206,7 @@ def mk_uuid() -> str:
 
 
 def wrap_address(
-    addr: UnwrappedAddress
+    addr: UnwrappedAddress|str,
 ) -> Address:
     '''
     Wrap an `UnwrappedAddress` as an `Address`-type based
@@ -256,6 +256,14 @@ def wrap_address(
         ):
             cls: Type[Address] = get_address_cls(_def_tpt_proto)
             addr: UnwrappedAddress = cls.get_root().unwrap()
+
+        # multiaddr-format string, e.g.
+        # '/ip4/127.0.0.1/tcp/1616'
+        case str() if addr.startswith('/'):
+            from tractor.discovery._multiaddr import (
+                parse_maddr,
+            )
+            return parse_maddr(addr)
 
         case _:
             # import pdbp; pdbp.set_trace()

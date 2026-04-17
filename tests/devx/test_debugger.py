@@ -785,17 +785,28 @@ def test_multi_nested_subactors_error_through_nurseries(
 
     # timed_out_early: bool = False
 
-    for send_char in itertools.cycle(['c', 'q']):
+    for (
+        i,
+        send_char,
+    ) in enumerate(itertools.cycle(['c', 'q'])):
+
+        timeout: float = -1
+        if (
+            _non_linux
+            and
+            ci_env
+        ):
+            timeout: float = 6
+
+        # XXX linux but the first crash sequence
+        # can take longer to arrive at a prompt.
+        elif i == 0:
+            timeout = 5
+
         try:
             child.expect(
                 PROMPT,
-                timeout=(
-                    6 if (
-                        _non_linux
-                        and
-                        ci_env
-                    ) else -1
-                ),
+                timeout=timeout,
             )
             child.sendline(send_char)
             time.sleep(0.01)
