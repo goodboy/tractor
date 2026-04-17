@@ -697,7 +697,7 @@ dev = [
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "stackscope", specifier = ">=0.2.2,<0.3" },
     { name = "typing-extensions", specifier = ">=4.14.1" },
-    { name = "xonsh", specifier = ">=0.22.8" },
+    { name = "xonsh", editable = "../xonsh" },
 ]
 devx = [
     { name = "greenback", specifier = ">=1.2.1,<2" },
@@ -709,7 +709,7 @@ repl = [
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyperclip", specifier = ">=1.9.0" },
-    { name = "xonsh", specifier = ">=0.22.8" },
+    { name = "xonsh", editable = "../xonsh" },
 ]
 testing = [
     { name = "pexpect", specifier = ">=4.9.0,<5" },
@@ -830,14 +830,85 @@ wheels = [
 
 [[package]]
 name = "xonsh"
-version = "0.22.8"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/99/d7/269a167722c8cea95204add643664a7dcb445ef50f5810a924ca7fd3e3f2/xonsh-0.22.8.tar.gz", hash = "sha256:5eedf7822f1655eb4f29a7c3916b0dcc7b8fe548b4b83001afe79f3bd39be28c", size = 830111, upload-time = "2026-03-17T11:58:35.193Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/32/7c3b686da03121f5efd7a70e54dd2bd306baf7f9c052040f21e9840c41d9/xonsh-0.22.8-py311-none-any.whl", hash = "sha256:e6eda3606ef0eb35d6a82ef2323f7887d786de82250b8a4f5139773e8c14cc9a", size = 655394, upload-time = "2026-03-17T11:58:33.334Z" },
-    { url = "https://files.pythonhosted.org/packages/5a/f8/25be838bc171dadae10e7bba9a2d4dad47ad3c9828665398d5314494c33d/xonsh-0.22.8-py312-none-any.whl", hash = "sha256:15a175c9930ab23d810632ef2dbb82ba6d366f8d0d5cf8c24a1f3442be2e9497", size = 655395, upload-time = "2026-03-17T11:58:30.003Z" },
-    { url = "https://files.pythonhosted.org/packages/6a/c7/156cdc5e93acb80bbd345201eb82bba940914365bd2cd44508f1a87bc568/xonsh-0.22.8-py313-none-any.whl", hash = "sha256:b2e2545b532a4a96349d0151df2441323fea2ded0043fc8e96dd69f3a6309d00", size = 655853, upload-time = "2026-03-17T11:58:26.924Z" },
+source = { editable = "../xonsh" }
+
+[package.metadata]
+requires-dist = [
+    { name = "coverage", marker = "extra == 'dev'", specifier = ">=5.3.1" },
+    { name = "coverage", marker = "extra == 'test'", specifier = ">=5.3.1" },
+    { name = "distro", marker = "sys_platform == 'linux' and extra == 'full'" },
+    { name = "distro", marker = "extra == 'linux'" },
+    { name = "furo", marker = "extra == 'dev'" },
+    { name = "furo", marker = "extra == 'doc'" },
+    { name = "gnureadline", marker = "sys_platform == 'darwin' and extra == 'full'" },
+    { name = "gnureadline", marker = "extra == 'mac'" },
+    { name = "matplotlib", marker = "extra == 'dev'" },
+    { name = "matplotlib", marker = "extra == 'doc'" },
+    { name = "myst-parser", marker = "extra == 'dev'" },
+    { name = "myst-parser", marker = "extra == 'doc'" },
+    { name = "numpydoc", marker = "extra == 'dev'" },
+    { name = "numpydoc", marker = "extra == 'doc'" },
+    { name = "pre-commit", marker = "extra == 'dev'" },
+    { name = "prompt-toolkit", marker = "extra == 'bestshell'", specifier = ">=3.0.29" },
+    { name = "prompt-toolkit", marker = "extra == 'dev'", specifier = ">=3.0.29" },
+    { name = "prompt-toolkit", marker = "extra == 'doc'", specifier = ">=3.0.29" },
+    { name = "prompt-toolkit", marker = "extra == 'full'", specifier = ">=3.0.29" },
+    { name = "prompt-toolkit", marker = "extra == 'ptk'", specifier = ">=3.0.29" },
+    { name = "prompt-toolkit", marker = "extra == 'test'", specifier = ">=3.0.29" },
+    { name = "psutil", marker = "extra == 'dev'" },
+    { name = "psutil", marker = "extra == 'doc'" },
+    { name = "pygments", marker = "extra == 'bestshell'", specifier = ">=2.2" },
+    { name = "pygments", marker = "extra == 'dev'", specifier = ">=2.2" },
+    { name = "pygments", marker = "extra == 'doc'", specifier = ">=2.2" },
+    { name = "pygments", marker = "extra == 'full'", specifier = ">=2.2" },
+    { name = "pygments", marker = "extra == 'pygments'", specifier = ">=2.2" },
+    { name = "pygments", marker = "extra == 'test'", specifier = ">=2.2" },
+    { name = "pyperclip", marker = "extra == 'full'" },
+    { name = "pyperclip", marker = "extra == 'ptk'" },
+    { name = "pyte", marker = "extra == 'dev'", specifier = ">=0.8.0" },
+    { name = "pyte", marker = "extra == 'test'", specifier = ">=0.8.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
+    { name = "pytest-cov", marker = "extra == 'dev'" },
+    { name = "pytest-cov", marker = "extra == 'test'" },
+    { name = "pytest-mock", marker = "extra == 'dev'" },
+    { name = "pytest-mock", marker = "extra == 'test'" },
+    { name = "pytest-rerunfailures", marker = "extra == 'dev'" },
+    { name = "pytest-rerunfailures", marker = "extra == 'test'" },
+    { name = "pytest-subprocess", marker = "extra == 'dev'" },
+    { name = "pytest-subprocess", marker = "extra == 'test'" },
+    { name = "pytest-timeout", marker = "extra == 'dev'" },
+    { name = "pytest-timeout", marker = "extra == 'test'" },
+    { name = "pyzmq", marker = "extra == 'dev'" },
+    { name = "pyzmq", marker = "extra == 'doc'" },
+    { name = "re-ver", marker = "extra == 'dev'" },
+    { name = "requests", marker = "extra == 'dev'" },
+    { name = "requests", marker = "extra == 'test'" },
+    { name = "restructuredtext-lint", marker = "extra == 'dev'" },
+    { name = "restructuredtext-lint", marker = "extra == 'test'" },
+    { name = "runthis-sphinxext", marker = "extra == 'dev'" },
+    { name = "runthis-sphinxext", marker = "extra == 'doc'" },
+    { name = "setproctitle", marker = "sys_platform == 'win32' and extra == 'full'" },
+    { name = "setproctitle", marker = "extra == 'proctitle'" },
+    { name = "sphinx", marker = "extra == 'dev'", specifier = ">=3.1" },
+    { name = "sphinx", marker = "extra == 'doc'", specifier = ">=3.1" },
+    { name = "sphinx-autobuild", marker = "extra == 'dev'" },
+    { name = "sphinx-autobuild", marker = "extra == 'doc'" },
+    { name = "sphinx-prompt", marker = "extra == 'dev'" },
+    { name = "sphinx-prompt", marker = "extra == 'doc'" },
+    { name = "sphinx-reredirects", marker = "extra == 'dev'" },
+    { name = "sphinx-reredirects", marker = "extra == 'doc'" },
+    { name = "tomli", marker = "extra == 'dev'" },
+    { name = "tornado", marker = "extra == 'dev'" },
+    { name = "tornado", marker = "extra == 'doc'" },
+    { name = "ujson", marker = "extra == 'full'" },
+    { name = "virtualenv", marker = "extra == 'dev'", specifier = ">=20.16.2" },
+    { name = "virtualenv", marker = "extra == 'test'", specifier = ">=20.16.2" },
 ]
+provides-extras = ["bestshell", "dev", "doc", "full", "linux", "mac", "proctitle", "ptk", "pygments", "test"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "xonsh", extras = ["dev"] }]
 
 [[package]]
 name = "zipp"
