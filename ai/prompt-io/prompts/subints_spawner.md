@@ -29,4 +29,6 @@ Part of this work should include,
 
 - all tests should be (able to be) paramatrized to use the new
   `subints` backend and enabled by flag in the harness using the
-  existing 
+  existing `pytest --spawn-backend <spawn-backend>` support offered in
+  the `open_root_actor()` and `.testing._pytest` harness override
+  fixture.
