@@ -21,6 +21,7 @@ Machinery for actor process spawning using multiple backends.
 from __future__ import annotations
 import multiprocessing as mp
 import platform
+import sys
 from typing import (
     Any,
     Awaitable,
@@ -62,6 +63,7 @@ SpawnMethodKey = Literal[
     'trio',  # supported on all platforms
     'mp_spawn',
     'mp_forkserver',  # posix only
+    'subint',  # py3.14+ via `concurrent.interpreters` (PEP 734)
 ]
 _spawn_method: SpawnMethodKey = 'trio'
 
@@ -112,6 +114,17 @@ def try_set_start_method(
             _ctx = mp.get_context('spawn')
 
         case 'trio':
+            _ctx = None
+
+        case 'subint':
+            # subints need no `mp.context`; feature-gate 3.14+
+            from ._subint import _has_subints
+            if not _has_subints:
+                raise RuntimeError(
+                    f'Spawn method {key!r} requires Python 3.14+ '
+                    f'(stdlib `concurrent.interpreters`, PEP 734).\n'
+                    f'Current runtime: {sys.version}'
+                )
             _ctx = None
 
         case _:
@@ -438,6 +451,7 @@ async def new_proc(
 # `hard_kill`/`proc_waiter` from this module.
 from ._trio import trio_proc
 from ._mp import mp_proc
+from ._subint import subint_proc
 
 
 # proc spawning backend target map
@@ -445,4 +459,5 @@ _methods: dict[SpawnMethodKey, Callable] = {
     'trio': trio_proc,
     'mp_spawn': mp_proc,
     'mp_forkserver': mp_proc,
+    'subint': subint_proc,
 }
