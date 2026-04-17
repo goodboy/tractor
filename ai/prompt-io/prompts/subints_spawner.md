@@ -8,8 +8,8 @@ https://github.com/goodboy/tractor/issues/379
 
 Part of this work should include,
 
-- modularizing and thus better origing the `.spawn.*` subpkg by
-  breaking up various backends currently in `spawn._spawn` in to
+- modularizing and thus better organizing the `.spawn.*` subpkg by
+  breaking up various backends currently in `spawn._spawn` into
   separate submods where it makes sense.
 
 - add a new `._subint` backend which tries to keep as much of the
@@ -27,7 +27,7 @@ Part of this work should include,
     with subprocs, but explicit public escape hatches to enable rigorously
     managed shm channels for high performance apps.
 
-- all tests should be (able to be) paramatrized to use the new
+- all tests should be (able to be) parameterized to use the new
   `subints` backend and enabled by flag in the harness using the
   existing `pytest --spawn-backend <spawn-backend>` support offered in
   the `open_root_actor()` and `.testing._pytest` harness override
