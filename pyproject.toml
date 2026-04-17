@@ -9,7 +9,7 @@ name = "tractor"
 version = "0.1.0a6dev0"
 description = 'structured concurrent `trio`-"actors"'
 authors = [{ name = "Tyler Goodlet", email = "goodboy_foss@protonmail.com" }]
-requires-python = ">=3.12, <3.15"
+requires-python = ">=3.14, <3.15"
 readme = "docs/README.rst"
 license = "AGPL-3.0-or-later"
 keywords = [
@@ -48,7 +48,7 @@ dependencies = [
   "pdbp>=1.8.2,<2", # windows only (from `pdbp`)
   # typed IPC msging
   "msgspec>=0.19.0",
-  "cffi>=1.17.1",
+  # "cffi>=1.17.1",
   "bidict>=0.23.1",
   "multiaddr>=0.2.0",
   "platformdirs>=4.4.0",
@@ -64,7 +64,7 @@ dev = [
 ]
 devx = [
   # `tractor.devx` tooling
-  "greenback>=1.2.1,<2",
+  # "greenback>=1.2.1,<2",  # TODO? 3.14 greenlet on nix?
   "stackscope>=0.2.2,<0.3",
   # ^ requires this?
   "typing-extensions>=4.14.1",
