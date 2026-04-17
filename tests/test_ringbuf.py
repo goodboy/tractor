@@ -17,6 +17,9 @@ from tractor._testing.samples import (
 # in case you don't want to melt your cores, uncomment dis!
 pytestmark = pytest.mark.skip
 
+# XXX `cffi` dun build on py3.14 yet..
+cffi = pytest.importorskip("cffi")
+
 
 @tractor.context
 async def child_read_shm(
