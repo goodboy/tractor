@@ -15,7 +15,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Machinery for actor process spawning using multiple backends.
+Top level routines & machinery for actor-as-process/subint spawning
+over multiple backends.
 
 """
 from __future__ import annotations
@@ -35,7 +36,6 @@ from trio import TaskStatus
 
 from ..devx import debug
 from tractor.runtime._state import (
-    debug_mode,
     _runtime_vars,
 )
 from tractor.log import get_logger
@@ -47,7 +47,6 @@ from tractor.msg import types as msgtypes
 
 if TYPE_CHECKING:
     from tractor.ipc import (
-        _server,
         Channel,
     )
     from tractor.runtime._supervise import ActorNursery

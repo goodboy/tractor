@@ -57,7 +57,6 @@ from ._spawn import (
 if TYPE_CHECKING:
     from tractor.ipc import (
         _server,
-        Channel,
     )
     from tractor.runtime._supervise import ActorNursery
 

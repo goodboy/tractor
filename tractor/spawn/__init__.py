@@ -17,29 +17,24 @@
 '''
 Actor process spawning machinery using multiple backends.
 
-Layout
-------
-- `._spawn`: the "core" supervisor machinery — spawn-method
-  registry (`SpawnMethodKey`, `_methods`, `_spawn_method`,
-  `_ctx`, `try_set_start_method`), the `new_proc` dispatcher,
-  and the cross-backend helpers `exhaust_portal`,
-  `cancel_on_completion`, `hard_kill`, `soft_kill`,
-  `proc_waiter`.
+- `._spawn`: cross-backend subactor-as-sub[proc|int] spawning
+  and supervision routines.
 
 Per-backend submodules (each exposes a single `*_proc()`
 coroutine registered in `_spawn._methods`):
 
 - `._trio`: the `trio`-native subprocess backend (default,
   all platforms), spawns via `trio.lowlevel.open_process()`.
-- `._mp`: the stdlib `multiprocessing` backends —
-  `'mp_spawn'` and `'mp_forkserver'` variants — driven by
-  the `mp.context` bound to `_spawn._ctx`.
+
+- `._mp`: the stdlib `multiprocessing` backend variants — driven by
+  the `mp.context` bound to `_spawn._ctx`:
+  * `'mp_spawn'`,
+  * `'mp_forkserver'` 
 
 Entry-point helpers live in `._entry`/`._mp_fixup_main`/
 `._forkserver_override`.
 
-NOTE: to avoid circular imports, this ``__init__`` does NOT
-eagerly import submodules. Use direct module paths like
-``tractor.spawn._spawn`` or ``tractor.spawn._trio`` instead.
+NOTE: to avoid circular imports, this ``__init__`` does NOT eagerly
+import submodules.
 
 '''

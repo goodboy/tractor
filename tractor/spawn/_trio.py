@@ -15,11 +15,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-The `trio` subprocess spawning backend.
+The `trio`-subprocess backend; the default for cross-platform.
 
 Spawns sub-actors as fresh OS processes driven by
-`trio.lowlevel.open_process()` — our default, cross-platform
-spawn method.
+`trio.lowlevel.open_process()`.
 
 '''
 from __future__ import annotations
@@ -40,7 +39,7 @@ from tractor.runtime._state import (
     current_actor,
     is_root_process,
     debug_mode,
-    _runtime_vars,
+    get_runtime_vars,
 )
 from tractor.log import get_logger
 from tractor.discovery._addr import UnwrappedAddress
@@ -60,7 +59,6 @@ from ._spawn import (
 if TYPE_CHECKING:
     from tractor.ipc import (
         _server,
-        Channel,
     )
     from tractor.runtime._supervise import ActorNursery
 
@@ -248,7 +246,7 @@ async def trio_proc(
                             await proc.wait()
 
                 await debug.maybe_wait_for_debugger(
-                    child_in_debug=_runtime_vars.get(
+                    child_in_debug=get_runtime_vars().get(
                         '_debug_mode', False
                     ),
                     header_msg=(
