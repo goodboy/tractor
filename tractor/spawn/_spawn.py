@@ -117,12 +117,17 @@ def try_set_start_method(
             _ctx = None
 
         case 'subint':
-            # subints need no `mp.context`; feature-gate 3.14+
+            # subints need no `mp.context`; feature-gate on the
+            # private `_interpreters` C module (available py3.13+
+            # via cpython's internal stdlib — predates the PEP 734
+            # public wrapper which only lands in py3.14).
             from ._subint import _has_subints
             if not _has_subints:
                 raise RuntimeError(
-                    f'Spawn method {key!r} requires Python 3.14+ '
-                    f'(stdlib `concurrent.interpreters`, PEP 734).\n'
+                    f'Spawn method {key!r} requires Python 3.13+ '
+                    f'(private stdlib `_interpreters` C module; '
+                    f'the public `concurrent.interpreters` wrapper '
+                    f'lands in py3.14).\n'
                     f'Current runtime: {sys.version}'
                 )
             _ctx = None
