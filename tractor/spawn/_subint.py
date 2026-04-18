@@ -115,6 +115,17 @@ if TYPE_CHECKING:
 log = get_logger('tractor')
 
 
+# How long we'll wait (in seconds) inside the shielded soft-kill
+# / teardown blocks before abandoning the sub-interpreter to its
+# fate. See the "hard-kill" comments at the two shield sites.
+#
+# Unbounded shields are a Bad Idea with subints: because CPython
+# doesn't deliver SIGINT into sub-interpreters and the legacy
+# config shares the main GIL, a stuck subint can otherwise lock
+# the parent trio loop (and the user's Ctrl-C) indefinitely.
+_HARD_KILL_TIMEOUT: float = 3.0
+
+
 async def subint_proc(
     name: str,
     actor_nursery: ActorNursery,
@@ -220,10 +231,15 @@ async def subint_proc(
                 # teardown); nothing to signal.
                 pass
 
+    # NOTE: `daemon=True` so a stuck subint can never block
+    # process exit — if our `_HARD_KILL_TIMEOUT` paths below
+    # have to abandon this thread, Python's interpreter
+    # shutdown won't wait for it forever. Tradeoff: any
+    # subint state still live at abandon-time may leak.
     driver_thread = threading.Thread(
         target=_subint_target,
         name=f'subint-driver[{interp_id}]',
-        daemon=False,
+        daemon=True,
     )
 
     try:
@@ -283,7 +299,23 @@ async def subint_proc(
                 try:
                     await subint_exited.wait()
                 except trio.Cancelled:
-                    with trio.CancelScope(shield=True):
+                    # Bounded shield: we want to ATTEMPT a
+                    # graceful cancel via the portal, but we
+                    # MUST NOT let the shield trap user
+                    # Ctrl-C / parent teardown forever if the
+                    # subint is already unreachable (e.g., the
+                    # IPC channel was broken — which is exactly
+                    # what `test_ipc_channel_break_during_stream`
+                    # exercises). After `_HARD_KILL_TIMEOUT` we
+                    # drop the shield and let `Cancelled`
+                    # propagate; the outer teardown will force
+                    # things along.
+                    with (
+                        trio.CancelScope(shield=True),
+                        trio.move_on_after(
+                            _HARD_KILL_TIMEOUT,
+                        ) as cs,
+                    ):
                         log.cancel(
                             f'Soft-killing subint sub-actor\n'
                             f'c)=> {chan.aid.reprol()}\n'
@@ -296,9 +328,20 @@ async def subint_proc(
                             trio.ClosedResourceError,
                         ):
                             # channel already down — subint will
-                            # exit on its own timeline
+                            # exit on its own timeline (or won't,
+                            # in which case the timeout below
+                            # is our escape).
                             pass
                         await subint_exited.wait()
+                    if cs.cancelled_caught:
+                        log.warning(
+                            f'Soft-kill of subint sub-actor timed '
+                            f'out after {_HARD_KILL_TIMEOUT}s — '
+                            f'subint may still be running; '
+                            f'escalating to thread-abandon.\n'
+                            f'   |_interp_id={interp_id}\n'
+                            f'   |_aid={chan.aid.reprol()}\n'
+                        )
                     raise
                 finally:
                     lifecycle_n.cancel_scope.cancel()
@@ -312,9 +355,44 @@ async def subint_proc(
             # teardown. Off-load the blocking `.join()` to a
             # cache thread (which carries no subint tstate of
             # its own, so no cache conflict).
-            with trio.CancelScope(shield=True):
+            #
+            # Bounded shield: if the driver thread never exits
+            # (soft-kill failed above, subint stuck in
+            # non-checkpointing Python, etc.) we MUST abandon
+            # it rather than wedge the parent forever. The
+            # thread is `daemon=True` so proc-exit won't block
+            # on it either. Subsequent `_interpreters.destroy()`
+            # on a still-running subint raises `InterpreterError`
+            # which we log and swallow — the abandoned subint
+            # will be torn down by process exit.
+            with (
+                trio.CancelScope(shield=True),
+                trio.move_on_after(_HARD_KILL_TIMEOUT) as cs,
+            ):
                 if driver_thread.is_alive():
-                    await trio.to_thread.run_sync(driver_thread.join)
+                    # XXX `abandon_on_cancel=True` is load-bearing:
+                    # the default (False) makes `to_thread.run_sync`
+                    # ignore the enclosing `move_on_after` and
+                    # block until `driver_thread.join()` returns —
+                    # which is exactly what we can't wait for here.
+                    await trio.to_thread.run_sync(
+                        driver_thread.join,
+                        abandon_on_cancel=True,
+                    )
+            if cs.cancelled_caught:
+                log.warning(
+                    f'Subint driver thread did not exit within '
+                    f'{_HARD_KILL_TIMEOUT}s — abandoning.\n'
+                    f'   |_interp_id={interp_id}\n'
+                    f'   |_thread={driver_thread.name}\n'
+                    f'(This usually means portal-cancel could '
+                    f'not be delivered — e.g., IPC channel was '
+                    f'already broken. The subint will continue '
+                    f'running until process exit terminates the '
+                    f'daemon thread.)'
+                )
+
+            with trio.CancelScope(shield=True):
                 try:
                     _interpreters.destroy(interp_id)
                     log.runtime(
@@ -325,7 +403,11 @@ async def subint_proc(
                 except _interpreters.InterpreterError as e:
                     log.warning(
                         f'Could not destroy sub-interpreter '
-                        f'{interp_id}: {e}'
+                        f'{interp_id}: {e}\n'
+                        f'(expected if the driver thread was '
+                        f'abandoned above; the subint is still '
+                        f'running and will be reaped at process '
+                        f'exit.)'
                     )
 
     finally:
