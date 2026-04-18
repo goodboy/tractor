@@ -25,9 +25,13 @@ IPC-based actor boundary.
 
 Availability
 ------------
-Requires Python 3.14+ for the stdlib `concurrent.interpreters`
-module. On older runtimes the module still imports (so the
-registry stays introspectable) but `subint_proc()` raises.
+Runs on py3.13+ via the *private* stdlib `_interpreters` C
+module (which predates the py3.14 public
+`concurrent.interpreters` stdlib wrapper). See the comment
+above the `_interpreters` import below for the trade-offs
+driving the private-API choice. On older runtimes the
+module still imports (so the registry stays
+introspectable) but `subint_proc()` raises.
 
 '''
 from __future__ import annotations
@@ -43,18 +47,43 @@ from trio import TaskStatus
 
 
 # NOTE: we reach into the *private* `_interpreters` C module
-# rather than using the nice `concurrent.interpreters` public
-# API because the latter only exposes the `'isolated'` subint
-# config (PEP 684, per-interp GIL). Under that config, any C
-# extension lacking the `Py_mod_multiple_interpreters` slot
-# refuses to import — which includes `msgspec` (used all over
-# tractor's IPC layer) as of 0.19.x. Dropping to the `'legacy'`
-# config keeps the main GIL + lets existing C extensions load
-# normally while preserving the state-isolation we actually
-# need for the actor model (separate `sys.modules`, `__main__`,
-# globals). Once msgspec (and similar deps) opt-in to PEP 684
-# we can migrate to the public `interpreters.create()` API and
-# pick up per-interp-GIL parallelism for free.
+# rather than `concurrent.interpreters`' public API because the
+# public API only exposes PEP 734's `'isolated'` config
+# (per-interp GIL). Under `'isolated'`, any C extension missing
+# the `Py_mod_multiple_interpreters` slot (PEP 684) refuses to
+# import; in our stack that's `msgspec` — which tractor uses
+# pervasively in the IPC layer — so isolated-mode subints can't
+# finish booting the sub-actor's `trio.run()`. msgspec PEP 684
+# support is open upstream at jcrist/msgspec#563.
+#
+# Dropping to the `'legacy'` config keeps the main GIL + lets
+# existing C extensions load normally while preserving the
+# state isolation we actually care about for the actor model
+# (separate `sys.modules` / `__main__` / globals). Side win:
+# the private `_interpreters` module has shipped since py3.13
+# (it predates the PEP 734 stdlib landing), so the `subint`
+# backend can run on py3.13+ despite `concurrent.interpreters`
+# itself being 3.14+.
+#
+# Migration path: when msgspec (jcrist/msgspec#563) and any
+# other PEP 684-holdout C deps opt-in, we can switch to the
+# public `concurrent.interpreters.create()` API (isolated
+# mode) and pick up per-interp-GIL parallelism for free.
+#
+# References:
+# - PEP 734 (`concurrent.interpreters` public API):
+#   https://peps.python.org/pep-0734/
+# - PEP 684 (per-interpreter GIL / `Py_mod_multiple_interpreters`):
+#   https://peps.python.org/pep-0684/
+# - stdlib docs (3.14+):
+#   https://docs.python.org/3.14/library/concurrent.interpreters.html
+# - CPython public wrapper source (`Lib/concurrent/interpreters/`):
+#   https://github.com/python/cpython/tree/main/Lib/concurrent/interpreters
+# - CPython private C ext source
+#   (`Modules/_interpretersmodule.c`):
+#   https://github.com/python/cpython/blob/main/Modules/_interpretersmodule.c
+# - msgspec PEP 684 upstream tracker:
+#   https://github.com/jcrist/msgspec/issues/563
 try:
     import _interpreters  # type: ignore
     _has_subints: bool = True
@@ -123,8 +152,9 @@ async def subint_proc(
     '''
     if not _has_subints:
         raise RuntimeError(
-            f'The {"subint"!r} spawn backend requires Python 3.14+ '
-            f'(stdlib `concurrent.interpreters`, PEP 734).\n'
+            f'The {"subint"!r} spawn backend requires Python 3.13+ '
+            f'(private stdlib `_interpreters` C module; the public '
+            f'`concurrent.interpreters` wrapper lands in py3.14).\n'
             f'Current runtime: {sys.version}'
         )
 
