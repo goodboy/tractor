@@ -117,16 +117,21 @@ def try_set_start_method(
 
         case 'subint':
             # subints need no `mp.context`; feature-gate on the
-            # private `_interpreters` C module (available py3.13+
-            # via cpython's internal stdlib — predates the PEP 734
-            # public wrapper which only lands in py3.14).
+            # py3.14 public `concurrent.interpreters` wrapper
+            # (PEP 734). We actually drive the private
+            # `_interpreters` C module in legacy mode — see
+            # `tractor.spawn._subint` for why — but py3.13's
+            # vintage of that private module hangs under our
+            # multi-trio usage, so we refuse it via the public-
+            # module presence check.
             from ._subint import _has_subints
             if not _has_subints:
                 raise RuntimeError(
-                    f'Spawn method {key!r} requires Python 3.13+ '
-                    f'(private stdlib `_interpreters` C module; '
-                    f'the public `concurrent.interpreters` wrapper '
-                    f'lands in py3.14).\n'
+                    f'Spawn method {key!r} requires Python 3.14+.\n'
+                    f'(On py3.13 the private `_interpreters` C '
+                    f'module exists but tractor\'s spawn flow '
+                    f'wedges — see `tractor.spawn._subint` '
+                    f'docstring for details.)\n'
                     f'Current runtime: {sys.version}'
                 )
             _ctx = None
