@@ -182,6 +182,32 @@ def test_subint_non_checkpointing_child(
     - ~3s: `_HARD_KILL_TIMEOUT` (thread-join wait)
     - margin
 
+    KNOWN ISSUE (Ctrl-C-able hang):
+    -------------------------------
+    This test currently hangs past the hard-kill timeout for
+    reasons unrelated to the subint teardown itself — after
+    the subint is destroyed, a parent-side trio task appears
+    to park on an orphaned IPC channel (no clean EOF
+    delivered to a waiting receive). Unlike the
+    SIGINT-starvation sibling case in
+    `test_stale_entry_is_deleted`, this hang IS Ctrl-C-able
+    (`strace` shows SIGINT wakeup-fd `write() = 1`, not
+    `EAGAIN`) — i.e. the main trio loop is still iterating
+    normally. That makes this *our* bug to fix, not a
+    CPython-level limitation.
+
+    See `ai/conc-anal/subint_cancel_delivery_hang_issue.md`
+    for the full analysis + candidate fix directions
+    (explicit parent-side channel abort in `subint_proc`
+    teardown being the most likely surgical fix).
+
+    The sibling `ai/conc-anal/subint_sigint_starvation_issue.md`
+    documents the *other* hang class (abandoned-legacy-subint
+    thread + shared-GIL starvation → signal-wakeup-fd pipe
+    fills → SIGINT silently dropped) — that one is
+    structurally blocked on msgspec PEP 684 adoption and is
+    NOT what this test is hitting.
+
     '''
     deadline: float = 15.0
     with dump_on_hang(
