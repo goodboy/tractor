@@ -198,6 +198,7 @@ all_bullets = true
 
 [tool.pytest.ini_options]
 minversion = '6.0'
+timeout = 200  # per-test hard limit
 # https://docs.pytest.org/en/stable/reference/reference.html#configuration-options
 testpaths = [
   'tests'
