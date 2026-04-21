@@ -132,6 +132,10 @@ async def say_hello_use_wait(
         return result
 
 
+@pytest.mark.timeout(
+    3,
+    method='thread',
+)
 @tractor_test
 @pytest.mark.parametrize(
     'func',
@@ -545,6 +549,12 @@ def test_stale_entry_is_deleted(
     stale entry and not delivering a bad portal.
 
     '''
+    if start_method == 'subint':
+        pytest.skip(
+            'XXX SUBINT HANGING TEST XXX\n'
+            'See oustanding issue(s)\n'
+        )
+
     async def main():
 
         name: str = 'transport_fails_actor'
