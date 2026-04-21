@@ -1,6 +1,10 @@
 version = 1
 revision = 3
 requires-python = ">=3.13, <3.15"
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version < '3.14'",
+]
 
 [[package]]
 name = "async-generator"
@@ -151,9 +155,9 @@ name = "greenback"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "greenlet" },
-    { name = "outcome" },
-    { name = "sniffio" },
+    { name = "greenlet", marker = "python_full_version < '3.14'" },
+    { name = "outcome", marker = "python_full_version < '3.14'" },
+    { name = "sniffio", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dc/c1/ab3a42c0f3ed56df9cd33de1539b3198d98c6ccbaf88a73d6be0b72d85e0/greenback-1.2.1.tar.gz", hash = "sha256:de3ca656885c03b96dab36079f3de74bb5ba061da9bfe3bb69dccc866ef95ea3", size = 42597, upload-time = "2024-02-20T21:23:13.239Z" }
 wheels = [
@@ -654,7 +658,6 @@ version = "0.1.0a6.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "bidict" },
-    { name = "cffi" },
     { name = "colorlog" },
     { name = "msgspec" },
     { name = "multiaddr" },
@@ -667,7 +670,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "greenback" },
     { name = "pexpect" },
     { name = "prompt-toolkit" },
     { name = "psutil" },
@@ -678,9 +680,11 @@ dev = [
     { name = "xonsh" },
 ]
 devx = [
-    { name = "greenback" },
     { name = "stackscope" },
     { name = "typing-extensions" },
+]
+eventfd = [
+    { name = "cffi", marker = "python_full_version < '3.14'" },
 ]
 lint = [
     { name = "ruff" },
@@ -691,6 +695,12 @@ repl = [
     { name = "pyperclip" },
     { name = "xonsh" },
 ]
+subints = [
+    { name = "msgspec", marker = "python_full_version >= '3.14'" },
+]
+sync-pause = [
+    { name = "greenback", marker = "python_full_version < '3.14'" },
+]
 testing = [
     { name = "pexpect" },
     { name = "pytest" },
@@ -699,7 +709,6 @@ testing = [
 [package.metadata]
 requires-dist = [
     { name = "bidict", specifier = ">=0.23.1" },
-    { name = "cffi", specifier = ">=1.17.1" },
     { name = "colorlog", specifier = ">=6.8.2,<7" },
     { name = "msgspec", specifier = ">=0.20.0" },
     { name = "multiaddr", specifier = ">=0.2.0" },
@@ -712,7 +721,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "greenback", specifier = ">=1.2.1,<2" },
     { name = "pexpect", specifier = ">=4.9.0,<5" },
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "psutil", specifier = ">=7.0.0" },
@@ -723,10 +731,10 @@ dev = [
     { name = "xonsh", specifier = ">=0.23.8" },
 ]
 devx = [
-    { name = "greenback", specifier = ">=1.2.1,<2" },
     { name = "stackscope", specifier = ">=0.2.2,<0.3" },
     { name = "typing-extensions", specifier = ">=4.14.1" },
 ]
+eventfd = [{ name = "cffi", marker = "python_full_version == '3.13.*'", specifier = ">=1.17.1" }]
 lint = [{ name = "ruff", specifier = ">=0.9.6" }]
 repl = [
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
@@ -734,6 +742,8 @@ repl = [
     { name = "pyperclip", specifier = ">=1.9.0" },
     { name = "xonsh", specifier = ">=0.23.8" },
 ]
+subints = [{ name = "msgspec", marker = "python_full_version >= '3.14'", specifier = ">=0.21.0" }]
+sync-pause = [{ name = "greenback", marker = "python_full_version == '3.13.*'", specifier = ">=1.2.1,<2" }]
 testing = [
     { name = "pexpect", specifier = ">=4.9.0,<5" },
     { name = "pytest", specifier = ">=8.3.5" },
@@ -849,6 +859,7 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/4a/2aab8300ad218dfc7678c34d5f703f09df5681fecc6e66d48c951ef58049/xonsh-0.23.8-py311-none-any.whl", hash = "sha256:4bab3e405643df2cc78ec2cac13241471841796fe710386d2179666aae8a5f9c", size = 799846, upload-time = "2026-05-30T04:47:21.211Z" },
     { url = "https://files.pythonhosted.org/packages/87/ec/aa66ef6046f90769dd8fcb3ddca9d00282d12e3d73645abbf12f190f17cf/xonsh-0.23.8-py312-none-any.whl", hash = "sha256:c7d0f0fba0cafe0bd75bf202820aeffc74b52943fa27d98d3b4346793f6ba493", size = 799868, upload-time = "2026-05-30T04:47:19.158Z" },
     { url = "https://files.pythonhosted.org/packages/12/fe/2d757d82b57332f1c6cd3f8c168fbcf060a275895a763542255ae1c53d75/xonsh-0.23.8-py313-none-any.whl", hash = "sha256:1b7335522a6ecd63f0d84151977a7a9050874d3ecec00cf79919d0770bebb1b4", size = 800388, upload-time = "2026-05-30T04:47:18.47Z" },
+    { url = "https://files.pythonhosted.org/packages/80/96/567bb3131655ff73c821e8a030c53707ced6c8840330a859f67bbaefbd16/xonsh-0.23.8-py314-none-any.whl", hash = "sha256:2a411fc47958c6107b3e13372655d18c52be98368e2159a1910cfde77124b3b1", size = 800352, upload-time = "2026-05-30T04:47:14.812Z" },
 ]
 
 [[package]]
