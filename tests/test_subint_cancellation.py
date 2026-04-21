@@ -161,6 +161,20 @@ def test_subint_happy_teardown(
         trio.run(partial(_happy_path, reg_addr, deadline))
 
 
+# Wall-clock bound via `pytest-timeout` (`method='thread'`)
+# as defense-in-depth over the inner `trio.fail_after(15)`.
+# Under the orphaned-channel hang class described in
+# `ai/conc-anal/subint_cancel_delivery_hang_issue.md`, SIGINT
+# is still deliverable and this test *should* be unwedgeable
+# by the inner trio timeout — but sibling subint-backend
+# tests in this repo have also exhibited the
+# `subint_sigint_starvation_issue.md` GIL-starvation flavor,
+# so `method='thread'` keeps us safe in case ordering or
+# load shifts the failure mode.
+@pytest.mark.timeout(
+    3,  # NOTE never passes pre-3.14+ subints support.
+    method='thread',
+)
 def test_subint_non_checkpointing_child(
     reg_addr: tuple[str, int|str],
 ) -> None:
