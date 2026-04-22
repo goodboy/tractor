@@ -139,7 +139,9 @@ def pytest_addoption(
 
 
 @pytest.fixture(scope='session', autouse=True)
-def loglevel(request) -> str:
+def loglevel(
+    request: pytest.FixtureRequest,
+) -> str:
     import tractor
     orig = tractor.log._default_loglevel
     level = tractor.log._default_loglevel = request.config.option.loglevel
@@ -156,7 +158,7 @@ def loglevel(request) -> str:
 
 @pytest.fixture(scope='function')
 def test_log(
-    request,
+    request: pytest.FixtureRequest,
     loglevel: str,
 ) -> tractor.log.StackLevelAdapter:
     '''

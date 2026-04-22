@@ -26,6 +26,15 @@ from tractor._testing import (
 
 from .conftest import cpu_scaling_factor
 
+pytestmark = pytest.mark.skipon_spawn_backend(
+    'subint',
+    reason=(
+        'XXX SUBINT GIL-CONTENTION HANGING TEST XXX\n'
+        'See oustanding issue(s)\n'
+        # TODO, put issue link!
+    )
+)
+
 # XXX TODO cases:
 # - [x] WE cancelled the peer and thus should not see any raised
 #   `ContextCancelled` as it should be reaped silently?

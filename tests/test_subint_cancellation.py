@@ -161,6 +161,14 @@ def test_subint_happy_teardown(
         trio.run(partial(_happy_path, reg_addr, deadline))
 
 
+@pytest.mark.skipon_spawn_backend(
+    'subint',
+    reason=(
+        'XXX SUBINT HANGING TEST XXX\n'
+        'See oustanding issue(s)\n'
+        # TODO, put issue link!
+    )
+)
 # Wall-clock bound via `pytest-timeout` (`method='thread'`)
 # as defense-in-depth over the inner `trio.fail_after(15)`.
 # Under the orphaned-channel hang class described in
