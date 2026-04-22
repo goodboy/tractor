@@ -72,6 +72,13 @@ SpawnMethodKey = Literal[
     # `ai/conc-anal/subint_fork_blocked_by_cpython_post_fork_issue.md`
     # + issue #379 for the full analysis.
     'subint_fork',
+    # EXPERIMENTAL — the `subint_fork` workaround. `os.fork()`
+    # from a non-trio worker thread (never entered a subint)
+    # is CPython-legal and works cleanly; forked child runs
+    # `tractor._child._actor_child_main()` against a trio
+    # runtime, exactly like `trio_proc` but via fork instead
+    # of subproc-exec. See `tractor.spawn._subint_forkserver`.
+    'subint_forkserver',
 ]
 _spawn_method: SpawnMethodKey = 'trio'
 
@@ -124,13 +131,14 @@ def try_set_start_method(
         case 'trio':
             _ctx = None
 
-        case 'subint' | 'subint_fork':
-            # Both subint backends need no `mp.context`; both
-            # feature-gate on the py3.14 public
+        case 'subint' | 'subint_fork' | 'subint_forkserver':
+            # All subint-family backends need no `mp.context`;
+            # all three feature-gate on the py3.14 public
             # `concurrent.interpreters` wrapper (PEP 734). See
             # `tractor.spawn._subint` for the detailed
-            # reasoning and the distinction between the two
-            # (`subint_fork` is WIP/experimental).
+            # reasoning. `subint_fork` is blocked at the
+            # CPython level (raises `NotImplementedError`);
+            # `subint_forkserver` is the working workaround.
             from ._subint import _has_subints
             if not _has_subints:
                 raise RuntimeError(
@@ -469,6 +477,7 @@ from ._trio import trio_proc
 from ._mp import mp_proc
 from ._subint import subint_proc
 from ._subint_fork import subint_fork_proc
+from ._subint_forkserver import subint_forkserver_proc
 
 
 # proc spawning backend target map
@@ -483,4 +492,8 @@ _methods: dict[SpawnMethodKey, Callable] = {
     # clean `NotImplementedError` with pointer to the analysis,
     # rather than an "invalid backend" error.
     'subint_fork': subint_fork_proc,
+    # WIP — fork-from-non-trio-worker-thread, works on py3.14+
+    # (validated via `ai/conc-anal/subint_fork_from_main_thread_smoketest.py`).
+    # See `tractor.spawn._subint_forkserver`.
+    'subint_forkserver': subint_forkserver_proc,
 }
