@@ -279,8 +279,10 @@ def pytest_addoption(
     )
 
 
-def pytest_configure(config):
-    backend = config.option.spawn_backend
+def pytest_configure(
+    config: pytest.Config,
+):
+    backend: str = config.option.spawn_backend
     from tractor.spawn._spawn import try_set_start_method
     try:
         try_set_start_method(backend)
@@ -296,6 +298,46 @@ def pytest_configure(config):
         'markers',
         'no_tpt(proto_key): test will (likely) not behave with tpt backend'
     )
+    config.addinivalue_line(
+        'markers',
+        'skipon_spawn_backend(*start_methods, reason=None): '
+        'skip this test under any of the given `--spawn-backend` '
+        'values; useful for backend-specific known-hang / -borked '
+        'cases (e.g. the `subint` GIL-starvation class documented '
+        'in `ai/conc-anal/subint_sigint_starvation_issue.md`).'
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Function],
+):
+    '''
+    Expand any `@pytest.mark.skipon_spawn_backend('<backend>'[,
+    ...], reason='...')` markers into concrete
+    `pytest.mark.skip(reason=...)` calls for tests whose
+    backend-arg set contains the active `--spawn-backend`.
+
+    Uses `item.iter_markers(name=...)` which walks function +
+    class + module-level marks in the correct scope order (and
+    handles both the single-`MarkDecorator` and `list[Mark]`
+    forms of a module-level `pytestmark`) — so the same marker
+    works at any level a user puts it.
+
+    '''
+    backend: str = config.option.spawn_backend
+    default_reason: str = f'Borked on --spawn-backend={backend!r}'
+    for item in items:
+        for mark in item.iter_markers(name='skipon_spawn_backend'):
+            if backend in mark.args:
+                reason: str = mark.kwargs.get(
+                    'reason',
+                    default_reason,
+                )
+                item.add_marker(pytest.mark.skip(reason=reason))
+                # first matching mark wins; no value in stacking
+                # multiple `skip`s on the same item.
+                break
 
     # `--enable-stackscope`: install SIGUSR1 → trio task-tree
     # dump in pytest itself + propagate to every subactor via
@@ -330,7 +372,9 @@ def pytest_configure(config):
 
 
 @pytest.fixture(scope='session')
-def debug_mode(request) -> bool:
+def debug_mode(
+    request: pytest.FixtureRequest,
+) -> bool:
     '''
     Flag state for whether `--tpdb` (for `tractor`-py-debugger)
     was passed to the test run.
@@ -480,7 +524,9 @@ def spawn_backend(
 
 
 @pytest.fixture(scope='session')
-def tpt_protos(request) -> list[str]:
+def tpt_protos(
+    request: pytest.FixtureRequest,
+) -> list[str]:
 
     # allow quoting on CLI
     proto_keys: list[str] = [
@@ -508,7 +554,7 @@ def tpt_protos(request) -> list[str]:
     autouse=True,
 )
 def tpt_proto(
-    request,
+    request: pytest.FixtureRequest,
     tpt_protos: list[str],
 ) -> str:
     proto_key: str = tpt_protos[0]
@@ -560,7 +606,6 @@ def pytest_generate_tests(
     metafunc: pytest.Metafunc,
 ):
     spawn_backend: str = metafunc.config.option.spawn_backend
-
     if not spawn_backend:
         # XXX some weird windows bug with `pytest`?
         spawn_backend = 'trio'
