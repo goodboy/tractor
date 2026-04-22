@@ -53,11 +53,27 @@ and inherited parent state.
 
 Status
 ------
-**EXPERIMENTAL** — primitives only. Not yet wired into
-`tractor.spawn._spawn`'s backend registry. The next step is
-to drive these from a parent-side `trio.run()` and hook the
-returned child pid into tractor's normal actor-nursery/IPC
-machinery.
+**EXPERIMENTAL** — wired as the `'subint_forkserver'` entry
+in `tractor.spawn._spawn._methods` and selectable via
+`try_set_start_method('subint_forkserver')` / `--spawn-backend
+=subint_forkserver`. Parent-side spawn, child-side runtime
+bring-up and normal portal-RPC teardown are validated by the
+backend-tier test in
+`tests/spawn/test_subint_forkserver.py::test_subint_forkserver_spawn_basic`.
+
+Still-open work (tracked on tractor #379):
+
+- no cancellation / hard-kill stress coverage yet (counterpart
+  to `tests/test_subint_cancellation.py` for the plain
+  `subint` backend),
+- child-side "subint-hosted root runtime" mode (the second
+  half of the envisioned arch — currently the forked child
+  runs plain `_trio_main` via `spawn_method='trio'`; the
+  subint-hosted variant is still the future step gated on
+  msgspec PEP 684 support),
+- thread-hygiene audit of the two `threading.Thread`
+  primitives below, gated on the same msgspec unblock
+  (see TODO section further down).
 
 TODO — cleanup gated on msgspec PEP 684 support
 -----------------------------------------------
@@ -93,16 +109,37 @@ See also
 from __future__ import annotations
 import os
 import signal
+import sys
 import threading
+from functools import partial
 from typing import (
+    Any,
     Callable,
     TYPE_CHECKING,
 )
 
+import trio
+from trio import TaskStatus
+
 from tractor.log import get_logger
+from tractor.msg import (
+    types as msgtypes,
+    pretty_struct,
+)
+from tractor.runtime._state import current_actor
+from tractor.runtime._portal import Portal
+from ._spawn import (
+    cancel_on_completion,
+    soft_kill,
+)
 
 if TYPE_CHECKING:
-    pass
+    from tractor.discovery._addr import UnwrappedAddress
+    from tractor.ipc import (
+        _server,
+    )
+    from tractor.runtime._runtime import Actor
+    from tractor.runtime._supervise import ActorNursery
 
 
 log = get_logger('tractor')
@@ -360,3 +397,265 @@ def run_subint_in_worker_thread(
         )
     if err is not None:
         raise err
+
+
+class _ForkedProc:
+    '''
+    Thin `trio.Process`-compatible shim around a raw OS pid
+    returned by `fork_from_worker_thread()`, exposing just
+    enough surface for the `soft_kill()` / hard-reap pattern
+    borrowed from `trio_proc()`.
+
+    Unlike `trio.Process`, we have no direct handles on the
+    child's std-streams (fork-without-exec inherits the
+    parent's FDs, but we don't marshal them into this
+    wrapper) — `.stdin`/`.stdout`/`.stderr` are all `None`,
+    which matches what `soft_kill()` handles via its
+    `is not None` guards.
+
+    '''
+    def __init__(self, pid: int):
+        self.pid: int = pid
+        self._returncode: int | None = None
+        # `soft_kill`/`hard_kill` check these for pipe
+        # teardown — all None since we didn't wire up pipes
+        # on the fork-without-exec path.
+        self.stdin = None
+        self.stdout = None
+        self.stderr = None
+
+    def poll(self) -> int | None:
+        '''
+        Non-blocking liveness probe. Returns `None` if the
+        child is still running, else its exit code (negative
+        for signal-death, matching `subprocess.Popen`
+        convention).
+
+        '''
+        if self._returncode is not None:
+            return self._returncode
+        try:
+            waited_pid, status = os.waitpid(self.pid, os.WNOHANG)
+        except ChildProcessError:
+            # already reaped (or never existed) — treat as
+            # clean exit for polling purposes.
+            self._returncode = 0
+            return 0
+        if waited_pid == 0:
+            return None
+        self._returncode = self._parse_status(status)
+        return self._returncode
+
+    @property
+    def returncode(self) -> int | None:
+        return self._returncode
+
+    async def wait(self) -> int:
+        '''
+        Async blocking wait for the child's exit, off-loaded
+        to a trio cache thread so we don't block the event
+        loop on `waitpid()`. Safe to call multiple times;
+        subsequent calls return the cached rc without
+        re-issuing the syscall.
+
+        '''
+        if self._returncode is not None:
+            return self._returncode
+        _, status = await trio.to_thread.run_sync(
+            os.waitpid,
+            self.pid,
+            0,
+            abandon_on_cancel=False,
+        )
+        self._returncode = self._parse_status(status)
+        return self._returncode
+
+    def kill(self) -> None:
+        '''
+        OS-level `SIGKILL` to the child. Swallows
+        `ProcessLookupError` (already dead).
+
+        '''
+        try:
+            os.kill(self.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def _parse_status(self, status: int) -> int:
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        elif os.WIFSIGNALED(status):
+            # negative rc by `subprocess.Popen` convention
+            return -os.WTERMSIG(status)
+        return 0
+
+    def __repr__(self) -> str:
+        return (
+            f'<_ForkedProc pid={self.pid} '
+            f'returncode={self._returncode}>'
+        )
+
+
+async def subint_forkserver_proc(
+    name: str,
+    actor_nursery: ActorNursery,
+    subactor: Actor,
+    errors: dict[tuple[str, str], Exception],
+
+    # passed through to actor main
+    bind_addrs: list[UnwrappedAddress],
+    parent_addr: UnwrappedAddress,
+    _runtime_vars: dict[str, Any],
+    *,
+    infect_asyncio: bool = False,
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
+    proc_kwargs: dict[str, any] = {},
+
+) -> None:
+    '''
+    Spawn a subactor via `os.fork()` from a non-trio worker
+    thread (see `fork_from_worker_thread()`), with the forked
+    child running `tractor._child._actor_child_main()` and
+    connecting back via tractor's normal IPC handshake.
+
+    Supervision model mirrors `trio_proc()` — we manage a
+    real OS subprocess, so `Portal.cancel_actor()` +
+    `soft_kill()` on graceful teardown and `os.kill(SIGKILL)`
+    on hard-reap both apply directly (no
+    `_interpreters.destroy()` voodoo needed since the child
+    is in its own process).
+
+    The only real difference from `trio_proc` is the spawn
+    mechanism: fork from a known-clean main-interp worker
+    thread instead of `trio.lowlevel.open_process()`.
+
+    '''
+    if not _has_subints:
+        raise RuntimeError(
+            f'The {"subint_forkserver"!r} spawn backend '
+            f'requires Python 3.14+.\n'
+            f'Current runtime: {sys.version}'
+        )
+
+    uid: tuple[str, str] = subactor.aid.uid
+    loglevel: str | None = subactor.loglevel
+
+    # Closure captured into the fork-child's memory image.
+    # In the child this is the first post-fork Python code to
+    # run, on what was the fork-worker thread in the parent.
+    def _child_target() -> int:
+        # Lazy import so the parent doesn't pay for it on
+        # every spawn — it's module-level in `_child` but
+        # cheap enough to re-resolve here.
+        from tractor._child import _actor_child_main
+        _actor_child_main(
+            uid=uid,
+            loglevel=loglevel,
+            parent_addr=parent_addr,
+            infect_asyncio=infect_asyncio,
+            # NOTE, from the child-side runtime's POV it's
+            # a regular trio actor — it uses `_trio_main`,
+            # receives `SpawnSpec` over IPC, etc. The
+            # `subint_forkserver` name is a property of HOW
+            # the parent spawned, not of what the child is.
+            spawn_method='trio',
+        )
+        return 0
+
+    cancelled_during_spawn: bool = False
+    proc: _ForkedProc | None = None
+    ipc_server: _server.Server = actor_nursery._actor.ipc_server
+
+    try:
+        try:
+            pid: int = await trio.to_thread.run_sync(
+                partial(
+                    fork_from_worker_thread,
+                    _child_target,
+                    thread_name=(
+                        f'subint-forkserver[{name}]'
+                    ),
+                ),
+                abandon_on_cancel=False,
+            )
+            proc = _ForkedProc(pid)
+            log.runtime(
+                f'Forked subactor via forkserver\n'
+                f'(>\n'
+                f' |_{proc}\n'
+            )
+
+            event, chan = await ipc_server.wait_for_peer(uid)
+
+        except trio.Cancelled:
+            cancelled_during_spawn = True
+            raise
+
+        assert proc is not None
+
+        portal = Portal(chan)
+        actor_nursery._children[uid] = (
+            subactor,
+            proc,
+            portal,
+        )
+
+        sspec = msgtypes.SpawnSpec(
+            _parent_main_data=subactor._parent_main_data,
+            enable_modules=subactor.enable_modules,
+            reg_addrs=subactor.reg_addrs,
+            bind_addrs=bind_addrs,
+            _runtime_vars=_runtime_vars,
+        )
+        log.runtime(
+            f'Sending spawn spec to forkserver child\n'
+            f'{{}}=> {chan.aid.reprol()!r}\n'
+            f'\n'
+            f'{pretty_struct.pformat(sspec)}\n'
+        )
+        await chan.send(sspec)
+
+        curr_actor: Actor = current_actor()
+        curr_actor._actoruid2nursery[uid] = actor_nursery
+
+        task_status.started(portal)
+
+        with trio.CancelScope(shield=True):
+            await actor_nursery._join_procs.wait()
+
+        async with trio.open_nursery() as nursery:
+            if portal in actor_nursery._cancel_after_result_on_exit:
+                nursery.start_soon(
+                    cancel_on_completion,
+                    portal,
+                    subactor,
+                    errors,
+                )
+
+            # reuse `trio_proc`'s soft-kill dance — `proc`
+            # is our `_ForkedProc` shim which implements the
+            # same `.poll()` / `.wait()` / `.kill()` surface
+            # `soft_kill` expects.
+            await soft_kill(
+                proc,
+                _ForkedProc.wait,
+                portal,
+            )
+            nursery.cancel_scope.cancel()
+
+    finally:
+        # Hard reap: SIGKILL + waitpid. Cheap since we have
+        # the real OS pid, unlike `subint_proc` which has to
+        # fuss with `_interpreters.destroy()` races.
+        if proc is not None and proc.poll() is None:
+            log.cancel(
+                f'Hard killing forkserver subactor\n'
+                f'>x)\n'
+                f' |_{proc}\n'
+            )
+            with trio.CancelScope(shield=True):
+                proc.kill()
+                await proc.wait()
+
+        if not cancelled_during_spawn:
+            actor_nursery._children.pop(uid, None)
