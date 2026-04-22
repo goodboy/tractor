@@ -548,32 +548,24 @@ async def subint_forkserver_proc(
         # every spawn — it's module-level in `_child` but
         # cheap enough to re-resolve here.
         from tractor._child import _actor_child_main
-        # XXX, fork inherits the parent's entire memory
-        # image — including `tractor.runtime._state` globals
-        # that encode "this process is the root actor":
-        #
-        # - `_runtime_vars['_is_root']` → True in parent
-        # - pre-populated `_root_mailbox`, `_registry_addrs`
-        # - the parent's `_current_actor` singleton
-        #
-        # A fresh `exec`-based child would start with the
-        # `_state` module's defaults (all falsey / empty).
-        # Replicate that here so the new child-side `Actor`
-        # sees a "cold" runtime — otherwise `Actor.__init__`
-        # takes the `is_root_process() == True` branch and
-        # pre-populates `self.enable_modules`, which then
-        # trips the `assert not self.enable_modules` gate at
-        # the top of `Actor._from_parent()` on the subsequent
-        # parent→child `SpawnSpec` handshake.
-        from tractor.runtime import _state
-        _state._current_actor = None
-        _state._runtime_vars.update({
-            '_is_root': False,
-            '_root_mailbox': (None, None),
-            '_root_addrs': [],
-            '_registry_addrs': [],
-            '_debug_mode': False,
-        })
+        # XXX, `os.fork()` inherits the parent's entire memory
+        # image, including `tractor.runtime._state._runtime_vars`
+        # (which in the parent encodes "this process IS the root
+        # actor"). A fresh `exec`-based child starts cold; we
+        # replicate that here by explicitly resetting runtime
+        # vars to their fresh-process defaults — otherwise
+        # `Actor.__init__` takes the `is_root_process() == True`
+        # branch, pre-populates `self.enable_modules`, and trips
+        # the `assert not self.enable_modules` gate at the top
+        # of `Actor._from_parent()` on the subsequent parent→
+        # child `SpawnSpec` handshake. (`_state._current_actor`
+        # is unconditionally overwritten by `_trio_main` → no
+        # reset needed for it.)
+        from tractor.runtime._state import (
+            get_runtime_vars,
+            set_runtime_vars,
+        )
+        set_runtime_vars(get_runtime_vars(clear_values=True))
         _actor_child_main(
             uid=uid,
             loglevel=loglevel,
