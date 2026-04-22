@@ -63,6 +63,15 @@ SpawnMethodKey = Literal[
     'mp_spawn',
     'mp_forkserver',  # posix only
     'subint',  # py3.14+ via `concurrent.interpreters` (PEP 734)
+    # EXPERIMENTAL — blocked at the CPython level. The
+    # design goal was a `trio+fork`-safe subproc spawn via
+    # `os.fork()` from a trio-free launchpad sub-interpreter,
+    # but CPython's `PyOS_AfterFork_Child` → `_PyInterpreterState_DeleteExceptMain`
+    # requires fork come from the main interp. See
+    # `tractor.spawn._subint_fork` +
+    # `ai/conc-anal/subint_fork_blocked_by_cpython_post_fork_issue.md`
+    # + issue #379 for the full analysis.
+    'subint_fork',
 ]
 _spawn_method: SpawnMethodKey = 'trio'
 
@@ -115,15 +124,13 @@ def try_set_start_method(
         case 'trio':
             _ctx = None
 
-        case 'subint':
-            # subints need no `mp.context`; feature-gate on the
-            # py3.14 public `concurrent.interpreters` wrapper
-            # (PEP 734). We actually drive the private
-            # `_interpreters` C module in legacy mode — see
-            # `tractor.spawn._subint` for why — but py3.13's
-            # vintage of that private module hangs under our
-            # multi-trio usage, so we refuse it via the public-
-            # module presence check.
+        case 'subint' | 'subint_fork':
+            # Both subint backends need no `mp.context`; both
+            # feature-gate on the py3.14 public
+            # `concurrent.interpreters` wrapper (PEP 734). See
+            # `tractor.spawn._subint` for the detailed
+            # reasoning and the distinction between the two
+            # (`subint_fork` is WIP/experimental).
             from ._subint import _has_subints
             if not _has_subints:
                 raise RuntimeError(
@@ -461,6 +468,7 @@ async def new_proc(
 from ._trio import trio_proc
 from ._mp import mp_proc
 from ._subint import subint_proc
+from ._subint_fork import subint_fork_proc
 
 
 # proc spawning backend target map
@@ -469,4 +477,10 @@ _methods: dict[SpawnMethodKey, Callable] = {
     'mp_spawn': mp_proc,
     'mp_forkserver': mp_proc,
     'subint': subint_proc,
+    # blocked at CPython level — see `_subint_fork.py` +
+    # `ai/conc-anal/subint_fork_blocked_by_cpython_post_fork_issue.md`.
+    # Kept here so `--spawn-backend=subint_fork` routes to a
+    # clean `NotImplementedError` with pointer to the analysis,
+    # rather than an "invalid backend" error.
+    'subint_fork': subint_fork_proc,
 }
