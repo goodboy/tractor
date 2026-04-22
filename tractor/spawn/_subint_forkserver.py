@@ -59,6 +59,24 @@ to drive these from a parent-side `trio.run()` and hook the
 returned child pid into tractor's normal actor-nursery/IPC
 machinery.
 
+TODO — cleanup gated on msgspec PEP 684 support
+-----------------------------------------------
+Both primitives below allocate a dedicated
+`threading.Thread` rather than using
+`trio.to_thread.run_sync()`. That's a cautious design
+rooted in three distinct-but-entangled issues (GIL
+starvation from legacy-config subints, tstate-recycling
+destroy race on trio cache threads, fork-from-main-tstate
+invariant). Some of those dissolve under PEP 684
+isolated-mode subints; one requires empirical re-testing
+to know.
+
+Full analysis + audit plan for when we can revisit is in
+`ai/conc-anal/subint_forkserver_thread_constraints_on_pep684_issue.md`.
+Intent: file a follow-up GH issue linked to #379 once
+[jcrist/msgspec#563](https://github.com/jcrist/msgspec/issues/563)
+unblocks isolated-mode subints in tractor.
+
 See also
 --------
 - `tractor.spawn._subint_fork` — the stub for the
@@ -268,7 +286,7 @@ def fork_from_worker_thread(
     return pid
 
 
-def run_trio_in_subint(
+def run_subint_in_worker_thread(
     bootstrap: str,
     *,
     thread_name: str = 'subint-trio',
@@ -276,14 +294,21 @@ def run_trio_in_subint(
 
 ) -> None:
     '''
-    Helper for use inside a forked child: create a fresh
-    legacy-config sub-interpreter and drive the given
-    `bootstrap` code string through `_interpreters.exec()`
-    on a dedicated worker thread.
+    Create a fresh legacy-config sub-interpreter and drive
+    the given `bootstrap` code string through
+    `_interpreters.exec()` on a dedicated worker thread.
 
-    Typical `bootstrap` content imports `trio`, defines an
-    async entry, calls `trio.run()`. See
-    `tractor.spawn._subint.subint_proc` for the matching
+    Naming mirrors `fork_from_worker_thread()`:
+    "<action>_in_worker_thread" — the action here is "run a
+    subint", not "run trio" per se. Typical `bootstrap`
+    content does import `trio` + call `trio.run()`, but
+    nothing about this primitive requires trio; it's a
+    generic "host a subint on a worker thread" helper.
+    Intended mainly for use inside a fork-child (see
+    `tractor.spawn._subint_forkserver` module docstring) but
+    works anywhere.
+
+    See `tractor.spawn._subint.subint_proc` for the matching
     pattern tractor uses at the sub-actor level.
 
     Destroys the subint after the thread joins.
