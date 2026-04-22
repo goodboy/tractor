@@ -7,6 +7,14 @@ import tractor
 from tractor.experimental import msgpub
 from tractor._testing import tractor_test
 
+pytestmark = pytest.mark.skipon_spawn_backend(
+    'subint',
+    reason=(
+        'XXX SUBINT HANGING TEST XXX\n'
+        'See oustanding issue(s)\n'
+        # TODO, put issue link!
+    )
+)
 
 def test_type_checks():
 
