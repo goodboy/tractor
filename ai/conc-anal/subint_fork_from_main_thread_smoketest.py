@@ -91,7 +91,7 @@ except ImportError:
 # primitives have moved into tractor proper.)
 from tractor.spawn._subint_forkserver import (
     fork_from_worker_thread,
-    run_trio_in_subint,
+    run_subint_in_worker_thread,
     wait_child,
 )
 
@@ -305,18 +305,18 @@ def _child_trio_in_subint() -> int:
     '''
     CHILD-side `child_target`: drive a trivial `trio.run()`
     inside a fresh legacy-config subint on a worker thread,
-    using the `tractor.spawn._subint_forkserver.run_trio_in_subint`
+    using the `tractor.spawn._subint_forkserver.run_subint_in_worker_thread`
     primitive. Returns 0 on success.
 
     '''
     try:
-        run_trio_in_subint(
+        run_subint_in_worker_thread(
             _CHILD_TRIO_BOOTSTRAP,
             thread_name='child-subint-trio-thread',
         )
     except RuntimeError as err:
         print(
-            f'  CHILD: run_trio_in_subint timed out / thread '
+            f'  CHILD: run_subint_in_worker_thread timed out / thread '
             f'never returned: {err}',
             flush=True,
         )
