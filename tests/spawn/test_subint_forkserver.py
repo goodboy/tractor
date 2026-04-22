@@ -1,9 +1,17 @@
 '''
 Integration exercises for the `tractor.spawn._subint_forkserver`
-primitives (`fork_from_worker_thread()` + `run_subint_in_worker_thread()`)
-driven from inside a real `trio.run()` in the parent process —
-the runtime shape tractor will need when we move toward wiring
-up a `subint_forkserver` spawn backend proper.
+submodule at three tiers:
+
+1. the low-level primitives
+   (`fork_from_worker_thread()` +
+   `run_subint_in_worker_thread()`) driven from inside a real
+   `trio.run()` in the parent process,
+
+2. the full `subint_forkserver_proc` spawn backend wired
+   through tractor's normal actor-nursery + portal-RPC
+   machinery — i.e. `open_root_actor` + `open_nursery` +
+   `run_in_actor` against a subactor spawned via fork from a
+   main-interp worker thread.
 
 Background
 ----------
@@ -16,17 +24,20 @@ never entered a subint) works, and the forked child can then
 host its own `trio.run()` inside a fresh subint.
 
 Those smoke-test scenarios are standalone — no trio runtime
-in the *parent*. These tests exercise the same primitives
-from inside `trio.run()` in the parent, proving out the
-piece actually needed for a working spawn backend.
+in the *parent*. Tiers (1)+(2) here cover the primitives
+driven from inside `trio.run()` in the parent, and tier (3)
+(the `*_spawn_basic` test) drives the registered
+`subint_forkserver` spawn backend end-to-end against the
+tractor runtime.
 
 Gating
 ------
 - py3.14+ (via `concurrent.interpreters` presence)
-- no backend restriction (these tests don't use
-  `--spawn-backend` — they drive the forkserver primitives
-  directly rather than going through tractor's spawn-method
-  registry).
+- no `--spawn-backend` restriction — the backend-level test
+  flips `tractor.spawn._spawn._spawn_method` programmatically
+  (via `try_set_start_method('subint_forkserver')`) and
+  restores it on teardown, so these tests are independent of
+  the session-level CLI backend choice.
 
 '''
 from __future__ import annotations
@@ -36,6 +47,7 @@ import os
 import pytest
 import trio
 
+import tractor
 from tractor.devx import dump_on_hang
 
 
@@ -50,6 +62,8 @@ from tractor.spawn._subint_forkserver import (  # noqa: E402
     run_subint_in_worker_thread,
     wait_child,
 )
+from tractor.spawn import _spawn as _spawn_mod  # noqa: E402
+from tractor.spawn._spawn import try_set_start_method  # noqa: E402
 
 
 # ----------------------------------------------------------------
@@ -212,3 +226,104 @@ def test_fork_and_run_trio_in_child() -> None:
             ),
         )
     assert isinstance(pid, int) and pid > 0
+
+
+# ----------------------------------------------------------------
+# tier-3 backend test: drive the registered `subint_forkserver`
+# spawn backend end-to-end through tractor's actor-nursery +
+# portal-RPC machinery.
+# ----------------------------------------------------------------
+
+
+async def _trivial_rpc() -> str:
+    '''
+    Minimal subactor-side RPC body: just return a sentinel
+    string the parent can assert on.
+
+    '''
+    return 'hello from subint-forkserver child'
+
+
+async def _happy_path_forkserver(
+    reg_addr: tuple[str, int | str],
+    deadline: float,
+) -> None:
+    '''
+    Parent-side harness: stand up a root actor, open an actor
+    nursery, spawn one subactor via the currently-selected
+    spawn backend (which this test will have flipped to
+    `subint_forkserver`), run a trivial RPC through its
+    portal, assert the round-trip result.
+
+    '''
+    with trio.fail_after(deadline):
+        async with (
+            tractor.open_root_actor(
+                registry_addrs=[reg_addr],
+            ),
+            tractor.open_nursery() as an,
+        ):
+            portal: tractor.Portal = await an.run_in_actor(
+                _trivial_rpc,
+                name='subint-forkserver-child',
+            )
+            result: str = await portal.wait_for_result()
+            assert result == 'hello from subint-forkserver child'
+
+
+@pytest.fixture
+def forkserver_spawn_method():
+    '''
+    Flip `tractor.spawn._spawn._spawn_method` to
+    `'subint_forkserver'` for the duration of a test, then
+    restore whatever was in place before (usually the
+    session-level CLI choice, typically `'trio'`).
+
+    Without this, other tests in the same session would
+    observe the global flip and start spawning via fork —
+    which is almost certainly NOT what their assertions were
+    written against.
+
+    '''
+    prev_method: str = _spawn_mod._spawn_method
+    prev_ctx = _spawn_mod._ctx
+    try_set_start_method('subint_forkserver')
+    try:
+        yield
+    finally:
+        _spawn_mod._spawn_method = prev_method
+        _spawn_mod._ctx = prev_ctx
+
+
+@pytest.mark.timeout(60, method='thread')
+def test_subint_forkserver_spawn_basic(
+    reg_addr: tuple[str, int | str],
+    forkserver_spawn_method,
+) -> None:
+    '''
+    Happy-path: spawn ONE subactor via the
+    `subint_forkserver` backend (parent-side fork from a
+    main-interp worker thread), do a trivial portal-RPC
+    round-trip, tear the nursery down cleanly.
+
+    If this passes, the "forkserver + tractor runtime" arch
+    is proven end-to-end: the registered
+    `subint_forkserver_proc` spawn target successfully
+    forks a child, the child runs `_actor_child_main()` +
+    completes IPC handshake + serves an RPC, and the parent
+    reaps via `_ForkedProc.wait()` without regressing any of
+    the normal nursery teardown invariants.
+
+    '''
+    deadline: float = 20.0
+    with dump_on_hang(
+        seconds=deadline,
+        path='/tmp/subint_forkserver_spawn_basic.dump',
+    ):
+        trio.run(
+            partial(
+                _happy_path_forkserver,
+                reg_addr,
+                deadline,
+            ),
+        )
