@@ -447,13 +447,17 @@ def _process_alive(pid: int) -> bool:
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        'subint_forkserver orphan-child SIGINT gap: trio on the '
-        'fork-inherited non-main thread has no SIGINT wakeup-fd '
-        'handler installed, and CPython\'s default '
-        'KeyboardInterrupt delivery does NOT reach the trio '
-        'loop on this thread post-fork. Fix path TBD — see '
-        'TODO in `tractor.spawn._subint_forkserver`. Flip this '
-        'mark (or drop it) once the gap is closed.'
+        'subint_forkserver orphan-child SIGINT hang: trio\'s '
+        'event loop stays wedged in `epoll_wait` despite the '
+        'SIGINT handler being correctly installed and the '
+        'signal being delivered at the kernel level. NOT a '
+        '"handler missing on non-main thread" issue — post-'
+        'fork the worker IS `threading.main_thread()` and '
+        'trio\'s `KIManager` handler is confirmed installed. '
+        'Full analysis + ruled-out hypotheses + fix directions '
+        'in `ai/conc-anal/'
+        'subint_forkserver_orphan_sigint_hang_issue.md`. '
+        'Flip this mark (or drop it) once the gap is closed.'
     ),
 )
 @pytest.mark.timeout(60, method='thread')
@@ -478,15 +482,23 @@ def test_orphaned_subactor_sigint_cleanup_DRAFT(
       5. Poll `os.kill(child_pid, 0)` for up to 10s — assert
          the child exits.
 
-    Empirical result (2026-04): currently **FAILS** — the
-    "post-fork single-thread → default KeyboardInterrupt lands
-    on trio's thread" hypothesis from the class-A/B
-    conc-anal discussion turned out to be wrong. SIGINT on the
-    orphan child doesn't unwind the trio loop. Most likely
-    CPython delivers `KeyboardInterrupt` specifically to
-    `threading.main_thread()`, whose tstate is dead in the
-    post-fork child (fork inherited the worker thread, not the
-    original main thread). Marked `xfail(strict=True)` so the
+    Empirical result (2026-04, py3.14): currently **FAILS** —
+    SIGINT on the orphan child doesn't unwind the trio loop,
+    despite trio's `KIManager` handler being correctly
+    installed in the subactor (the post-fork thread IS
+    `threading.main_thread()` on py3.14). `faulthandler` dump
+    shows the subactor wedged in `trio/_core/_io_epoll.py::
+    get_events` — the signal's supposed wakeup of the event
+    loop isn't firing. Full analysis + diagnostic evidence
+    in `ai/conc-anal/
+    subint_forkserver_orphan_sigint_hang_issue.md`.
+
+    The runtime's *intentional* "KBI-as-OS-cancel" path at
+    `tractor/spawn/_entry.py::_trio_main:164` is therefore
+    unreachable under this backend+config. Closing the gap is
+    aligned with existing design intent (make the already-
+    designed behavior actually fire), not a new feature.
+    Marked `xfail(strict=True)` so the
     mark flips to XPASS→fail once the gap is closed and we'll
     know to drop the mark.
 
