@@ -205,6 +205,85 @@ python -m pytest tests/ -x -q --co 2>&1 | tail -5
 If either fails, fix the import error before running
 any actual tests.
 
+### Step 4: zombie-actor / stale-registry check (MANDATORY)
+
+The tractor runtime's default registry address is
+**`127.0.0.1:1616`** (TCP) / `/tmp/registry@1616.sock`
+(UDS). Whenever any prior test run — especially one
+using a fork-based backend like `subint_forkserver` —
+leaks a child actor process, that zombie keeps the
+registry port bound and **every subsequent test
+session fails to bind**, often presenting as 50+
+unrelated failures ("all tests broken"!) across
+backends.
+
+**This has to be checked before the first run AND
+after any cancelled/SIGINT'd run** — signal failures
+in the middle of a test can leave orphan children.
+
+```sh
+# 1. TCP registry — any listener on :1616? (primary signal)
+ss -tlnp 2>/dev/null | grep ':1616' || echo 'TCP :1616 free'
+
+# 2. leftover actor/forkserver procs — scoped to THIS
+#    repo's python path, so we don't false-flag legit
+#    long-running tractor-using apps (e.g. `piker`,
+#    downstream projects that embed tractor).
+pgrep -af "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv" \
+  | grep -v 'grep\|pgrep' \
+  || echo 'no leaked actor procs from this repo'
+
+# 3. stale UDS registry sockets
+ls -la /tmp/registry@*.sock 2>/dev/null \
+  || echo 'no leaked UDS registry sockets'
+```
+
+**Interpretation:**
+
+- **TCP :1616 free AND no stale sockets** → clean,
+  proceed. The actor-procs probe is secondary — false
+  positives are common (piker, any other tractor-
+  embedding app); only cleanup if `:1616` is bound or
+  sockets linger.
+- **TCP :1616 bound OR stale sockets present** →
+  surface PIDs + cmdlines to the user, offer cleanup:
+
+  ```sh
+  # 1. kill test zombies scoped to THIS repo's python only
+  #    (don't pkill by bare pattern — that'd nuke legit
+  #    long-running tractor apps like piker)
+  pkill -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv"
+  sleep 0.3
+  pkill -9 -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv" 2>/dev/null
+
+  # 2. if a test zombie holds :1616 specifically and doesn't
+  #    match the above pattern, find its PID the hard way:
+  ss -tlnp 2>/dev/null | grep ':1616'   # prints `users:(("<name>",pid=NNNN,...))`
+  # then: kill <NNNN>
+
+  # 3. remove stale UDS sockets
+  rm -f /tmp/registry@*.sock
+
+  # 4. re-verify
+  ss -tlnp 2>/dev/null | grep ':1616' || echo 'TCP :1616 now free'
+  ```
+
+**Never ignore stale registry state.** If you see the
+"all tests failing" pattern — especially
+`trio.TooSlowError` / connection refused / address in
+use on many unrelated tests — check registry **before**
+spelunking into test code. The failure signature will
+be identical across backends because they're all
+fighting for the same port.
+
+**False-positive warning for step 2:** a plain
+`pgrep -af '_actor_child_main'` will also match
+legit long-running tractor-embedding apps (e.g.
+`piker` at `~/repos/piker/py*/bin/python3 -m
+tractor._child ...`). Always scope to the current
+repo's python path, or only use step 1 (`:1616`) as
+the authoritative signal.
+
 ## 4. Run and report
 
 - Run the constructed command.
