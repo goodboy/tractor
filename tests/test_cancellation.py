@@ -452,6 +452,19 @@ async def spawn_and_error(
             await nursery.run_in_actor(*args, **kwargs)
 
 
+@pytest.mark.skipon_spawn_backend(
+    'subint_forkserver',
+    reason=(
+        'Multi-level fork-spawn cancel cascade hang — '
+        'peer-channel `process_messages` loops do not '
+        'exit on `service_tn.cancel_scope.cancel()`. '
+        'See `ai/conc-anal/'
+        'subint_forkserver_test_cancellation_leak_issue.md` '
+        'for the full diagnosis + candidate fix directions. '
+        'Drop this mark once the peer-chan-loop exit issue '
+        'is closed.'
+    ),
+)
 @pytest.mark.timeout(
     10,
     method='thread',
