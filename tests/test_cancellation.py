@@ -275,7 +275,8 @@ async def stream_forever():
     timeout=6,
 )
 async def test_cancel_infinite_streamer(
-    start_method: str
+    reg_addr: tuple,
+    start_method: str,
 ):
     # stream for at most 1 seconds
     with (
@@ -341,6 +342,7 @@ async def test_cancel_infinite_streamer(
 )
 async def test_some_cancels_all(
     num_actors_and_errs: tuple,
+    reg_addr: tuple,
     start_method: str,
     loglevel: str,
 ):
@@ -450,8 +452,13 @@ async def spawn_and_error(
             await nursery.run_in_actor(*args, **kwargs)
 
 
+@pytest.mark.timeout(
+    10,
+    method='thread',
+)
 @tractor_test
 async def test_nested_multierrors(
+    reg_addr: tuple,
     loglevel: str,
     start_method: str,
 ):
@@ -541,6 +548,7 @@ async def test_nested_multierrors(
 
 @no_windows
 def test_cancel_via_SIGINT(
+    reg_addr: tuple,
     loglevel: str,
     start_method: str,
 ):
@@ -553,7 +561,9 @@ def test_cancel_via_SIGINT(
 
     async def main():
         with trio.fail_after(2):
-            async with tractor.open_nursery() as tn:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as tn:
                 await tn.start_actor('sucka')
                 if 'mp' in start_method:
                     time.sleep(0.1)
@@ -566,6 +576,7 @@ def test_cancel_via_SIGINT(
 
 @no_windows
 def test_cancel_via_SIGINT_other_task(
+    reg_addr: tuple,
     loglevel: str,
     start_method: str,
     spawn_backend: str,
@@ -594,7 +605,9 @@ def test_cancel_via_SIGINT_other_task(
     async def spawn_and_sleep_forever(
         task_status=trio.TASK_STATUS_IGNORED
     ):
-        async with tractor.open_nursery() as tn:
+        async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
+        ) as tn:
             for i in range(3):
                 await tn.run_in_actor(
                     sleep_forever,
