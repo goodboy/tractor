@@ -195,6 +195,69 @@ except ImportError:
     _has_subints: bool = False
 
 
+def _close_inherited_fds(
+    keep: frozenset[int] = frozenset({0, 1, 2}),
+) -> int:
+    '''
+    Close every open file descriptor in the current process
+    EXCEPT those in `keep` (default: stdio only).
+
+    Intended as the first thing a post-`os.fork()` child runs
+    after closing any communication pipes it knows about. This
+    is the fork-child FD hygiene discipline that
+    `subprocess.Popen(close_fds=True)` applies by default for
+    its exec-based children, but which we have to implement
+    ourselves because our `fork_from_worker_thread()` primitive
+    deliberately does NOT exec.
+
+    Why it matters
+    --------------
+    Without this, a forkserver-spawned subactor inherits the
+    parent actor's IPC listener sockets, trio-epoll fd, trio
+    wakeup-pipe, peer-channel sockets, etc. If that subactor
+    then itself forkserver-spawns a grandchild, the grandchild
+    inherits the FDs transitively from *both* its direct
+    parent AND the root actor — IPC message routing becomes
+    ambiguous and the cancel cascade deadlocks. See
+    `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`
+    for the full diagnosis + the empirical repro.
+
+    Fresh children will open their own IPC sockets via
+    `_actor_child_main()`, so they don't need any of the
+    parent's FDs.
+
+    Returns the count of fds that were successfully closed —
+    useful for sanity-check logging at callsites.
+
+    '''
+    # Enumerate open fds via `/proc/self/fd` on Linux (the fast +
+    # precise path); fall back to `RLIMIT_NOFILE` range close on
+    # other platforms. Matches stdlib
+    # `subprocess._posixsubprocess.close_fds` strategy.
+    try:
+        fd_names: list[str] = os.listdir('/proc/self/fd')
+        candidates: list[int] = [
+            int(n) for n in fd_names if n.isdigit()
+        ]
+    except (FileNotFoundError, PermissionError):
+        import resource
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        candidates = list(range(3, soft))
+
+    closed: int = 0
+    for fd in candidates:
+        if fd in keep:
+            continue
+        try:
+            os.close(fd)
+            closed += 1
+        except OSError:
+            # fd was already closed (race with listdir) or
+            # otherwise unclosable — either is fine.
+            pass
+    return closed
+
+
 def _format_child_exit(
     status: int,
 ) -> str:
@@ -302,9 +365,13 @@ def fork_from_worker_thread(
         pid: int = os.fork()
         if pid == 0:
             # CHILD: close the pid-pipe ends (we don't use
-            # them here), run the user callable if any, exit.
+            # them here), then scrub ALL other inherited FDs
+            # so the child starts with a clean slate
+            # (stdio-only). Critical for multi-level spawn
+            # trees — see `_close_inherited_fds()` docstring.
             os.close(rfd)
             os.close(wfd)
+            _close_inherited_fds()
             rc: int = 0
             if child_target is not None:
                 try:
