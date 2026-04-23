@@ -1,8 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(date *)",
       "Bash(cp .claude/*)",
+      "Read(.claude/**)",
+      "Read(.claude/skills/run-tests/**)",
+      "Write(.claude/**/*commit_msg*)",
+      "Write(.claude/git_commit_msg_LATEST.md)",
+      "Skill(run-tests)",
+      "Skill(close-wkt)",
+      "Skill(open-wkt)",
+      "Skill(prompt-io)",
+      "Bash(date *)",
       "Bash(git diff *)",
       "Bash(git log *)",
       "Bash(git status)",
@@ -23,14 +31,12 @@
       "Bash(UV_PROJECT_ENVIRONMENT=py* uv sync:*)",
       "Bash(UV_PROJECT_ENVIRONMENT=py* uv run:*)",
       "Bash(echo EXIT:$?:*)",
-      "Write(.claude/*commit_msg*)",
-      "Write(.claude/git_commit_msg_LATEST.md)",
-      "Skill(run-tests)",
-      "Skill(close-wkt)",
-      "Skill(open-wkt)",
-      "Skill(prompt-io)"
+      "Bash(echo \"EXIT=$?\")",
+      "Read(//tmp/**)"
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "prefersReducedMotion": false,
+  "outputStyle": "default"
 }
