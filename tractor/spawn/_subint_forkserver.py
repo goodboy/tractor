@@ -655,12 +655,16 @@ async def subint_forkserver_proc(
             loglevel=loglevel,
             parent_addr=parent_addr,
             infect_asyncio=infect_asyncio,
-            # NOTE, from the child-side runtime's POV it's
-            # a regular trio actor — it uses `_trio_main`,
-            # receives `SpawnSpec` over IPC, etc. The
-            # `subint_forkserver` name is a property of HOW
-            # the parent spawned, not of what the child is.
-            spawn_method='trio',
+            # The child's runtime is trio-native (uses
+            # `_trio_main` + receives `SpawnSpec` over IPC),
+            # but label it with the actual parent-side spawn
+            # mechanism so `Actor.pformat()` / log lines
+            # reflect reality. Downstream runtime gates that
+            # key on `_spawn_method` group `subint_forkserver`
+            # alongside `trio`/`subint` where the SpawnSpec
+            # IPC handshake is concerned — see
+            # `runtime._runtime.Actor._from_parent()`.
+            spawn_method='subint_forkserver',
         )
         return 0
 
