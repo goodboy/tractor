@@ -246,7 +246,11 @@ async def trio_proc(
                             await proc.wait()
 
                 await debug.maybe_wait_for_debugger(
-                    child_in_debug=get_runtime_vars().get(
+                    # NOTE: use the child's `_runtime_vars`
+                    # (the fn-arg dict shipped via `SpawnSpec`)
+                    # — NOT `get_runtime_vars()` which returns
+                    # the *parent's* live runtime state.
+                    child_in_debug=_runtime_vars.get(
                         '_debug_mode', False
                     ),
                     header_msg=(

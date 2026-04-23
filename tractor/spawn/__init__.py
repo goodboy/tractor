@@ -29,7 +29,7 @@ coroutine registered in `_spawn._methods`):
 - `._mp`: the stdlib `multiprocessing` backend variants — driven by
   the `mp.context` bound to `_spawn._ctx`:
   * `'mp_spawn'`,
-  * `'mp_forkserver'` 
+  * `'mp_forkserver'`
 
 Entry-point helpers live in `._entry`/`._mp_fixup_main`/
 `._forkserver_override`.

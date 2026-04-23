@@ -24,7 +24,7 @@ Part of this work should include,
     is happening under the hood with how cpython implements subints.
 
   * default configuration should encourage state isolation as with
-    with subprocs, but explicit public escape hatches to enable rigorously
+    subprocs, but explicit public escape hatches to enable rigorously
     managed shm channels for high performance apps.
 
 - all tests should be (able to be) parameterized to use the new
