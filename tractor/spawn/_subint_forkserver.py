@@ -591,11 +591,11 @@ async def subint_forkserver_proc(
         )
     if child_sigint == 'trio':
         raise NotImplementedError(
-            f"`child_sigint='trio'` mode — trio-native SIGINT "
-            f"plumbing in the fork-child — is scaffolded but "
-            f"not yet implemented. See the xfail'd "
-            f"`test_orphaned_subactor_sigint_cleanup_DRAFT` "
-            f"and the TODO in this module's docstring."
+            "`child_sigint='trio'` mode — trio-native SIGINT "
+            "plumbing in the fork-child — is scaffolded but "
+            "not yet implemented. See the xfail'd "
+            "`test_orphaned_subactor_sigint_cleanup_DRAFT` "
+            "and the TODO in this module's docstring."
         )
 
     uid: tuple[str, str] = subactor.aid.uid
