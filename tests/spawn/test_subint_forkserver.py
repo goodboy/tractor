@@ -43,6 +43,7 @@ Gating
 from __future__ import annotations
 from functools import partial
 import os
+from pathlib import Path
 import platform
 import select
 import signal
@@ -179,7 +180,8 @@ async def run_fork_in_non_trio_thread(
 # inner `trio.fail_after()` so assertion failures fire fast
 # under normal conditions.
 @pytest.mark.timeout(30, method='thread')
-def test_fork_from_worker_thread_via_trio() -> None:
+def test_fork_from_worker_thread_via_trio(
+) -> None:
     '''
     Baseline: inside `trio.run()`, call
     `fork_from_worker_thread()` via `trio.to_thread.run_sync()`,
@@ -460,10 +462,13 @@ def _process_alive(pid: int) -> bool:
         'Flip this mark (or drop it) once the gap is closed.'
     ),
 )
-@pytest.mark.timeout(60, method='thread')
+@pytest.mark.timeout(
+    30,
+    method='thread',
+)
 def test_orphaned_subactor_sigint_cleanup_DRAFT(
     reg_addr: tuple[str, int | str],
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     '''
     DRAFT — orphaned-subactor SIGINT survivability under the
@@ -564,7 +569,8 @@ def test_orphaned_subactor_sigint_cleanup_DRAFT(
 
         # step 4+5: SIGINT the orphan, poll for exit.
         os.kill(child_pid, signal.SIGINT)
-        cleanup_deadline: float = time.monotonic() + 10.0
+        timeout: float = 6.0
+        cleanup_deadline: float = time.monotonic() + timeout
         while time.monotonic() < cleanup_deadline:
             if not _process_alive(child_pid):
                 return  # <- success path
