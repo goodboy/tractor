@@ -69,6 +69,20 @@ from ._exceptions import (
 logger = log.get_logger('tractor')
 
 
+# Spawn backends under which `debug_mode=True` is supported.
+# Requirement: the spawned subactor's root runtime must be
+# trio-native so `tractor.devx.debug._tty_lock` works. Matches
+# both the enable-site in `open_root_actor` and the cleanup-
+# site reset of `_runtime_vars['_debug_mode']` — keep them in
+# lockstep when adding backends.
+_DEBUG_COMPATIBLE_BACKENDS: tuple[str, ...] = (
+    'trio',
+    # forkserver children run `_trio_main` in their own OS
+    # process — same child-side runtime shape as `trio_proc`.
+    'subint_forkserver',
+)
+
+
 # TODO: stick this in a `@acm` defined in `devx.debug`?
 # -[ ] also maybe consider making this a `wrapt`-deco to
 #     save an indent level?
@@ -386,10 +400,14 @@ async def open_root_actor(
                 f'`registry_addrs`.'
             )
 
+        # Debug-mode is currently only supported for backends whose
+        # subactor root runtime is trio-native (so `tractor.devx.
+        # debug._tty_lock` works). See `_DEBUG_COMPATIBLE_BACKENDS`
+        # module-const for the list.
         if (
             debug_mode
             and
-            _spawn._spawn_method == 'trio'
+            _spawn._spawn_method in _DEBUG_COMPATIBLE_BACKENDS
         ):
             _state._runtime_vars['_debug_mode'] = True
 
@@ -411,7 +429,9 @@ async def open_root_actor(
 
         elif debug_mode:
             raise RuntimeError(
-                "Debug mode is only supported for the `trio` backend!"
+                f'Debug mode currently supported only for '
+                f'{_DEBUG_COMPATIBLE_BACKENDS!r} spawn backends, not '
+                f'{_spawn._spawn_method!r}.'
             )
 
         # TODO: factor this into `.devx._stackscope`!!
@@ -706,7 +726,7 @@ async def open_root_actor(
             if (
                 debug_mode
                 and
-                _spawn._spawn_method == 'trio'
+                _spawn._spawn_method in _DEBUG_COMPATIBLE_BACKENDS
             ):
                 _state._runtime_vars['_debug_mode'] = False
 
