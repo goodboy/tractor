@@ -446,22 +446,15 @@ def _process_alive(pid: int) -> bool:
         return False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'subint_forkserver orphan-child SIGINT hang: trio\'s '
-        'event loop stays wedged in `epoll_wait` despite the '
-        'SIGINT handler being correctly installed and the '
-        'signal being delivered at the kernel level. NOT a '
-        '"handler missing on non-main thread" issue — post-'
-        'fork the worker IS `threading.main_thread()` and '
-        'trio\'s `KIManager` handler is confirmed installed. '
-        'Full analysis + ruled-out hypotheses + fix directions '
-        'in `ai/conc-anal/'
-        'subint_forkserver_orphan_sigint_hang_issue.md`. '
-        'Flip this mark (or drop it) once the gap is closed.'
-    ),
-)
+# NOTE: was previously `@pytest.mark.xfail(strict=True, ...)`
+# for the orphan-SIGINT hang documented in
+# `ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md`
+# — now passes after the fork-child FD-hygiene fix in
+# `tractor.spawn._subint_forkserver._close_inherited_fds()`:
+# closing all inherited FDs (including the parent's IPC
+# listener + trio-epoll + wakeup-pipe FDs) lets the child's
+# trio event loop respond cleanly to external SIGINT.
+# Leaving the test in place as a regression guard.
 @pytest.mark.timeout(
     30,
     method='thread',
