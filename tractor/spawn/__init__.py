@@ -15,12 +15,26 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Actor process spawning machinery using
-multiple backends (trio, multiprocessing).
+Actor process spawning machinery using multiple backends.
 
-NOTE: to avoid circular imports, this ``__init__``
-does NOT eagerly import submodules. Use direct
-module paths like ``tractor.spawn._spawn`` or
-``tractor.spawn._entry`` instead.
+- `._spawn`: cross-backend subactor-as-sub[proc|int] spawning
+  and supervision routines.
+
+Per-backend submodules (each exposes a single `*_proc()`
+coroutine registered in `_spawn._methods`):
+
+- `._trio`: the `trio`-native subprocess backend (default,
+  all platforms), spawns via `trio.lowlevel.open_process()`.
+
+- `._mp`: the stdlib `multiprocessing` backend variants — driven by
+  the `mp.context` bound to `_spawn._ctx`:
+  * `'mp_spawn'`,
+  * `'mp_forkserver'`
+
+Entry-point helpers live in `._entry`/`._mp_fixup_main`/
+`._forkserver_override`.
+
+NOTE: to avoid circular imports, this ``__init__`` does NOT eagerly
+import submodules.
 
 '''

@@ -27,6 +27,7 @@ import inspect
 import platform
 from typing import (
     Callable,
+    get_args,
 )
 
 import pytest
@@ -341,12 +342,11 @@ def pytest_generate_tests(
         # XXX some weird windows bug with `pytest`?
         spawn_backend = 'trio'
 
-    # TODO: maybe just use the literal `._spawn.SpawnMethodKey`?
-    assert spawn_backend in (
-        'mp_spawn',
-        'mp_forkserver',
-        'trio',
-    )
+    # drive the valid-backend set from the canonical `Literal` so
+    # adding a new spawn backend (e.g. `'subint'`) doesn't require
+    # touching the harness.
+    from tractor.spawn._spawn import SpawnMethodKey
+    assert spawn_backend in get_args(SpawnMethodKey)
 
     # NOTE: used-to-be-used-to dyanmically parametrize tests for when
     # you just passed --spawn-backend=`mp` on the cli, but now we expect
