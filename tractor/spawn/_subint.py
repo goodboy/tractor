@@ -123,7 +123,6 @@ if TYPE_CHECKING:
     from tractor.discovery._addr import UnwrappedAddress
     from tractor.ipc import (
         _server,
-        Channel,
     )
     from tractor.runtime._runtime import Actor
     from tractor.runtime._supervise import ActorNursery
@@ -431,5 +430,3 @@ async def subint_proc(
     finally:
         if not cancelled_during_spawn:
             actor_nursery._children.pop(uid, None)
-
-
