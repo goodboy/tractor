@@ -67,12 +67,15 @@ Still-open work (tracked on tractor #379):
   to `tests/test_subint_cancellation.py` for the plain
   `subint` backend),
 - `child_sigint='trio'` mode (flag scaffolded below; default
-  is `'ipc'`): install a manual SIGINT → trio-cancel bridge
-  in the fork-child prelude so externally-delivered SIGINT
-  reaches the child's trio loop even when the parent is
-  dead (no IPC cancel path). See the xfail'd
-  `test_orphaned_subactor_sigint_cleanup_DRAFT` for the
-  target behavior.
+  is `'ipc'`). Originally intended as a manual SIGINT →
+  trio-cancel bridge, but investigation showed trio's handler
+  IS already correctly installed in the fork-child subactor
+  — the orphan-SIGINT hang is actually a separate bug where
+  trio's event loop stays wedged in `epoll_wait` despite
+  delivery. See
+  `ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md`
+  for the full trace + fix directions. Once that root cause
+  is fixed, this flag may end up a no-op / doc-only mode.
 - child-side "subint-hosted root runtime" mode (the second
   half of the envisioned arch — currently the forked child
   runs plain `_trio_main` via `spawn_method='trio'`; the
