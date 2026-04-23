@@ -1216,6 +1216,23 @@ class Actor:
                 ipc_server.cancel()
                 await ipc_server.wait_for_shutdown()
 
+            # Break the shield on the parent-channel
+            # `process_messages` loop (started with `shield=True`
+            # in `async_main` above). Required to avoid a
+            # deadlock during teardown of fork-spawned subactors:
+            # without this cancel, the loop parks waiting for
+            # EOF on the parent channel, but the parent is
+            # blocked on `os.waitpid()` for THIS actor's exit
+            # — mutual wait. For exec-spawn backends the EOF
+            # arrives naturally when the parent closes its
+            # handler-task socket during its own teardown, but
+            # in fork backends the shared-process-image makes
+            # that delivery racy / not guaranteed. Explicit
+            # cancel here gives us deterministic unwinding
+            # regardless of backend.
+            if self._parent_chan_cs is not None:
+                self._parent_chan_cs.cancel()
+
             # cancel all rpc tasks permanently
             if self._service_tn:
                 self._service_tn.cancel_scope.cancel()
@@ -1736,7 +1753,16 @@ async def async_main(
                 # start processing parent requests until our channel
                 # server is 100% up and running.
                 if actor._parent_chan:
-                    await root_tn.start(
+                    # Capture the shielded `loop_cs` for the
+                    # parent-channel `process_messages` task so
+                    # `Actor.cancel()` has a handle to break the
+                    # shield during teardown — without this, the
+                    # shielded loop would park on the parent chan
+                    # indefinitely waiting for EOF that only arrives
+                    # after the PARENT tears down, which under
+                    # fork-based backends (e.g. `subint_forkserver`)
+                    # it waits on THIS actor's exit — deadlock.
+                    actor._parent_chan_cs = await root_tn.start(
                         partial(
                             _rpc.process_messages,
                             chan=actor._parent_chan,
