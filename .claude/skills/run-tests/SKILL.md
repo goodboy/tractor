@@ -249,22 +249,38 @@ ls -la /tmp/registry@*.sock 2>/dev/null \
   surface PIDs + cmdlines to the user, offer cleanup:
 
   ```sh
-  # 1. kill test zombies scoped to THIS repo's python only
-  #    (don't pkill by bare pattern — that'd nuke legit
-  #    long-running tractor apps like piker)
-  pkill -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv"
-  sleep 0.3
-  pkill -9 -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv" 2>/dev/null
+  # 1. GRACEFUL FIRST (tractor is structured concurrent — it
+  #    catches SIGINT as an OS-cancel in `_trio_main` and
+  #    cascades Portal.cancel_actor via IPC to every descendant.
+  #    So always try SIGINT first with a bounded timeout; only
+  #    escalate to SIGKILL if graceful cleanup doesn't complete).
+  pkill -INT -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv"
 
-  # 2. if a test zombie holds :1616 specifically and doesn't
+  # 2. bounded wait for graceful teardown (usually sub-second).
+  #    Loop until the processes exit, or timeout. Keep the
+  #    bound tight — hung/abrupt-killed descendants usually
+  #    hang forever, so don't wait more than a few seconds.
+  for i in $(seq 1 10); do
+    pgrep -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv" >/dev/null || break
+    sleep 0.3
+  done
+
+  # 3. ESCALATE TO SIGKILL only if graceful didn't finish.
+  if pgrep -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv" >/dev/null; then
+    echo 'graceful teardown timed out — escalating to SIGKILL'
+    pkill -9 -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv"
+  fi
+
+  # 4. if a test zombie holds :1616 specifically and doesn't
   #    match the above pattern, find its PID the hard way:
   ss -tlnp 2>/dev/null | grep ':1616'   # prints `users:(("<name>",pid=NNNN,...))`
-  # then: kill <NNNN>
+  # then (same SIGINT-first ladder):
+  # kill -INT <NNNN>; sleep 1; kill -9 <NNNN> 2>/dev/null
 
-  # 3. remove stale UDS sockets
+  # 5. remove stale UDS sockets
   rm -f /tmp/registry@*.sock
 
-  # 4. re-verify
+  # 6. re-verify
   ss -tlnp 2>/dev/null | grep ':1616' || echo 'TCP :1616 now free'
   ```
 
