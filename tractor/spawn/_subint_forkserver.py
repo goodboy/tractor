@@ -252,9 +252,13 @@ def _close_inherited_fds(
             os.close(fd)
             closed += 1
         except OSError:
-            # fd was already closed (race with listdir) or
-            # otherwise unclosable — either is fine.
-            pass
+            # fd was already closed (race with listdir) or otherwise
+            # unclosable — either is fine.
+            log.exception(
+                f'Failed to close inherited fd in child ??\n'
+                f'{fd!r}\n'
+            )
+
     return closed
 
 
@@ -401,11 +405,17 @@ def fork_from_worker_thread(
         try:
             os.close(rfd)
         except OSError:
-            pass
+            log.exception(
+                f'Failed to close PID-pipe read-fd in parent ??\n'
+                f'{rfd!r}\n'
+            )
         try:
             os.close(wfd)
         except OSError:
-            pass
+            log.exception(
+                f'Failed to close PID-pipe write-fd in parent ??\n'
+                f'{wfd!r}\n'
+            )
         raise RuntimeError(
             f'subint-forkserver worker thread '
             f'{thread_name!r} did not return within '
@@ -475,6 +485,13 @@ def run_subint_in_worker_thread(
             _interpreters.exec(interp_id, bootstrap)
         except BaseException as e:
             err = e
+            log.exception(
+                f'Failed to .exec() in subint ??\n'
+                f'_interpreters.exec(\n'
+                f'    interp_id={interp_id!r},\n'
+                f'    bootstrap={bootstrap!r},\n'
+                f') => {err!r}\n'
+            )
 
     worker: threading.Thread = threading.Thread(
         target=_drive,
