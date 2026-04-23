@@ -395,6 +395,62 @@ Candidate follow-up experiments:
   re-raise means it should still exit. Unless
   something higher up swallows it.
 
+### Attempted fix (DID NOT work) — hypothesis (3)
+
+Tried: in `_serve_ipc_eps` finally, after closing
+listeners, also iterate `server._peers` and
+sync-close each peer channel's underlying stream
+socket fd:
+
+```python
+for _uid, _chans in list(server._peers.items()):
+    for _chan in _chans:
+        try:
+            _stream = _chan._transport.stream if _chan._transport else None
+            if _stream is not None:
+                _stream.socket.close()  # sync fd close
+        except (AttributeError, OSError):
+            pass
+```
+
+Theory: closing the socket fd from outside the stuck
+recv task would make the recv see EBADF /
+ClosedResourceError and unblock.
+
+Result: `test_nested_multierrors[subint_forkserver]`
+still hangs identically. Either:
+- The sync `socket.close()` doesn't propagate into
+  trio's in-flight `recv_some()` the way I expected
+  (trio may hold an internal reference that keeps the
+  fd open even after an external close), or
+- The stuck recv isn't even the root blocker and the
+  peer handlers never reach the finally for some
+  reason I haven't understood yet.
+
+Either way, the sync-close hypothesis is **ruled
+out**. Reverted the experiment, restored the skip-
+mark on the test.
+
+### Aside: `-s` flag changes behavior for peer-intensive tests
+
+While exploring, noticed
+`tests/test_context_stream_semantics.py` under
+`--spawn-backend=subint_forkserver` hangs with
+pytest's default `--capture=fd` but passes with
+`-s` (`--capture=no`). Hypothesis (unverified): fork
+children inherit pytest's capture pipe for stdout/
+stderr (fds 1,2 — we preserve these in
+`_close_inherited_fds`). When subactor logging is
+verbose, the capture pipe buffer fills, writes block,
+child can't progress, deadlock.
+
+If confirmed, fix direction: redirect subactor
+stdout/stderr to `/dev/null` (or a file) in
+`_actor_child_main` so subactors don't hold pytest's
+capture pipe open. Not a blocker on the main
+peer-chan-loop investigation; deserves its own mini-
+tracker.
+
 ## Stopgap (landed)
 
 `test_nested_multierrors` skip-marked under
