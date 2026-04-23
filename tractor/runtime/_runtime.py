@@ -870,7 +870,14 @@ class Actor:
 
             accept_addrs: list[UnwrappedAddress]|None = None
 
-            if self._spawn_method in ("trio", "subint"):
+            if self._spawn_method in (
+                'trio',
+                'subint',
+                # `subint_forkserver` parent-side sends a
+                # `SpawnSpec` over IPC just like the other two
+                # — fork child-side runtime is trio-native.
+                'subint_forkserver',
+            ):
 
                 # Receive post-spawn runtime state from our parent.
                 spawnspec: msgtypes.SpawnSpec = await chan.recv()
