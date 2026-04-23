@@ -66,6 +66,13 @@ Still-open work (tracked on tractor #379):
 - no cancellation / hard-kill stress coverage yet (counterpart
   to `tests/test_subint_cancellation.py` for the plain
   `subint` backend),
+- `child_sigint='trio'` mode (flag scaffolded below; default
+  is `'ipc'`): install a manual SIGINT → trio-cancel bridge
+  in the fork-child prelude so externally-delivered SIGINT
+  reaches the child's trio loop even when the parent is
+  dead (no IPC cancel path). See the xfail'd
+  `test_orphaned_subactor_sigint_cleanup_DRAFT` for the
+  target behavior.
 - child-side "subint-hosted root runtime" mode (the second
   half of the envisioned arch — currently the forked child
   runs plain `_trio_main` via `spawn_method='trio'`; the
@@ -115,6 +122,7 @@ from functools import partial
 from typing import (
     Any,
     Callable,
+    Literal,
     TYPE_CHECKING,
 )
 
@@ -143,6 +151,31 @@ if TYPE_CHECKING:
 
 
 log = get_logger('tractor')
+
+
+# Configurable child-side SIGINT handling for forkserver-spawned
+# subactors. Threaded through `subint_forkserver_proc`'s
+# `proc_kwargs` under the `'child_sigint'` key.
+#
+# - `'ipc'` (default, currently the only implemented mode):
+#   child has NO trio-level SIGINT handler — trio.run() is on
+#   the fork-inherited non-main thread, `signal.set_wakeup_fd()`
+#   is main-thread-only. Cancellation flows exclusively via
+#   the parent's `Portal.cancel_actor()` IPC path. Safe +
+#   deterministic for nursery-structured apps where the parent
+#   is always the cancel authority. Known gap: orphan
+#   (post-parent-SIGKILL) children don't respond to SIGINT
+#   — see `test_orphaned_subactor_sigint_cleanup_DRAFT`.
+#
+# - `'trio'` (**not yet implemented**): install a manual
+#   SIGINT → trio-cancel bridge in the child's fork prelude
+#   (pre-`trio.run()`) so external Ctrl-C reaches stuck
+#   grandchildren even with a dead parent. Adds signal-
+#   handling surface the `'ipc'` default cleanly avoids; only
+#   pay for it when externally-interruptible children actually
+#   matter (e.g. CLI tool grandchildren).
+ChildSigintMode = Literal['ipc', 'trio']
+_DEFAULT_CHILD_SIGINT: ChildSigintMode = 'ipc'
 
 
 # Feature-gate: py3.14+ via the public `concurrent.interpreters`
@@ -537,13 +570,61 @@ async def subint_forkserver_proc(
             f'Current runtime: {sys.version}'
         )
 
+    # Backend-scoped config pulled from `proc_kwargs`. Using
+    # `proc_kwargs` (vs a first-class kwarg on this function)
+    # matches how other backends expose per-spawn tuning
+    # (`trio_proc` threads it to `trio.lowlevel.open_process`,
+    # etc.) and keeps `ActorNursery.start_actor(proc_kwargs=...)`
+    # as the single ergonomic entry point.
+    child_sigint: ChildSigintMode = proc_kwargs.get(
+        'child_sigint',
+        _DEFAULT_CHILD_SIGINT,
+    )
+    if child_sigint not in ('ipc', 'trio'):
+        raise ValueError(
+            f'Invalid `child_sigint={child_sigint!r}` for '
+            f'`subint_forkserver` backend.\n'
+            f'Expected one of: {ChildSigintMode}.'
+        )
+    if child_sigint == 'trio':
+        raise NotImplementedError(
+            f"`child_sigint='trio'` mode — trio-native SIGINT "
+            f"plumbing in the fork-child — is scaffolded but "
+            f"not yet implemented. See the xfail'd "
+            f"`test_orphaned_subactor_sigint_cleanup_DRAFT` "
+            f"and the TODO in this module's docstring."
+        )
+
     uid: tuple[str, str] = subactor.aid.uid
     loglevel: str | None = subactor.loglevel
 
     # Closure captured into the fork-child's memory image.
     # In the child this is the first post-fork Python code to
     # run, on what was the fork-worker thread in the parent.
+    # `child_sigint` is captured here so the impl lands inside
+    # this function once the `'trio'` mode is wired up —
+    # nothing above this comment needs to change.
     def _child_target() -> int:
+        # Dispatch on the captured SIGINT-mode closure var.
+        # Today only `'ipc'` is reachable (the `'trio'` branch
+        # is fenced off at the backend-entry guard above); the
+        # match is in place so the future `'trio'` impl slots
+        # in as a plain case arm without restructuring.
+        match child_sigint:
+            case 'ipc':
+                pass  # <- current behavior: no child-side
+                      #    SIGINT plumbing; rely on parent
+                      #    `Portal.cancel_actor()` IPC path.
+            case 'trio':
+                # Unreachable today (see entry-guard above);
+                # this stub exists so that lifting the guard
+                # is the only change required to enable
+                # `'trio'` mode once the SIGINT wakeup-fd
+                # bridge is implemented.
+                raise NotImplementedError(
+                    "`child_sigint='trio'` fork-prelude "
+                    "plumbing not yet wired."
+                )
         # Lazy import so the parent doesn't pay for it on
         # every spawn — it's module-level in `_child` but
         # cheap enough to re-resolve here.
