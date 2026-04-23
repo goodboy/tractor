@@ -306,13 +306,159 @@ root's `open_nursery` receives the
 `BaseExceptionGroup` containing the `AssertionError`
 from the errorer and unwinds cleanly.
 
+## Update — 2026-04-23: partial fix landed, deeper layer surfaced
+
+Three improvements landed as separate commits in the
+`subint_forkserver_backend` branch (see `git log`):
+
+1. **`_close_inherited_fds()` in fork-child prelude**
+   (`tractor/spawn/_subint_forkserver.py`). POSIX
+   close-fds-equivalent enumeration via
+   `/proc/self/fd` (or `RLIMIT_NOFILE` fallback), keep
+   only stdio. This is fix-direction (1) from the list
+   above — went with the blunt form rather than the
+   targeted enum-via-`actor.ipc_server` form, turns
+   out the aggressive close is safe because every
+   inheritable resource the fresh child needs
+   (IPC-channel socket, etc.) is opened AFTER the
+   fork anyway.
+2. **`_ForkedProc.wait()` via `os.pidfd_open()` +
+   `trio.lowlevel.wait_readable()`** — matches the
+   `trio.Process.wait` / `mp.Process.sentinel` pattern
+   used by `trio_proc` and `proc_waiter`. Gives us
+   fully trio-cancellable child-wait (prior impl
+   blocked a cache thread on a sync `os.waitpid` that
+   was NOT trio-cancellable due to
+   `abandon_on_cancel=False`).
+3. **`_parent_chan_cs` wiring** in
+   `tractor/runtime/_runtime.py`: capture the shielded
+   `loop_cs` for the parent-channel `process_messages`
+   task in `async_main`; explicitly cancel it in
+   `Actor.cancel()` teardown. This breaks the shield
+   during teardown so the parent-chan loop exits when
+   cancel is issued, instead of parking on a parent-
+   socket EOF that might never arrive under fork
+   semantics.
+
+**Concrete wins from (1):** the sibling
+`subint_forkserver_orphan_sigint_hang_issue.md` class
+is **now fixed** — `test_orphaned_subactor_sigint_cleanup_DRAFT`
+went from strict-xfail to pass. The xfail mark was
+removed; the test remains as a regression guard.
+
+**test_nested_multierrors STILL hangs** though.
+
+### Updated diagnosis (narrowed)
+
+DIAGDEBUG instrumentation of `process_messages` ENTER/
+EXIT pairs + `_parent_chan_cs.cancel()` call sites
+showed (captured during a 20s-timeout repro):
+
+- 80 `process_messages` ENTERs, 75 EXITs → 5 stuck.
+- **All 40 `shield=True` ENTERs matched EXIT** — every
+  shielded parent-chan loop exits cleanly. The
+  `_parent_chan_cs` wiring works as intended.
+- **The 5 stuck loops are all `shield=False`** — peer-
+  channel handlers (inbound connections handled by
+  `handle_stream_from_peer` in stream_handler_tn).
+- After our `_parent_chan_cs.cancel()` fires, NEW
+  shielded process_messages loops start (on the
+  session reg_addr port — probably discovery-layer
+  reconnection attempts). These don't block teardown
+  (they all exit) but indicate the cancel cascade has
+  more moving parts than expected.
+
+### Remaining unknown
+
+Why don't the 5 peer-channel loops exit when
+`service_tn.cancel_scope.cancel()` fires? They're in
+`stream_handler_tn` which IS `service_tn` in the
+current configuration (`open_ipc_server(parent_tn=
+service_tn, stream_handler_tn=service_tn)`). A
+standard nursery-scope-cancel should propagate through
+them — no shield, no special handler. Something
+specific to the fork-spawned configuration keeps them
+alive.
+
+Candidate follow-up experiments:
+
+- Dump the trio task tree at the hang point (via
+  `stackscope` or direct trio introspection) to see
+  what each stuck loop is awaiting. `chan.__anext__`
+  on a socket recv? An inner lock? A shielded sub-task?
+- Compare peer-channel handler lifecycle under
+  `trio_proc` vs `subint_forkserver` with equivalent
+  logging to spot the divergence.
+- Investigate whether the peer handler is caught in
+  the `except trio.Cancelled:` path at
+  `tractor/ipc/_server.py:448` that re-raises — but
+  re-raise means it should still exit. Unless
+  something higher up swallows it.
+
+### Attempted fix (DID NOT work) — hypothesis (3)
+
+Tried: in `_serve_ipc_eps` finally, after closing
+listeners, also iterate `server._peers` and
+sync-close each peer channel's underlying stream
+socket fd:
+
+```python
+for _uid, _chans in list(server._peers.items()):
+    for _chan in _chans:
+        try:
+            _stream = _chan._transport.stream if _chan._transport else None
+            if _stream is not None:
+                _stream.socket.close()  # sync fd close
+        except (AttributeError, OSError):
+            pass
+```
+
+Theory: closing the socket fd from outside the stuck
+recv task would make the recv see EBADF /
+ClosedResourceError and unblock.
+
+Result: `test_nested_multierrors[subint_forkserver]`
+still hangs identically. Either:
+- The sync `socket.close()` doesn't propagate into
+  trio's in-flight `recv_some()` the way I expected
+  (trio may hold an internal reference that keeps the
+  fd open even after an external close), or
+- The stuck recv isn't even the root blocker and the
+  peer handlers never reach the finally for some
+  reason I haven't understood yet.
+
+Either way, the sync-close hypothesis is **ruled
+out**. Reverted the experiment, restored the skip-
+mark on the test.
+
+### Aside: `-s` flag changes behavior for peer-intensive tests
+
+While exploring, noticed
+`tests/test_context_stream_semantics.py` under
+`--spawn-backend=subint_forkserver` hangs with
+pytest's default `--capture=fd` but passes with
+`-s` (`--capture=no`). Hypothesis (unverified): fork
+children inherit pytest's capture pipe for stdout/
+stderr (fds 1,2 — we preserve these in
+`_close_inherited_fds`). When subactor logging is
+verbose, the capture pipe buffer fills, writes block,
+child can't progress, deadlock.
+
+If confirmed, fix direction: redirect subactor
+stdout/stderr to `/dev/null` (or a file) in
+`_actor_child_main` so subactors don't hold pytest's
+capture pipe open. Not a blocker on the main
+peer-chan-loop investigation; deserves its own mini-
+tracker.
+
 ## Stopgap (landed)
 
-Until the fix lands, `test_nested_multierrors` +
-related multi-level-spawn tests can be skip-marked
-under `subint_forkserver` via
+`test_nested_multierrors` skip-marked under
+`subint_forkserver` via
 `@pytest.mark.skipon_spawn_backend('subint_forkserver',
-reason='...')`. Cross-ref this doc.
+reason='...')`, cross-referenced to this doc. Mark
+should be dropped once the peer-channel-loop exit
+issue is fixed.
 
 ## References
 
