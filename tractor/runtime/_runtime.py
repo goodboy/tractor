@@ -1973,7 +1973,25 @@ async def async_main(
                 f'   {pformat(ipc_server._peers)}'
             )
             log.runtime(teardown_report)
-            await ipc_server.wait_for_no_more_peers()
+            # NOTE: bound the peer-clear wait — otherwise if any
+            # peer-channel handler is stuck (e.g. never got its
+            # cancel propagated due to a runtime bug), this wait
+            # blocks forever and deadlocks the whole actor-tree
+            # teardown cascade. 3s is enough for any graceful
+            # cancel-ack round-trip; beyond that we're in bug
+            # territory and need to proceed with local teardown
+            # so the parent's `_ForkedProc.wait()` can unblock.
+            # See `ai/conc-anal/
+            # subint_forkserver_test_cancellation_leak_issue.md`
+            # for the full diagnosis.
+            with trio.move_on_after(3.0) as _peers_cs:
+                await ipc_server.wait_for_no_more_peers()
+            if _peers_cs.cancelled_caught:
+                teardown_report += (
+                    f'-> TIMED OUT waiting for peers to clear '
+                    f'({len(ipc_server._peers)} still connected)\n'
+                )
+                log.warning(teardown_report)
 
         teardown_report += (
             '-]> all peer channels are complete.\n'
