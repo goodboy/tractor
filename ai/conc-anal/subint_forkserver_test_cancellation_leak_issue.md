@@ -635,6 +635,93 @@ asymmetric. Not purely depth-determined. Some race
 condition in nursery teardown when multiple
 siblings error simultaneously.
 
+## Update — 2026-04-23 (late, probe iteration 3): hang pinpointed to `wait_for_no_more_peers()`
+
+Further DIAGDEBUG at every milestone in `async_main`
+(runtime UP / EXITED service_tn / EXITED root_tn /
+FINALLY ENTER / RETURNING) plus `_ForkedProc.wait`
+ENTER/RETURNED per-pidfd. Result:
+
+**Every stuck actor reaches `async_main: FINALLY
+ENTER` but NOT `async_main: RETURNING`.**
+
+That isolates the hang to a specific await in
+`async_main`'s finally block at
+`tractor/runtime/_runtime.py:1837+`. The suspect:
+
+```python
+# Ensure all peers (actors connected to us as clients) are finished
+if ipc_server := actor.ipc_server and ipc_server.has_peers(check_chans=True):
+    ...
+    await ipc_server.wait_for_no_more_peers()  # ← UNBOUNDED, blocks forever
+```
+
+`_no_more_peers` is an `Event` set only when
+`server._peers` empties (see
+`ipc/_server.py:526-530`). If ANY peer-handler is
+stuck (the 5 unclosed loops from the earlier pass),
+it keeps its channel in `server._peers`, so the
+event never fires, so the wait hangs.
+
+### Applied fix (partial, landed as defensive-in-depth)
+
+`tractor/runtime/_runtime.py:1981` —
+`wait_for_no_more_peers()` call now wrapped in
+`trio.move_on_after(3.0)` + a warning log when the
+timeout fires. Commented with the full rationale.
+
+**Verified:** with this fix, ALL 15 actors reach
+`async_main: RETURNING` cleanly (up from 10/15
+reaching end before).
+
+**Unfortunately:** the test still hangs past 45s
+total — meaning there's YET ANOTHER unbounded wait
+downstream of `async_main`. The bounded
+`wait_for_no_more_peers` unblocks one level, but
+the cascade has another level above it.
+
+### Candidates for the remaining hang
+
+1. `open_root_actor`'s own finally / post-
+   `async_main` flow in `_root.py` — specifically
+   `await actor.cancel(None)` which has its own
+   internal waits.
+2. The `trio.run()` itself doesn't return even
+   after the root task completes because trio's
+   nursery still has background tasks running.
+3. Maybe `_serve_ipc_eps`'s finally has an await
+   that blocks when peers aren't clearing.
+
+### Current stance
+
+- Defensive `wait_for_no_more_peers` bound landed
+  (good hygiene regardless). Revealing a real
+  deadlock-avoidance gap in tractor's cleanup.
+- Test still hangs → skip-mark restored on
+  `test_nested_multierrors[subint_forkserver]`.
+- The full chain of unbounded waits needs another
+  session of drilling, probably at
+  `open_root_actor` / `actor.cancel` level.
+
+### Summary of this investigation's wins
+
+1. **FD hygiene fix** (`_close_inherited_fds`) —
+   correct, closed orphan-SIGINT sibling issue.
+2. **pidfd-based `_ForkedProc.wait`** — cancellable,
+   matches trio_proc pattern.
+3. **`_parent_chan_cs` wiring** —
+   `Actor.cancel()` now breaks the shielded parent-
+   chan `process_messages` loop.
+4. **`wait_for_no_more_peers` bounded** —
+   prevents the actor-level finally hang.
+5. **Ruled-out hypotheses:** tree-kill missing
+   (wrong), stuck socket recv (wrong), capture-
+   pipe fill (wrong).
+6. **Pinpointed remaining unknown:** at least one
+   more unbounded wait in the teardown cascade
+   above `async_main`. Concrete candidates
+   enumerated above.
+
 ## Stopgap (landed)
 
 `test_nested_multierrors` skip-marked under
