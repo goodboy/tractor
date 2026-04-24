@@ -451,3 +451,73 @@ by your changes — note them and move on.
 **Rule of thumb**: if a test fails with `TooSlowError`,
 `trio.TooSlowError`, or `pexpect.TIMEOUT` and you didn't
 touch the relevant code path, it's flaky — skip it.
+
+## 9. The pytest-capture hang pattern (CHECK THIS FIRST)
+
+**Symptom:** a tractor test hangs indefinitely under
+default `pytest` but passes instantly when you add
+`-s` (`--capture=no`).
+
+**Cause:** tractor subactors (especially under fork-
+based backends) inherit pytest's stdout/stderr
+capture pipes via fds 1,2. Under high-volume error
+logging (e.g. multi-level cancel cascade, nested
+`run_in_actor` failures, anything triggering
+`RemoteActorError` + `ExceptionGroup` traceback
+spew), the **64KB Linux pipe buffer fills** faster
+than pytest drains it. Subactor writes block → can't
+finish exit → parent's `waitpid`/pidfd wait blocks →
+deadlock cascades up the tree.
+
+**Pre-existing guards in the tractor harness** that
+encode this same knowledge — grep these FIRST
+before spelunking:
+
+- `tests/conftest.py:258-260` (in the `daemon`
+  fixture): `# XXX: too much logging will lock up
+  the subproc (smh)` — downgrades `trace`/`debug`
+  loglevel to `info` to prevent the hang.
+- `tests/conftest.py:316`: `# can lock up on the
+  _io.BufferedReader and hang..` — noted on the
+  `proc.stderr.read()` post-SIGINT.
+
+**Debug recipe (in priority order):**
+
+1. **Try `-s` first.** If the hang disappears with
+   `pytest -s`, you've confirmed it's capture-pipe
+   fill. Skip spelunking.
+2. **Lower the loglevel.** Default `--ll=error` on
+   this project; if you've bumped it to `debug` /
+   `info`, try dropping back. Each log level
+   multiplies pipe-pressure under fault cascades.
+3. **If you MUST use default capture + high log
+   volume**, redirect subactor stdout/stderr in the
+   child prelude (e.g.
+   `tractor.spawn._subint_forkserver._child_target`
+   post-`_close_inherited_fds`) to `/dev/null` or a
+   file.
+
+**Signature tells you it's THIS bug (vs. a real
+code hang):**
+
+- Multi-actor test under fork-based backend
+  (`subint_forkserver`, eventually `trio_proc` too
+  under enough log volume).
+- Multiple `RemoteActorError` / `ExceptionGroup`
+  tracebacks in the error path.
+- Test passes with `-s` in the 5-10s range, hangs
+  past pytest-timeout (usually 30+ s) without `-s`.
+- Subactor processes visible via `pgrep -af
+  subint-forkserv` or similar after the hang —
+  they're alive but blocked on `write()` to an
+  inherited stdout fd.
+
+**Historical reference:** this deadlock cost a
+multi-session investigation (4 genuine cascade
+fixes landed along the way) that only surfaced the
+capture-pipe issue AFTER the deeper fixes let the
+tree actually tear down enough to produce pipe-
+filling log volume. Full post-mortem in
+`ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`.
+Lesson codified here so future-me grep-finds the
+workaround before digging.
