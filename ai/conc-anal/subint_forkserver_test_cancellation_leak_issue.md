@@ -715,12 +715,111 @@ the cascade has another level above it.
 4. **`wait_for_no_more_peers` bounded** —
    prevents the actor-level finally hang.
 5. **Ruled-out hypotheses:** tree-kill missing
-   (wrong), stuck socket recv (wrong), capture-
-   pipe fill (wrong).
+   (wrong), stuck socket recv (wrong).
 6. **Pinpointed remaining unknown:** at least one
    more unbounded wait in the teardown cascade
    above `async_main`. Concrete candidates
    enumerated above.
+
+## Update — 2026-04-23 (VERY late): pytest capture pipe IS the final gate
+
+After landing fixes 1-4 and instrumenting every
+layer down to `tractor_test`'s `trio.run(_main)`:
+
+**Empirical result: with `pytest -s` the test PASSES
+in 6.20s.** Without `-s` (default `--capture=fd`) it
+hangs forever.
+
+DIAG timeline for the root pytest PID (with `-s`
+implied from later verification):
+
+```
+tractor_test: about to trio.run(_main)
+open_root_actor: async_main task started, yielding to test body
+_main: about to await wrapped test fn
+_main: wrapped RETURNED cleanly        ← test body completed!
+open_root_actor: about to actor.cancel(None)
+Actor.cancel ENTER req_chan=False
+Actor.cancel RETURN
+open_root_actor: actor.cancel RETURNED
+open_root_actor: outer FINALLY
+open_root_actor: finally END (returning from ctxmgr)
+tractor_test: trio.run FINALLY (returned or raised)  ← trio.run fully returned!
+```
+
+`trio.run()` fully returns. The test body itself
+completes successfully (pytest.raises absorbed the
+expected `BaseExceptionGroup`). What blocks is
+**pytest's own stdout/stderr capture** — under
+`--capture=fd` default, pytest replaces the parent
+process's fd 1,2 with pipe write-ends it's reading
+from. Fork children inherit those pipe fds
+(because `_close_inherited_fds` correctly preserves
+stdio). High-volume subactor error-log tracebacks
+(7+ actors each logging multiple
+`RemoteActorError`/`ExceptionGroup` tracebacks on
+the error-propagation cascade) fill the 64KB Linux
+pipe buffer. Subactor writes block. Subactor can't
+progress. Process doesn't exit. Parent's
+`_ForkedProc.wait` (now pidfd-based and
+cancellable, but nothing's cancelling here since
+the test body already completed) keeps the pipe
+reader alive... but pytest isn't draining its end
+fast enough because test-teardown/fixture-cleanup
+is in progress.
+
+**Actually** the exact mechanism is slightly
+different: pytest's capture fixture MIGHT be
+actively reading, but faster-than-writer subactors
+overflow its internal buffer. Or pytest might be
+blocked itself on the finalization step.
+
+Either way, `-s` conclusively fixes it.
+
+### Why I ruled this out earlier (and shouldn't have)
+
+Earlier in this investigation I tested
+`test_nested_multierrors` with/without `-s` and
+both hung. That's because AT THAT TIME, fixes 1-4
+weren't all in place yet. The test was hanging at
+multiple deeper levels long before reaching the
+"generate lots of error-log output" phase. Once
+the cascade actually tore down cleanly, enough
+output was produced to hit the capture-pipe limit.
+
+**Classic order-of-operations mistake in
+debugging:** ruling something out too early based
+on a test that was actually failing for a
+different reason.
+
+### Fix direction (next session)
+
+Redirect subactor stdout/stderr to `/dev/null` (or
+a session-scoped log file) in the fork-child
+prelude, right after `_close_inherited_fds()`. This
+severs the inherited pytest-capture pipes and lets
+subactor output flow elsewhere. Under normal
+production use (non-pytest), stdout/stderr would
+be the TTY — we'd want to keep that. So the
+redirect should be conditional or opt-in via the
+`child_sigint`/proc_kwargs flag family.
+
+Alternative: document as a gotcha and recommend
+`pytest -s` for any tests using the
+`subint_forkserver` backend with multi-level actor
+trees. Simpler, user-visible, no code change.
+
+### Current state
+
+- Skip-mark on `test_nested_multierrors[subint_forkserver]`
+  restored with reason pointing here.
+- Test confirmed passing with `-s` after all 4
+  cascade fixes applied.
+- The 4 cascade fixes are NOT wasted — they're
+  correct hardening regardless of the capture-pipe
+  issue, AND without them we'd never reach the
+  "actually produces enough output to fill the
+  pipe" state.
 
 ## Stopgap (landed)
 
