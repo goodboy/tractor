@@ -156,8 +156,10 @@ def test_breakpoint_hook_restored(
     calls used.
 
     '''
+    # XXX required for `breakpoint()` overload and
+    # thus`tractor.devx.pause_from_sync()`.
+    pytest.importorskip('greenback')
     child = spawn('restore_builtin_breakpoint')
-
     child.expect(PROMPT)
     try:
         assert_before(
