@@ -431,25 +431,114 @@ Either way, the sync-close hypothesis is **ruled
 out**. Reverted the experiment, restored the skip-
 mark on the test.
 
-### Aside: `-s` flag changes behavior for peer-intensive tests
+### Aside: `-s` flag does NOT change `test_nested_multierrors` behavior
 
-While exploring, noticed
-`tests/test_context_stream_semantics.py` under
-`--spawn-backend=subint_forkserver` hangs with
-pytest's default `--capture=fd` but passes with
-`-s` (`--capture=no`). Hypothesis (unverified): fork
-children inherit pytest's capture pipe for stdout/
-stderr (fds 1,2 — we preserve these in
-`_close_inherited_fds`). When subactor logging is
-verbose, the capture pipe buffer fills, writes block,
-child can't progress, deadlock.
+Tested explicitly: both with and without `-s`, the
+test hangs identically. So the capture-pipe-fill
+hypothesis is **ruled out** for this test.
 
-If confirmed, fix direction: redirect subactor
-stdout/stderr to `/dev/null` (or a file) in
-`_actor_child_main` so subactors don't hold pytest's
-capture pipe open. Not a blocker on the main
-peer-chan-loop investigation; deserves its own mini-
-tracker.
+The earlier `test_context_stream_semantics.py` `-s`
+observation was most likely caused by a competing
+pytest run in my session (confirmed via process list
+— my leftover pytest was alive at that time and
+could have been holding state on the default
+registry port).
+
+## Update — 2026-04-23 (late): cancel delivery ruled in, nursery-wait ruled BLOCKER
+
+**New diagnostic run** instrumented
+`handle_stream_from_peer` at ENTER / `except
+trio.Cancelled:` / finally, plus `Actor.cancel()`
+just before `self._parent_chan_cs.cancel()`. Result:
+
+- **40 `handle_stream_from_peer` ENTERs**.
+- **0 `except trio.Cancelled:` hits** — cancel
+  never fires on any peer-handler.
+- **35 finally hits** — those handlers exit via
+  peer-initiated EOF (normal return), NOT cancel.
+- **5 handlers never reach finally** — stuck forever.
+- **`Actor.cancel()` fired in 12 PIDs** — but the
+  PIDs with peer handlers that DIDN'T fire
+  Actor.cancel are exactly **root + 2 direct
+  spawners**. These 3 actors have peer handlers
+  (for their own subactors) that stay stuck because
+  **`Actor.cancel()` at these levels never runs**.
+
+### The actual deadlock shape
+
+`Actor.cancel()` lives in
+`open_root_actor.__aexit__` / `async_main` teardown.
+That only runs when the enclosing `async with
+tractor.open_nursery()` exits. The nursery's
+`__aexit__` calls the backend `*_proc` spawn target's
+teardown, which does `soft_kill() →
+_ForkedProc.wait()` on its child PID. That wait is
+trio-cancellable via pidfd now (good) — but nothing
+CANCELS it because the outer scope only cancels when
+`Actor.cancel()` runs, which only runs when the
+nursery completes, which waits on the child.
+
+It's a **multi-level mutual wait**:
+
+```
+root              blocks on spawner.wait()
+  spawner         blocks on grandchild.wait()
+    grandchild    blocks on errorer.wait()
+      errorer     Actor.cancel() ran, but process
+                  may not have fully exited yet
+                  (something in root_tn holding on?)
+```
+
+Each level waits for the level below. The bottom
+level (errorer) reaches Actor.cancel(), but its
+process may not fully exit — meaning its pidfd
+doesn't go readable, meaning the grandchild's
+waitpid doesn't return, meaning the grandchild's
+nursery doesn't unwind, etc. all the way up.
+
+### Refined question
+
+**Why does an errorer process not exit after its
+`Actor.cancel()` completes?**
+
+Possibilities:
+1. `_parent_chan_cs.cancel()` fires (shielded
+   parent-chan loop unshielded), but the task is
+   stuck INSIDE the shielded loop's recv in a way
+   that cancel still can't break.
+2. After `Actor.cancel()` returns, `async_main`
+   still has other tasks in `root_tn` waiting for
+   something that never arrives (e.g. outbound
+   IPC reply delivery).
+3. The `os._exit(rc)` in `_worker` (at
+   `_subint_forkserver.py`) doesn't run because
+   `_child_target` never returns.
+
+Next-session candidate probes (in priority order):
+
+1. **Instrument `_worker`'s fork-child branch** to
+   confirm whether `child_target()` returns (and
+   thus `os._exit(rc)` is reached) for errorer
+   PIDs. If yes → process should die; if no →
+   trace back into `_actor_child_main` /
+   `_trio_main` / `async_main` to find the stuck
+   spot.
+2. **Instrument `async_main`'s final unwind** to
+   see which await in the teardown doesn't
+   complete.
+3. **Compare under `trio_proc` backend** at the
+   same `_worker`-equivalent level to see where
+   the flows diverge.
+
+### Rule-out: NOT a stuck peer-chan recv
+
+Earlier hypothesis was that the 5 stuck peer-chan
+loops were blocked on a socket recv that cancel
+couldn't interrupt. This pass revealed the real
+cause: cancel **never reaches those tasks** because
+their owning actor's `Actor.cancel()` never runs.
+The recvs are fine — they're just parked because
+nothing is telling them to stop.
 
 ## Stopgap (landed)
 
