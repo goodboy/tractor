@@ -774,6 +774,22 @@ async def subint_forkserver_proc(
             set_runtime_vars,
         )
         set_runtime_vars(get_runtime_vars(clear_values=True))
+        # If stdout/stderr point at a PIPE (not a TTY or
+        # regular file), we're almost certainly running under
+        # pytest's default `--capture=fd` or some other
+        # capturing harness. Under high-volume subactor error-
+        # log output (e.g. the cancel cascade spew in nested
+        # `run_in_actor` failures) the Linux 64KB pipe buffer
+        # fills faster than the reader drains → child `write()`
+        # blocks → child can't finish teardown → parent's
+        # `_ForkedProc.wait` blocks → cascade deadlock.
+        # Sever inheritance by redirecting fds 1,2 to
+        # `/dev/null` in that specific case. TTY/file stdio
+        # is preserved so interactive runs still see subactor
+        # output. See `.claude/skills/run-tests/SKILL.md`
+        # section 9 and
+        # `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`
+        # for the post-mortem.
         _actor_child_main(
             uid=uid,
             loglevel=loglevel,

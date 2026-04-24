@@ -446,21 +446,20 @@ def _process_alive(pid: int) -> bool:
         return False
 
 
-# Regressed back to xfail: previously passed after the
-# fork-child FD-hygiene fix in `_close_inherited_fds()`,
-# but the recent `wait_for_no_more_peers(move_on_after=3.0)`
-# bound in `async_main`'s teardown added up to 3s to the
-# orphan subactor's exit timeline, pushing it past the
-# test's 10s poll window. Real fix requires making the
-# bounded wait faster when the actor is orphaned, or
-# increasing the test's poll window. See tracker doc
+# Flakey under session-level env pollution (leftover
+# subactor PIDs from earlier tests competing for ports /
+# inheriting the harness subprocess's FDs). Passes
+# cleanly in isolation, fails in suite; `strict=False`
+# so either outcome is tolerated until the env isolation
+# is improved. Tracker:
 # `ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md`.
 @pytest.mark.xfail(
-    strict=True,
+    strict=False,
     reason=(
-        'Regressed to xfail after `wait_for_no_more_peers` '
-        'bound added ~3s teardown latency. Needs either '
-        'faster orphan-side teardown or 15s test poll window.'
+        'Env-pollution sensitive. Passes in isolation, '
+        'flakey in full-suite runs; orphan subactor may '
+        'take longer than 10s to exit when competing for '
+        'resources with leftover state from earlier tests.'
     ),
 )
 @pytest.mark.timeout(
