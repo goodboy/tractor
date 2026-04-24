@@ -540,6 +540,101 @@ their owning actor's `Actor.cancel()` never runs.
 The recvs are fine — they're just parked because
 nothing is telling them to stop.
 
+## Update — 2026-04-23 (very late): leaves exit, middle actors stuck in `trio.run`
+
+Yet another instrumentation pass — this time
+printing at:
+
+- `_worker` child branch: `pre child_target()` /
+  `child_target RETURNED rc=N` / `about to
+  os._exit(rc)` 
+- `_trio_main`: `about to trio.run` /
+  `trio.run RETURNED NORMALLY` / `FINALLY`
+
+**Fresh-run results** (`test_nested_multierrors[
+subint_forkserver]`, depth=1/breadth=2, 1 root + 14
+forked = 15 actors total):
+
+- **9 processes completed the full flow** —
+  `trio.run RETURNED NORMALLY` → `child_target
+  RETURNED rc=0` → `about to os._exit(0)`. These
+  are the LEAVES of the tree (errorer actors) plus
+  their direct parents (depth-0 spawners). They
+  actually exit their processes.
+- **5 processes are stuck INSIDE `trio.run(trio_main)`**
+  — they hit "about to trio.run" but NEVER see
+  "trio.run RETURNED NORMALLY". These are root +
+  top-level spawners + one intermediate.
+
+**What this means:** `async_main` itself is the
+deadlock holder, not the peer-channel loops.
+Specifically, the outer `async with root_tn:` in
+`async_main` never exits for the 5 stuck actors.
+Their `trio.run` never returns → `_trio_main`
+catch/finally never runs → `_worker` never reaches
+`os._exit(rc)` → the PROCESS never dies → its
+parent's `_ForkedProc.wait()` blocks → parent's
+nursery hangs → parent's `async_main` hangs → ...
+
+### The new precise question
+
+**What task in the 5 stuck actors' `async_main`
+never completes?** Candidates:
+
+1. The shielded parent-chan `process_messages`
+   task in `root_tn` — but we explicitly cancel it
+   via `_parent_chan_cs.cancel()` in `Actor.cancel()`.
+   However, `Actor.cancel()` only runs during
+   `open_root_actor.__aexit__`, which itself runs
+   only after `async_main`'s outer unwind — which
+   doesn't happen. So the shield isn't broken.
+
+2. `await actor_nursery._join_procs.wait()` or
+   similar in the inline backend `*_proc` flow.
+
+3. `_ForkedProc.wait()` on a grandchild that
+   actually DID exit — but the pidfd_open watch
+   didn't fire for some reason (race between
+   pidfd_open and the child exiting?).
+
+The most specific next probe: **add DIAG around
+`_ForkedProc.wait()` enter/exit** to see whether
+the pidfd-based wait returns for every grandchild
+exit. If a stuck parent's `_ForkedProc.wait()`
+NEVER returns despite its child exiting, the
+pidfd mechanism has a race bug under nested
+forkserver.
+
+Alternative probe: instrument `async_main`'s outer
+nursery exits to find which nursery's `__aexit__`
+is stuck, drilling down from `trio.run` to the
+specific `async with` that never completes.
+
+### Cascade summary (updated tree view)
+
+```
+ROOT (pytest)                       STUCK in trio.run
+├── top_0 (spawner, d=1)            STUCK in trio.run
+│   ├── spawner_0_d1_0 (d=0)        exited (os._exit 0)
+│   │   ├── errorer_0_0             exited (os._exit 0)
+│   │   └── errorer_0_1             exited (os._exit 0)
+│   └── spawner_0_d1_1 (d=0)        exited (os._exit 0)
+│       ├── errorer_0_2             exited (os._exit 0)
+│       └── errorer_0_3             exited (os._exit 0)
+└── top_1 (spawner, d=1)            STUCK in trio.run
+    ├── spawner_1_d1_0 (d=0)        STUCK in trio.run (sibling race?)
+    │   ├── errorer_1_0             exited
+    │   └── errorer_1_1             exited
+    └── spawner_1_d1_1 (d=0)        STUCK in trio.run
+        ├── errorer_1_2             exited
+        └── errorer_1_3             exited
+```
+
+Grandchildren (d=0 spawners) exit OR stick —
+asymmetric. Not purely depth-determined. Some race
+condition in nursery teardown when multiple
+siblings error simultaneously.
+
 ## Stopgap (landed)
 
 `test_nested_multierrors` skip-marked under
