@@ -446,21 +446,19 @@ def _process_alive(pid: int) -> bool:
         return False
 
 
-# Regressed back to xfail: previously passed after the
-# fork-child FD-hygiene fix in `_close_inherited_fds()`,
-# but the recent `wait_for_no_more_peers(move_on_after=3.0)`
-# bound in `async_main`'s teardown added up to 3s to the
-# orphan subactor's exit timeline, pushing it past the
-# test's 10s poll window. Real fix requires making the
-# bounded wait faster when the actor is orphaned, or
-# increasing the test's poll window. See tracker doc
+# Known-gap test — `subint_forkserver` orphan-SIGINT
+# handling. See
 # `ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md`.
+# `strict=True` so if a future fix closes the gap the
+# XPASS surfaces as a FAIL and forces us to drop the
+# mark intentionally.
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        'Regressed to xfail after `wait_for_no_more_peers` '
-        'bound added ~3s teardown latency. Needs either '
-        'faster orphan-side teardown or 15s test poll window.'
+        'Orphan subactor SIGINT delivery: trio event loop '
+        'on non-main thread post-fork doesn\'t see the '
+        'external SIGINT → KBI path. See tracker doc.\n'
+        'ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md'
     ),
 )
 @pytest.mark.timeout(
