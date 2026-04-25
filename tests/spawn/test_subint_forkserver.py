@@ -446,20 +446,19 @@ def _process_alive(pid: int) -> bool:
         return False
 
 
-# Flakey under session-level env pollution (leftover
-# subactor PIDs from earlier tests competing for ports /
-# inheriting the harness subprocess's FDs). Passes
-# cleanly in isolation, fails in suite; `strict=False`
-# so either outcome is tolerated until the env isolation
-# is improved. Tracker:
+# Known-gap test — `subint_forkserver` orphan-SIGINT
+# handling. See
 # `ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md`.
+# `strict=True` so if a future fix closes the gap the
+# XPASS surfaces as a FAIL and forces us to drop the
+# mark intentionally.
 @pytest.mark.xfail(
-    strict=False,
+    strict=True,
     reason=(
-        'Env-pollution sensitive. Passes in isolation, '
-        'flakey in full-suite runs; orphan subactor may '
-        'take longer than 10s to exit when competing for '
-        'resources with leftover state from earlier tests.'
+        'Orphan subactor SIGINT delivery: trio event loop '
+        'on non-main thread post-fork doesn\'t see the '
+        'external SIGINT → KBI path. See tracker doc.\n'
+        'ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md'
     ),
 )
 @pytest.mark.timeout(
