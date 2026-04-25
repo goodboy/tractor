@@ -199,6 +199,7 @@ def test_tractor_cancels_aio(
     async def main():
         async with tractor.open_nursery(
             debug_mode=debug_mode,
+            registry_addrs=[reg_addr],
         ) as an:
             portal = await an.run_in_actor(
                 asyncio_actor,
@@ -221,11 +222,11 @@ def test_trio_cancels_aio(
 
     '''
     async def main():
-
+        # cancel the nursery shortly after boot
         with trio.move_on_after(1):
-            # cancel the nursery shortly after boot
-
-            async with tractor.open_nursery() as tn:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as tn:
                 await tn.run_in_actor(
                     asyncio_actor,
                     target='aio_sleep_forever',
@@ -293,7 +294,9 @@ def test_context_spawns_aio_task_that_errors(
     '''
     async def main():
         with trio.fail_after(1 + delay):
-            async with tractor.open_nursery() as an:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as an:
                 p = await an.start_actor(
                     'aio_daemon',
                     enable_modules=[__name__],
@@ -376,7 +379,9 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(
     async def main():
 
         an: tractor.ActorNursery
-        async with tractor.open_nursery() as an:
+        async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
+        ) as an:
             p: tractor.Portal = await an.run_in_actor(
                 asyncio_actor,
                 target='aio_cancel',
@@ -585,7 +590,9 @@ def test_basic_interloop_channel_stream(
     async def main():
         # TODO, figure out min timeout here!
         with trio.fail_after(6):
-            async with tractor.open_nursery() as an:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as an:
                 portal = await an.run_in_actor(
                     stream_from_aio,
                     infect_asyncio=True,
@@ -598,9 +605,13 @@ def test_basic_interloop_channel_stream(
 
 
 # TODO: parametrize the above test and avoid the duplication here?
-def test_trio_error_cancels_intertask_chan(reg_addr):
+def test_trio_error_cancels_intertask_chan(
+    reg_addr: tuple[str, int],
+):
     async def main():
-        async with tractor.open_nursery() as an:
+        async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
+        ) as an:
             portal = await an.run_in_actor(
                 stream_from_aio,
                 trio_raise_err=True,
@@ -635,6 +646,7 @@ def test_trio_closes_early_causes_aio_checkpoint_raise(
             async with tractor.open_nursery(
                 debug_mode=debug_mode,
                 # enable_stack_on_sig=True,
+                registry_addrs=[reg_addr],
             ) as an:
                 portal = await an.run_in_actor(
                     stream_from_aio,
@@ -683,6 +695,7 @@ def test_aio_exits_early_relays_AsyncioTaskExited(
     async def main():
         with trio.fail_after(1 + delay):
             async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
                 debug_mode=debug_mode,
                 # enable_stack_on_sig=True,
             ) as an:
@@ -723,6 +736,7 @@ def test_aio_errors_and_channel_propagates_and_closes(
 ):
     async def main():
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
             portal = await an.run_in_actor(
@@ -822,6 +836,7 @@ def test_echoserver_detailed_mechanics(
 ):
     async def main():
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
             p = await an.start_actor(
@@ -1000,7 +1015,7 @@ async def manage_file(
     ],
     ids=[
         'bg_aio_task',
-        'just_trio_slee',
+        'just_trio_sleep',
     ],
 )
 @pytest.mark.parametrize(
@@ -1016,11 +1031,14 @@ async def manage_file(
 )
 def test_sigint_closes_lifetime_stack(
     tmp_path: Path,
+    reg_addr: tuple,
+    debug_mode: bool,
+
     wait_for_ctx: bool,
     bg_aio_task: bool,
     trio_side_is_shielded: bool,
-    debug_mode: bool,
     send_sigint_to: str,
+    start_method: str,
 ):
     '''
     Ensure that an infected child can use the `Actor.lifetime_stack`
@@ -1030,12 +1048,22 @@ def test_sigint_closes_lifetime_stack(
     '''
     async def main():
 
-        delay = 999 if tractor.debug_mode() else 1
+        delay: float = (
+            999
+            if debug_mode
+            else 1
+        )
         try:
             an: tractor.ActorNursery
             async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
                 debug_mode=debug_mode,
             ) as an:
+
+                # sanity
+                if debug_mode:
+                    assert tractor.debug_mode()
+
                 p: tractor.Portal = await an.start_actor(
                     'file_mngr',
                     enable_modules=[__name__],
@@ -1070,6 +1098,10 @@ def test_sigint_closes_lifetime_stack(
                         cpid if send_sigint_to == 'child'
                         else os.getpid()
                     )
+                    print(
+                        f'Sending SIGINT to {send_sigint_to!r}\n'
+                        f'pid: {pid!r}\n'
+                    )
                     os.kill(
                         pid,
                         signal.SIGINT,
@@ -1080,12 +1112,36 @@ def test_sigint_closes_lifetime_stack(
                     # timeout should trigger!
                     if wait_for_ctx:
                         print('waiting for ctx outcome in parent..')
+
+                        if debug_mode:
+                            assert delay == 999
+
                         try:
-                            with trio.fail_after(1 + delay):
+                            with trio.fail_after(
+                                1 + delay
+                            ):
                                 await ctx.wait_for_result()
                         except tractor.ContextCancelled as ctxc:
                             assert ctxc.canceller == ctx.chan.uid
                             raise
+
+                        except trio.TooSlowError:
+                            if (
+                                send_sigint_to == 'child'
+                                and
+                                start_method == 'subint_forkserver'
+                            ):
+                                pytest.xfail(
+                                    reason=(
+                                        'SIGINT delivery to fork-child subactor is known '
+                                        'to NOT SUCCEED, precisely bc we have not wired up a'
+                                        '"trio SIGINT mode" in the child pre-fork.\n'
+                                        'Also see `test_orphaned_subactor_sigint_cleanup_DRAFT` for'
+                                        'a dedicated suite demonstrating this expected limitation as '
+                                        'well as the detailed doc:\n'
+                                        '`ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md`.\n'
+                                    ),
+                                )
 
                     # XXX CASE 2: this seems to be the source of the
                     # original issue which exhibited BEFORE we put
@@ -1186,6 +1242,7 @@ def test_aio_side_raises_before_started(
         with trio.fail_after(3):
             an: tractor.ActorNursery
             async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
                 debug_mode=debug_mode,
                 loglevel=loglevel,
             ) as an:
