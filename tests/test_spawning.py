@@ -194,9 +194,14 @@ def test_loglevel_propagated_to_subactor(
     reg_addr: tuple,
     level: str,
 ):
-    if start_method == 'mp_forkserver':
+    if start_method in ('mp_forkserver', 'subint_forkserver'):
         pytest.skip(
-            "a bug with `capfd` seems to make forkserver capture not work?"
+            "a bug with `capfd` seems to make forkserver capture not work? "
+            "(same class as the `mp_forkserver` pre-existing skip — fork-"
+            "based backends inherit pytest's capfd temp-file fds into the "
+            "subactor and the IPC handshake reads garbage (`unclean EOF "
+            "read only X/HUGE_NUMBER bytes`). Work around by using "
+            "`capsys` instead or skip entirely."
         )
 
     async def main():
