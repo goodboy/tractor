@@ -32,6 +32,7 @@ from typing import (
 
 import pytest
 import tractor
+from tractor.spawn._spawn import SpawnMethodKey
 import trio
 
 
@@ -274,7 +275,12 @@ def pytest_collection_modifyitems(
     default_reason: str = f'Borked on --spawn-backend={backend!r}'
     for item in items:
         for mark in item.iter_markers(name='skipon_spawn_backend'):
-            if backend in mark.args:
+            skip_backends: tuple[str] = mark.args
+            for skip_backend in skip_backends:
+                assert skip_backend in get_args(SpawnMethodKey)
+            # ?TODO, run these through the try-set-backend checker to
+            # avoid typos?
+            if backend in skip_backends:
                 reason: str = mark.kwargs.get(
                     'reason',
                     default_reason,
@@ -283,6 +289,42 @@ def pytest_collection_modifyitems(
                 # first matching mark wins; no value in stacking
                 # multiple `skip`s on the same item.
                 break
+
+
+@pytest.fixture(
+    scope='session',
+    autouse=True,
+)
+def _reap_orphaned_subactors():
+    '''
+    Session-scoped autouse fixture: after the whole test
+    session finishes, SIGINT any subactor processes still
+    parented to this `pytest` process, wait a bounded
+    grace window, then SIGKILL survivors.
+
+    Rationale: under fork-based spawn backends (notably
+    `subint_forkserver`), a test that times out or bails
+    mid-teardown can leave subactor forks alive. Without
+    this reap, they linger across sessions and compete
+    for ports / inherit pytest's capture-pipe fds — which
+    flakifies later tests. SC-polite discipline: SIGINT
+    first to let the subactor's trio cancel shield + IPC
+    teardown paths run before we escalate.
+
+    Matching companion CLI: `scripts/tractor-reap` for
+    the pytest-died-mid-session case.
+
+    '''
+    import os
+    parent_pid: int = os.getpid()
+    yield
+    from tractor._testing._reap import (
+        find_descendants,
+        reap,
+    )
+    pids: list[int] = find_descendants(parent_pid)
+    if pids:
+        reap(pids, grace=3.0)
 
 
 @pytest.fixture(scope='session')
@@ -398,7 +440,6 @@ def pytest_generate_tests(
     # drive the valid-backend set from the canonical `Literal` so
     # adding a new spawn backend (e.g. `'subint'`) doesn't require
     # touching the harness.
-    from tractor.spawn._spawn import SpawnMethodKey
     assert spawn_backend in get_args(SpawnMethodKey)
 
     # NOTE: used-to-be-used-to dyanmically parametrize tests for when
