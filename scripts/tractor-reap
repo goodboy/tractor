@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+# tractor: structured concurrent "actors".
+# Copyright 2018-eternity Tyler Goodlet.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+'''
+`tractor-reap` — SC-polite zombie-subactor reaper.
+
+Finds `tractor` subactor processes left alive after a
+`pytest` (or any tractor-app) run that failed to fully
+cancel its actor tree, then sends SIGINT with a bounded
+grace window before escalating to SIGKILL.
+
+Detection modes (auto-selected):
+
+    --parent <pid>  : descendant-mode — kill procs whose
+                      PPid == <pid>. Use when a parent
+                      is still alive and you want to
+                      scope the sweep precisely (e.g.
+                      CI wrapper calling in from outside
+                      pytest).
+
+    (default)       : orphan-mode — kill procs with
+                      PPid==1 (init-reparented) whose
+                      cwd matches the repo root AND
+                      whose cmdline contains `python`.
+                      The cwd filter is what prevents
+                      sweeping unrelated init-children.
+
+Usage:
+
+    # after a pytest run crashed/was Ctrl+C'd
+    scripts/tractor-reap
+
+    # from inside a still-live supervisor
+    scripts/tractor-reap --parent 12345
+
+    # dry-run: list what would be reaped, don't signal
+    scripts/tractor-reap -n
+
+'''
+import argparse
+import pathlib
+import subprocess
+import sys
+
+
+def _repo_root() -> pathlib.Path:
+    '''
+    Use `git rev-parse --show-toplevel` when available;
+    fall back to the repo this script lives in.
+
+    '''
+    try:
+        out: str = subprocess.check_output(
+            ['git', 'rev-parse', '--show-toplevel'],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        return pathlib.Path(out)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return pathlib.Path(__file__).resolve().parent.parent
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog='tractor-reap',
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        '--parent', '-p',
+        type=int,
+        default=None,
+        help='descendant-mode: reap procs with PPid==<pid>',
+    )
+    parser.add_argument(
+        '--grace', '-g',
+        type=float,
+        default=3.0,
+        help='SIGINT grace window in seconds (default 3.0)',
+    )
+    parser.add_argument(
+        '--dry-run', '-n',
+        action='store_true',
+        help='list matched pids but do not signal',
+    )
+    args = parser.parse_args()
+
+    # import lazily so `--help` doesn't require the tractor
+    # package to be importable (e.g. when running from a
+    # shell not inside a venv).
+    repo = _repo_root()
+    sys.path.insert(0, str(repo))
+    from tractor._testing._reap import (
+        find_descendants,
+        find_orphans,
+        reap,
+    )
+
+    if args.parent is not None:
+        pids: list[int] = find_descendants(args.parent)
+        mode: str = f'descendants of PPid={args.parent}'
+    else:
+        pids = find_orphans(repo)
+        mode = f'orphans (PPid=1, cwd={repo})'
+
+    if not pids:
+        print(f'[tractor-reap] no {mode} to reap')
+        return 0
+
+    if args.dry_run:
+        print(f'[tractor-reap] dry-run — {mode}:\n  {pids}')
+        return 0
+
+    signalled, survivors = reap(pids, grace=args.grace)
+    # exit 0 if everyone exited cleanly, else 1 to signal
+    # escalation happened — makes the command useful in
+    # CI health-checks and `||`-chaining.
+    return 0 if not survivors else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -521,3 +521,67 @@ filling log volume. Full post-mortem in
 `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`.
 Lesson codified here so future-me grep-finds the
 workaround before digging.
+
+## 10. Reaping zombie subactors (`tractor-reap`)
+
+**Symptom:** after a `pytest` run crashes, times out,
+or is `Ctrl+C`'d, subactor forks (esp. under
+`subint_forkserver`) can be reparented to `init`
+(PPid==1) and linger. They hold onto ports, inherit
+pytest's capture-pipe fds, and flakify later
+sessions.
+
+**Two layers of defense:**
+
+### a) Session-scoped auto-fixture (always on)
+
+`tractor/_testing/pytest.py::_reap_orphaned_subactors`
+runs at pytest session teardown. It walks `/proc` for
+direct descendants of the pytest pid, SIGINTs them,
+waits up to 3s, then SIGKILLs survivors. SC-polite:
+gives the subactor runtime a chance to run its trio
+cancel shield + IPC teardown before escalation.
+
+This is *autouse* and session-scoped — you don't need
+to do anything. It just runs.
+
+### b) `scripts/tractor-reap` CLI (manual reap)
+
+For the **pytest-died-mid-session** case (Ctrl+C, OOM
+kill, hung process you had to `kill -9`), the fixture
+never ran. Reach for the CLI:
+
+```sh
+# default: orphans (PPid==1, cwd==repo, cmd contains python)
+scripts/tractor-reap
+
+# descendant-mode: from a still-live supervisor
+scripts/tractor-reap --parent <pytest-pid>
+
+# see what would be reaped, don't signal
+scripts/tractor-reap -n
+
+# tune the SIGINT → SIGKILL grace window
+scripts/tractor-reap --grace 5
+```
+
+Exit code: `0` if everyone exited on SIGINT, `1` if
+SIGKILL had to escalate — so you can chain it in CI
+health-checks (`scripts/tractor-reap || <alert>`).
+
+**What it matches** (orphan-mode):
+- `PPid == 1` (reparented to init → definitely
+  orphaned, not just a currently-running child)
+- `cwd == <repo-root>` (keeps the sweep scoped; won't
+  touch unrelated init-children elsewhere)
+- `python` in cmdline
+
+**What it does not do:** kill anything whose PPid is
+still a live tractor parent. If the parent is alive
+it's not an orphan; use `--parent <pid>` if you need
+to force-reap under a still-live supervisor.
+
+**When NOT to run it:** while a pytest session is
+active in another terminal. It's safe (won't touch
+that session's live children in orphan-mode) but can
+race if the target session is mid-teardown.
