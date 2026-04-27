@@ -76,9 +76,7 @@ async def subscribe(
 
 
 async def consumer(
-
     subs: list[str],
-
 ) -> None:
 
     uid = tractor.current_actor().uid
@@ -108,15 +106,21 @@ async def consumer(
                         print(f'{uid} got: {value}')
 
 
-def test_dynamic_pub_sub():
-
+def test_dynamic_pub_sub(
+    reg_addr: tuple,
+    debug_mode: bool,
+    test_log: tractor.log.StackLevelAdapter,
+):
     global _registry
 
     from multiprocessing import cpu_count
     cpus = cpu_count()
 
     async def main():
-        async with tractor.open_nursery() as n:
+        async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
+            debug_mode=debug_mode,
+        ) as n:
 
             # name of this actor will be same as target func
             await n.run_in_actor(publisher)
@@ -155,12 +159,13 @@ def test_dynamic_pub_sub():
             else:
                 pytest.fail('Never got a `TooSlowError` ?')
 
+        assert err
+        test_log.exception('Timed out AS EXPECTED')
+
 
 @tractor.context
 async def one_task_streams_and_one_handles_reqresp(
-
     ctx: tractor.Context,
-
 ) -> None:
 
     await ctx.started()
@@ -257,7 +262,8 @@ async def echo_ctx_stream(
 
 
 def test_sigint_both_stream_types():
-    '''Verify that running a bi-directional and recv only stream
+    '''
+    Verify that running a bi-directional and recv only stream
     side-by-side will cancel correctly from SIGINT.
 
     '''
