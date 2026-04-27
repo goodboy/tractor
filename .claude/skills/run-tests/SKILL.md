@@ -8,14 +8,19 @@ allowed-tools:
   - Bash(python -m pytest *)
   - Bash(python -c *)
   - Bash(python --version *)
-  - Bash(git rev-parse *)
+  - Bash(UV_PROJECT_ENVIRONMENT=py* uv run python *)
+  - Bash(UV_PROJECT_ENVIRONMENT=py* uv run pytest *)
   - Bash(UV_PROJECT_ENVIRONMENT=py* uv sync *)
+  - Bash(UV_PROJECT_ENVIRONMENT=py* uv pip show *)
+  - Bash(git rev-parse *)
   - Bash(ls *)
   - Bash(cat *)
+  - Bash(jq * .pytest_cache/*)
   - Read
   - Grep
   - Glob
   - Task
+  - AskUserQuestion
 ---
 
 Run the `tractor` test suite using `pytest`. Follow this
@@ -90,41 +95,104 @@ python -m pytest tests/ -x --tb=short --no-header --tpt-proto uds
 python -m pytest tests/ -x --tb=short --no-header -k "cancel and not slow"
 ```
 
-## 3. Pre-flight checks (before running tests)
+## 3. Pre-flight: venv detection (MANDATORY)
 
-### Worktree venv detection
+**Always verify a `uv` venv is active before running
+`python` or `pytest`.** This project uses
+`UV_PROJECT_ENVIRONMENT=py<MINOR>` naming (e.g.
+`py313`) — never `.venv`.
 
-If running inside a git worktree (`git rev-parse
---git-common-dir` differs from `--git-dir`), verify
-the Python being used is from the **worktree's own
-venv**, not the main repo's. Check:
+### Step 1: detect active venv
+
+Run this check first:
+
+```sh
+python -c "
+import sys, os
+venv = os.environ.get('VIRTUAL_ENV', '')
+prefix = sys.prefix
+print(f'VIRTUAL_ENV={venv}')
+print(f'sys.prefix={prefix}')
+print(f'executable={sys.executable}')
+"
+```
+
+### Step 2: interpret results
+
+**Case A — venv is active** (`VIRTUAL_ENV` is set
+and points to a `py<MINOR>/` dir under the project
+root or worktree):
+
+Use bare `python` / `python -m pytest` for all
+commands. This is the normal, fast path.
+
+**Case B — no venv active** (`VIRTUAL_ENV` is empty
+or `sys.prefix` points to a system Python):
+
+Use `AskUserQuestion` to ask the user:
+
+> "No uv venv is active. Should I activate one
+> via `UV_PROJECT_ENVIRONMENT=py<MINOR> uv sync`,
+> or would you prefer to activate your shell venv
+> first?"
+
+Options:
+1. **"Create/sync venv"** — run
+   `UV_PROJECT_ENVIRONMENT=py<MINOR> uv sync` where
+   `<MINOR>` is detected from `python --version`
+   (e.g. `313` for 3.13). Then use
+   `py<MINOR>/bin/python` for all subsequent
+   commands in this session.
+2. **"I'll activate it myself"** — stop and let the
+   user `source py<MINOR>/bin/activate` or similar.
+
+**Case C — inside a git worktree** (`git rev-parse
+--git-common-dir` differs from `--git-dir`):
+
+Verify Python resolves from the **worktree's own
+venv**, not the main repo's:
 
 ```sh
 python -c "import tractor; print(tractor.__file__)"
 ```
 
-If the path points outside the worktree (e.g. to
-the main repo), set up a local venv first:
+If the path points outside the worktree, create a
+worktree-local venv:
 
 ```sh
 UV_PROJECT_ENVIRONMENT=py<MINOR> uv sync
 ```
 
-where `<MINOR>` matches the active cpython minor
-version (detect via `python --version`, e.g.
-`py313` for 3.13, `py314` for 3.14). Then use
-`py<MINOR>/bin/python` for all subsequent commands.
+Then use `py<MINOR>/bin/python` for all commands.
 
-**Why this matters**: without a worktree-local venv,
-subprocesses spawned by tractor resolve modules from
-the main repo's editable install, causing spurious
-`AttributeError` / `ModuleNotFoundError` for code
-that only exists on the worktree's branch.
+**Why this matters**: without the correct venv,
+subprocesses spawned by tractor resolve modules
+from the wrong editable install, causing spurious
+`AttributeError` / `ModuleNotFoundError`.
 
-### Import + collection checks
+### Fallback: `uv run`
 
-Always run these, especially after refactors or
-module moves — they catch import errors instantly:
+If the user can't or won't activate a venv, all
+`python` and `pytest` commands can be prefixed
+with `UV_PROJECT_ENVIRONMENT=py<MINOR> uv run`:
+
+```sh
+# instead of: python -m pytest tests/ -x
+UV_PROJECT_ENVIRONMENT=py313 uv run pytest tests/ -x
+
+# instead of: python -c 'import tractor'
+UV_PROJECT_ENVIRONMENT=py313 uv run python -c 'import tractor'
+```
+
+`uv run` auto-discovers the project and venv,
+but is slower than a pre-activated venv due to
+lock-file resolution on each invocation. Prefer
+activating the venv when possible.
+
+### Step 3: import + collection checks
+
+After venv is confirmed, always run these
+(especially after refactors or module moves):
 
 ```sh
 # 1. package import smoke check
@@ -217,7 +285,48 @@ python -c 'import tractor' && python -m pytest tests/ -x -q --co 2>&1 | tail -3
 python -m pytest tests/test_local.py tests/test_rpc.py tests/test_spawning.py tests/discovery/test_registrar.py -x --tb=short --no-header
 ```
 
-### Re-run last failures only:
+### Inspect last failures (without re-running):
+
+When the user asks "what failed?", "show failures",
+or wants to check the last-failed set before
+re-running — read the pytest cache directly. This
+is instant and avoids test collection overhead.
+
+```sh
+python -c "
+import json, pathlib, sys
+p = pathlib.Path('.pytest_cache/v/cache/lastfailed')
+if not p.exists():
+    print('No lastfailed cache found.'); sys.exit()
+data = json.loads(p.read_text())
+# filter to real test node IDs (ignore junk
+# entries that can accumulate from system paths)
+tests = sorted(k for k in data if k.startswith('tests/'))
+if not tests:
+    print('No failures recorded.')
+else:
+    print(f'{len(tests)} last-failed test(s):')
+    for t in tests:
+        print(f'  {t}')
+"
+```
+
+**Why not `--cache-show` or `--co --lf`?**
+
+- `pytest --cache-show 'cache/lastfailed'` works
+  but dumps raw dict repr including junk entries
+  (stale system paths that leak into the cache).
+- `pytest --co --lf` actually *collects* tests which
+  triggers import resolution and is slow (~0.5s+).
+  Worse, when cached node IDs don't exactly match
+  current parametrize IDs (e.g. param names changed
+  between runs), pytest falls back to collecting
+  the *entire file*, giving false positives.
+- Reading the JSON directly is instant, filterable
+  to `tests/`-prefixed entries, and shows exactly
+  what pytest recorded — no interpretation.
+
+**After inspecting**, re-run the failures:
 ```sh
 python -m pytest --lf -x --tb=short --no-header
 ```

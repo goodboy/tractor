@@ -9,7 +9,7 @@ name = "tractor"
 version = "0.1.0a6dev0"
 description = 'structured concurrent `trio`-"actors"'
 authors = [{ name = "Tyler Goodlet", email = "goodboy_foss@protonmail.com" }]
-requires-python = ">=3.12, <3.14"
+requires-python = ">=3.13, <3.15"
 readme = "docs/README.rst"
 license = "AGPL-3.0-or-later"
 keywords = [
@@ -31,6 +31,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: System :: Distributed Computing",
 ]
 dependencies = [
@@ -43,11 +44,12 @@ dependencies = [
   "tricycle>=0.4.1,<0.5",
   "wrapt>=1.16.0,<2",
   "colorlog>=6.8.2,<7",
+
   # built-in multi-actor `pdb` REPL
   "pdbp>=1.8.2,<2", # windows only (from `pdbp`)
+
   # typed IPC msging
-  "msgspec>=0.21.0",
-  "cffi>=1.17.1",
+  "msgspec>=0.20.0",
   "bidict>=0.23.1",
   "multiaddr>=0.2.0",
   "platformdirs>=4.4.0",
@@ -63,10 +65,13 @@ dev = [
 ]
 devx = [
   # `tractor.devx` tooling
-  "greenback>=1.2.1,<2",
   "stackscope>=0.2.2,<0.3",
   # ^ requires this?
   "typing-extensions>=4.14.1",
+  # {include-group = 'sync_pause'},  # XXX, no 3.14 yet!
+]
+sync_pause = [
+  "greenback>=1.2.1,<2",  # TODO? 3.14 greenlet on nix?
 ]
 testing = [
   # test suite
@@ -74,15 +79,28 @@ testing = [
   # https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
   "pytest>=8.3.5",
   "pexpect>=4.9.0,<5",
+  # per-test wall-clock bound (used via
+  # `@pytest.mark.timeout(..., method='thread')` on the
+  # known-hanging `subint`-backend audit tests; see
+  # `ai/conc-anal/subint_*_issue.md`).
+  "pytest-timeout>=2.3",
 ]
 repl = [
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
-  "xonsh>=0.22.2",
+  "xonsh>=0.22.8",
   "psutil>=7.0.0",
 ]
 lint = [
   "ruff>=0.9.6"
+]
+# XXX, used for linux-only hi perf eventfd+shm channels
+# now mostly moved over to `hotbaud`.
+eventfd = [
+  "cffi>=1.17.1",
+]
+subints = [
+  "msgspec>=0.21.0",
 ]
 # TODO, add these with sane versions; were originally in
 # `requirements-docs.txt`..
@@ -92,10 +110,26 @@ lint = [
 # ]
 # ------ dependency-groups ------
 
+[tool.uv.dependency-groups]
+# for subints, we require 3.14+ due to 2 issues,
+# - hanging behaviour for various multi-task teardown cases (see
+#   "Availability" section in the `tractor.spawn._subints` doc string).
+# - `msgspec` support which is oustanding per PEP 684 upstream tracker:
+#   https://github.com/jcrist/msgspec/issues/563
+#
+# https://docs.astral.sh/uv/concepts/projects/dependencies/#group-requires-python
+subints = {requires-python = ">=3.14"}
+eventfd = {requires-python = ">=3.13, <3.14"}
+sync_pause = {requires-python = ">=3.13, <3.14"}
 
 [tool.uv.sources]
 # XXX NOTE, only for @goodboy's hacking on `pprint(sort_dicts=False)`
 # for the `pp` alias..
+# ------ gh upstream ------
+# xonsh = { git = 'https://github.com/anki-code/xonsh.git', branch = 'prompt_next_suggestion' }
+# ^ https://github.com/xonsh/xonsh/pull/6048
+# xonsh = { git = 'https://github.com/xonsh/xonsh.git', branch = 'main' }
+xonsh = { path = "../xonsh", editable = true }
 
 # [tool.uv.sources.pdbp]
 # XXX, in case we need to tmp patch again.
@@ -164,6 +198,7 @@ all_bullets = true
 
 [tool.pytest.ini_options]
 minversion = '6.0'
+timeout = 200  # per-test hard limit
 # https://docs.pytest.org/en/stable/reference/reference.html#configuration-options
 testpaths = [
   'tests'

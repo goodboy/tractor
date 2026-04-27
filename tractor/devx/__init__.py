@@ -41,6 +41,11 @@ from .pformat import (
     pformat_caller_frame as pformat_caller_frame,
     pformat_boxed_tb as pformat_boxed_tb,
 )
+from ._debug_hangs import (
+    dump_on_hang as dump_on_hang,
+    track_resource_deltas as track_resource_deltas,
+    resource_delta_fixture as resource_delta_fixture,
+)
 
 
 # TODO, move this to a new `.devx._pdbp` mod?

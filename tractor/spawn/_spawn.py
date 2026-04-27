@@ -22,6 +22,7 @@ over multiple backends.
 from __future__ import annotations
 import multiprocessing as mp
 import platform
+import sys
 from typing import (
     Any,
     Awaitable,
@@ -61,6 +62,7 @@ SpawnMethodKey = Literal[
     'trio',  # supported on all platforms
     'mp_spawn',
     'mp_forkserver',  # posix only
+    'subint',  # py3.14+ via `concurrent.interpreters` (PEP 734)
 ]
 _spawn_method: SpawnMethodKey = 'trio'
 
@@ -111,6 +113,27 @@ def try_set_start_method(
             _ctx = mp.get_context('spawn')
 
         case 'trio':
+            _ctx = None
+
+        case 'subint':
+            # subints need no `mp.context`; feature-gate on the
+            # py3.14 public `concurrent.interpreters` wrapper
+            # (PEP 734). We actually drive the private
+            # `_interpreters` C module in legacy mode — see
+            # `tractor.spawn._subint` for why — but py3.13's
+            # vintage of that private module hangs under our
+            # multi-trio usage, so we refuse it via the public-
+            # module presence check.
+            from ._subint import _has_subints
+            if not _has_subints:
+                raise RuntimeError(
+                    f'Spawn method {key!r} requires Python 3.14+.\n'
+                    f'(On py3.13 the private `_interpreters` C '
+                    f'module exists but tractor\'s spawn flow '
+                    f'wedges — see `tractor.spawn._subint` '
+                    f'docstring for details.)\n'
+                    f'Current runtime: {sys.version}'
+                )
             _ctx = None
 
         case _:
@@ -437,6 +460,7 @@ async def new_proc(
 # `hard_kill`/`proc_waiter` from this module.
 from ._trio import trio_proc
 from ._mp import mp_proc
+from ._subint import subint_proc
 
 
 # proc spawning backend target map
@@ -444,4 +468,5 @@ _methods: dict[SpawnMethodKey, Callable] = {
     'trio': trio_proc,
     'mp_spawn': mp_proc,
     'mp_forkserver': mp_proc,
+    'subint': subint_proc,
 }
