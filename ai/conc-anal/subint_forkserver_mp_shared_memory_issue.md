@@ -132,14 +132,20 @@ segment (legitimate race in shared-key setups).
 
 - **Crash-leaked segments.** If an actor segfaults
   or is `SIGKILL`'d before its lifetime stack runs,
-  `/dev/shm/<key>` will leak. Mitigations:
-  - `tractor-reap` (the new
-    `scripts/tractor-reap` CLI) doesn't yet sweep
-    `/dev/shm` — could extend it.
-  - Higher-level apps using shm should pin a UUID
-    into the key (the `'shml_<uuid>'` pattern in
-    `test_child_attaches_alot`) so leaks are
-    distinct per session and easy to GC out-of-band.
+  `/dev/shm/<key>` will leak. Mitigation:
+  `scripts/tractor-reap --shm` walks `/dev/shm`,
+  filters to segments owned by the current uid that
+  no live process is mapping or holding open (via
+  `/proc/*/maps` + `/proc/*/fd/*`), and unlinks
+  them. The "nobody-has-it-open" filter is
+  kernel-canonical so it never touches in-flight
+  segments held by sibling apps (verified locally
+  against 81 piker/lttng/aja-held segments — all
+  preserved).
+  - Higher-level apps using shm should still pin a
+    UUID into the key (the `'shml_<uuid>'` pattern
+    in `test_child_attaches_alot`) so concurrent
+    sessions don't collide on the same key.
 - **Cross-actor unlink races.** Two actors holding
   the same shm key racing on `unlink()` — handled
   by the `FileNotFoundError` swallow.

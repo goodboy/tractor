@@ -716,6 +716,7 @@ sync-pause = [
 ]
 testing = [
     { name = "pexpect" },
+    { name = "psutil" },
     { name = "pytest" },
     { name = "pytest-timeout" },
 ]
@@ -761,6 +762,7 @@ subints = [{ name = "msgspec", marker = "python_full_version >= '3.14'", specifi
 sync-pause = [{ name = "greenback", marker = "python_full_version == '3.13.*'", specifier = ">=1.2.1,<2" }]
 testing = [
     { name = "pexpect", specifier = ">=4.9.0,<5" },
+    { name = "psutil", specifier = ">=7.0.0" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-timeout", specifier = ">=2.3" },
 ]

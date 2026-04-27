@@ -84,6 +84,11 @@ testing = [
   # known-hanging `subint`-backend audit tests; see
   # `ai/conc-anal/subint_*_issue.md`).
   "pytest-timeout>=2.3",
+  # used by `tractor._testing._reap` for the
+  # `tractor-reap` zombie-subactor + leaked-shm
+  # cleanup utility (xplatform `Process.memory_maps`,
+  # `Process.open_files`).
+  "psutil>=7.0.0",
 ]
 repl = [
   "pyperclip>=1.9.0",
