@@ -77,7 +77,14 @@ SpawnMethodKey = Literal[
     # is CPython-legal and works cleanly; forked child runs
     # `tractor._child._actor_child_main()` against a trio
     # runtime, exactly like `trio_proc` but via fork instead
-    # of subproc-exec. See `tractor.spawn._subint_forkserver`.
+    # of subproc-exec. See `tractor.spawn._main_thread_forkserver`.
+    'main_thread_forkserver',
+    # RESERVED for the future variant-2 subint-isolated-child
+    # runtime — gated on jcrist/msgspec#1026 + PEP 684. Today
+    # this key aliases to `main_thread_forkserver_proc`; once
+    # the upstream unblocks land it'll dispatch to the
+    # subint-hosted-trio impl. See
+    # `tractor.spawn._subint_forkserver`.
     'subint_forkserver',
 ]
 _spawn_method: SpawnMethodKey = 'trio'
@@ -131,14 +138,23 @@ def try_set_start_method(
         case 'trio':
             _ctx = None
 
-        case 'subint' | 'subint_fork' | 'subint_forkserver':
+        case (
+            'subint'
+            | 'subint_fork'
+            | 'main_thread_forkserver'
+            | 'subint_forkserver'
+        ):
             # All subint-family backends need no `mp.context`;
-            # all three feature-gate on the py3.14 public
+            # all four feature-gate on the py3.14 public
             # `concurrent.interpreters` wrapper (PEP 734). See
             # `tractor.spawn._subint` for the detailed
             # reasoning. `subint_fork` is blocked at the
             # CPython level (raises `NotImplementedError`);
-            # `subint_forkserver` is the working workaround.
+            # `main_thread_forkserver` is the working
+            # variant-1 backend; `subint_forkserver` aliases
+            # to it today, reserved for the future variant-2
+            # subint-isolated-child runtime once upstream
+            # msgspec#1026 unblocks.
             from ._subint import _has_subints
             if not _has_subints:
                 raise RuntimeError(
@@ -477,7 +493,7 @@ from ._trio import trio_proc
 from ._mp import mp_proc
 from ._subint import subint_proc
 from ._subint_fork import subint_fork_proc
-from ._subint_forkserver import subint_forkserver_proc
+from ._main_thread_forkserver import main_thread_forkserver_proc
 
 
 # proc spawning backend target map
@@ -492,8 +508,19 @@ _methods: dict[SpawnMethodKey, Callable] = {
     # clean `NotImplementedError` with pointer to the analysis,
     # rather than an "invalid backend" error.
     'subint_fork': subint_fork_proc,
-    # WIP — fork-from-non-trio-worker-thread, works on py3.14+
-    # (validated via `ai/conc-anal/subint_fork_from_main_thread_smoketest.py`).
-    # See `tractor.spawn._subint_forkserver`.
-    'subint_forkserver': subint_forkserver_proc,
+    # Variant-1 (working today): fork from a regular main-interp
+    # worker thread, child runs trio on its own main interp.
+    # Validated by
+    # `ai/conc-anal/subint_fork_from_main_thread_smoketest.py`.
+    # See `tractor.spawn._main_thread_forkserver`.
+    'main_thread_forkserver': main_thread_forkserver_proc,
+    # Variant-2 (future, reserved): same fork machinery but
+    # child enters a sub-interpreter to host its `trio.run()`
+    # — gated on jcrist/msgspec#1026 unblocking PEP 684
+    # isolated-mode subints. Today aliases to the variant-1
+    # impl so `--spawn-backend=subint_forkserver` keeps
+    # working; flipped to a `NotImplementedError` stub in a
+    # follow-up commit. See
+    # `tractor.spawn._subint_forkserver`.
+    'subint_forkserver': main_thread_forkserver_proc,
 }

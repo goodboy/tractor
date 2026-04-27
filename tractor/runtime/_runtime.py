@@ -873,9 +873,12 @@ class Actor:
             if self._spawn_method in (
                 'trio',
                 'subint',
-                # `subint_forkserver` parent-side sends a
-                # `SpawnSpec` over IPC just like the other two
-                # — fork child-side runtime is trio-native.
+                # `main_thread_forkserver` (and the future
+                # variant-2 `subint_forkserver`) parent-side
+                # sends a `SpawnSpec` over IPC just like the
+                # other two — fork child-side runtime is
+                # trio-native.
+                'main_thread_forkserver',
                 'subint_forkserver',
             ):
 
