@@ -79,7 +79,7 @@ _DEBUG_COMPATIBLE_BACKENDS: tuple[str, ...] = (
     'trio',
     # forkserver children run `_trio_main` in their own OS
     # process — same child-side runtime shape as `trio_proc`.
-    'subint_forkserver',
+    'main_thread_forkserver',
 )
 
 

@@ -257,7 +257,8 @@ async def subint_proc(
         # via a `nonlocal err` slot inspected after
         # `subint_exited.wait()` — see anyio's
         # `to_interpreter._interp_call` `(retval, is_exception)`
-        # tuple pattern + `_subint_forkserver.py:480-494`'s
+        # tuple pattern +
+        # `_subint_forkserver.run_subint_in_worker_thread._drive`'s
         # equivalent which already does this. Skipped here for
         # now: re-raise from the parent must coordinate with
         # the existing `trio.Cancelled` paths around the

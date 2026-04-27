@@ -122,8 +122,8 @@ class RuntimeVars(Struct):
 # `open_root_actor()` nor received a parent `SpawnSpec`. Kept
 # as a module-level constant so `get_runtime_vars(clear_values=
 # True)` can reset the live dict back to this baseline (see
-# `tractor.spawn._subint_forkserver` for the one current caller
-# that needs it).
+# `tractor.spawn._main_thread_forkserver` for the one current
+# caller that needs it).
 _RUNTIME_VARS_DEFAULTS: dict[str, Any] = {
     # root of actor-process tree info
     '_is_root': False,  # bool
@@ -165,7 +165,7 @@ def get_runtime_vars(
     defaults (`_RUNTIME_VARS_DEFAULTS`) instead of the live
     dict. Useful in combination with `set_runtime_vars()` to
     reset process-global state back to "cold" — the main caller
-    today is the `subint_forkserver` spawn backend's post-fork
+    today is the `main_thread_forkserver` spawn backend's post-fork
     child prelude:
 
         set_runtime_vars(get_runtime_vars(clear_values=True))

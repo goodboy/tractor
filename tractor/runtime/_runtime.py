@@ -1763,7 +1763,7 @@ async def async_main(
                     # shielded loop would park on the parent chan
                     # indefinitely waiting for EOF that only arrives
                     # after the PARENT tears down, which under
-                    # fork-based backends (e.g. `subint_forkserver`)
+                    # fork-based backends (e.g. `main_thread_forkserver`)
                     # it waits on THIS actor's exit — deadlock.
                     actor._parent_chan_cs = await root_tn.start(
                         partial(

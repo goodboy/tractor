@@ -303,7 +303,7 @@ def _reap_orphaned_subactors():
     grace window, then SIGKILL survivors.
 
     Rationale: under fork-based spawn backends (notably
-    `subint_forkserver`), a test that times out or bails
+    `main_thread_forkserver`), a test that times out or bails
     mid-teardown can leave subactor forks alive. Without
     this reap, they linger across sessions and compete
     for ports / inherit pytest's capture-pipe fds — which

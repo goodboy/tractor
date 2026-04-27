@@ -452,8 +452,12 @@ async def spawn_and_error(
             await nursery.run_in_actor(*args, **kwargs)
 
 
-# NOTE: subint_forkserver skip handled by file-level `pytestmark`
-# above (same pytest-capture-fd hang class as siblings).
+# NOTE: `main_thread_forkserver` capture-fd hang class is no
+# longer skipped here — `--capture=sys` (the new `pyproject.toml`
+# default) sidesteps the pipe-buffer-fill deadlock for
+# `test_nested_multierrors`. See
+# `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`
+# / #449 for the post-mortem.
 @pytest.mark.timeout(
     10,
     method='thread',
