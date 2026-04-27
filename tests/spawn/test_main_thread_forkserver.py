@@ -1,13 +1,14 @@
 '''
-Integration exercises for the `tractor.spawn._subint_forkserver`
+Integration exercises for the `tractor.spawn._main_thread_forkserver`
 submodule at three tiers:
 
 1. the low-level primitives
-   (`fork_from_worker_thread()` +
-   `run_subint_in_worker_thread()`) driven from inside a real
+   (`fork_from_worker_thread()` from `_main_thread_forkserver`
+   + `run_subint_in_worker_thread()` from
+   `_subint_forkserver`) driven from inside a real
    `trio.run()` in the parent process,
 
-2. the full `subint_forkserver_proc` spawn backend wired
+2. the full `main_thread_forkserver_proc` spawn backend wired
    through tractor's normal actor-nursery + portal-RPC
    machinery — i.e. `open_root_actor` + `open_nursery` +
    `run_in_actor` against a subactor spawned via fork from a
@@ -27,15 +28,15 @@ Those smoke-test scenarios are standalone — no trio runtime
 in the *parent*. Tiers (1)+(2) here cover the primitives
 driven from inside `trio.run()` in the parent, and tier (3)
 (the `*_spawn_basic` test) drives the registered
-`subint_forkserver` spawn backend end-to-end against the
-tractor runtime.
+`main_thread_forkserver` spawn backend end-to-end against
+the tractor runtime.
 
 Gating
 ------
 - py3.14+ (via `concurrent.interpreters` presence)
 - no `--spawn-backend` restriction — the backend-level test
   flips `tractor.spawn._spawn._spawn_method` programmatically
-  (via `try_set_start_method('subint_forkserver')`) and
+  (via `try_set_start_method('main_thread_forkserver')`) and
   restores it on teardown, so these tests are independent of
   the session-level CLI backend choice.
 
@@ -64,10 +65,12 @@ from tractor.devx import dump_on_hang
 # `tractor.spawn._subint` for why.
 pytest.importorskip('concurrent.interpreters')
 
-from tractor.spawn._subint_forkserver import (  # noqa: E402
+from tractor.spawn._main_thread_forkserver import (  # noqa: E402
     fork_from_worker_thread,
-    run_subint_in_worker_thread,
     wait_child,
+)
+from tractor.spawn._subint_forkserver import (  # noqa: E402
+    run_subint_in_worker_thread,
 )
 from tractor.spawn import _spawn as _spawn_mod  # noqa: E402
 from tractor.spawn._spawn import try_set_start_method  # noqa: E402
@@ -195,7 +198,7 @@ def test_fork_from_worker_thread_via_trio(
     deadline: float = 10.0
     with dump_on_hang(
         seconds=deadline,
-        path='/tmp/subint_forkserver_baseline.dump',
+        path='/tmp/main_thread_forkserver_baseline.dump',
     ):
         pid: int = trio.run(
             partial(run_fork_in_non_trio_thread, deadline),
@@ -217,14 +220,14 @@ def test_fork_and_run_trio_in_child() -> None:
     `trio.run()` inside it on yet another worker thread.
 
     This is the full "forkserver + trio-in-subint-in-child"
-    pattern the proposed `subint_forkserver` spawn backend
+    pattern the proposed `main_thread_forkserver` spawn backend
     would rest on.
 
     '''
     deadline: float = 15.0
     with dump_on_hang(
         seconds=deadline,
-        path='/tmp/subint_forkserver_trio_in_child.dump',
+        path='/tmp/main_thread_forkserver_trio_in_child.dump',
     ):
         pid: int = trio.run(
             partial(
@@ -237,7 +240,7 @@ def test_fork_and_run_trio_in_child() -> None:
 
 
 # ----------------------------------------------------------------
-# tier-3 backend test: drive the registered `subint_forkserver`
+# tier-3 backend test: drive the registered `main_thread_forkserver`
 # spawn backend end-to-end through tractor's actor-nursery +
 # portal-RPC machinery.
 # ----------------------------------------------------------------
@@ -260,7 +263,7 @@ async def _happy_path_forkserver(
     Parent-side harness: stand up a root actor, open an actor
     nursery, spawn one subactor via the currently-selected
     spawn backend (which this test will have flipped to
-    `subint_forkserver`), run a trivial RPC through its
+    `main_thread_forkserver`), run a trivial RPC through its
     portal, assert the round-trip result.
 
     '''
@@ -304,19 +307,19 @@ def forkserver_spawn_method():
 
 
 @pytest.mark.timeout(60, method='thread')
-def test_subint_forkserver_spawn_basic(
+def test_main_thread_forkserver_spawn_basic(
     reg_addr: tuple[str, int | str],
     forkserver_spawn_method,
 ) -> None:
     '''
     Happy-path: spawn ONE subactor via the
-    `subint_forkserver` backend (parent-side fork from a
+    `main_thread_forkserver` backend (parent-side fork from a
     main-interp worker thread), do a trivial portal-RPC
     round-trip, tear the nursery down cleanly.
 
     If this passes, the "forkserver + tractor runtime" arch
     is proven end-to-end: the registered
-    `subint_forkserver_proc` spawn target successfully
+    `main_thread_forkserver_proc` spawn target successfully
     forks a child, the child runs `_actor_child_main()` +
     completes IPC handshake + serves an RPC, and the parent
     reaps via `_ForkedProc.wait()` without regressing any of
@@ -326,7 +329,7 @@ def test_subint_forkserver_spawn_basic(
     deadline: float = 20.0
     with dump_on_hang(
         seconds=deadline,
-        path='/tmp/subint_forkserver_spawn_basic.dump',
+        path='/tmp/main_thread_forkserver_spawn_basic.dump',
     ):
         trio.run(
             partial(
@@ -340,7 +343,7 @@ def test_subint_forkserver_spawn_basic(
 # ----------------------------------------------------------------
 # tier-4 DRAFT: orphaned-subactor SIGINT survivability
 #
-# Motivating question: with `subint_forkserver`, the child's
+# Motivating question: with `main_thread_forkserver`, the child's
 # `trio.run()` lives on the fork-inherited worker thread which
 # is NOT `threading.main_thread()` — so trio cannot install its
 # `signal.set_wakeup_fd`-based SIGINT handler. If the parent
@@ -360,7 +363,7 @@ def test_subint_forkserver_spawn_basic(
 # Cross-backend generalization (decide after this passes):
 # - applicable to any backend whose subactors are separate OS
 #   processes: `trio`, `mp_spawn`, `mp_forkserver`,
-#   `subint_forkserver`.
+#   `main_thread_forkserver`.
 # - NOT applicable to plain `subint` (subactors are in-process
 #   subinterpreters, no orphan child process to SIGINT).
 # - move path: lift the harness script into
@@ -446,7 +449,7 @@ def _process_alive(pid: int) -> bool:
         return False
 
 
-# Known-gap test — `subint_forkserver` orphan-SIGINT
+# Known-gap test — `main_thread_forkserver` orphan-SIGINT
 # handling. See
 # `ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md`.
 # `strict=True` so if a future fix closes the gap the
@@ -471,12 +474,12 @@ def test_orphaned_subactor_sigint_cleanup_DRAFT(
 ) -> None:
     '''
     DRAFT — orphaned-subactor SIGINT survivability under the
-    `subint_forkserver` backend.
+    `main_thread_forkserver` backend.
 
     Sequence:
       1. Spawn a harness subprocess that brings up a root
          actor + one `sleep_forever` subactor via
-         `subint_forkserver`.
+         `main_thread_forkserver`.
       2. Read the harness's stdout for `PARENT_READY=<pid>`
          and `CHILD_PID=<pid>` markers (confirms the
          parent→child IPC handshake completed).
@@ -524,7 +527,7 @@ def test_orphaned_subactor_sigint_cleanup_DRAFT(
         [
             sys.executable,
             str(script_path),
-            'subint_forkserver',
+            'main_thread_forkserver',
             host,
             str(port),
         ],
@@ -577,7 +580,7 @@ def test_orphaned_subactor_sigint_cleanup_DRAFT(
 
         pytest.fail(
             f'Orphan subactor (pid={child_pid}) did NOT exit '
-            f'within 10s of SIGINT under `subint_forkserver` '
+            f'within 10s of SIGINT under `main_thread_forkserver` '
             f'→ trio on non-main thread did not observe the '
             f'default CPython KeyboardInterrupt; backend needs '
             f'explicit SIGINT plumbing.'

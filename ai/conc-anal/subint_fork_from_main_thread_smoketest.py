@@ -89,10 +89,12 @@ except ImportError:
 # the "zero tractor imports" isolation guarantee; now that
 # CPython-level feasibility is confirmed, the validated
 # primitives have moved into tractor proper.)
-from tractor.spawn._subint_forkserver import (
+from tractor.spawn._main_thread_forkserver import (
     fork_from_worker_thread,
-    run_subint_in_worker_thread,
     wait_child,
+)
+from tractor.spawn._subint_forkserver import (
+    run_subint_in_worker_thread,
 )
 
 

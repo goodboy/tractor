@@ -154,21 +154,6 @@ from trio import TaskStatus
 from tractor.log import get_logger
 from ._subint import _has_subints
 
-# Backward-compat re-exports of the fork primitives whose
-# canonical home is now `_main_thread_forkserver`. Kept here
-# transiently so existing
-# `from tractor.spawn._subint_forkserver import ...` callsites
-# in the tests + the conc-anal smoketest keep resolving;
-# dropped once a follow-up commit migrates those imports to
-# the new module.
-from ._main_thread_forkserver import (
-    _close_inherited_fds as _close_inherited_fds,
-    _format_child_exit as _format_child_exit,
-    fork_from_worker_thread as fork_from_worker_thread,
-    wait_child as wait_child,
-    _ForkedProc as _ForkedProc,
-)
-
 if TYPE_CHECKING:
     from tractor.discovery._addr import UnwrappedAddress
     from tractor.runtime._portal import Portal
