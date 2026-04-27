@@ -201,6 +201,15 @@ async def subint_proc(
     # `parent_addr` (`tuple[str, int|str]` — see `UnwrappedAddress`)
     # and `infect_asyncio` (`bool`) `repr()` to valid Python
     # literals, so we can embed them directly.
+    #
+    # ?TODO, future SpawnSpec enrichment: if we ever want to pass
+    # non-`repr()`-roundtrippable values (a pre-built `SpawnSpec`
+    # struct, a credential token, a callable) we should switch to
+    # `_interpreters.set___main___attrs(interp_id, {...})` — the
+    # API anyio uses in `to_interpreter._Worker.call()`. Pattern:
+    # https://github.com/agronholm/anyio/blob/master/src/anyio/to_interpreter.py
+    # (the `set___main___attrs` site). See also tracking issue
+    # `#379`.
     bootstrap: str = (
         'from tractor._child import _actor_child_main\n'
         '_actor_child_main(\n'
@@ -237,6 +246,30 @@ async def subint_proc(
         '''
         try:
             _interpreters.exec(interp_id, bootstrap)
+        # XXX without this catch, a hard subint-bootstrap
+        # failure (e.g. `ImportError` because the actor module
+        # isn't importable inside the subint, or a syntax error
+        # in the bootstrap str) goes only to Python's default
+        # thread-excepthook and is INVISIBLE to the parent
+        # task. At minimum, log via `log.exception` so the
+        # operator sees what failed.
+        # ?TODO, surface the captured exc to the parent task
+        # via a `nonlocal err` slot inspected after
+        # `subint_exited.wait()` — see anyio's
+        # `to_interpreter._interp_call` `(retval, is_exception)`
+        # tuple pattern + `_subint_forkserver.py:480-494`'s
+        # equivalent which already does this. Skipped here for
+        # now: re-raise from the parent must coordinate with
+        # the existing `trio.Cancelled` paths around the
+        # `subint_exited.wait()` calls (lines 327, 362).
+        # NOTE: this whole dedicated-thread machinery may go
+        # away under #450 (PEP 684 isolated mode), in which
+        # case `trio.to_thread.run_sync(Interpreter.exec, ...)`
+        # would handle exception propagation natively.
+        except BaseException:
+            log.exception(
+                f'subint bootstrap raised — interp_id={interp_id}'
+            )
         finally:
             try:
                 trio.from_thread.run_sync(
@@ -397,11 +430,19 @@ async def subint_proc(
                         abandon_on_cancel=True,
                     )
             if cs.cancelled_caught:
+                # Disambiguate "thread leaked but subint already
+                # done" from "thread alive because subint is
+                # genuinely wedged" — pattern borrowed from
+                # trio-parallel's `_sint.SintWorker.is_alive()`.
+                still_running: bool = _interpreters.is_running(
+                    interp_id,
+                )
                 log.warning(
                     f'Subint driver thread did not exit within '
                     f'{_HARD_KILL_TIMEOUT}s — abandoning.\n'
                     f'   |_interp_id={interp_id}\n'
                     f'   |_thread={driver_thread.name}\n'
+                    f'   |_subint_still_running={still_running}\n'
                     f'(This usually means portal-cancel could '
                     f'not be delivered — e.g., IPC channel was '
                     f'already broken. The subint will continue '
