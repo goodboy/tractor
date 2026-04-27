@@ -929,15 +929,26 @@ def open_shm_list(
     # "close" attached shm on actor teardown
     try:
         actor = tractor.current_actor()
-
         actor.lifetime_stack.callback(shml.shm.close)
 
-        # XXX on 3.13+ we don't need to call this?
-        # -> bc we pass `track=False` for `SharedMemeory` orr?
-        if (
-            platform.python_version_tuple()[:-1] < ('3', '13')
-        ):
-            actor.lifetime_stack.callback(shml.shm.unlink)
+        # >XXX NOTE< on 3.13+ we need to call this AS WELL AS pass
+        # `track=False` for `mp.SharedMemeory` otherwise fork based
+        # backends will error out due to long lived stdlib
+        # limitations,
+        # - https://bugs.python.org/issue38119
+        # - https://bugs.python.org/issue45209
+        #
+        def try_unlink():
+            try:
+                shml.shm.unlink()
+            except FileNotFoundError as fne:
+                log.debug(
+                    f'ShmList already deallocated pre-actor-shutdown.\n'
+                    f'{fne!r}\n'
+                )
+
+        actor.lifetime_stack.callback(try_unlink)
+
     except RuntimeError:
         log.warning('tractor runtime not active, skipping teardown steps')
 

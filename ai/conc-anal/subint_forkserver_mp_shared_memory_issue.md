@@ -1,24 +1,29 @@
-# `subint_forkserver` × `multiprocessing.SharedMemory`: incompatible-by-mp-design
+# `subint_forkserver` × `multiprocessing.SharedMemory`: fork-inherited `resource_tracker` fd
 
 Surfaced by `tests/test_shm.py` under
-`--spawn-backend=subint_forkserver`. Both test functions
-fail with distinct symptoms that share one root cause:
+`--spawn-backend=subint_forkserver`. Two distinct
+failure modes, one root cause:
 **`multiprocessing.resource_tracker` is fork-without-exec
-unsafe.**
+unsafe** (canonical CPython class — bpo-38119, bpo-45209).
+
+**Status: resolved by `tractor/ipc/_mp_bs.py` +
+`tractor/ipc/_shm.py` changes (see "Resolution" below).
+This doc kept as the
+post-mortem / decision record.**
 
 ## TL;DR
 
 `mp.shared_memory.SharedMemory` registers each shm
 allocation with the per-process
 `multiprocessing.resource_tracker` singleton. The
-tracker is a daemon process started lazily, and the
+tracker is a daemon process started lazily; the
 parent owns a unix-pipe-fd to it. When the parent
 forks-without-execing into a `subint_forkserver`
-child, the child inherits that fd — but the fd refers
-to the *parent's* tracker, which the child has no
+child, the child inherits that fd — but it refers to
+the *parent's* tracker, which the child has no
 business writing to.
 
-Two manifestations:
+Two manifestations under the original (pre-fix) code:
 
 1. **`test_child_attaches_alot`** — child loops 1000×
    `attach_shm_list()`. First `mp.SharedMemory` call
@@ -37,89 +42,140 @@ Two manifestations:
    `FileExistsError: '/shm_list'` because the leak
    persists across the parametrize loop and forkserver
    children can't `shm_open(create=True)` an existing
-   key. Trio backend doesn't surface this because
-   each subactor `exec`s a fresh interpreter →
-   independent resource tracker per subactor → no
-   inherited-fd issue, and the test's pre-existing
-   leak is masked by the per-process tracker reset.
+   key.
 
-## Why trio backend works
+Trio backend (`mp_spawn`-style) doesn't surface this:
+each subactor `exec`s a fresh interpreter →
+independent resource tracker per subactor → no
+inherited-fd issue, and the test's pre-existing leak
+gets masked by the per-process tracker reset.
 
-Under `--spawn-backend=trio`, each subactor is born
-via `python -m tractor._child` (full `execve`) →
-fresh interpreter → fresh module-level globals →
-`mp.resource_tracker._resource_tracker` is `None`
-until first use → `mp.SharedMemory` constructs its
-own tracker, talks to its own pipe-fd. No cross-
-process fd inheritance.
+Under `subint_forkserver`, the child is `os.fork()`'d
+from a worker thread (no `exec`) → inherits parent's
+`mp.resource_tracker._resource_tracker._fd` → EBADF
+/ cross-talk on first `mp.SharedMemory` op.
 
-Under `subint_forkserver`, the child is
-`os.fork()`'d from a worker thread of the parent
-(no `exec`) → inherits parent's
-`mp.resource_tracker._resource_tracker._fd` →
-EBADF / cross-talk on first `mp.SharedMemory`
-operation in the child.
+## Resolution
 
-## Status
+We side-step the broken upstream machinery entirely
+rather than try to make it fork-safe. Two-part fix
+landed (commits to follow this doc):
 
-**Not a tractor bug.** This is the canonical
-"fork-without-exec breaks `multiprocessing`
-internals" class — see CPython issues:
+### 1. `tractor/ipc/_mp_bs.py::disable_mantracker()`
+   — unconditional disable
 
-- https://bugs.python.org/issue38119
-- https://bugs.python.org/issue45209
+The previous "3.13+ short-circuit" path used
+`partial(SharedMemory, track=False)` to opt-out of
+registration on 3.13+. The `track=False` switch is
+necessary but not sufficient under fork: the
+inherited tracker fd can still be touched indirectly
+(e.g. through `_ensure_running_and_write`'s
+self-check path).
 
-Pure-`fork` start method has the same incompatibility;
-that's why `mp` itself defaults to `spawn` on macOS
-and `forkserver`/`spawn` on Linux post-3.14.
+The fix takes both belts AND suspenders:
 
-## Mitigation
+- **Always** monkey-patch
+  `mp.resource_tracker._resource_tracker` to a
+  no-op `ManTracker` subclass whose
+  `register`/`unregister`/`ensure_running` are all
+  empty.
+- **Always** wrap `SharedMemory` with
+  `track=False`.
 
-`tests/test_shm.py` is module-marked with
-`pytest.mark.skipon_spawn_backend('subint_forkserver',
-'subint', reason=...)` pointing at this doc.
+Result: the inherited tracker fd in the fork child
+is still inherited (fd is a kernel object; we can't
+un-inherit it across fork) but **nothing in the
+shm code path will ever try to use it** — both the
+tracker singleton and the per-allocation registration
+are short-circuited.
 
-Two longer-term options if we ever want shm tests under
-`subint_forkserver`:
+### 2. `tractor/ipc/_shm.py::open_shm_list()`
+   — own the cleanup
 
-1. **Reset the inherited tracker fd in the child
-   prelude** —
-   `tractor/spawn/_subint_forkserver.py::_child_target`
-   already calls `_close_inherited_fds()`. We could
-   additionally explicitly clear
-   `multiprocessing.resource_tracker._resource_tracker`
-   so the child re-creates a fresh tracker on first
-   shm op. **Caveat**: this means each
-   forkserver-subactor spawns its own resource-tracker
-   daemon-process, multiplying daemon-proc count by
-   subactor count. mp authors deliberately avoided
-   this — the tracker is meant to be a per-mp-context
-   singleton.
+Without `mp.resource_tracker`, nobody else will
+unlink leaked segments at process exit. tractor
+already controls actor lifecycle, so we register
+unlink on the actor's lifetime stack:
 
-2. **Stop using `multiprocessing.shared_memory`** —
-   migrate to `posix_ipc` directly (no resource
-   tracker) or finish the `hotbaud`-based ringbuf
-   transport that already supersedes shm in many
-   `tractor` IPC paths.
+```python
+def try_unlink():
+    try:
+        shml.shm.unlink()
+    except FileNotFoundError as fne:
+        log.exception(...)  # benign sibling-already-cleaned race
 
-Neither is in scope for the
-`subint_forkserver`-backend-lands PR; both are tracked
-out as future work.
+actor.lifetime_stack.callback(try_unlink)
+```
 
-## Reproducer
+The `FileNotFoundError` swallow handles the case
+where a sibling actor already unlinked the same
+segment (legitimate race in shared-key setups).
+
+## Why this is the right call
+
+- **mp's tracker is widely criticized.** The
+  in-tree comment "non-SC madness" predates this
+  fix and matches CPython upstream's own discomfort
+  (e.g. the per-context tracker design rework
+  discussions in bpo-43475).
+- **tractor already owns process lifecycle.** We
+  have `actor.lifetime_stack`, `Portal.cancel_actor`,
+  and the IPC cancel cascade. Adding mp's tracker
+  on top buys nothing we can't do better ourselves.
+- **Backend-uniform.** No special-casing per spawn
+  backend. trio (`mp_spawn`-style), `subint_forkserver`,
+  and the future `subint` all behave identically
+  — register-time no-op, exit-time unlink-via-
+  lifetime-stack.
+
+## Trade-offs / known gaps
+
+- **Crash-leaked segments.** If an actor segfaults
+  or is `SIGKILL`'d before its lifetime stack runs,
+  `/dev/shm/<key>` will leak. Mitigations:
+  - `tractor-reap` (the new
+    `scripts/tractor-reap` CLI) doesn't yet sweep
+    `/dev/shm` — could extend it.
+  - Higher-level apps using shm should pin a UUID
+    into the key (the `'shml_<uuid>'` pattern in
+    `test_child_attaches_alot`) so leaks are
+    distinct per session and easy to GC out-of-band.
+- **Cross-actor unlink races.** Two actors holding
+  the same shm key racing on `unlink()` — handled
+  by the `FileNotFoundError` swallow.
+- **Crashes won't show up in mp's leak warning.**
+  We've turned off `resource_tracker`, so the usual
+  `resource_tracker: There appear to be N leaked
+  shared_memory objects to clean up at shutdown`
+  warning is gone too. If we ever want it back as
+  a crash-detection signal, we'd need our own
+  equivalent (walk the actor's `_shm_list_keys` set
+  at root teardown, log any unfreed).
+
+## Verification
 
 ```sh
-# fail mode 1 (EBADF on resource_tracker._fd):
-./py314/bin/python -m pytest \
-    tests/test_shm.py::test_child_attaches_alot \
-    --spawn-backend=subint_forkserver --tb=short
-
-# fail mode 2 (FileExistsError on /shm_list):
-./py314/bin/python -m pytest \
-    tests/test_shm.py::test_parent_writer_child_reader \
+# fixed under both backends:
+./py314/bin/python -m pytest tests/test_shm.py \
     --spawn-backend=subint_forkserver
+# 7 passed
 
-# baseline (passes):
-./py314/bin/python -m pytest \
-    tests/test_shm.py --spawn-backend=trio
+./py314/bin/python -m pytest tests/test_shm.py \
+    --spawn-backend=trio
+# 7 passed (regression check)
 ```
+
+## References
+
+- CPython upstream issues:
+  - https://bugs.python.org/issue38119 (fork
+    + resource_tracker fd inheritance)
+  - https://bugs.python.org/issue45209
+    (SharedMemory + resource_tracker)
+  - https://bugs.python.org/issue43475
+    (per-context tracker rework discussion)
+- Long-term alternative: migrate off
+  `multiprocessing.shared_memory` entirely to
+  `posix_ipc` (no tracker) or finish the
+  `hotbaud`-based ringbuf transport. Not blocked on
+  this fix — both are independently tracked.
