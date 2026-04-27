@@ -36,20 +36,212 @@ across four scenarios by
 py3.14.
 
 This submodule lifts the validated primitives out of the
-smoke-test and into tractor proper, so they can eventually be
-wired into a real "subint forkserver" spawn backend — where:
+smoke-test and into tractor proper as the
+`subint_forkserver` spawn backend.
+
+Design rationale — why a forkserver, and why in-process
+-------------------------------------------------------
+
+There are two design questions worth pinning down up front,
+since the name "subint_forkserver" intentionally evokes the
+stdlib `multiprocessing.forkserver` for comparison:
+
+**(1) Why a forkserver pattern at all, vs. forking directly
+from the trio task?**
+
+`os.fork()` is fundamentally hostile to trio: trio owns
+file descriptors, signal-wakeup-fds, threadpools, and an
+event loop with non-trivial post-fork lifecycle invariants
+(see python-trio/trio#1614 et al.). Forking a trio-running
+thread duplicates all that state into the child, which then
+either needs surgical reset (fragile) or has to immediately
+`exec()` (defeats the point of fork-without-exec). The
+*forkserver* sidesteps this by isolating the `os.fork()`
+call in a worker that has provably never entered trio — so
+the child inherits a clean, trio-free image.
+
+**(2) Why an in-process forkserver, vs. stdlib
+`multiprocessing.forkserver`?**
+
+The stdlib design solves the same "fork from clean state"
+problem by spinning up a **separate sidecar process** at
+first use of `mp.set_start_method('forkserver')`. The parent
+then IPC's each spawn request to that sidecar over a unix
+socket; the sidecar is the process that actually calls
+`os.fork()`. This works but pays for cleanliness with three
+costs:
+
+- **Sidecar lifecycle**: a second long-lived process per
+  parent, with its own start/stop/health-check semantics.
+- **IPC overhead per spawn**: every actor-spawn round-trips
+  an `mp` request message through a unix socket before any
+  child code runs.
+- **State isolation by process boundary**: the sidecar can't
+  share parent state at all — every spawn is a "cold" child
+  re-importing modules from disk.
+
+The subint architecture lets us keep the forkserver
+**in-process** because subints already provide the
+state-isolation guarantee that `mp.forkserver`'s sidecar
+buys via the process boundary. Concretely: in the envisioned
+arch (currently partially landed — see "Status" below),
+
+- the **main interpreter** stays trio-free and hosts the
+  forkserver worker thread that owns `os.fork()`,
+- the parent actor's **`trio.run()`** lives in a separate
+  *sub-interpreter* (a different worker thread) — fully
+  isolated `sys.modules` / `__main__` / globals from main,
+- when a spawn is requested, the trio task signals the
+  forkserver thread (intra-process, ~free) and the
+  forkserver forks; the child inherits the parent's full
+  in-memory state cheaply.
+
+That collapses the three costs above:
+
+- no sidecar — the forkserver is just another thread,
+- spawn signal is a thread-local event/condition, not IPC,
+- child inherits the warm parent state (loaded modules,
+  populated caches, etc.) for free.
+
+The tradeoff we accept in exchange: this design is
+3.14-only (legacy-config subints still share the GIL, so
+the parent's trio loop and the forkserver worker contend
+on it; once PEP 684 isolated-mode + msgspec
+[jcrist/msgspec#1026](https://github.com/jcrist/msgspec/issues/1026)
+land, this constraint relaxes). And the dedicated worker
+threads here are heavier than `trio.to_thread.run_sync`
+calls — see the "TODO" section further down for the audit
+plan once those upstream pieces land.
+
+Implementation status — what's wired today
+-----------------------------------------
+
+The "envisioned arch" above is the eventual target; the
+**currently-landed** flow is a partial step toward it:
 
 - A dedicated main-interp worker thread owns all `os.fork()`
-  calls (never enters a subint).
-- The tractor parent-actor's `trio.run()` lives in a
-  sub-interpreter on a different worker thread.
-- When a spawn is requested, the trio-task signals the
-  forkserver thread; the forkserver forks; child re-enters
-  the same pattern (trio in a subint + forkserver on main).
+  calls (never enters a subint). ✓ landed.
+- Parent actor's `trio.run()` lives **on the main interp**
+  for now (not a subint yet). The subint-hosted root
+  runtime is gated on jcrist/msgspec#1026 (see
+  `_subint.py` docstring).
+- Spawn-request signal: trio task `→ to_thread.run_sync`
+  to the forkserver-worker thread. ✓ landed.
+- Forked child: runs `_actor_child_main` against a normal
+  trio runtime. ✓ landed.
 
-This mirrors the stdlib `multiprocessing.forkserver` design
-but keeps the forkserver in-process for faster spawn latency
-and inherited parent state.
+The "subint" in the backend name refers to the *family* —
+this backend ships in the same PR series as `_subint.py`
+(in-thread subint backend) and `_subint_fork.py` (the RFC
+stub for fork-from-non-main-subint, blocked upstream).
+Once the parent's trio also lives in a subint we'll have
+the full envisioned arch; until then the forkserver
+half is independently useful and ship-able.
+
+What survives the fork? — POSIX semantics
+-----------------------------------------
+
+A natural worry when forking from a parent that's running
+`trio.run()` on another thread: does that trio thread (and
+any other threads in the parent) keep running in the child?
+
+**No.** POSIX `fork()` only preserves the *calling* thread
+in the child. Every other thread in the parent — trio's
+runner thread, any `to_thread` cache threads, anything else
+— is gone the instant `fork()` returns in the child.
+
+Concretely, after the forkserver worker calls `os.fork()`:
+
+| thread                | parent    | child         |
+|-----------------------|-----------|---------------|
+| forkserver worker     | continues | sole survivor |
+| `trio.run()` thread   | continues | gone          |
+| any other thread      | continues | gone          |
+
+The forkserver worker becomes the new "main" execution
+context in the child; `trio.run()` and every other
+parent thread never executes a single instruction
+post-fork in the child.
+
+This is exactly *why* `os.fork()` is delegated to a
+dedicated worker thread that has provably never entered
+trio: we want that trio-free thread to be the surviving
+one in the child.
+
+That said, dead-thread *artifacts* still cross the fork
+boundary (canonical "fork in a multithreaded program is
+dangerous" — see `man pthread_atfork`). What persists, and
+how we handle each:
+
+- **Inherited file descriptors** — the dead trio thread's
+  epoll fd, signal-wakeup-fd, eventfds, sockets, IPC
+  pipes, pytest's capture-fds, etc. are all still in the
+  child's fd table (kernel-level inheritance). Handled by
+  `_close_inherited_fds()` in the child prelude — walks
+  `/proc/self/fd` and closes everything except stdio +
+  the channel pipe to the forkserver.
+- **Memory image** — trio's internal data structures
+  (scheduler, task queues, runner state) sit in COW
+  memory but nobody's executing them. Get GC'd /
+  overwritten when the child's fresh `trio.run()` boots.
+- **Python thread state** — handled automatically by
+  CPython. `PyOS_AfterFork_Child()` calls
+  `_PyThreadState_DeleteExceptCurrent()`, so dead
+  `PyThreadState` objects are cleaned and
+  `threading.enumerate()` returns just the surviving
+  thread.
+- **User-level locks (`threading.Lock`)** —
+  held-by-dead-thread state is the canonical fork hazard.
+  Not an issue in practice for tractor: trio doesn't hold
+  cross-thread locks across fork (its synchronization is
+  within the trio task system, which doesn't survive in
+  either direction). CPython's GIL is auto-reset by the
+  fork callback.
+
+FYI: how this dodges the `trio.run()` × `fork()` hazards
+--------------------------------------------------------
+
+`os.fork()` is famously hostile to `trio` (see
+python-trio/trio#1614 et al.) because trio owns several
+classes of process-global state that all break across the
+fork boundary in different ways. The forkserver-thread
+design dodges each class explicitly:
+
+- **Signal-wakeup-fd**: trio installs a wakeup-fd via
+  `signal.set_wakeup_fd()` on `trio.run()` startup so
+  signals can interrupt `epoll_wait`. The child inherits
+  this fd, but trio's runner that owns it is gone — so
+  any signal delivery in the child writes to a dead
+  reader. *Dodge*: the inherited wakeup-fd is closed by
+  `_close_inherited_fds()`, then the child's own
+  `trio.run()` installs a fresh one.
+- **`epoll`/`kqueue` instance**: trio's I/O backend holds
+  one. Inherited as a dead fd; same fix as above.
+- **Threadpool cache threads** (`trio.to_thread`): worker
+  threads with cached tstate. Don't exist in the child
+  (POSIX); cache state is meaningless garbage that gets
+  reset when the child's trio.run() initializes its own
+  thread cache.
+- **Cancel scopes / nurseries / open `trio.Process` /
+  open sockets**: these are trio-runtime objects, not
+  kernel objects. The runtime that owns them is gone in
+  the child, so the Python objects exist as zombie data
+  in COW memory and get overwritten as the child runs.
+  Inherited *kernel* fds those objects wrapped (sockets,
+  proc pipes) are caught by `_close_inherited_fds()`.
+- **`atexit` handlers**: trio doesn't register any that
+  would mis-fire post-fork; trio's lifetime-stack is
+  all `with`-block-scoped and dies with the runner.
+- **Foreign-language I/O state** (libcurl, OpenSSL session
+  caches, etc.): out of scope — same hazard as any
+  fork-without-exec; users layering those on top of
+  tractor need their own pthread_atfork handlers.
+
+Net effect: for the runtime surface tractor controls
+(trio + IPC layer + msgspec), the forkserver-thread
+isolation + `_close_inherited_fds()` cleanup gives the
+forked child a clean trio environment. Everything else
+falls under the standard fork-without-exec disclaimer.
 
 Status
 ------
@@ -100,7 +292,7 @@ to know.
 Full analysis + audit plan for when we can revisit is in
 `ai/conc-anal/subint_forkserver_thread_constraints_on_pep684_issue.md`.
 Intent: file a follow-up GH issue linked to #379 once
-[jcrist/msgspec#563](https://github.com/jcrist/msgspec/issues/563)
+[jcrist/msgspec#1026](https://github.com/jcrist/msgspec/issues/1026)
 unblocks isolated-mode subints in tractor.
 
 See also
