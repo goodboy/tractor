@@ -113,6 +113,73 @@ threads here are heavier than `trio.to_thread.run_sync`
 calls — see the "TODO" section further down for the audit
 plan once those upstream pieces land.
 
+Future arch — what subints would buy us
+---------------------------------------
+
+The `subint` in this module's name is **family-naming
+today** — currently the implementation only uses a regular
+worker thread on the main interp; no subinterpreter is
+created anywhere in the parent or child. The naming becomes
+*literal* once jcrist/msgspec#1026 unblocks isolated-mode
+subints (PEP 684 per-interp GIL). Three concrete wins land
+at that point:
+
+**(1) Cheaper forks (smaller main-interp COW image)**
+
+Today the parent's main interp carries the full tractor
+stack: trio runtime, msgspec codecs, IPC layer, every
+user module the actor imported. When the forkserver
+worker calls `os.fork()` the child inherits ALL of that
+as COW memory — even though most gets overwritten when
+the child boots its own `trio.run()`.
+
+Move the parent's `trio.run()` into a subint (its own
+`sys.modules` / `__main__` / globals) and the main
+interp **stays minimal** — just the forkserver-thread
+plumbing + bare CPython. The main interp becomes the
+*literal* forkserver: an intentionally-empty execution
+context whose only job is to call `os.fork()` cleanly.
+Inherited COW image shrinks proportionally.
+
+**(2) True parallelism between forkserver and trio
+(per-interp GIL)**
+
+Today the forkserver worker and the trio.run() thread
+share the main GIL — when one runs the other waits.
+Spawn requests briefly stall trio while the worker
+takes the GIL to call `os.fork()`. PEP 684 isolated-
+mode gives each subint its own GIL: forkserver thread
+on main + trio on subint actually run in parallel.
+Spawn latency drops, trio loop doesn't notice the
+fork happening.
+
+**(3) Multi-actor-per-process (the architectural prize)**
+
+The bigger payoff and the reason `_subint.py` (the
+in-thread `subint` backend) exists in parallel with
+this module. With per-interp-GIL subints, one process
+can host:
+
+- main interp: forkserver thread + bookkeeping
+- subint A: actor 1's `trio.run()`
+- subint B: actor 2's `trio.run()`
+- subint C: ...
+
+`os.fork()` becomes the **last-resort** spawn — used
+only when a new OS process is actually required
+(cgroups, namespaces, security boundary, multi-host
+distribution). Within a single process, subint-per-
+actor is radically cheaper: no fork, no COW, no
+inherited-fd cleanup — just `_interpreters.create()`
++ `_interpreters.exec()`.
+
+The two backends converge on a coherent story:
+`subint` → in-process spawn (cheap, GIL-isolated),
+`subint_forkserver` → cross-process spawn (when you
+truly need OS-level isolation). The forkserver isn't
+the default mechanism; it's the bridge to a new
+process when subint isolation isn't enough.
+
 Implementation status — what's wired today
 -----------------------------------------
 
