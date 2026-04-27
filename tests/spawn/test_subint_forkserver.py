@@ -283,8 +283,8 @@ async def _happy_path_forkserver(
 def forkserver_spawn_method():
     '''
     Flip `tractor.spawn._spawn._spawn_method` to
-    `'subint_forkserver'` for the duration of a test, then
-    restore whatever was in place before (usually the
+    `'main_thread_forkserver'` for the duration of a test,
+    then restore whatever was in place before (usually the
     session-level CLI choice, typically `'trio'`).
 
     Without this, other tests in the same session would
@@ -295,7 +295,7 @@ def forkserver_spawn_method():
     '''
     prev_method: str = _spawn_mod._spawn_method
     prev_ctx = _spawn_mod._ctx
-    try_set_start_method('subint_forkserver')
+    try_set_start_method('main_thread_forkserver')
     try:
         yield
     finally:

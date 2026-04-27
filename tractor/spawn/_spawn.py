@@ -494,6 +494,7 @@ from ._mp import mp_proc
 from ._subint import subint_proc
 from ._subint_fork import subint_fork_proc
 from ._main_thread_forkserver import main_thread_forkserver_proc
+from ._subint_forkserver import subint_forkserver_proc
 
 
 # proc spawning backend target map
@@ -517,10 +518,9 @@ _methods: dict[SpawnMethodKey, Callable] = {
     # Variant-2 (future, reserved): same fork machinery but
     # child enters a sub-interpreter to host its `trio.run()`
     # — gated on jcrist/msgspec#1026 unblocking PEP 684
-    # isolated-mode subints. Today aliases to the variant-1
-    # impl so `--spawn-backend=subint_forkserver` keeps
-    # working; flipped to a `NotImplementedError` stub in a
-    # follow-up commit. See
+    # isolated-mode subints. Today the stub raises
+    # `NotImplementedError` pointing at the variant-1 backend
+    # + upstream blocker. See
     # `tractor.spawn._subint_forkserver`.
-    'subint_forkserver': main_thread_forkserver_proc,
+    'subint_forkserver': subint_forkserver_proc,
 }
