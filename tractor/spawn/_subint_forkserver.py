@@ -142,12 +142,9 @@ See also
 
 '''
 from __future__ import annotations
-import sys
 import threading
-from functools import partial
 from typing import (
     Any,
-    Literal,
     TYPE_CHECKING,
 )
 
@@ -155,76 +152,40 @@ import trio
 from trio import TaskStatus
 
 from tractor.log import get_logger
-from tractor.msg import (
-    types as msgtypes,
-    pretty_struct,
-)
-from tractor.runtime._state import current_actor
-from tractor.runtime._portal import Portal
-from ._spawn import (
-    cancel_on_completion,
-    soft_kill,
-)
-# Lower-level fork primitives — see module docstring for the
-# split rationale. `_subint_forkserver` builds tractor's
-# subint-family spawn backend on top of these.
+from ._subint import _has_subints
+
+# Backward-compat re-exports of the fork primitives whose
+# canonical home is now `_main_thread_forkserver`. Kept here
+# transiently so existing
+# `from tractor.spawn._subint_forkserver import ...` callsites
+# in the tests + the conc-anal smoketest keep resolving;
+# dropped once a follow-up commit migrates those imports to
+# the new module.
 from ._main_thread_forkserver import (
     _close_inherited_fds as _close_inherited_fds,
     _format_child_exit as _format_child_exit,
     fork_from_worker_thread as fork_from_worker_thread,
     wait_child as wait_child,
-    _ForkedProc,
+    _ForkedProc as _ForkedProc,
 )
 
 if TYPE_CHECKING:
     from tractor.discovery._addr import UnwrappedAddress
-    from tractor.ipc import (
-        _server,
-    )
+    from tractor.runtime._portal import Portal
     from tractor.runtime._runtime import Actor
     from tractor.runtime._supervise import ActorNursery
 
+# Private CPython subint API — used by `run_subint_in_worker_thread`
+# below. Imported only when 3.14+ is detected (via `_has_subints`
+# from `_subint`); on older runtimes the symbol is `None` and
+# the function raises a clean `RuntimeError` on entry.
+if _has_subints:
+    import _interpreters  # type: ignore
+else:
+    _interpreters = None  # type: ignore
+
 
 log = get_logger('tractor')
-
-
-# Configurable child-side SIGINT handling for forkserver-spawned
-# subactors. Threaded through `subint_forkserver_proc`'s
-# `proc_kwargs` under the `'child_sigint'` key.
-#
-# - `'ipc'` (default, currently the only implemented mode):
-#   child has NO trio-level SIGINT handler — trio.run() is on
-#   the fork-inherited non-main thread, `signal.set_wakeup_fd()`
-#   is main-thread-only. Cancellation flows exclusively via
-#   the parent's `Portal.cancel_actor()` IPC path. Safe +
-#   deterministic for nursery-structured apps where the parent
-#   is always the cancel authority. Known gap: orphan
-#   (post-parent-SIGKILL) children don't respond to SIGINT
-#   — see `test_orphaned_subactor_sigint_cleanup_DRAFT`.
-#
-# - `'trio'` (**not yet implemented**): install a manual
-#   SIGINT → trio-cancel bridge in the child's fork prelude
-#   (pre-`trio.run()`) so external Ctrl-C reaches stuck
-#   grandchildren even with a dead parent. Adds signal-
-#   handling surface the `'ipc'` default cleanly avoids; only
-#   pay for it when externally-interruptible children actually
-#   matter (e.g. CLI tool grandchildren).
-ChildSigintMode = Literal['ipc', 'trio']
-_DEFAULT_CHILD_SIGINT: ChildSigintMode = 'ipc'
-
-
-# Feature-gate: py3.14+ via the public `concurrent.interpreters`
-# wrapper. Matches the gate in `tractor.spawn._subint` —
-# see that module's docstring for why we require the public
-# API's presence even though we reach into the private
-# `_interpreters` C module for actual calls.
-try:
-    from concurrent import interpreters as _public_interpreters  # noqa: F401  # type: ignore
-    import _interpreters  # type: ignore
-    _has_subints: bool = True
-except ImportError:
-    _interpreters = None  # type: ignore
-    _has_subints: bool = False
 
 
 def run_subint_in_worker_thread(
@@ -308,3 +269,57 @@ def run_subint_in_worker_thread(
         )
     if err is not None:
         raise err
+
+
+async def subint_forkserver_proc(
+    name: str,
+    actor_nursery: ActorNursery,
+    subactor: Actor,
+    errors: dict[tuple[str, str], Exception],
+
+    bind_addrs: list[UnwrappedAddress],
+    parent_addr: UnwrappedAddress,
+    _runtime_vars: dict[str, Any],
+    *,
+    infect_asyncio: bool = False,
+    task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
+    proc_kwargs: dict[str, any] = {},
+
+) -> None:
+    '''
+    PLACEHOLDER — variant-2 (subint-isolated child runtime)
+    spawn-backend coroutine. Reserved for the eventual impl
+    that uses `run_subint_in_worker_thread()` in the fork-child
+    to host the child's `trio.run()` inside a fresh subint.
+
+    Today this stub raises immediately so
+    `--spawn-backend=subint_forkserver` errors cleanly with a
+    pointer to the working variant-1 backend
+    (`main_thread_forkserver`) and the upstream blocker
+    ([jcrist/msgspec#1026](https://github.com/jcrist/msgspec/issues/1026)).
+
+    See this module's top-level docstring for the future-arch
+    design + what lives here when the variant-2 impl lands.
+
+    '''
+    raise NotImplementedError(
+        f'`{ "subint_forkserver"!r}` spawn backend is reserved '
+        f'for the future variant-2 (subint-isolated child '
+        f'runtime) — gated on jcrist/msgspec#1026 unblocking '
+        f'PEP 684 isolated-mode subints upstream.\n'
+        f'\n'
+        f'For the working fork-based backend today, use '
+        f'`--spawn-backend=main_thread_forkserver` (variant '
+        f'1: fork from a regular main-interp worker thread, '
+        f'child runs trio on its own main interp).\n'
+        f'\n'
+        f'See:\n'
+        f'  - tractor.spawn._main_thread_forkserver — the '
+        f'working variant-1 impl + design rationale\n'
+        f'  - tractor.spawn._subint_forkserver — this '
+        f'module\'s docstring for the variant-2 future-arch\n'
+        f'  - https://github.com/goodboy/tractor/issues/379 '
+        f'(subint umbrella)\n'
+        f'  - https://github.com/jcrist/msgspec/issues/1026 '
+        f'(upstream PEP 684 blocker)'
+    )
