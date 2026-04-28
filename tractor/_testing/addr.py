@@ -22,6 +22,7 @@ Might be eventually useful to expose as a util set from
 our `tractor.discovery` subsys?
 
 '''
+import os
 import random
 from typing import (
     Type,
@@ -31,16 +32,27 @@ from tractor.discovery import _addr
 
 def get_rando_addr(
     tpt_proto: str,
-    *,
-
-    # choose random port at import time
-    _rando_port: str = random.randint(1000, 9999)
-
 ) -> tuple[str, str|int]:
     '''
     Used to globally override the runtime to the
     per-test-session-dynamic addr so that all tests never conflict
     with any other actor tree using the default.
+
+    Cross-process isolation: TCP-port picks salt
+    `random.randint()` with `os.getpid()` so two parallel
+    pytest sessions (e.g. one running `--tpt-proto=tcp` and
+    another `--tpt-proto=uds` concurrently) almost-never
+    collide on the same port. Without the salt, the prior
+    impl's import-time `random.randint(1000, 9999)` default
+    arg was effectively a process-singleton with a 1/9000
+    chance of cross-run collision per pair — and when it
+    happened EVERY `reg_addr`-using test in BOTH runs would
+    fight over the bind, cascading into a chain of
+    "Address already in use" failures.
+
+    For UDS this concern doesn't apply: `UDSAddress.get_random()`
+    already builds socket paths from `os.getpid()` so each
+    pytest process gets its own socket-path namespace.
 
     '''
     addr_type: Type[_addr.Addres] = _addr._address_types[tpt_proto]
@@ -51,9 +63,21 @@ def get_rando_addr(
     testrun_reg_addr: tuple[str, int|str]
     match tpt_proto:
         case 'tcp':
+            # Per-call randomness mixed with `os.getpid()` —
+            # see the docstring above for the cross-process
+            # isolation rationale. The mix means:
+            # - within one pytest session, two calls return
+            #   distinct ports (good for tests that need a
+            #   second-different-reg-addr in one fn body, e.g.
+            #   `test_tpt_bind_addrs::bind-subset-reg`),
+            # - across parallel pytest sessions, the pid bias
+            #   makes coincident port choices unlikely.
+            port: int = 1000 + (
+                random.randint(0, 8999) + os.getpid()
+            ) % 9000
             testrun_reg_addr = (
                 addr_type.def_bindspace,
-                _rando_port,
+                port,
             )
 
         # NOTE, file-name uniqueness (no-collisions) will be based on
