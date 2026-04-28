@@ -32,6 +32,22 @@ from tractor.trionics import BroadcastReceiver
 from tractor._testing import expect_ctxc
 
 
+# Per-test zombie-subactor reaper. Opt-in (NOT autouse) —
+# see `tractor._testing.pytest.reap_subactors_per_test`'s
+# docstring for the full rationale. This module specifically
+# needs it because tests like
+# `test_echoserver_detailed_mechanics[KeyboardInterrupt]`
+# and the `test_sigint_closes_lifetime_stack[*]` matrix have
+# been observed to hang past pytest's wall-clock under
+# `main_thread_forkserver`, leaving subactor forks that
+# squat on registrar resources and cascade-fail every
+# subsequent test (`test_inter_peer_cancellation`,
+# `test_legacy_one_way_streaming`, etc.).
+pytestmark = pytest.mark.usefixtures(
+    'reap_subactors_per_test',
+)
+
+
 @pytest.fixture(
     scope='module',
 )
