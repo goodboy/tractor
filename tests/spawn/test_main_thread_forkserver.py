@@ -603,3 +603,50 @@ def test_orphaned_subactor_sigint_cleanup_DRAFT(
             proc.wait(timeout=2.0)
         except subprocess.TimeoutExpired:
             pass
+
+
+# ----------------------------------------------------------------
+# regression guard: variant-2 (`subint_forkserver`) placeholder
+# MUST raise `NotImplementedError` today — guards against future
+# commits accidentally re-aliasing the key to the variant-1
+# coroutine (which was a transient state during the rename).
+# ----------------------------------------------------------------
+def test_subint_forkserver_key_errors_cleanly() -> None:
+    '''
+    `--spawn-backend=subint_forkserver` is reserved for the
+    eventual variant-2 (subint-isolated child runtime)
+    backend, gated on jcrist/msgspec#1026 unblocking PEP 684
+    isolated-mode subints upstream.
+
+    Until that lands, the dispatch entry MUST raise
+    `NotImplementedError` immediately rather than silently
+    aliasing to `main_thread_forkserver_proc`. Verify the
+    error message also surfaces both the working-backend
+    pointer and the upstream-blocker ref so an operator
+    arriving at the error has somewhere to go.
+
+    '''
+    import asyncio
+    from tractor.spawn._spawn import _methods
+
+    proc = _methods['subint_forkserver']
+    with pytest.raises(NotImplementedError) as ei:
+        # signature args match `main_thread_forkserver_proc`'s
+        # — the stub raises before touching them so dummy
+        # values are fine.
+        asyncio.run(
+            proc(
+                'x', None, None, {}, [],
+                ('127.0.0.1', 0), {},
+            )
+        )
+
+    msg: str = str(ei.value)
+    assert 'main_thread_forkserver' in msg, (
+        f'stub error msg should redirect to the working '
+        f'variant-1 backend; got: {msg!r}'
+    )
+    assert 'msgspec#1026' in msg or '1026' in msg, (
+        f'stub error msg should reference the upstream '
+        f'blocker (jcrist/msgspec#1026); got: {msg!r}'
+    )
