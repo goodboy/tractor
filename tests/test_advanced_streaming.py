@@ -5,6 +5,7 @@ Advanced streaming patterns using bidirectional streams and contexts.
 from collections import Counter
 import itertools
 import platform
+from typing import Type
 
 import pytest
 import trio
@@ -106,61 +107,120 @@ async def consumer(
                         print(f'{uid} got: {value}')
 
 
+# NOTE: deliberately NOT using `@pytest.mark.timeout(...)` —
+# both pytest-timeout enforcement modes break trio under
+# fork-based backends:
+#
+# - `method='signal'` (SIGALRM): the handler synchronously
+#   raises `Failed` in trio's main thread mid-`epoll.poll()`,
+#   leaves `GLOBAL_RUN_CONTEXT` half-installed ("Trio guest
+#   run got abandoned"), and EVERY subsequent `trio.run()`
+#   in the same pytest process bails with
+#   `RuntimeError: Attempted to call run() from inside a
+#   run()` — session-wide poison.
+#
+# - `method='thread'`: calls `_thread.interrupt_main()`
+#   raising `KeyboardInterrupt` into the main thread. Under
+#   fork-based backends with mid-cascade fd-juggling the KBI
+#   can escape trio's `KIManager` and bubble out of pytest
+#   itself — kills the WHOLE session.
+#
+# Instead we use `trio.fail_after()` INSIDE `main()` below:
+# trio's own `Cancelled`/`TooSlowError` machinery handles the
+# timeout, cleanly unwinds the actor nursery's cancel
+# cascade, and only fails the single test (no cross-test
+# state corruption either way).
+#
+# `pyproject.toml`'s default `timeout = 200` is still a
+# last-resort safety net.
+@pytest.mark.parametrize(
+    'expect_cancel_exc', [
+        KeyboardInterrupt,
+        trio.TooSlowError,
+    ],
+    ids=lambda item:
+        f'expect_user_exc_raised={item.__name__}'
+)
 def test_dynamic_pub_sub(
     reg_addr: tuple,
     debug_mode: bool,
     test_log: tractor.log.StackLevelAdapter,
+    reap_subactors_per_test: int,
+    expect_cancel_exc: Type[BaseException],
 ):
+    failed_to_raise_report: str = (
+        f'Never got a {expect_cancel_exc!r} ??'
+    )
+
     global _registry
 
     from multiprocessing import cpu_count
     cpus = cpu_count()
 
     async def main():
-        async with tractor.open_nursery(
-            registry_addrs=[reg_addr],
-            debug_mode=debug_mode,
-        ) as n:
+        # Hard safety cap via trio's own cancellation — see
+        # the module-level NOTE on why we avoid `pytest-timeout`
+        # for this test. Total expected runtime: ~1s spawn + 3s
+        # sleep + ~1-2s cancel cascade ≈ 5-6s. 12s gives plenty
+        # of headroom; if exceeded, trio raises `TooSlowError`
+        # which the outer `try` block treats as a hang report
+        # (or, if `expect_cancel_exc is trio.TooSlowError`, as
+        # the test passing — either way, no global state
+        # corruption).
+        with trio.fail_after(12):
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+                debug_mode=debug_mode,
+            ) as n:
 
-            # name of this actor will be same as target func
-            await n.run_in_actor(publisher)
+                # name of this actor will be same as target func
+                await n.run_in_actor(publisher)
 
-            for i, sub in zip(
-                range(cpus - 2),
-                itertools.cycle(_registry.keys())
-            ):
+                for i, sub in zip(
+                    range(cpus - 2),
+                    itertools.cycle(_registry.keys())
+                ):
+                    await n.run_in_actor(
+                        consumer,
+                        name=f'consumer_{sub}',
+                        subs=[sub],
+                    )
+
+                # make one dynamic subscriber
                 await n.run_in_actor(
                     consumer,
-                    name=f'consumer_{sub}',
-                    subs=[sub],
+                    name='consumer_dynamic',
+                    subs=list(_registry.keys()),
                 )
 
-            # make one dynamic subscriber
-            await n.run_in_actor(
-                consumer,
-                name='consumer_dynamic',
-                subs=list(_registry.keys()),
-            )
-
-            # block until cancelled by user
-            with trio.fail_after(3):
-                await trio.sleep_forever()
+                # block until "cancelled by user"
+                await trio.sleep(3)
+                test_log.warning(
+                    f'Raising user cancel exc: '
+                    f'{expect_cancel_exc!r}'
+                )
+                raise expect_cancel_exc('simulate user cancel!')
 
     try:
         trio.run(main)
-    except (
-        trio.TooSlowError,
-        ExceptionGroup,
-    ) as err:
-        if isinstance(err, ExceptionGroup):
-            for suberr in err.exceptions:
-                if isinstance(suberr, trio.TooSlowError):
-                    break
-            else:
-                pytest.fail('Never got a `TooSlowError` ?')
+        pytest.fail(failed_to_raise_report)
+    except expect_cancel_exc:
+        # parent-side raised the user-cancel exc directly and
+        # it propagated unwrapped; clean path.
+        test_log.exception('Got user-cancel exc AS EXPECTED')
+    except BaseExceptionGroup as err:
+        # under fork-based backends the user-raised cancel
+        # can race with subactor-side stream teardown
+        # (`trio.EndOfChannel` from a publisher's `send()`
+        # whose remote half got cut). The expected exc may
+        # then be nested deeper in the group rather than at
+        # the top level. `BaseExceptionGroup.split()` walks
+        # the exc tree recursively (Python 3.11+).
+        matched, _ = err.split(expect_cancel_exc)
+        if matched is None:
+            pytest.fail(failed_to_raise_report)
 
-        assert err
-        test_log.exception('Timed out AS EXPECTED')
+        test_log.exception('Got user-cancel exc AS EXPECTED')
 
 
 @tractor.context
@@ -292,7 +352,6 @@ def test_sigint_both_stream_types():
                             resp = await stream.receive()
                             assert resp == msg
                             raise KeyboardInterrupt
-
     try:
         trio.run(main)
         assert 0, "Didn't receive KBI!?"
@@ -362,7 +421,12 @@ async def inf_streamer(
     print('streamer exited .open_streamer() block')
 
 
+@pytest.mark.timeout(
+    6,
+    method='signal',
+)
 def test_local_task_fanout_from_stream(
+    reg_addr: tuple,
     debug_mode: bool,
 ):
     '''
@@ -427,4 +491,9 @@ def test_local_task_fanout_from_stream(
 
             await p.cancel_actor()
 
-    trio.run(main)
+    async def w_timeout():
+        with trio.fail_after(6):
+            await main()
+
+    # trio.run(main)
+    trio.run(w_timeout)
