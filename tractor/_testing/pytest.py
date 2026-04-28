@@ -327,6 +327,55 @@ def _reap_orphaned_subactors():
         reap(pids, grace=3.0)
 
 
+@pytest.fixture
+def reap_subactors_per_test():
+    '''
+    Per-test (function-scoped) zombie-subactor reaper —
+    **opt-in**, NOT autouse.
+
+    When a test's teardown fails to fully cancel its actor
+    tree (e.g. an asyncio cancel-cascade times out under
+    `main_thread_forkserver`, pytest hits its 200s wall-
+    clock and abandons), the leftover subactor lingers as a
+    direct child of `pytest` and squats on whatever
+    registrar port / UDS path / shm segment it had bound.
+    Subsequent tests trying to allocate the same resource
+    fail — and with backends that bind a session-shared
+    `reg_addr`, that means EVERY following test in the
+    suite cascades. The session-scoped sibling
+    (`_reap_orphaned_subactors`) only kicks in at session
+    end which is too late to save the cascade.
+
+    Apply at module-level on the topically-problematic
+    test files via:
+
+    ```python
+    pytestmark = pytest.mark.usefixtures(
+        'reap_subactors_per_test',
+    )
+    ```
+
+    Or per-test via the same `usefixtures` mark on a
+    specific function. Intentionally NOT autouse so the
+    fixture's presence on a module signals "this module's
+    teardown is known-leaky enough to contaminate
+    siblings"; the visibility helps future-us track down
+    root causes rather than burying them under blanket
+    cleanup.
+
+    '''
+    import os
+    parent_pid: int = os.getpid()
+    yield
+    from tractor._testing._reap import (
+        find_descendants,
+        reap,
+    )
+    pids: list[int] = find_descendants(parent_pid)
+    if pids:
+        reap(pids, grace=3.0)
+
+
 @pytest.fixture(scope='session')
 def debug_mode(
     request: pytest.FixtureRequest,
