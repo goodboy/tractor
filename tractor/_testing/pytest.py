@@ -328,7 +328,7 @@ def _reap_orphaned_subactors():
 
 
 @pytest.fixture
-def reap_subactors_per_test():
+def reap_subactors_per_test() -> int:
     '''
     Per-test (function-scoped) zombie-subactor reaper —
     **opt-in**, NOT autouse.
@@ -366,7 +366,7 @@ def reap_subactors_per_test():
     '''
     import os
     parent_pid: int = os.getpid()
-    yield
+    yield parent_pid
     from tractor._testing._reap import (
         find_descendants,
         reap,
