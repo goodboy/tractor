@@ -112,11 +112,11 @@ def dump_task_tree() -> None:
     # |_[Storage/Memory/IPC-Stream/Data-Struct
 
     fpath: str = f'/tmp/tractor-stackscope-{os.getpid()}.log'
-    from . import _pformat
-    actor_repr: str = _pformat.nest_from_op(
+    from . import pformat
+    actor_repr: str = pformat.nest_from_op(
         input_op='|_',
         text=f'{actor}',
-        nest_prefilx='|_',
+        nest_prefix='|_',
         nest_indent=3,
     )
     full_dump: str = (
