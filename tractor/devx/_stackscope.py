@@ -47,7 +47,9 @@ from typing import (
 import trio
 from tractor.runtime import _state
 from tractor import log as logmod
-from tractor.devx import debug
+from tractor.devx import (
+    debug,
+)
 
 log = logmod.get_logger()
 
@@ -109,15 +111,28 @@ def dump_task_tree() -> None:
     # |_{Supervisor/Scope
     # |_[Storage/Memory/IPC-Stream/Data-Struct
 
+    fpath: str = f'/tmp/tractor-stackscope-{os.getpid()}.log'
+    from . import _pformat
+    actor_repr: str = _pformat.nest_from_op(
+        input_op='|_',
+        text=f'{actor}',
+        nest_prefilx='|_',
+        nest_indent=3,
+    )
     full_dump: str = (
         f'Dumping `stackscope` tree for actor\n'
         f'(>: {actor.uid!r}\n'
         f' |_{mp.current_process()}\n'
         f'   |_{thr}\n'
-        f'     |_{actor}\n'
+        # TODO, use the nest_from_op
+        f'{actor_repr}'
+        # f'     |_{actor}'
         f'\n'
         f'{sigint_handler_report}\n'
         f'signal.getsignal(SIGINT) -> {current_sigint_handler!r}\n'
+        f'\n'
+        f'capture-bypass tee: {fpath}\n'
+        f'(`tail -f {fpath}` to follow across signals)\n'
         f'\n'
         f'------ start-of-{actor.uid!r} ------\n'
         f'|\n'
@@ -131,7 +146,6 @@ def dump_task_tree() -> None:
     # `--capture=fd` swallows `log.devx()` above; the
     # following two writes guarantee the dump reaches the
     # human even when stdio is captured.
-    fpath: str = f'/tmp/tractor-stackscope-{os.getpid()}.log'
     try:
         with open(fpath, 'a') as f:
             f.write(full_dump + '\n')
@@ -150,6 +164,34 @@ def dump_task_tree() -> None:
 
 _handler_lock = RLock()
 _tree_dumped: bool = False
+
+# Captured at `enable_stack_on_sig()` time when running
+# inside a trio task. `dump_tree_on_sig` uses this to
+# schedule `dump_task_tree` ON the trio loop via
+# `token.run_sync_soon` so stackscope sees a real current
+# task and can recurse into nursery children. Without
+# it (signal handler running in a non-trio stack frame),
+# `stackscope.extract` only walks the `<init>` task and
+# misses everything inside `async_main`'s nurseries.
+_trio_token: trio.lowlevel.TrioToken|None = None
+
+
+def _safe_dump_task_tree() -> None:
+    '''
+    `run_sync_soon`-friendly wrapper that swallows any
+    exception from `dump_task_tree`. Trio prints
+    + crashes on uncaught exceptions in scheduled
+    callbacks; we'd rather log + keep the test running so
+    the user can re-trigger the dump.
+
+    '''
+    try:
+        dump_task_tree()
+    except BaseException:
+        log.exception(
+            '`dump_task_tree()` raised (scheduled via '
+            '`run_sync_soon`); continuing.\n'
+        )
 
 
 def dump_tree_on_sig(
@@ -174,16 +216,17 @@ def dump_tree_on_sig(
             'Trying to dump `stackscope` tree..\n'
         )
         try:
-            dump_task_tree()
-            # await actor._service_n.start_soon(
-            #     partial(
-            #         trio.to_thread.run_sync,
-            #         dump_task_tree,
-            #     )
-            # )
-            # trio.lowlevel.current_trio_token().run_sync_soon(
-            #     dump_task_tree
-            # )
+            # Prefer scheduling on the trio loop — runs the
+            # dump from a real trio-task context so
+            # `stackscope.extract(recurse_child_tasks=True)`
+            # walks every nursery child instead of seeing
+            # only the `<init>` task. Falls back to a direct
+            # call when no token was captured (e.g. signal
+            # delivered outside a trio.run).
+            if _trio_token is not None:
+                _trio_token.run_sync_soon(_safe_dump_task_tree)
+            else:
+                dump_task_tree()
 
         except RuntimeError:
             log.exception(
@@ -269,11 +312,27 @@ def enable_stack_on_sig(
         )
         return None
 
+    # Capture the trio token if we're inside `trio.run`
+    # so SIGUSR1 dispatches the dump *onto* the trio loop
+    # (full task-tree visibility). When called outside trio
+    # (e.g. from `pytest_configure`), token capture fails
+    # silently and `dump_tree_on_sig` falls back to the
+    # direct-call path.
+    global _trio_token
+    try:
+        _trio_token = trio.lowlevel.current_trio_token()
+    except RuntimeError:
+        # not in a `trio.run` — leave None; runtime can
+        # re-call `enable_stack_on_sig()` later from
+        # inside `async_main` to capture it.
+        _trio_token = None
+
     handler: Callable|int = getsignal(sig)
     if handler is dump_tree_on_sig:
         log.devx(
             'A `SIGUSR1` handler already exists?\n'
             f'|_ {handler!r}\n'
+            f'(trio_token captured: {_trio_token is not None})\n'
         )
         return
 
@@ -287,5 +346,6 @@ def enable_stack_on_sig(
         f'{stackscope!r}\n\n'
         f'With `SIGUSR1` handler\n'
         f'|_{dump_tree_on_sig}\n'
+        f'(trio_token captured: {_trio_token is not None})\n'
     )
     return stackscope
