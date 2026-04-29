@@ -135,13 +135,15 @@ def try_set_start_method(
         case 'mp_spawn':
             _ctx = mp.get_context('spawn')
 
-        case 'trio':
+        case (
+            'trio'
+            | 'main_thread_forkserver'
+        ):
             _ctx = None
 
         case (
             'subint'
             | 'subint_fork'
-            | 'main_thread_forkserver'
             | 'subint_forkserver'
         ):
             # All subint-family backends need no `mp.context`;
