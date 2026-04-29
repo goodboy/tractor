@@ -241,6 +241,7 @@ async def open_root_actor(
             f'_registry_addrs: {registry_addrs!r}\n'
         )
 
+    # debug.mk_pdb().set_trace()
     async with maybe_block_bp(
         debug_mode=debug_mode,
         maybe_enable_greenback=maybe_enable_greenback,
@@ -284,6 +285,75 @@ async def open_root_actor(
             )
             enable_modules.extend(rpc_module_paths)
 
+        # `TRACTOR_LOGLEVEL` env-var wins over any caller-passed
+        # `loglevel` so devs/test-runs can crank (or silence)
+        # console verbosity without touching application code.
+        env_ll_report: str = ''
+        if env_ll := os.environ.get('TRACTOR_LOGLEVEL'):
+            loglevel = env_ll
+            env_ll_report: str = (
+                f'Detected env-var setting,\n'
+                f'TRACTOR_LOGLEVEL={env_ll!r}\n'
+                f'\n'
+                f'Setting console loglevel per,\n'
+                f'loglevel={loglevel!r}\n'
+            )
+            if (
+                loglevel
+                and
+                loglevel.upper() != env_ll.upper()
+            ):
+                env_ll_report += (
+                    f'\n'
+                    f'NOTE env-var OVERRIDES caller-passed,\n'
+                    f'loglevel={loglevel!r}\n'
+                )
+
+        loglevel: str = (
+            loglevel
+            or
+            log._default_loglevel
+        )
+        loglevel: str = loglevel.upper()
+
+        assert loglevel
+        _log = log.get_console_log(
+            level=loglevel,
+            name='tractor',
+            logger=logger,
+        )
+        assert _log
+        if env_ll_report:
+            _log.info(env_ll_report)
+
+        # `TRACTOR_SPAWN_METHOD` env-var wins over any caller-passed
+        # `start_method` so devs/test-runs can swap the actor spawn
+        # backend without touching application code (e.g. driving
+        # the `examples/debugging/<script>.py` suite under each
+        # backend from `tests/devx/conftest.py::spawn`).
+        if env_sm := os.environ.get('TRACTOR_SPAWN_METHOD'):
+            start_method: str = env_sm
+            env_sm_report: str = (
+                f'Detected env-var setting,\n'
+                f'TRACTOR_SPAWN_METHOD={env_sm!r}\n'
+                f'\n'
+                f'Setting spawn backend as,\n'
+                f'start_method={env_sm!r}\n'
+            )
+            if (
+                start_method
+                and
+                start_method != env_sm
+            ):
+                _log.warning(
+                    env_sm_report
+                    +
+                    f'NOTE env-var OVERRIDES caller-passed,\n'
+                    f'`start_method={start_method!r}`\n'
+                )
+            else:
+                _log.info(env_sm_report)
+
         if start_method is not None:
             _spawn.try_set_start_method(start_method)
 
@@ -300,12 +370,6 @@ async def open_root_actor(
             wrap_address(uw_addr)
             for uw_addr in uw_reg_addrs
         ]
-        loglevel: str = (
-            loglevel
-            or
-            log._default_loglevel
-        )
-        loglevel: str = loglevel.upper()
 
         # Debug-mode is currently only supported for backends whose
         # subactor root runtime is trio-native (so `tractor.devx.
@@ -340,13 +404,6 @@ async def open_root_actor(
                 f'{_DEBUG_COMPATIBLE_BACKENDS!r} spawn backends, not '
                 f'{_spawn._spawn_method!r}.'
             )
-
-        assert loglevel
-        _log = log.get_console_log(
-            level=loglevel,
-            name='tractor',
-        )
-        assert _log
 
         # TODO: factor this into `.devx._stackscope`!!
         if (

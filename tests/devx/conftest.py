@@ -56,6 +56,7 @@ type PexpectSpawner = Callable[
 @pytest.fixture
 def spawn(
     start_method: str,
+    loglevel: str,
     testdir: pytest.Pytester,
     reg_addr: tuple[str, int],
 
@@ -67,11 +68,12 @@ def spawn(
     '''
     supported_spawners: set[str] = {
         'trio',
-        # ?TODO, other spawners that will work?
-        # - [ ] need to pass `start_method={spawner}` to underlying
-        #      `examples/debugging/<script>.py` somehow?
-        # 'main_thread_forkserver',
-        # 'subint_forkserver',
+        # `examples/debugging/<script>.py` picks up the spawn
+        # backend via the `TRACTOR_SPAWN_METHOD` env-var which
+        # is honored inside `tractor._root.open_root_actor()`,
+        # so no per-script edits are required.
+        'main_thread_forkserver',
+        'subint_forkserver',
     }
     if start_method not in supported_spawners:
         pytest.skip(
@@ -94,6 +96,32 @@ def spawn(
         # disable all ANSI color output
         # os.environ['NO_COLOR'] = '1'
 
+    def set_spawn_method():
+        '''
+        Drive the actor-spawn backend inside the spawned
+        `examples/debugging/<script>.py` subproc via env-var
+        (consumed by `tractor._root.open_root_actor()`),
+        without requiring per-script CLI plumbing.
+
+        '''
+        import os
+        os.environ['TRACTOR_SPAWN_METHOD'] = start_method
+
+    def set_loglevel():
+        '''
+        Forward the test-suite parametrized `loglevel` into the
+        spawned `examples/debugging/<script>.py` subproc via
+        env-var (consumed by `tractor._root.open_root_actor()`),
+        so console verbosity can be cranked or silenced from
+        the test harness without per-script edits.
+
+        '''
+        import os
+        if loglevel:
+            os.environ['TRACTOR_LOGLEVEL'] = loglevel
+        else:
+            os.environ.pop('TRACTOR_LOGLEVEL', None)
+
     spawned: PexpectSpawner|None = None
 
     def _spawn(
@@ -103,6 +131,8 @@ def spawn(
     ) -> pty_spawn.spawn:
         nonlocal spawned
         unset_colors()
+        set_spawn_method()
+        set_loglevel()
         spawned = testdir.spawn(
             cmd=mk_cmd(
                 cmd,
@@ -145,6 +175,16 @@ def spawn(
 
         if ptyproc.isalive():
             ptyproc.kill(signal.SIGKILL)
+
+    # Scope our env-var mutations to this single fixture
+    # invocation — both `TRACTOR_SPAWN_METHOD` and
+    # `TRACTOR_LOGLEVEL` are honored by
+    # `tractor._root.open_root_actor()` so leaking them past
+    # this test could inadvertently re-route a later
+    # in-process tractor test's spawn-backend / loglevel.
+    import os
+    os.environ.pop('TRACTOR_SPAWN_METHOD', None)
+    os.environ.pop('TRACTOR_LOGLEVEL', None)
 
     # TODO? ensure we've cleaned up any UDS-paths?
     # breakpoint()
