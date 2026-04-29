@@ -65,9 +65,18 @@ def spawn(
     run an `./examples/..` script by name.
 
     '''
-    if start_method != 'trio':
+    supported_spawners: set[str] = {
+        'trio',
+        # ?TODO, other spawners that will work?
+        # - [ ] need to pass `start_method={spawner}` to underlying
+        #      `examples/debugging/<script>.py` somehow?
+        # 'main_thread_forkserver',
+        # 'subint_forkserver',
+    }
+    if start_method not in supported_spawners:
         pytest.skip(
-            '`pexpect` based tests only supported on `trio` backend'
+            f'`pexpect` based tests NOT supported on spawning-backend: {start_method!r}\n'
+            f'supported-spawners: {supported_spawners!r}'
         )
 
     def unset_colors():
@@ -148,21 +157,38 @@ def spawn(
 def ctlc(
     request: pytest.FixtureRequest,
     ci_env: bool,
-
+    start_method: str,
 ) -> bool:
+    '''
+    Parametrize and optionally skip tests which handle
+    ctlc-in-`pdbp`-REPL testing scenarios; certain spawners and actor-tree depths
+    cope very poorly with this..
 
+    In particular the spawning backends from `multiprocessing` are
+    fragile, as can be the default `trio` spawner under certain
+    conditions where SIGINT is relayed down the entire subproc tree.
+
+    '''
     use_ctlc: bool = request.param
     node = request.node
     markers = node.own_markers
     for mark in markers:
-        if mark.name == 'has_nested_actors':
+        if (
+            mark.name == 'has_nested_actors'
+            and
+            start_method not in {
+                # TODO, any spawners we should try again?
+                # - [ ] 'trio' but WITHOUT the SIGINT handler setup
+                #      per subproc?
+                # 'main_thread_forkserver',
+            }
+        ):
             pytest.skip(
                 f'Test {node} has nested actors and fails with Ctrl-C.\n'
                 f'The test can sometimes run fine locally but until'
                 ' we solve' 'this issue this CI test will be xfail:\n'
                 'https://github.com/goodboy/tractor/issues/320'
             )
-
         if (
             mark.name == 'ctlcs_bish'
             and
