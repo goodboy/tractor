@@ -32,6 +32,7 @@ from typing import (
 
 import pytest
 import tractor
+from tractor.spawn._spawn import SpawnMethodKey
 import trio
 
 
@@ -212,6 +213,21 @@ def pytest_addoption(
         ),
     )
 
+    parser.addoption(
+        "--enable-stackscope",
+        action="store_true",
+        dest='tractor_enable_stackscope',
+        default=False,
+        help=(
+            'Install `stackscope` SIGUSR1 handler in pytest + '
+            'every spawned subactor for live trio task-tree '
+            'dumps during hang investigations. Lighter than '
+            '`--tpdb` (no pdb machinery / tty-lock contention) '
+            '— use when you only need stack visibility. To '
+            'capture: `kill -USR1 <pytest-or-subactor-pid>`.'
+        ),
+    )
+
     # provide which IPC transport protocols opting-in test suites
     # should accumulatively run against.
     parser.addoption(
@@ -252,6 +268,37 @@ def pytest_configure(
         'in `ai/conc-anal/subint_sigint_starvation_issue.md`).'
     )
 
+    # `--enable-stackscope`: install SIGUSR1 → trio task-tree
+    # dump in pytest itself + propagate to every subactor via
+    # an env var that fork-children inherit and the runtime
+    # gate honors. Lighter than `--tpdb` (no pdb machinery) —
+    # purely for hang-investigation stack visibility.
+    if getattr(
+        config.option, 'tractor_enable_stackscope', False
+    ):
+        import os
+        # Env var inherited via fork → subactor's runtime
+        # picks it up at `Actor.async_main` startup. See the
+        # gate in `tractor.runtime._runtime` matching this
+        # var name.
+        os.environ['TRACTOR_ENABLE_STACKSCOPE'] = '1'
+
+        # Install in pytest itself so `kill -USR1 <pytest>`
+        # dumps the parent trio task-tree (which is where
+        # most Mode-A-class hangs park).
+        try:
+            from tractor.devx._stackscope import (
+                enable_stack_on_sig,
+            )
+            enable_stack_on_sig()
+        except ImportError:
+            import warnings
+            warnings.warn(
+                '`stackscope` not installed — '
+                '--enable-stackscope is a no-op. '
+                'Install via the `devx` dep group.'
+            )
+
 
 def pytest_collection_modifyitems(
     config: pytest.Config,
@@ -274,7 +321,12 @@ def pytest_collection_modifyitems(
     default_reason: str = f'Borked on --spawn-backend={backend!r}'
     for item in items:
         for mark in item.iter_markers(name='skipon_spawn_backend'):
-            if backend in mark.args:
+            skip_backends: tuple[str] = mark.args
+            for skip_backend in skip_backends:
+                assert skip_backend in get_args(SpawnMethodKey)
+            # ?TODO, run these through the try-set-backend checker to
+            # avoid typos?
+            if backend in skip_backends:
                 reason: str = mark.kwargs.get(
                     'reason',
                     default_reason,
@@ -283,6 +335,91 @@ def pytest_collection_modifyitems(
                 # first matching mark wins; no value in stacking
                 # multiple `skip`s on the same item.
                 break
+
+
+@pytest.fixture(
+    scope='session',
+    autouse=True,
+)
+def _reap_orphaned_subactors():
+    '''
+    Session-scoped autouse fixture: after the whole test
+    session finishes, SIGINT any subactor processes still
+    parented to this `pytest` process, wait a bounded
+    grace window, then SIGKILL survivors.
+
+    Rationale: under fork-based spawn backends (notably
+    `main_thread_forkserver`), a test that times out or bails
+    mid-teardown can leave subactor forks alive. Without
+    this reap, they linger across sessions and compete
+    for ports / inherit pytest's capture-pipe fds — which
+    flakifies later tests. SC-polite discipline: SIGINT
+    first to let the subactor's trio cancel shield + IPC
+    teardown paths run before we escalate.
+
+    Matching companion CLI: `scripts/tractor-reap` for
+    the pytest-died-mid-session case.
+
+    '''
+    import os
+    parent_pid: int = os.getpid()
+    yield
+    from tractor._testing._reap import (
+        find_descendants,
+        reap,
+    )
+    pids: list[int] = find_descendants(parent_pid)
+    if pids:
+        reap(pids, grace=3.0)
+
+
+@pytest.fixture
+def reap_subactors_per_test() -> int:
+    '''
+    Per-test (function-scoped) zombie-subactor reaper —
+    **opt-in**, NOT autouse.
+
+    When a test's teardown fails to fully cancel its actor
+    tree (e.g. an asyncio cancel-cascade times out under
+    `main_thread_forkserver`, pytest hits its 200s wall-
+    clock and abandons), the leftover subactor lingers as a
+    direct child of `pytest` and squats on whatever
+    registrar port / UDS path / shm segment it had bound.
+    Subsequent tests trying to allocate the same resource
+    fail — and with backends that bind a session-shared
+    `reg_addr`, that means EVERY following test in the
+    suite cascades. The session-scoped sibling
+    (`_reap_orphaned_subactors`) only kicks in at session
+    end which is too late to save the cascade.
+
+    Apply at module-level on the topically-problematic
+    test files via:
+
+    ```python
+    pytestmark = pytest.mark.usefixtures(
+        'reap_subactors_per_test',
+    )
+    ```
+
+    Or per-test via the same `usefixtures` mark on a
+    specific function. Intentionally NOT autouse so the
+    fixture's presence on a module signals "this module's
+    teardown is known-leaky enough to contaminate
+    siblings"; the visibility helps future-us track down
+    root causes rather than burying them under blanket
+    cleanup.
+
+    '''
+    import os
+    parent_pid: int = os.getpid()
+    yield parent_pid
+    from tractor._testing._reap import (
+        find_descendants,
+        reap,
+    )
+    pids: list[int] = find_descendants(parent_pid)
+    if pids:
+        reap(pids, grace=3.0)
 
 
 @pytest.fixture(scope='session')
@@ -398,7 +535,6 @@ def pytest_generate_tests(
     # drive the valid-backend set from the canonical `Literal` so
     # adding a new spawn backend (e.g. `'subint'`) doesn't require
     # touching the harness.
-    from tractor.spawn._spawn import SpawnMethodKey
     assert spawn_backend in get_args(SpawnMethodKey)
 
     # NOTE: used-to-be-used-to dyanmically parametrize tests for when

@@ -229,3 +229,69 @@ Unlike asyncio, trio allows checkpoints in
 that does `await` can itself be cancelled (e.g.
 by nursery shutdown). Watch for cleanup code that
 assumes it will run to completion.
+
+### Unbounded waits in cleanup paths
+
+Any `await <event>.wait()` in a teardown path is
+a latent deadlock unless the event's setter is
+GUARANTEED to fire. If the setter depends on
+external state (peer disconnects, child process
+exit, subsequent task completion) that itself
+depends on the current task's progress, you have
+a mutual wait.
+
+Rule: **bound every `await X.wait()` in cleanup
+paths with `trio.move_on_after()`** unless you
+can prove the setter is unconditionally reachable
+from the state at the await site. Concrete recent
+example: `ipc_server.wait_for_no_more_peers()` in
+`async_main`'s finally (see
+`ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`
+"probe iteration 3") — it was unbounded, and when
+one peer-handler was stuck the wait-for-no-more-
+peers event never fired, deadlocking the whole
+actor-tree teardown cascade.
+
+### The capture-pipe-fill hang pattern (grep this first)
+
+When investigating any hang in the test suite
+**especially under fork-based backends**, first
+check whether the hang reproduces under `pytest
+-s` (`--capture=no`). If `-s` makes it go away
+you're not looking at a trio concurrency bug —
+you're looking at a Linux pipe-buffer fill.
+
+Mechanism: pytest replaces fds 1,2 with pipe
+write-ends. Fork-child subactors inherit those
+fds. High-volume error-log tracebacks (cancel
+cascade spew) fill the 64KB pipe buffer. Child
+`write()` blocks. Child can't exit. Parent's
+`waitpid`/pidfd wait blocks. Deadlock cascades up
+the tree.
+
+Pre-existing guards in `tests/conftest.py` encode
+this knowledge — grep these BEFORE blaming
+concurrency:
+
+```python
+# tests/conftest.py:258
+if loglevel in ('trace', 'debug'):
+    # XXX: too much logging will lock up the subproc (smh)
+    loglevel: str = 'info'
+
+# tests/conftest.py:316
+# can lock up on the `_io.BufferedReader` and hang..
+stderr: str = proc.stderr.read().decode()
+```
+
+Full post-mortem +
+`ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`
+for the canonical reproduction. Cost several
+investigation sessions before catching it —
+because the capture-pipe symptom was masked by
+deeper cascade-deadlocks. Once the cascades were
+fixed, the tree tore down enough to generate
+pipe-filling log volume → capture-pipe finally
+surfaced. Grep-note for future-self: **if a
+multi-subproc tractor test hangs, `pytest -s`
+first, conc-anal second.**

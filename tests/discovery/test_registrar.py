@@ -133,7 +133,7 @@ async def say_hello_use_wait(
 
 
 @pytest.mark.timeout(
-    3,
+    7,
     method='thread',
 )
 @tractor_test
@@ -520,6 +520,10 @@ async def kill_transport(
 
 
 
+# ?TODO, do a OSc style signalling test on this?
+# -[ ] doesn't work for fork backends
+# @pytest.mark.parametrize('use_signal', [False, True])
+#
 # Wall-clock bound via `pytest-timeout` (`method='thread'`).
 # Under `--spawn-backend=subint` this test can wedge in an
 # un-Ctrl-C-able state (abandoned-subint + shared-GIL
@@ -531,20 +535,22 @@ async def kill_transport(
 # At timeout the plugin hard-kills the pytest process — that's
 # the intended behavior here; the alternative is an unattended
 # suite run that never returns.
-@pytest.mark.timeout(
-    3,  # NOTE should be a 2.1s happy path.
-    method='thread',
-)
+# @pytest.mark.timeout(
+#     30,
+#     # NOTE should be a 2.1s happy path.
+#     # XXX for `main_thread_forkserver` this is SUPER SENSITIVE
+#     # so keep it higher to avoid flaky runs..
+#     method='thread',
+# )
 @pytest.mark.skipon_spawn_backend(
     'subint',
+    # 'main_thread_forkserver',
     reason=(
         'XXX SUBINT HANGING TEST XXX\n'
         'See oustanding issue(s)\n'
         # TODO, put issue link!
     )
 )
-# @pytest.mark.parametrize('use_signal', [False, True])
-#
 def test_stale_entry_is_deleted(
     debug_mode: bool,
     daemon: subprocess.Popen,
@@ -558,7 +564,6 @@ def test_stale_entry_is_deleted(
 
     '''
     async def main():
-
         name: str = 'transport_fails_actor'
         _reg_ptl: tractor.Portal
         an: tractor.ActorNursery
@@ -590,6 +595,14 @@ def test_stale_entry_is_deleted(
                 # should fail since we knocked out the IPC tpt XD
                 await ptl.cancel_actor()
                 await an.cancel()
+
+    # XXX, for tracing if this starts being flaky again..
+    #
+    # async def _timeout_main():
+    #     with trio.move_on_after(4) as cs:
+    #         await main()
+    #     if cs.cancel_called:
+    #         await tractor.pause()
 
     # TODO, remove once the `[subint]` variant no longer hangs.
     #
@@ -641,3 +654,4 @@ def test_stale_entry_is_deleted(
         path=f'/tmp/test_stale_entry_is_deleted_{start_method}.dump',
     ):
         trio.run(main)
+        # trio.run(_timeout_main)

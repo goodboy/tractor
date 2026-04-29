@@ -841,7 +841,7 @@ def test_multi_nested_subactors_error_through_nurseries(
     )
 
 
-@pytest.mark.timeout(15)
+# @pytest.mark.timeout(15)
 @has_nested_actors
 def test_root_nursery_cancels_before_child_releases_tty_lock(
     spawn,

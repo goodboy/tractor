@@ -205,6 +205,101 @@ python -m pytest tests/ -x -q --co 2>&1 | tail -5
 If either fails, fix the import error before running
 any actual tests.
 
+### Step 4: zombie-actor / stale-registry check (MANDATORY)
+
+The tractor runtime's default registry address is
+**`127.0.0.1:1616`** (TCP) / `/tmp/registry@1616.sock`
+(UDS). Whenever any prior test run — especially one
+using a fork-based backend like `subint_forkserver` —
+leaks a child actor process, that zombie keeps the
+registry port bound and **every subsequent test
+session fails to bind**, often presenting as 50+
+unrelated failures ("all tests broken"!) across
+backends.
+
+**This has to be checked before the first run AND
+after any cancelled/SIGINT'd run** — signal failures
+in the middle of a test can leave orphan children.
+
+```sh
+# 1. TCP registry — any listener on :1616? (primary signal)
+ss -tlnp 2>/dev/null | grep ':1616' || echo 'TCP :1616 free'
+
+# 2. leftover actor/forkserver procs — scoped to THIS
+#    repo's python path, so we don't false-flag legit
+#    long-running tractor-using apps (e.g. `piker`,
+#    downstream projects that embed tractor).
+pgrep -af "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv" \
+  | grep -v 'grep\|pgrep' \
+  || echo 'no leaked actor procs from this repo'
+
+# 3. stale UDS registry sockets
+ls -la /tmp/registry@*.sock 2>/dev/null \
+  || echo 'no leaked UDS registry sockets'
+```
+
+**Interpretation:**
+
+- **TCP :1616 free AND no stale sockets** → clean,
+  proceed. The actor-procs probe is secondary — false
+  positives are common (piker, any other tractor-
+  embedding app); only cleanup if `:1616` is bound or
+  sockets linger.
+- **TCP :1616 bound OR stale sockets present** →
+  surface PIDs + cmdlines to the user, offer cleanup:
+
+  ```sh
+  # 1. GRACEFUL FIRST (tractor is structured concurrent — it
+  #    catches SIGINT as an OS-cancel in `_trio_main` and
+  #    cascades Portal.cancel_actor via IPC to every descendant.
+  #    So always try SIGINT first with a bounded timeout; only
+  #    escalate to SIGKILL if graceful cleanup doesn't complete).
+  pkill -INT -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv"
+
+  # 2. bounded wait for graceful teardown (usually sub-second).
+  #    Loop until the processes exit, or timeout. Keep the
+  #    bound tight — hung/abrupt-killed descendants usually
+  #    hang forever, so don't wait more than a few seconds.
+  for i in $(seq 1 10); do
+    pgrep -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv" >/dev/null || break
+    sleep 0.3
+  done
+
+  # 3. ESCALATE TO SIGKILL only if graceful didn't finish.
+  if pgrep -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv" >/dev/null; then
+    echo 'graceful teardown timed out — escalating to SIGKILL'
+    pkill -9 -f "$(pwd)/py[0-9]*/bin/python.*_actor_child_main|subint-forkserv"
+  fi
+
+  # 4. if a test zombie holds :1616 specifically and doesn't
+  #    match the above pattern, find its PID the hard way:
+  ss -tlnp 2>/dev/null | grep ':1616'   # prints `users:(("<name>",pid=NNNN,...))`
+  # then (same SIGINT-first ladder):
+  # kill -INT <NNNN>; sleep 1; kill -9 <NNNN> 2>/dev/null
+
+  # 5. remove stale UDS sockets
+  rm -f /tmp/registry@*.sock
+
+  # 6. re-verify
+  ss -tlnp 2>/dev/null | grep ':1616' || echo 'TCP :1616 now free'
+  ```
+
+**Never ignore stale registry state.** If you see the
+"all tests failing" pattern — especially
+`trio.TooSlowError` / connection refused / address in
+use on many unrelated tests — check registry **before**
+spelunking into test code. The failure signature will
+be identical across backends because they're all
+fighting for the same port.
+
+**False-positive warning for step 2:** a plain
+`pgrep -af '_actor_child_main'` will also match
+legit long-running tractor-embedding apps (e.g.
+`piker` at `~/repos/piker/py*/bin/python3 -m
+tractor._child ...`). Always scope to the current
+repo's python path, or only use step 1 (`:1616`) as
+the authoritative signal.
+
 ## 4. Run and report
 
 - Run the constructed command.
@@ -356,3 +451,175 @@ by your changes — note them and move on.
 **Rule of thumb**: if a test fails with `TooSlowError`,
 `trio.TooSlowError`, or `pexpect.TIMEOUT` and you didn't
 touch the relevant code path, it's flaky — skip it.
+
+## 9. The pytest-capture hang pattern (CHECK THIS FIRST)
+
+**Symptom:** a tractor test hangs indefinitely under
+default `pytest` but passes instantly when you add
+`-s` (`--capture=no`).
+
+**Cause:** tractor subactors (especially under fork-
+based backends) inherit pytest's stdout/stderr
+capture pipes via fds 1,2. Under high-volume error
+logging (e.g. multi-level cancel cascade, nested
+`run_in_actor` failures, anything triggering
+`RemoteActorError` + `ExceptionGroup` traceback
+spew), the **64KB Linux pipe buffer fills** faster
+than pytest drains it. Subactor writes block → can't
+finish exit → parent's `waitpid`/pidfd wait blocks →
+deadlock cascades up the tree.
+
+**Pre-existing guards in the tractor harness** that
+encode this same knowledge — grep these FIRST
+before spelunking:
+
+- `tests/conftest.py:258-260` (in the `daemon`
+  fixture): `# XXX: too much logging will lock up
+  the subproc (smh)` — downgrades `trace`/`debug`
+  loglevel to `info` to prevent the hang.
+- `tests/conftest.py:316`: `# can lock up on the
+  _io.BufferedReader and hang..` — noted on the
+  `proc.stderr.read()` post-SIGINT.
+
+**Debug recipe (in priority order):**
+
+1. **Try `-s` first.** If the hang disappears with
+   `pytest -s`, you've confirmed it's capture-pipe
+   fill. Skip spelunking.
+2. **Lower the loglevel.** Default `--ll=error` on
+   this project; if you've bumped it to `debug` /
+   `info`, try dropping back. Each log level
+   multiplies pipe-pressure under fault cascades.
+3. **If you MUST use default capture + high log
+   volume**, redirect subactor stdout/stderr in the
+   child prelude (e.g.
+   `tractor.spawn._subint_forkserver._child_target`
+   post-`_close_inherited_fds`) to `/dev/null` or a
+   file.
+
+**Signature tells you it's THIS bug (vs. a real
+code hang):**
+
+- Multi-actor test under fork-based backend
+  (`subint_forkserver`, eventually `trio_proc` too
+  under enough log volume).
+- Multiple `RemoteActorError` / `ExceptionGroup`
+  tracebacks in the error path.
+- Test passes with `-s` in the 5-10s range, hangs
+  past pytest-timeout (usually 30+ s) without `-s`.
+- Subactor processes visible via `pgrep -af
+  subint-forkserv` or similar after the hang —
+  they're alive but blocked on `write()` to an
+  inherited stdout fd.
+
+**Historical reference:** this deadlock cost a
+multi-session investigation (4 genuine cascade
+fixes landed along the way) that only surfaced the
+capture-pipe issue AFTER the deeper fixes let the
+tree actually tear down enough to produce pipe-
+filling log volume. Full post-mortem in
+`ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`.
+Lesson codified here so future-me grep-finds the
+workaround before digging.
+
+## 10. Reaping zombie subactors (`tractor-reap`)
+
+**Symptom:** after a `pytest` run crashes, times out,
+or is `Ctrl+C`'d, subactor forks (esp. under
+`subint_forkserver`) can be reparented to `init`
+(PPid==1) and linger. They hold onto ports, inherit
+pytest's capture-pipe fds, and flakify later
+sessions.
+
+**Two layers of defense:**
+
+### a) Session-scoped auto-fixture (always on)
+
+`tractor/_testing/pytest.py::_reap_orphaned_subactors`
+runs at pytest session teardown. It walks `/proc` for
+direct descendants of the pytest pid, SIGINTs them,
+waits up to 3s, then SIGKILLs survivors. SC-polite:
+gives the subactor runtime a chance to run its trio
+cancel shield + IPC teardown before escalation.
+
+This is *autouse* and session-scoped — you don't need
+to do anything. It just runs.
+
+### b) `scripts/tractor-reap` CLI (manual reap)
+
+For the **pytest-died-mid-session** case (Ctrl+C, OOM
+kill, hung process you had to `kill -9`), the fixture
+never ran. Reach for the CLI:
+
+```sh
+# default: orphans (PPid==1, cwd==repo, cmd contains python)
+scripts/tractor-reap
+
+# descendant-mode: from a still-live supervisor
+scripts/tractor-reap --parent <pytest-pid>
+
+# see what would be reaped, don't signal
+scripts/tractor-reap -n
+
+# tune the SIGINT → SIGKILL grace window
+scripts/tractor-reap --grace 5
+```
+
+Exit code: `0` if everyone exited on SIGINT, `1` if
+SIGKILL had to escalate — so you can chain it in CI
+health-checks (`scripts/tractor-reap || <alert>`).
+
+**What it matches** (orphan-mode):
+- `PPid == 1` (reparented to init → definitely
+  orphaned, not just a currently-running child)
+- `cwd == <repo-root>` (keeps the sweep scoped; won't
+  touch unrelated init-children elsewhere)
+- `python` in cmdline
+
+**What it does not do:** kill anything whose PPid is
+still a live tractor parent. If the parent is alive
+it's not an orphan; use `--parent <pid>` if you need
+to force-reap under a still-live supervisor.
+
+**When NOT to run it:** while a pytest session is
+active in another terminal. It's safe (won't touch
+that session's live children in orphan-mode) but can
+race if the target session is mid-teardown.
+
+### c) `--shm` / `--shm-only`: orphan-segment sweep
+
+Because `tractor.ipc._mp_bs.disable_mantracker()`
+turns off `mp.resource_tracker` (see
+`ai/conc-anal/subint_forkserver_mp_shared_memory_issue.md`),
+a hard-crashing actor can leave `/dev/shm/<key>`
+segments behind that nothing else GCs.
+
+```sh
+# process reap THEN shm sweep
+scripts/tractor-reap --shm
+
+# shm sweep only (skip process phase)
+scripts/tractor-reap --shm-only
+
+# dry-run: list candidates, don't unlink
+scripts/tractor-reap --shm -n
+```
+
+**Match criteria** (very conservative — this is a
+shared-system path, can't be wrong):
+- segment is a regular file under `/dev/shm`,
+- owned by the **current uid** (`stat.st_uid`),
+- AND **no live process holds it open** —
+  enumerated by walking every readable
+  `/proc/<pid>/maps` (post-mmap mappings) AND
+  `/proc/<pid>/fd/*` (pre-mmap shm-opened fds).
+
+The "nobody has it open" check is the
+kernel-canonical "is this leaked?" test — same
+answer `lsof /dev/shm/<key>` would give. No
+reliance on tractor-specific naming, so it works
+for any tractor app. Critically, it WILL NOT touch
+segments held by other apps you have running
+(e.g. `piker`, `lttng-ust-*`, `aja-shm-*` —
+verified locally with 81 in-use segments correctly
+preserved).

@@ -62,6 +62,7 @@ dev = [
   {include-group = 'devx'},
   {include-group = 'testing'},
   {include-group = 'repl'},
+  {include-group = 'sync_pause'},
 ]
 devx = [
   # `tractor.devx` tooling
@@ -84,11 +85,16 @@ testing = [
   # known-hanging `subint`-backend audit tests; see
   # `ai/conc-anal/subint_*_issue.md`).
   "pytest-timeout>=2.3",
+  # used by `tractor._testing._reap` for the
+  # `tractor-reap` zombie-subactor + leaked-shm
+  # cleanup utility (xplatform `Process.memory_maps`,
+  # `Process.open_files`).
+  "psutil>=7.0.0",
 ]
 repl = [
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
-  "xonsh>=0.22.8",
+  "xonsh>=0.23.0",
   "psutil>=7.0.0",
 ]
 lint = [
@@ -129,7 +135,7 @@ sync_pause = {requires-python = ">=3.13, <3.14"}
 # xonsh = { git = 'https://github.com/anki-code/xonsh.git', branch = 'prompt_next_suggestion' }
 # ^ https://github.com/xonsh/xonsh/pull/6048
 # xonsh = { git = 'https://github.com/xonsh/xonsh.git', branch = 'main' }
-xonsh = { path = "../xonsh", editable = true }
+# xonsh = { path = "../xonsh", editable = true }
 
 # [tool.uv.sources.pdbp]
 # XXX, in case we need to tmp patch again.
@@ -198,7 +204,35 @@ all_bullets = true
 
 [tool.pytest.ini_options]
 minversion = '6.0'
-timeout = 200  # per-test hard limit
+# NOTE: `pytest-timeout`'s global per-test cap is intentionally
+# NOT set — both of its enforcement methods break trio's
+# runtime under our fork-based spawn backends:
+#
+# - `method='signal'` (the default; SIGALRM) raises `Failed`
+#   synchronously from the signal handler in trio's main
+#   thread, which leaves `GLOBAL_RUN_CONTEXT` half-installed
+#   ("Trio guest run got abandoned"). EVERY subsequent
+#   `trio.run()` in the same pytest session then bails with
+#   `RuntimeError: Attempted to call run() from inside a
+#   run()` — full-session poison: a single 200s hang
+#   cascades into 30+ false-positive failures across
+#   downstream test files.
+#
+# - `method='thread'` calls `_thread.interrupt_main()` which
+#   can let the resulting `KeyboardInterrupt` escape trio's
+#   `KIManager` under fork-cascade teardown races, killing
+#   the whole pytest session.
+#
+# For tests that legitimately need a wall-clock cap, use
+# `with trio.fail_after(N):` INSIDE the test — trio's own
+# Cancelled machinery handles the timeout cleanly through
+# the actor nursery without disturbing global state. See
+# `tests/test_advanced_streaming.py::test_dynamic_pub_sub`'s
+# module-level NOTE for the canonical pattern.
+#
+# CI environments should rely on job-level wall-clock
+# timeouts (e.g. GitHub Actions `timeout-minutes`) for an
+# escape hatch on genuinely-stuck suites.
 # https://docs.pytest.org/en/stable/reference/reference.html#configuration-options
 testpaths = [
   'tests'
@@ -210,6 +244,29 @@ addopts = [
   '--import-mode=importlib',
   # don't show frickin captured logs AGAIN in the report..
   '--show-capture=no',
+
+  # sys-level capture. REQUIRED for fork-based spawn
+  # backends (e.g. `main_thread_forkserver`): default
+  # `--capture=fd` redirects fd 1,2 to temp files, and fork
+  # children inherit those fds — opaque deadlocks happen in
+  # the pytest-capture-machinery ↔ fork-child stdio
+  # interaction. `--capture=sys` only redirects Python-level
+  # `sys.stdout`/`sys.stderr`, leaving fd 1,2 alone.
+  #
+  # Trade-off (vs. `--capture=fd`):
+  # - LOST: per-test attribution of subactor *raw-fd* output
+  #   (C-ext writes, `os.write(2, ...)`, subproc stdout). Not
+  #   zero — those go to the terminal, captured by CI's
+  #   terminal-level capture, just not per-test-scoped in the
+  #   pytest failure report.
+  # - KEPT: Python-level `print()` + `logging` capture per-
+  #   test (tractor's logger uses `sys.stderr`, so tractor
+  #   log output IS still attributed per-test).
+  # - KEPT: user `pytest -s` for debugging (unaffected).
+  #
+  # Full post-mortem in
+  # `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`.
+  '--capture=sys',
 
   # disable `xonsh` plugin
   # https://docs.pytest.org/en/stable/how-to/plugins.html#disabling-plugins-from-autoloading

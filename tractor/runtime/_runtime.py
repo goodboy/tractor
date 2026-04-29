@@ -870,7 +870,17 @@ class Actor:
 
             accept_addrs: list[UnwrappedAddress]|None = None
 
-            if self._spawn_method in ("trio", "subint"):
+            if self._spawn_method in (
+                'trio',
+                'subint',
+                # `main_thread_forkserver` (and the future
+                # variant-2 `subint_forkserver`) parent-side
+                # sends a `SpawnSpec` over IPC just like the
+                # other two — fork child-side runtime is
+                # trio-native.
+                'main_thread_forkserver',
+                'subint_forkserver',
+            ):
 
                 # Receive post-spawn runtime state from our parent.
                 spawnspec: msgtypes.SpawnSpec = await chan.recv()
@@ -922,7 +932,20 @@ class Actor:
                 # => update process-wide globals
                 # TODO! -[ ] another `Struct` for rtvs..
                 rvs: dict[str, Any] = spawnspec._runtime_vars
-                if rvs['_debug_mode']:
+
+                # `stackscope` SIGUSR1 handler: install when EITHER
+                # `_debug_mode=True` (full multi-actor pdb support
+                # path) OR the `TRACTOR_ENABLE_STACKSCOPE` env var
+                # is set (lighter test-time hang-debug path; see
+                # `tractor._testing.pytest`'s `--enable-stackscope`
+                # CLI flag — env var propagates via fork-inherited
+                # environ).
+                import os
+                if (
+                    rvs['_debug_mode']
+                    or
+                    os.environ.get('TRACTOR_ENABLE_STACKSCOPE')
+                ):
                     from ..devx import (
                         enable_stack_on_sig,
                         maybe_init_greenback,
@@ -938,7 +961,8 @@ class Actor:
 
                     except ImportError:
                         log.warning(
-                            '`stackscope` not installed for use in debug mode!'
+                            '`stackscope` not installed for use in '
+                            'debug mode / `--enable-stackscope`!'
                         )
 
                     if rvs.get('use_greenback', False):
@@ -1208,6 +1232,23 @@ class Actor:
             if ipc_server := self.ipc_server:
                 ipc_server.cancel()
                 await ipc_server.wait_for_shutdown()
+
+            # Break the shield on the parent-channel
+            # `process_messages` loop (started with `shield=True`
+            # in `async_main` above). Required to avoid a
+            # deadlock during teardown of fork-spawned subactors:
+            # without this cancel, the loop parks waiting for
+            # EOF on the parent channel, but the parent is
+            # blocked on `os.waitpid()` for THIS actor's exit
+            # — mutual wait. For exec-spawn backends the EOF
+            # arrives naturally when the parent closes its
+            # handler-task socket during its own teardown, but
+            # in fork backends the shared-process-image makes
+            # that delivery racy / not guaranteed. Explicit
+            # cancel here gives us deterministic unwinding
+            # regardless of backend.
+            if self._parent_chan_cs is not None:
+                self._parent_chan_cs.cancel()
 
             # cancel all rpc tasks permanently
             if self._service_tn:
@@ -1729,7 +1770,16 @@ async def async_main(
                 # start processing parent requests until our channel
                 # server is 100% up and running.
                 if actor._parent_chan:
-                    await root_tn.start(
+                    # Capture the shielded `loop_cs` for the
+                    # parent-channel `process_messages` task so
+                    # `Actor.cancel()` has a handle to break the
+                    # shield during teardown — without this, the
+                    # shielded loop would park on the parent chan
+                    # indefinitely waiting for EOF that only arrives
+                    # after the PARENT tears down, which under
+                    # fork-based backends (e.g. `main_thread_forkserver`)
+                    # it waits on THIS actor's exit — deadlock.
+                    actor._parent_chan_cs = await root_tn.start(
                         partial(
                             _rpc.process_messages,
                             chan=actor._parent_chan,
@@ -1940,7 +1990,25 @@ async def async_main(
                 f'   {pformat(ipc_server._peers)}'
             )
             log.runtime(teardown_report)
-            await ipc_server.wait_for_no_more_peers()
+            # NOTE: bound the peer-clear wait — otherwise if any
+            # peer-channel handler is stuck (e.g. never got its
+            # cancel propagated due to a runtime bug), this wait
+            # blocks forever and deadlocks the whole actor-tree
+            # teardown cascade. 3s is enough for any graceful
+            # cancel-ack round-trip; beyond that we're in bug
+            # territory and need to proceed with local teardown
+            # so the parent's `_ForkedProc.wait()` can unblock.
+            # See `ai/conc-anal/
+            # subint_forkserver_test_cancellation_leak_issue.md`
+            # for the full diagnosis.
+            with trio.move_on_after(3.0) as _peers_cs:
+                await ipc_server.wait_for_no_more_peers()
+            if _peers_cs.cancelled_caught:
+                teardown_report += (
+                    f'-> TIMED OUT waiting for peers to clear '
+                    f'({len(ipc_server._peers)} still connected)\n'
+                )
+                log.warning(teardown_report)
 
         teardown_report += (
             '-]> all peer channels are complete.\n'
