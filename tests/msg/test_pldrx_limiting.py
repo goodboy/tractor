@@ -55,12 +55,37 @@ async def maybe_expect_raises(
     raises: BaseException|None = None,
     ensure_in_message: list[str]|None = None,
     post_mortem: bool = False,
-    timeout: int = 3,
+    # NOTE, `None` selects a backend-aware default below —
+    # see `_BACKEND_TIMEOUT_DEFAULTS` for rationale. Caller
+    # can override with an explicit value to opt out.
+    timeout: int|None = None,
 ) -> None:
     '''
     Async wrapper for ensuring errors propagate from the inner scope.
 
     '''
+    if timeout is None:
+        # Pick a backend-aware default. Fork-based backends
+        # (`main_thread_forkserver`) need much more headroom
+        # because actor spawn + IPC ctx-exit + msg-validation
+        # error path takes longer than under `trio` backend
+        # — especially under cross-pytest-stream contention
+        # (#451). `test_basic_payload_spec` empirically:
+        #   - 3s flaked all-valid variant (`TooSlowError`)
+        #   - 8s flaked `invalid-return` variant
+        #     (`Cancelled` surfaced instead of `MsgTypeError`
+        #     because `fail_after` fired mid-error-path)
+        #   - 15s flaked under cross-stream contention
+        # 30s for fork-based gives plenty of headroom while
+        # still failing-loud on a genuine hang. Other
+        # backends keep the original 3s.
+        from tractor.spawn import _spawn as _spawn_mod
+        timeout = (
+            30
+            if _spawn_mod._spawn_method == 'main_thread_forkserver'
+            else 3
+        )
+
     if tractor.debug_mode():
         timeout += 999
 
