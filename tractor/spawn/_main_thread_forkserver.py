@@ -38,6 +38,7 @@ Two empirical CPython properties drive the design:
    the forked child otherwise (`Fatal Python error: not main
    interpreter`). Full source-level walkthrough:
    `ai/conc-anal/subint_fork_blocked_by_cpython_post_fork_issue.md`.
+
 2. **`os.fork()` from a regular `threading.Thread` attached to
    the *main* interpreter — i.e. a worker thread that has never
    entered a subint — works cleanly.** Empirically validated
@@ -86,9 +87,11 @@ costs:
 
 - **Sidecar lifecycle**: a second long-lived process per
   parent, with its own start/stop/health-check semantics.
+
 - **IPC overhead per spawn**: every actor-spawn round-trips
   an `mp` request message through a unix socket before any
   child code runs.
+
 - **State isolation by process boundary**: the sidecar can't
   share parent state at all — every spawn is a "cold" child
   re-importing modules from disk.
@@ -106,6 +109,7 @@ For the full variant-2 picture see
 1) we already get costs 1 + 2 collapsed; cost 3 will land
 when msgspec#1026 unblocks isolated-mode subints.
 
+
 What survives the fork? — POSIX semantics
 -----------------------------------------
 
@@ -113,33 +117,58 @@ A natural worry when forking from a parent that's running
 `trio.run()` on another thread: does that trio thread (and
 any other threads in the parent) keep running in the child?
 
-**No.** POSIX `fork()` only preserves the *calling* thread
-in the child. Every other thread in the parent — trio's
-runner thread, any `to_thread` cache threads, anything else
-— is gone the instant `fork()` returns in the child.
+**No** — but with a precise meaning that's worth pinning
+down, since the canonical trio framing
+([python-trio/trio#1614](https://github.com/python-trio/trio/issues/1614))
+puts it the opposite-sounding way:
+
+> If you use `fork()` in a process with multiple threads,
+> all the other thread stacks are just leaked: there's
+> nothing else you can reasonably do with them.
+
+Both statements describe the same POSIX reality from
+opposite sides:
+
+- **Execution-side ("gone")**: POSIX `fork()` only
+  preserves the *calling* thread as a runnable thread in
+  the child. Every other thread in the parent — trio's
+  runner thread, any `to_thread` cache threads, anything
+  else — never executes another instruction post-fork.
+
+- **Memory-side ("leaked")**: those non-running threads'
+  *stacks* and per-thread heap structures are still
+  COW-inherited into the child's address space. They
+  persist as orphaned bytes with no owning thread, no
+  scheduler entry, and no way for the child to clean
+  them up — hence trio's word "leaked".
 
 Concretely, after the forkserver worker calls `os.fork()`:
 
-| thread                | parent    | child         |
-|-----------------------|-----------|---------------|
-| forkserver worker     | continues | sole survivor |
-| `trio.run()` thread   | continues | gone          |
-| any other thread      | continues | gone          |
+| thread              | parent    | child (executing) | child (memory)              |
+|---------------------|-----------|-------------------|-----------------------------|
+| forkserver worker   | continues | sole survivor     | live stack                  |
+| `trio.run()` thread | continues | not running       | leaked stack (zombie bytes) |
+| any other thread    | continues | not running       | leaked stack (zombie bytes) |
 
 The forkserver worker becomes the new "main" execution
 context in the child; `trio.run()` and every other parent
-thread never executes a single instruction post-fork in the
-child.
+thread never executes a single instruction post-fork.
+Their stack memory rides along as inert COW pages until
+the child's fresh `trio.run()` boots and overwrites/GCs
+it (or until the child `exec()`s and discards the entire
+image).
 
 This is exactly *why* `os.fork()` is delegated to a
 dedicated worker thread that has provably never entered
 trio: we want that trio-free thread to be the surviving
-one in the child.
+*executing* thread in the child, with the leaked trio
+stack reduced to inert COW pages we don't touch.
 
-That said, dead-thread *artifacts* still cross the fork
-boundary (canonical "fork in a multithreaded program is
-dangerous" — see `man pthread_atfork`). What persists, and
-how we handle each:
+The leaked-stack residue is one slice of the broader
+"fork in a multithreaded program is dangerous" hazard
+class (see `man pthread_atfork`). Other dead-thread
+artifacts that cross the fork boundary, and how we handle
+each:
 
 - **Inherited file descriptors** — the dead trio thread's
   epoll fd, signal-wakeup-fd, eventfds, sockets, IPC
@@ -148,16 +177,20 @@ how we handle each:
   `_close_inherited_fds()` in the child prelude — walks
   `/proc/self/fd` and closes everything except stdio +
   the channel pipe to the forkserver.
+
 - **Memory image** — trio's internal data structures
   (scheduler, task queues, runner state) sit in COW
-  memory but nobody's executing them. Get GC'd /
-  overwritten when the child's fresh `trio.run()` boots.
+  memory alongside the leaked stacks above. Nobody's
+  executing them; they get GC'd / overwritten when the
+  child's fresh `trio.run()` boots.
+
 - **Python thread state** — handled automatically by
   CPython. `PyOS_AfterFork_Child()` calls
   `_PyThreadState_DeleteExceptCurrent()`, so dead
   `PyThreadState` objects are cleaned and
   `threading.enumerate()` returns just the surviving
   thread.
+
 - **User-level locks (`threading.Lock`)** —
   held-by-dead-thread state is the canonical fork hazard.
   Not an issue in practice for tractor: trio doesn't hold
@@ -165,6 +198,7 @@ how we handle each:
   within the trio task system, which doesn't survive in
   either direction). CPython's GIL is auto-reset by the
   fork callback.
+
 
 FYI: how this dodges the `trio.run()` × `fork()` hazards
 --------------------------------------------------------
@@ -183,13 +217,16 @@ design dodges each class explicitly:
   reader. *Dodge*: the inherited wakeup-fd is closed by
   `_close_inherited_fds()`, then the child's own
   `trio.run()` installs a fresh one.
+
 - **`epoll`/`kqueue` instance**: trio's I/O backend holds
   one. Inherited as a dead fd; same fix as above.
+
 - **Threadpool cache threads** (`trio.to_thread`): worker
   threads with cached tstate. Don't exist in the child
   (POSIX); cache state is meaningless garbage that gets
   reset when the child's trio.run() initializes its own
   thread cache.
+
 - **Cancel scopes / nurseries / open `trio.Process` /
   open sockets**: these are trio-runtime objects, not
   kernel objects. The runtime that owns them is gone in
@@ -197,9 +234,11 @@ design dodges each class explicitly:
   in COW memory and get overwritten as the child runs.
   Inherited *kernel* fds those objects wrapped (sockets,
   proc pipes) are caught by `_close_inherited_fds()`.
+
 - **`atexit` handlers**: trio doesn't register any that
   would mis-fire post-fork; trio's lifetime-stack is
   all `with`-block-scoped and dies with the runner.
+
 - **Foreign-language I/O state** (libcurl, OpenSSL session
   caches, etc.): out of scope — same hazard as any
   fork-without-exec; users layering those on top of
@@ -210,6 +249,7 @@ Net effect: for the runtime surface tractor controls
 isolation + `_close_inherited_fds()` cleanup gives the
 forked child a clean trio environment. Everything else
 falls under the standard fork-without-exec disclaimer.
+
 
 Implementation status
 ---------------------
@@ -231,10 +271,11 @@ follow-up) including the
 
 Still-open work (tracked on tractor #379):
 
-- no cancellation / hard-kill stress coverage yet
+- [ ] no cancellation / hard-kill stress coverage yet
   (counterpart to `tests/test_subint_cancellation.py` for
   the plain `subint` backend),
-- `child_sigint='trio'` mode (flag scaffolded below; default
+
+- [ ] `child_sigint='trio'` mode (flag scaffolded below; default
   is `'ipc'`). Originally intended as a manual SIGINT →
   trio-cancel bridge, but investigation showed trio's
   handler IS already correctly installed in the fork-child
@@ -287,18 +328,22 @@ See also
 - `tractor.spawn._subint_forkserver` — variant-2 placeholder
   module; reserved for the future subint-isolated-child
   runtime once jcrist/msgspec#1026 unblocks.
+
 - `tractor.spawn._subint_fork` — the stub for the
   fork-from-non-main-subint strategy that DIDN'T work (kept
   in-tree as documentation of the attempt + the CPython-level
   block).
+
 - `ai/conc-anal/subint_fork_blocked_by_cpython_post_fork_issue.md`
   — CPython source walkthrough of why fork-from-subint is dead.
+
 - `ai/conc-anal/subint_fork_from_main_thread_smoketest.py`
   — standalone feasibility check (delegates to this module
   for the primitives it exercises).
 
 '''
 from __future__ import annotations
+import errno
 import os
 import signal
 import sys
@@ -423,9 +468,24 @@ def _close_inherited_fds(
         try:
             os.close(fd)
             closed += 1
-        except OSError:
-            # fd was already closed (race with listdir) or otherwise
-            # unclosable — either is fine.
+        except OSError as oserr:
+            # `EBADF` is the benign-and-expected case: the
+            # `os.listdir('/proc/self/fd')` call above itself
+            # opens a transient dirfd that ends up in
+            # `candidates`, then auto-closes before this loop
+            # reaches it. Same for any fd whose Python wrapper
+            # was GC'd between `listdir` and `os.close`.
+            # Suppress at debug-level — surfacing every
+            # EBADF as a full traceback (prior `log.exception`
+            # behavior) drowned the post-fork log channel.
+            if oserr.errno == errno.EBADF:
+                log.debug(
+                    f'Skip already-closed inherited fd {fd!r} '
+                    f'(EBADF, benign race with listdir)\n'
+                )
+                continue
+            # Other errnos (EIO / EPERM / EINTR / ...) are
+            # genuinely unexpected — keep the loud surface.
             log.exception(
                 f'Failed to close inherited fd in child ??\n'
                 f'{fd!r}\n'
