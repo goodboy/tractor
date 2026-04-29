@@ -346,7 +346,6 @@ from __future__ import annotations
 import errno
 import os
 import signal
-import sys
 import threading
 from functools import partial
 from typing import (
@@ -370,7 +369,6 @@ from ._spawn import (
     cancel_on_completion,
     soft_kill,
 )
-from ._subint import _has_subints
 
 if TYPE_CHECKING:
     from tractor.discovery._addr import UnwrappedAddress
@@ -832,13 +830,6 @@ async def main_thread_forkserver_proc(
     thread instead of `trio.lowlevel.open_process()`.
 
     '''
-    if not _has_subints:
-        raise RuntimeError(
-            f'The {"main_thread_forkserver"!r} spawn backend '
-            f'requires Python 3.14+.\n'
-            f'Current runtime: {sys.version}'
-        )
-
     # Backend-scoped config pulled from `proc_kwargs`. Using
     # `proc_kwargs` (vs a first-class kwarg on this function)
     # matches how other backends expose per-spawn tuning
