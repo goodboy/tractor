@@ -213,6 +213,21 @@ def pytest_addoption(
         ),
     )
 
+    parser.addoption(
+        "--enable-stackscope",
+        action="store_true",
+        dest='tractor_enable_stackscope',
+        default=False,
+        help=(
+            'Install `stackscope` SIGUSR1 handler in pytest + '
+            'every spawned subactor for live trio task-tree '
+            'dumps during hang investigations. Lighter than '
+            '`--tpdb` (no pdb machinery / tty-lock contention) '
+            '— use when you only need stack visibility. To '
+            'capture: `kill -USR1 <pytest-or-subactor-pid>`.'
+        ),
+    )
+
     # provide which IPC transport protocols opting-in test suites
     # should accumulatively run against.
     parser.addoption(
@@ -252,6 +267,37 @@ def pytest_configure(
         'cases (e.g. the `subint` GIL-starvation class documented '
         'in `ai/conc-anal/subint_sigint_starvation_issue.md`).'
     )
+
+    # `--enable-stackscope`: install SIGUSR1 → trio task-tree
+    # dump in pytest itself + propagate to every subactor via
+    # an env var that fork-children inherit and the runtime
+    # gate honors. Lighter than `--tpdb` (no pdb machinery) —
+    # purely for hang-investigation stack visibility.
+    if getattr(
+        config.option, 'tractor_enable_stackscope', False
+    ):
+        import os
+        # Env var inherited via fork → subactor's runtime
+        # picks it up at `Actor.async_main` startup. See the
+        # gate in `tractor.runtime._runtime` matching this
+        # var name.
+        os.environ['TRACTOR_ENABLE_STACKSCOPE'] = '1'
+
+        # Install in pytest itself so `kill -USR1 <pytest>`
+        # dumps the parent trio task-tree (which is where
+        # most Mode-A-class hangs park).
+        try:
+            from tractor.devx._stackscope import (
+                enable_stack_on_sig,
+            )
+            enable_stack_on_sig()
+        except ImportError:
+            import warnings
+            warnings.warn(
+                '`stackscope` not installed — '
+                '--enable-stackscope is a no-op. '
+                'Install via the `devx` dep group.'
+            )
 
 
 def pytest_collection_modifyitems(

@@ -66,7 +66,20 @@ def dump_task_tree() -> None:
     Do a classic `stackscope.extract()` task-tree dump to console at
     `.devx()` level.
 
+    Also unconditionally tee the rendered tree to two
+    capture-bypassing sinks so SIGUSR1 dumps remain visible
+    when the parent process has captured stdio (e.g. pytest's
+    default `--capture=fd`):
+
+    - `/tmp/tractor-stackscope-<pid>.log` (append-mode, always
+      written) — guaranteed-readable artifact even under CI
+      / `nohup` / no-tty conditions. `tail -f` to follow.
+    - `/dev/tty` if a controlling terminal is attached —
+      best-effort, ignored if the device is missing or write
+      fails. pytest never captures the tty.
+
     '''
+    import os
     import stackscope
     tree_str: str = str(
         stackscope.extract(
@@ -96,7 +109,7 @@ def dump_task_tree() -> None:
     # |_{Supervisor/Scope
     # |_[Storage/Memory/IPC-Stream/Data-Struct
 
-    log.devx(
+    full_dump: str = (
         f'Dumping `stackscope` tree for actor\n'
         f'(>: {actor.uid!r}\n'
         f' |_{mp.current_process()}\n'
@@ -105,33 +118,35 @@ def dump_task_tree() -> None:
         f'\n'
         f'{sigint_handler_report}\n'
         f'signal.getsignal(SIGINT) -> {current_sigint_handler!r}\n'
-        # f'\n'
-        # start-of-trace-tree delimiter (mostly for testing)
-        # f'------ {actor.uid!r} ------\n'
         f'\n'
         f'------ start-of-{actor.uid!r} ------\n'
         f'|\n'
         f'{tree_str}'
-        # end-of-trace-tree delimiter (mostly for testing)
         f'|\n'
         f'|_____ end-of-{actor.uid!r} ______\n'
     )
-    # TODO: can remove this right?
-    # -[ ] was original code from author
-    #
-    # print(
-    #     'DUMPING FROM PRINT\n'
-    #     +
-    #     content
-    # )
-    # import logging
-    # try:
-    #     with open("/dev/tty", "w") as tty:
-    #         tty.write(tree_str)
-    # except BaseException:
-    #     logging.getLogger(
-    #         "task_tree"
-    #     ).exception("Error printing task tree")
+    log.devx(full_dump)
+
+    # NOTE, capture-bypass sinks. Pytest's default
+    # `--capture=fd` swallows `log.devx()` above; the
+    # following two writes guarantee the dump reaches the
+    # human even when stdio is captured.
+    fpath: str = f'/tmp/tractor-stackscope-{os.getpid()}.log'
+    try:
+        with open(fpath, 'a') as f:
+            f.write(full_dump + '\n')
+    except OSError:
+        log.exception(
+            f'Failed to tee stackscope dump to {fpath!r}'
+        )
+
+    try:
+        with open('/dev/tty', 'w') as tty:
+            tty.write(full_dump + '\n')
+    except OSError:
+        # no controlling tty (CI / nohup / detached) —
+        # silently fall through; the file sink covers it.
+        pass
 
 _handler_lock = RLock()
 _tree_dumped: bool = False
@@ -233,7 +248,20 @@ def enable_stack_on_sig(
 
     '''
     try:
-        import stackscope
+        # NOTE, `stackscope._glue` does intentional async-gen type
+        # introspection at import-time which trips
+        # `RuntimeWarning: coroutine method 'asend'/'athrow' was
+        # never awaited`. Benign — they only want the wrapper
+        # type — but visible to users. Squelch the import-only
+        # warning so SIGUSR1 setup stays quiet.
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                'ignore',
+                category=RuntimeWarning,
+                message=r"coroutine method '(asend|athrow)' .* was never awaited",
+            )
+            import stackscope
     except ImportError:
         log.warning(
             'The `stackscope` lib is not installed!\n'

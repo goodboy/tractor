@@ -932,7 +932,20 @@ class Actor:
                 # => update process-wide globals
                 # TODO! -[ ] another `Struct` for rtvs..
                 rvs: dict[str, Any] = spawnspec._runtime_vars
-                if rvs['_debug_mode']:
+
+                # `stackscope` SIGUSR1 handler: install when EITHER
+                # `_debug_mode=True` (full multi-actor pdb support
+                # path) OR the `TRACTOR_ENABLE_STACKSCOPE` env var
+                # is set (lighter test-time hang-debug path; see
+                # `tractor._testing.pytest`'s `--enable-stackscope`
+                # CLI flag — env var propagates via fork-inherited
+                # environ).
+                import os
+                if (
+                    rvs['_debug_mode']
+                    or
+                    os.environ.get('TRACTOR_ENABLE_STACKSCOPE')
+                ):
                     from ..devx import (
                         enable_stack_on_sig,
                         maybe_init_greenback,
@@ -948,7 +961,8 @@ class Actor:
 
                     except ImportError:
                         log.warning(
-                            '`stackscope` not installed for use in debug mode!'
+                            '`stackscope` not installed for use in '
+                            'debug mode / `--enable-stackscope`!'
                         )
 
                     if rvs.get('use_greenback', False):
