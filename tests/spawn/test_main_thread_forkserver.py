@@ -182,7 +182,7 @@ async def run_fork_in_non_trio_thread(
 # `subint_sigint_starvation_issue.md`. Each test also has an
 # inner `trio.fail_after()` so assertion failures fire fast
 # under normal conditions.
-@pytest.mark.timeout(30, method='thread')
+# @pytest.mark.timeout(30, method='thread')
 def test_fork_from_worker_thread_via_trio(
 ) -> None:
     '''

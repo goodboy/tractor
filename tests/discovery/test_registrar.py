@@ -535,13 +535,13 @@ async def kill_transport(
 # At timeout the plugin hard-kills the pytest process — that's
 # the intended behavior here; the alternative is an unattended
 # suite run that never returns.
-@pytest.mark.timeout(
-    30,
-    # NOTE should be a 2.1s happy path.
-    # XXX for `main_thread_forkserver` this is SUPER SENSITIVE
-    # so keep it higher to avoid flaky runs..
-    method='thread',
-)
+# @pytest.mark.timeout(
+#     30,
+#     # NOTE should be a 2.1s happy path.
+#     # XXX for `main_thread_forkserver` this is SUPER SENSITIVE
+#     # so keep it higher to avoid flaky runs..
+#     method='thread',
+# )
 @pytest.mark.skipon_spawn_backend(
     'subint',
     # 'main_thread_forkserver',

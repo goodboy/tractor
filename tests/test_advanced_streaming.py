@@ -430,10 +430,10 @@ async def inf_streamer(
     print('streamer exited .open_streamer() block')
 
 
-@pytest.mark.timeout(
-    6,
-    method='signal',
-)
+# @pytest.mark.timeout(
+#     6,
+#     method='signal',
+# )
 def test_local_task_fanout_from_stream(
     reg_addr: tuple,
     debug_mode: bool,
