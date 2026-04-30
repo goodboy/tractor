@@ -15,15 +15,22 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-This is the "bootloader" for actors started using the native trio backend.
+The "bootloader" for sub-actors spawned via the native `trio`
+backend (the default `python -m tractor._child` CLI entry) and
+the in-process `subint` backend (`tractor.spawn._subint`).
 
 """
+from __future__ import annotations
 import argparse
-
 from ast import literal_eval
+from typing import TYPE_CHECKING
 
 from .runtime._runtime import Actor
 from .spawn._entry import _trio_main
+
+if TYPE_CHECKING:
+    from .discovery._addr import UnwrappedAddress
+    from .spawn._spawn import SpawnMethodKey
 
 
 def parse_uid(arg):
@@ -39,6 +46,36 @@ def parse_ipaddr(arg):
         return arg
 
 
+def _actor_child_main(
+    uid: tuple[str, str],
+    loglevel: str | None,
+    parent_addr: UnwrappedAddress | None,
+    infect_asyncio: bool,
+    spawn_method: SpawnMethodKey = 'trio',
+
+) -> None:
+    '''
+    Construct the child `Actor` and dispatch to `_trio_main()`.
+
+    Shared entry shape used by both the `python -m tractor._child`
+    CLI (trio/mp subproc backends) and the `subint` backend, which
+    invokes this from inside a fresh `concurrent.interpreters`
+    sub-interpreter via `Interpreter.call()`.
+
+    '''
+    subactor = Actor(
+        name=uid[0],
+        uuid=uid[1],
+        loglevel=loglevel,
+        spawn_method=spawn_method,
+    )
+    _trio_main(
+        subactor,
+        parent_addr=parent_addr,
+        infect_asyncio=infect_asyncio,
+    )
+
+
 if __name__ == "__main__":
     __tracebackhide__: bool = True
 
@@ -49,15 +86,10 @@ if __name__ == "__main__":
     parser.add_argument("--asyncio", action='store_true')
     args = parser.parse_args()
 
-    subactor = Actor(
-        name=args.uid[0],
-        uuid=args.uid[1],
+    _actor_child_main(
+        uid=args.uid,
         loglevel=args.loglevel,
-        spawn_method="trio"
-    )
-
-    _trio_main(
-        subactor,
         parent_addr=args.parent_addr,
         infect_asyncio=args.asyncio,
+        spawn_method='trio',
     )
