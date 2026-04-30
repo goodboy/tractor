@@ -49,9 +49,11 @@ async def main(
         tractor.open_nursery(
             debug_mode=True,
             enable_stack_on_sig=True,
-            # maybe_enable_greenback=False,
-            loglevel='devx',
+            loglevel='devx',  # XXX REQUIRED log level!
             enable_transports=[tpt],
+            # maybe_enable_greenback=True,
+            # ^TODO? maybe a "smarter" way todo all this is how
+            # `modden` does with a rtv serialized through the osenv?
         ) as an,
     ):
         ptl: tractor.Portal  = await an.start_actor(
@@ -63,7 +65,9 @@ async def main(
             start_n_shield_hang,
         ) as (ctx, cpid):
 
-            _, proc, _ = an._children[ptl.chan.uid]
+            _, proc, _ = an._children[
+                ptl.chan.aid.uid
+            ]
             assert cpid == proc.pid
 
             print(
