@@ -240,38 +240,27 @@ testpaths = [
 addopts = [
   # TODO: figure out why this isn't working..
   '--rootdir=./tests',
-
   '--import-mode=importlib',
   # don't show frickin captured logs AGAIN in the report..
   '--show-capture=no',
 
-  # sys-level capture. REQUIRED for fork-based spawn
-  # backends (e.g. `main_thread_forkserver`): default
-  # `--capture=fd` redirects fd 1,2 to temp files, and fork
-  # children inherit those fds — opaque deadlocks happen in
-  # the pytest-capture-machinery ↔ fork-child stdio
-  # interaction. `--capture=sys` only redirects Python-level
-  # `sys.stdout`/`sys.stderr`, leaving fd 1,2 alone.
-  #
-  # Trade-off (vs. `--capture=fd`):
-  # - LOST: per-test attribution of subactor *raw-fd* output
-  #   (C-ext writes, `os.write(2, ...)`, subproc stdout). Not
-  #   zero — those go to the terminal, captured by CI's
-  #   terminal-level capture, just not per-test-scoped in the
-  #   pytest failure report.
-  # - KEPT: Python-level `print()` + `logging` capture per-
-  #   test (tractor's logger uses `sys.stderr`, so tractor
-  #   log output IS still attributed per-test).
-  # - KEPT: user `pytest -s` for debugging (unaffected).
-  #
-  # Full post-mortem in
-  # `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`.
-  '--capture=sys',
+  # load builtin plugin since we need a boostrapping hook,
+  # `pytest_load_initial_conftests()` for `--capture=` per:
+  # https://docs.pytest.org/en/stable/reference/reference.html#bootstrapping-hooks
+  '-p tractor._testing.pytest',
 
   # disable `xonsh` plugin
   # https://docs.pytest.org/en/stable/how-to/plugins.html#disabling-plugins-from-autoloading
   # https://docs.pytest.org/en/stable/how-to/plugins.html#deactivating-unregistering-a-plugin-by-name
-  '-p no:xonsh'
+  '-p no:xonsh',
+
+  # XXX default on non-forking spawners
+  '--capture=fd',
+  # '--capture=sys',
+  # ^XXX NOTE^ ALWAYS SET THIS for `*_forkserver` spawner
+  # backends! see details @
+  # `tractor._testing.pytest.pytest_load_initial_conftests()`
+
 ]
 log_cli = false
 # TODO: maybe some of these layout choices?

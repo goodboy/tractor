@@ -24,16 +24,90 @@ from functools import (
     wraps,
 )
 import inspect
+import os
 import platform
 from typing import (
     Callable,
     get_args,
+    TYPE_CHECKING,
 )
 
 import pytest
 import tractor
 from tractor.spawn._spawn import SpawnMethodKey
 import trio
+
+# Sub-plugin: zombie-subactor + UDS sock-file + shm
+# reaping fixtures live in `tractor._testing._reap`
+# alongside the underlying detection/cleanup helpers.
+# Loading `_reap` as a sub-plugin here keeps reaping
+# concerns co-located + this module focused on tractor-
+# tooling-specific hooks (option/marker/parametrize,
+# `tractor_test` deco, transport / spawn-method
+# fixtures).
+pytest_plugins: tuple[str, ...] = (
+    'tractor._testing._reap',
+)
+
+if TYPE_CHECKING:
+    from argparse import Namespace
+
+# XXX REQUIRED in order to enforce `--capture=` flag
+# pre test session.
+# https://docs.pytest.org/en/stable/reference/reference.html#bootstrapping-hooks
+def pytest_load_initial_conftests(
+    early_config: pytest.Config,
+    parser: pytest.Parser,
+    args: list[str],
+):
+    opts: Namespace = early_config.option
+    opts_w_args: Namespace = parser.parse_known_args(args)
+
+    # XXX, ALWAYS apply capsys for fork based spawners:
+    # * main_thread_forkserver
+    # * (TODO) subint_forkserver
+    # '--capture=sys',
+    # ^XXX NOTE^ for `main_thread_forkserver` spawner
+    #
+    # => sys-level capture is REQUIRED for fork-based spawn
+    # backends (e.g. `main_thread_forkserver`): default
+    # `--capture=fd` redirects fd 1,2 to temp files, and fork
+    # children inherit those fds — opaque deadlocks happen in
+    # the pytest-capture-machinery ↔ fork-child stdio
+    # interaction. `--capture=sys` only redirects Python-level
+    # `sys.stdout`/`sys.stderr`, leaving fd 1,2 alone.
+    #
+    # Trade-off (vs. `--capture=fd`):
+    # - LOST: per-test attribution of subactor *raw-fd* output
+    #   (C-ext writes, `os.write(2, ...)`, subproc stdout). Not
+    #   zero — those go to the terminal, captured by CI's
+    #   terminal-level capture, just not per-test-scoped in the
+    #   pytest failure report.
+    # - KEPT: Python-level `print()` + `logging` capture per-
+    #   test (tractor's logger uses `sys.stderr`, so tractor
+    #   log output IS still attributed per-test).
+    # - KEPT: user `pytest -s` for debugging (unaffected).
+    #
+    # Full post-mortem in
+    # `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`.
+    if (
+        (spawner := opts_w_args.spawn_backend) in [
+            'main_thread_forkserver',
+        ]
+        and
+        opts.capture == 'fd'
+    ):
+        print(
+            f'XXX SETTING CAPSYS due to spawning backend XXX\n'
+            f'--spawn-backend={spawner!r}\n'
+        )
+        opts.capture = 'sys'
+
+    # TODO, set various `$TRACTOR_X*` osenv vars here!
+    print(
+        f'Applying `tractor`-specific `pytest` config,\n'
+        f'{opts_w_args!r}\n'
+    )
 
 
 def tractor_test(
@@ -216,8 +290,8 @@ def pytest_addoption(
     parser.addoption(
         "--enable-stackscope",
         action="store_true",
-        dest='tractor_enable_stackscope',
-        default=False,
+        dest='enable_stackscope',
+        # default=False,
         help=(
             'Install `stackscope` SIGUSR1 handler in pytest + '
             'every spawned subactor for live trio task-tree '
@@ -274,9 +348,10 @@ def pytest_configure(
     # gate honors. Lighter than `--tpdb` (no pdb machinery) —
     # purely for hang-investigation stack visibility.
     if getattr(
-        config.option, 'tractor_enable_stackscope', False
+        config.option,
+        'enable_stackscope',
+        False
     ):
-        import os
         # Env var inherited via fork → subactor's runtime
         # picks it up at `Actor.async_main` startup. See the
         # gate in `tractor.runtime._runtime` matching this
@@ -298,6 +373,8 @@ def pytest_configure(
                 '--enable-stackscope is a no-op. '
                 'Install via the `devx` dep group.'
             )
+    else:
+        os.environ.pop('TRACTOR_ENABLE_STACKSCOPE', None)
 
 
 def pytest_collection_modifyitems(
@@ -335,91 +412,6 @@ def pytest_collection_modifyitems(
                 # first matching mark wins; no value in stacking
                 # multiple `skip`s on the same item.
                 break
-
-
-@pytest.fixture(
-    scope='session',
-    autouse=True,
-)
-def _reap_orphaned_subactors():
-    '''
-    Session-scoped autouse fixture: after the whole test
-    session finishes, SIGINT any subactor processes still
-    parented to this `pytest` process, wait a bounded
-    grace window, then SIGKILL survivors.
-
-    Rationale: under fork-based spawn backends (notably
-    `main_thread_forkserver`), a test that times out or bails
-    mid-teardown can leave subactor forks alive. Without
-    this reap, they linger across sessions and compete
-    for ports / inherit pytest's capture-pipe fds — which
-    flakifies later tests. SC-polite discipline: SIGINT
-    first to let the subactor's trio cancel shield + IPC
-    teardown paths run before we escalate.
-
-    Matching companion CLI: `scripts/tractor-reap` for
-    the pytest-died-mid-session case.
-
-    '''
-    import os
-    parent_pid: int = os.getpid()
-    yield
-    from tractor._testing._reap import (
-        find_descendants,
-        reap,
-    )
-    pids: list[int] = find_descendants(parent_pid)
-    if pids:
-        reap(pids, grace=3.0)
-
-
-@pytest.fixture
-def reap_subactors_per_test() -> int:
-    '''
-    Per-test (function-scoped) zombie-subactor reaper —
-    **opt-in**, NOT autouse.
-
-    When a test's teardown fails to fully cancel its actor
-    tree (e.g. an asyncio cancel-cascade times out under
-    `main_thread_forkserver`, pytest hits its 200s wall-
-    clock and abandons), the leftover subactor lingers as a
-    direct child of `pytest` and squats on whatever
-    registrar port / UDS path / shm segment it had bound.
-    Subsequent tests trying to allocate the same resource
-    fail — and with backends that bind a session-shared
-    `reg_addr`, that means EVERY following test in the
-    suite cascades. The session-scoped sibling
-    (`_reap_orphaned_subactors`) only kicks in at session
-    end which is too late to save the cascade.
-
-    Apply at module-level on the topically-problematic
-    test files via:
-
-    ```python
-    pytestmark = pytest.mark.usefixtures(
-        'reap_subactors_per_test',
-    )
-    ```
-
-    Or per-test via the same `usefixtures` mark on a
-    specific function. Intentionally NOT autouse so the
-    fixture's presence on a module signals "this module's
-    teardown is known-leaky enough to contaminate
-    siblings"; the visibility helps future-us track down
-    root causes rather than burying them under blanket
-    cleanup.
-
-    '''
-    import os
-    parent_pid: int = os.getpid()
-    yield parent_pid
-    from tractor._testing._reap import (
-        find_descendants,
-        reap,
-    )
-    pids: list[int] = find_descendants(parent_pid)
-    if pids:
-        reap(pids, grace=3.0)
 
 
 @pytest.fixture(scope='session')

@@ -22,7 +22,8 @@ from tractor._testing import (
 
 pytest_plugins: list[str] = [
     'pytester',
-    'tractor._testing.pytest',
+    # NOTE, now loaded in `pytest-ini` section of `pyproject.toml`
+    # 'tractor._testing.pytest',
 ]
 
 _ci_env: bool = os.environ.get('CI', False)
