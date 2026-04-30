@@ -23,6 +23,14 @@ Two cleanup phases (run in order when both are enabled):
    hard-crashing actor leaves leaked segments that
    nothing else GCs.
 
+3. **UDS sweep** (`--uds` / `--uds-only`) — unlinks
+   `${XDG_RUNTIME_DIR}/tractor/<name>@<pid>.sock` files
+   whose binder pid is dead (or the `1616` registry
+   sentinel). Needed because the IPC server's
+   `os.unlink()` cleanup lives in a `finally:` block
+   that doesn't always run on hard exits (SIGKILL,
+   escaped `KeyboardInterrupt`, etc.) — see issue #452.
+
 Process-reap detection modes (auto-selected):
 
     --parent <pid>  : descendant-mode — kill procs whose
@@ -50,12 +58,18 @@ Usage:
     # only the shm sweep, skip process reap
     scripts/tractor-reap --shm-only
 
+    # process reap + shm + UDS sweep (the works)
+    scripts/tractor-reap --shm --uds
+
+    # only UDS sweep
+    scripts/tractor-reap --uds-only
+
     # from inside a still-live supervisor
     scripts/tractor-reap --parent 12345
 
     # dry-run: list what would be reaped, don't act
     scripts/tractor-reap -n
-    scripts/tractor-reap --shm -n
+    scripts/tractor-reap --shm --uds -n
 
 '''
 import argparse
@@ -118,7 +132,28 @@ def main() -> int:
         action='store_true',
         help='skip process reap; only do the shm sweep',
     )
+    parser.add_argument(
+        '--uds',
+        action='store_true',
+        help=(
+            'after process reap, also unlink orphaned '
+            '${XDG_RUNTIME_DIR}/tractor/*.sock files '
+            'whose binder pid is dead (or the 1616 '
+            'registry sentinel). See issue #452.'
+        ),
+    )
+    parser.add_argument(
+        '--uds-only',
+        action='store_true',
+        help='skip process reap + shm; only do the UDS sweep',
+    )
     args = parser.parse_args()
+    # any *-only flag also skips the process reap phase
+    skip_proc_reap: bool = (
+        args.shm_only
+        or
+        args.uds_only
+    )
 
     # import lazily so `--help` doesn't require the tractor
     # package to be importable (e.g. when running from a
@@ -129,14 +164,16 @@ def main() -> int:
         find_descendants,
         find_orphans,
         find_orphaned_shm,
+        find_orphaned_uds,
         reap,
         reap_shm,
+        reap_uds,
     )
 
     rc: int = 0
 
-    # --- phase 1: process reap (skipped under --shm-only) ---
-    if not args.shm_only:
+    # --- phase 1: process reap (skipped under --*-only) ---
+    if not skip_proc_reap:
         if args.parent is not None:
             pids: list[int] = find_descendants(args.parent)
             mode: str = f'descendants of PPid={args.parent}'
@@ -170,6 +207,24 @@ def main() -> int:
             )
         else:
             _, errors = reap_shm(leaked)
+            if errors:
+                rc = 1
+
+    # --- phase 3: UDS sweep (opt-in) ---
+    if args.uds or args.uds_only:
+        leaked_uds: list[str] = find_orphaned_uds()
+        if not leaked_uds:
+            print(
+                '[tractor-reap] no orphaned UDS sock-files '
+                'to sweep'
+            )
+        elif args.dry_run:
+            print(
+                f'[tractor-reap] dry-run — {len(leaked_uds)} '
+                f'orphaned UDS sock-file(s):\n  {leaked_uds}'
+            )
+        else:
+            _, errors = reap_uds(leaked_uds)
             if errors:
                 rc = 1
 
