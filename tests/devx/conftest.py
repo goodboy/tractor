@@ -96,7 +96,9 @@ def spawn(
         # disable all ANSI color output
         # os.environ['NO_COLOR'] = '1'
 
-    def set_spawn_method():
+    def set_spawn_method(
+        start_method: str,
+    ):
         '''
         Drive the actor-spawn backend inside the spawned
         `examples/debugging/<script>.py` subproc via env-var
@@ -106,7 +108,9 @@ def spawn(
         '''
         os.environ['TRACTOR_SPAWN_METHOD'] = start_method
 
-    def set_loglevel():
+    def set_loglevel(
+        loglevel: str|None,
+    ):
         '''
         Forward the test-suite parametrized `loglevel` into the
         spawned `examples/debugging/<script>.py` subproc via
@@ -125,12 +129,24 @@ def spawn(
     def _spawn(
         cmd: str,
         expect_timeout: float = 4,
+        start_method: str = start_method,
+        loglevel: str|None = None,
         **mkcmd_kwargs,
     ) -> pty_spawn.spawn:
+        '''
+        Inner closure handed to consumer tests to invoke
+        `pytest.Pytester.spawn`
+
+        '''
         nonlocal spawned
         unset_colors()
-        set_spawn_method()
-        set_loglevel()
+        set_spawn_method(start_method=start_method)
+        set_loglevel(
+            loglevel=loglevel,
+            # ?TODO^ when should this be set by `--ll <level>` ?
+            # by default we apply 'error' but there should be a diff
+            # vs. when the flag IS NOT passed?
+        )
         spawned = testdir.spawn(
             cmd=mk_cmd(
                 cmd,
@@ -322,10 +338,13 @@ def in_prompt_msg(
 def assert_before(
     child: SpawnBase,
     patts: list[str],
-
     **kwargs,
+) -> str:
+    '''
+    Assert a patter is in `child.before.decode() -> str`,
+    return the full `.before` output on success.
 
-) -> None:
+    '''
     __tracebackhide__: bool = False
 
     assert in_prompt_msg(
