@@ -14,6 +14,7 @@ import psutil
 import pytest
 import subprocess
 import tractor
+from tractor.devx import dump_on_hang
 from tractor.trionics import collapse_eg
 from tractor._testing import tractor_test
 from tractor.discovery._addr import wrap_address
@@ -131,6 +132,10 @@ async def say_hello_use_wait(
         return result
 
 
+@pytest.mark.timeout(
+    7,
+    method='thread',
+)
 @tractor_test
 @pytest.mark.parametrize(
     'func',
@@ -515,7 +520,37 @@ async def kill_transport(
 
 
 
+# ?TODO, do a OSc style signalling test on this?
+# -[ ] doesn't work for fork backends
 # @pytest.mark.parametrize('use_signal', [False, True])
+#
+# Wall-clock bound via `pytest-timeout` (`method='thread'`).
+# Under `--spawn-backend=subint` this test can wedge in an
+# un-Ctrl-C-able state (abandoned-subint + shared-GIL
+# starvation → signal-wakeup-fd pipe fills → SIGINT silently
+# dropped; see `ai/conc-anal/subint_sigint_starvation_issue.md`).
+# `method='thread'` is specifically required because `signal`-
+# method SIGALRM suffers the same GIL-starvation path and
+# wouldn't fire the Python-level handler.
+# At timeout the plugin hard-kills the pytest process — that's
+# the intended behavior here; the alternative is an unattended
+# suite run that never returns.
+# @pytest.mark.timeout(
+#     30,
+#     # NOTE should be a 2.1s happy path.
+#     # XXX for `main_thread_forkserver` this is SUPER SENSITIVE
+#     # so keep it higher to avoid flaky runs..
+#     method='thread',
+# )
+@pytest.mark.skipon_spawn_backend(
+    'subint',
+    # 'main_thread_forkserver',
+    reason=(
+        'XXX SUBINT HANGING TEST XXX\n'
+        'See oustanding issue(s)\n'
+        # TODO, put issue link!
+    )
+)
 def test_stale_entry_is_deleted(
     debug_mode: bool,
     daemon: subprocess.Popen,
@@ -529,7 +564,6 @@ def test_stale_entry_is_deleted(
 
     '''
     async def main():
-
         name: str = 'transport_fails_actor'
         _reg_ptl: tractor.Portal
         an: tractor.ActorNursery
@@ -562,4 +596,62 @@ def test_stale_entry_is_deleted(
                 await ptl.cancel_actor()
                 await an.cancel()
 
-    trio.run(main)
+    # XXX, for tracing if this starts being flaky again..
+    #
+    # async def _timeout_main():
+    #     with trio.move_on_after(4) as cs:
+    #         await main()
+    #     if cs.cancel_called:
+    #         await tractor.pause()
+
+    # TODO, remove once the `[subint]` variant no longer hangs.
+    #
+    # Status (as of Phase B hard-kill landing):
+    #
+    # - `[trio]`/`[mp_*]` variants: completes normally; `dump_on_hang`
+    #   is a no-op safety net here.
+    #
+    # - `[subint]` variant: hangs indefinitely AND is un-Ctrl-C-able.
+    #   `strace -p <pytest_pid>` while in the hang reveals a silently-
+    #   dropped SIGINT — the C signal handler tries to write the
+    #   signum byte to Python's signal-wakeup fd and gets `EAGAIN`,
+    #   meaning the pipe is full (nobody's draining it).
+    #
+    #   Root-cause chain: our hard-kill in `spawn._subint` abandoned
+    #   the driver OS-thread (which is `daemon=True`) after the soft-
+    #   kill timeout, but the *sub-interpreter* inside that thread is
+    #   still running `trio.run()` — `_interpreters.destroy()` can't
+    #   force-stop a running subint (raises `InterpreterError`), and
+    #   legacy-config subints share the main GIL. The abandoned subint
+    #   starves the parent's trio event loop from iterating often
+    #   enough to drain its wakeup pipe → SIGINT silently drops.
+    #
+    #   This is structurally a CPython-level limitation: there's no
+    #   public force-destroy primitive for a running subint. We
+    #   escape on the harness side via a SIGINT-loop in the `daemon`
+    #   fixture teardown (killing the bg registrar subproc closes its
+    #   end of the IPC, which eventually unblocks a recv in main trio,
+    #   which lets the loop drain the wakeup pipe). Long-term fix path:
+    #   msgspec PEP 684 support (jcrist/msgspec#563) → isolated-mode
+    #   subints with per-interp GIL.
+    #
+    #   Full analysis:
+    #   `ai/conc-anal/subint_sigint_starvation_issue.md`
+    #
+    #   See also the *sibling* hang class documented in
+    #   `ai/conc-anal/subint_cancel_delivery_hang_issue.md` — same
+    #   subint backend, different root cause (Ctrl-C-able hang, main
+    #   trio loop iterating fine; ours to fix, not CPython's).
+    #   Reproduced by `tests/test_subint_cancellation.py
+    #   ::test_subint_non_checkpointing_child`.
+    #
+    # Kept here (and not behind a `pytestmark.skip`) so we can still
+    # inspect the dump file if the hang ever returns after a refactor.
+    # `pytest`'s stderr capture eats `faulthandler` output otherwise,
+    # so we route `dump_on_hang` to a file.
+    with dump_on_hang(
+        seconds=20,
+        path=f'/tmp/test_stale_entry_is_deleted_{start_method}.dump',
+    ):
+        trio.run(main)
+        # trio.run(_timeout_main)

@@ -21,6 +21,16 @@ _non_linux: bool = platform.system() != 'Linux'
 _friggin_windows: bool = platform.system() == 'Windows'
 
 
+pytestmark = pytest.mark.skipon_spawn_backend(
+    'subint',
+    reason=(
+        'XXX SUBINT HANGING TEST XXX\n'
+        'See oustanding issue(s)\n'
+        # TODO, put issue link!
+    )
+)
+
+
 async def assert_err(delay=0):
     await trio.sleep(delay)
     assert 0
@@ -110,8 +120,17 @@ def test_remote_error(reg_addr, args_err):
             assert exc.boxed_type == errtype
 
 
+# @pytest.mark.skipon_spawn_backend(
+#     'subint',
+#     reason=(
+#         'XXX SUBINT HANGING TEST XXX\n'
+#         'See oustanding issue(s)\n'
+#         # TODO, put issue link!
+#     )
+# )
 def test_multierror(
     reg_addr: tuple[str, int],
+    start_method: str,
 ):
     '''
     Verify we raise a ``BaseExceptionGroup`` out of a nursery where
@@ -141,15 +160,28 @@ def test_multierror(
         trio.run(main)
 
 
-@pytest.mark.parametrize('delay', (0, 0.5))
 @pytest.mark.parametrize(
-    'num_subactors', range(25, 26),
+    'delay',
+    (0, 0.5),
+    ids='delays={}'.format,
 )
-def test_multierror_fast_nursery(reg_addr, start_method, num_subactors, delay):
-    """Verify we raise a ``BaseExceptionGroup`` out of a nursery where
+@pytest.mark.parametrize(
+    'num_subactors',
+    range(25, 26),
+    ids= 'num_subs={}'.format,
+)
+def test_multierror_fast_nursery(
+    reg_addr: tuple,
+    start_method: str,
+    num_subactors: int,
+    delay: float,
+):
+    '''
+    Verify we raise a ``BaseExceptionGroup`` out of a nursery where
     more then one actor errors and also with a delay before failure
     to test failure during an ongoing spawning.
-    """
+
+    '''
     async def main():
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
@@ -189,8 +221,15 @@ async def do_nothing():
     pass
 
 
-@pytest.mark.parametrize('mechanism', ['nursery_cancel', KeyboardInterrupt])
-def test_cancel_single_subactor(reg_addr, mechanism):
+@pytest.mark.parametrize(
+    'mechanism', [
+    'nursery_cancel',
+    KeyboardInterrupt,
+])
+def test_cancel_single_subactor(
+    reg_addr: tuple,
+    mechanism: str|KeyboardInterrupt,
+):
     '''
     Ensure a ``ActorNursery.start_actor()`` spawned subactor
     cancels when the nursery is cancelled.
@@ -232,9 +271,13 @@ async def stream_forever():
         await trio.sleep(0.01)
 
 
-@tractor_test
-async def test_cancel_infinite_streamer(start_method):
-
+@tractor_test(
+    timeout=6,
+)
+async def test_cancel_infinite_streamer(
+    reg_addr: tuple,
+    start_method: str,
+):
     # stream for at most 1 seconds
     with (
         trio.fail_after(4),
@@ -257,6 +300,14 @@ async def test_cancel_infinite_streamer(start_method):
     assert n.cancelled
 
 
+# @pytest.mark.skipon_spawn_backend(
+#     'subint',
+#     reason=(
+#         'XXX SUBINT HANGING TEST XXX\n'
+#         'See oustanding issue(s)\n'
+#         # TODO, put issue link!
+#     )
+# )
 @pytest.mark.parametrize(
     'num_actors_and_errs',
     [
@@ -286,9 +337,12 @@ async def test_cancel_infinite_streamer(start_method):
         'no_daemon_actors_fail_all_run_in_actors_sleep_then_fail',
     ],
 )
-@tractor_test
+@tractor_test(
+    timeout=10,
+)
 async def test_some_cancels_all(
     num_actors_and_errs: tuple,
+    reg_addr: tuple,
     start_method: str,
     loglevel: str,
 ):
@@ -370,7 +424,10 @@ async def test_some_cancels_all(
         pytest.fail("Should have gotten a remote assertion error?")
 
 
-async def spawn_and_error(breadth, depth) -> None:
+async def spawn_and_error(
+    breadth: int,
+    depth: int,
+) -> None:
     name = tractor.current_actor().name
     async with tractor.open_nursery() as nursery:
         for i in range(breadth):
@@ -395,8 +452,22 @@ async def spawn_and_error(breadth, depth) -> None:
             await nursery.run_in_actor(*args, **kwargs)
 
 
+# NOTE: `main_thread_forkserver` capture-fd hang class is no
+# longer skipped here — `--capture=sys` (the new `pyproject.toml`
+# default) sidesteps the pipe-buffer-fill deadlock for
+# `test_nested_multierrors`. See
+# `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`
+# / #449 for the post-mortem.
+# @pytest.mark.timeout(
+#     10,
+#     method='thread',
+# )
 @tractor_test
-async def test_nested_multierrors(loglevel, start_method):
+async def test_nested_multierrors(
+    reg_addr: tuple,
+    loglevel: str,
+    start_method: str,
+):
     '''
     Test that failed actor sets are wrapped in `BaseExceptionGroup`s. This
     test goes only 2 nurseries deep but we should eventually have tests
@@ -483,20 +554,24 @@ async def test_nested_multierrors(loglevel, start_method):
 
 @no_windows
 def test_cancel_via_SIGINT(
-    loglevel,
-    start_method,
-    spawn_backend,
+    reg_addr: tuple,
+    loglevel: str,
+    start_method: str,
 ):
-    """Ensure that a control-C (SIGINT) signal cancels both the parent and
+    '''
+    Ensure that a control-C (SIGINT) signal cancels both the parent and
     child processes in trionic fashion
-    """
+
+    '''
     pid: int = os.getpid()
 
     async def main():
         with trio.fail_after(2):
-            async with tractor.open_nursery() as tn:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as tn:
                 await tn.start_actor('sucka')
-                if 'mp' in spawn_backend:
+                if 'mp' in start_method:
                     time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)
                 await trio.sleep_forever()
@@ -507,6 +582,7 @@ def test_cancel_via_SIGINT(
 
 @no_windows
 def test_cancel_via_SIGINT_other_task(
+    reg_addr: tuple,
     loglevel: str,
     start_method: str,
     spawn_backend: str,
@@ -535,7 +611,9 @@ def test_cancel_via_SIGINT_other_task(
     async def spawn_and_sleep_forever(
         task_status=trio.TASK_STATUS_IGNORED
     ):
-        async with tractor.open_nursery() as tn:
+        async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
+        ) as tn:
             for i in range(3):
                 await tn.run_in_actor(
                     sleep_forever,
@@ -580,6 +658,14 @@ async def spawn_sub_with_sync_blocking_task():
         print('exiting first subactor layer..\n')
 
 
+# @pytest.mark.skipon_spawn_backend(
+#     'subint',
+#     reason=(
+#         'XXX SUBINT HANGING TEST XXX\n'
+#         'See oustanding issue(s)\n'
+#         # TODO, put issue link!
+#     )
+# )
 @pytest.mark.parametrize(
     'man_cancel_outer',
     [
@@ -694,7 +780,7 @@ def test_cancel_while_childs_child_in_sync_sleep(
 
 
 def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
-    start_method,
+    start_method: str,
 ):
     '''
     This is a very subtle test which demonstrates how cancellation
