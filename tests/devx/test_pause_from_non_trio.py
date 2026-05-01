@@ -66,19 +66,28 @@ def test_pause_from_sync(
     # XXX required for `breakpoint()` overload and
     # thus`tractor.devx.pause_from_sync()`.
     pytest.importorskip('greenback')
-    child = spawn('sync_bp')
+    child = spawn(
+        'sync_bp',
+        loglevel='pdb',  # XXX pattern matching
+    )
 
     # first `sync_pause()` after nurseries open
     child.expect(PROMPT)
-    assert_before(
+    _before: str = assert_before(
         child,
         [
-            # pre-prompt line
-            _pause_msg,
-            "<Task '__main__.main'",
+            # devx-loglevel
+            # "imported <module 'greenback' from",
+            # "successfully scheduled `._pause()` in `trio` thread on behalf of <Task",
+
+            _pause_msg,  # pre-prompt line
             "('root'",
+            "<Task '__main__.main'",
+            "tractor.pause_from_sync()",
         ]
     )
+    # XXX `enable_stack_on_sig=False` in script
+    assert 'stackscope' not in _before
     if ctlc:
         do_ctlc(child)
         # ^NOTE^ subactor not spawned yet; don't need extra delay.
@@ -88,18 +97,18 @@ def test_pause_from_sync(
     # first `await tractor.pause()` inside `p.open_context()` body
     child.expect(PROMPT)
 
-    # XXX shouldn't see gb loaded message with PDB loglevel!
-    # assert not in_prompt_msg(
-    #     child,
-    #     ['`greenback` portal opened!'],
-    # )
     # should be same root task
     assert_before(
         child,
         [
+            # XXX should see gb loaded with devx-loglevel.
+            # "`greenback` portal opened!",
+            # "Activated `greenback` for `tractor.pause_from_sync()` support!",
+
             _pause_msg,
-            "<Task '__main__.main'",
             "('root'",
+            "<Task '__main__.main'",
+            "tractor.pause()",
         ]
     )
 
@@ -130,17 +139,17 @@ def test_pause_from_sync(
     # `Lock.acquire()`-ed
     # (NOT both, which will result in REPL clobbering!)
     attach_patts: dict[str, list[str]] = {
-        'subactor': [
-            "'start_n_sync_pause'",
-            "('subactor'",
+        "|_<Task 'start_n_sync_pause'": [
+            "|_('subactor'",
+            "tractor.pause_from_sync()",
         ],
-        'inline_root_bg_thread': [
-            "<Thread(inline_root_bg_thread",
+        "|_<Thread(inline_root_bg_thread": [
             "('root'",
+            "breakpoint(hide_tb=hide_tb)",
         ],
-        'start_soon_root_bg_thread': [
-            "<Thread(start_soon_root_bg_thread",
-            "('root'",
+        "|_<Thread(start_soon_root_bg_thread": [
+            "|_('root'",
+            "tractor.pause_from_sync()",
         ],
     }
     conts: int = 0  # for debugging below matching logic on failure

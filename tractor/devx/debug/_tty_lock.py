@@ -181,7 +181,7 @@ class Lock:
         return (
             f'<{cls.__name__}(\n'
             f'{body}'
-            ')>\n\n'
+            ')>\n'
         )
 
     @classmethod
@@ -282,7 +282,7 @@ class Lock:
             ):
                 message += (
                     '-> No new task holds the TTY lock!\n\n'
-                    f'{Lock.repr()}\n'
+                    f'{Lock.repr()}'
                 )
 
             elif (
