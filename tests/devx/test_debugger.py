@@ -765,6 +765,7 @@ def test_multi_subactors_root_errors(
 def test_multi_nested_subactors_error_through_nurseries(
     ci_env: bool,
     spawn: PexpectSpawner,
+    start_method: str,
 
     # TODO: address debugger issue for nested tree:
     # https://github.com/goodboy/tractor/issues/320
@@ -781,16 +782,16 @@ def test_multi_nested_subactors_error_through_nurseries(
     # A test (below) has now been added to explicitly verify this is
     # fixed.
 
-    child = spawn('multi_nested_subactors_error_up_through_nurseries')
-
-    # timed_out_early: bool = False
-
+    child = spawn(
+        'multi_nested_subactors_error_up_through_nurseries',
+        loglevel='pdb',
+    )
     for (
         i,
         send_char,
     ) in enumerate(itertools.cycle(['c', 'q'])):
 
-        timeout: float = -1
+        timeout: float = child.timeout
         if (
             _non_linux
             and
@@ -802,6 +803,15 @@ def test_multi_nested_subactors_error_through_nurseries(
         # can take longer to arrive at a prompt.
         elif i == 0:
             timeout = 5
+
+        # XXX forking backends may take longer due to
+        # determinstic IPC cancellation.
+        if (
+            start_method in [
+                'main_thread_forkserver',
+            ]
+        ):
+            timeout += 4
 
         try:
             child.expect(
@@ -1187,7 +1197,11 @@ def test_ctxep_pauses_n_maybe_ipc_breaks(
     mashed and zombie reaper kills sub with no hangs.
 
     '''
-    child = spawn('subactor_bp_in_ctx')
+    child = spawn(
+        'subactor_bp_in_ctx',
+        loglevel='devx'
+        # ^XXX REQUIRED for below patt matching!
+    )
     child.expect(PROMPT)
 
     # 3 iters for the `gen()` pause-points
@@ -1277,7 +1291,11 @@ def test_crash_handling_within_cancelled_root_actor(
     call.
 
     '''
-    child = spawn('root_self_cancelled_w_error')
+    child = spawn(
+        'root_self_cancelled_w_error',
+        loglevel='cancel',
+        # ^XXX REQUIRED for below patt matching!
+    )
     child.expect(PROMPT)
 
     assert_before(
