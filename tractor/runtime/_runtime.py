@@ -940,32 +940,30 @@ class Actor:
                 # `tractor._testing.pytest`'s `--enable-stackscope`
                 # CLI flag — env var propagates via fork-inherited
                 # environ).
-                import os
-                if (
-                    rvs['_debug_mode']
-                    or
-                    os.environ.get('TRACTOR_ENABLE_STACKSCOPE')
-                ):
-                    from ..devx import (
-                        enable_stack_on_sig,
-                        maybe_init_greenback,
-                    )
-                    try:
-                        # TODO: maybe return some status msgs upward
-                        # to that we can emit them in `con_status`
-                        # instead?
-                        log.devx(
-                            'Enabling `stackscope` traces on SIGUSR1'
-                        )
-                        enable_stack_on_sig()
+                if rvs['_debug_mode']:
+                    if (
+                        rvs.get('use_stackscope')
+                        or
+                        os.environ.get('TRACTOR_ENABLE_STACKSCOPE')
+                    ):
+                        from ..devx import enable_stack_on_sig
+                        try:
+                            # TODO: maybe return some status msgs upward
+                            # to that we can emit them in `con_status`
+                            # instead?
+                            log.devx(
+                                'Enabling `stackscope` traces on SIGUSR1'
+                            )
+                            enable_stack_on_sig()
 
-                    except ImportError:
-                        log.warning(
-                            '`stackscope` not installed for use in '
-                            'debug mode / `--enable-stackscope`!'
-                        )
+                        except ImportError:
+                            log.warning(
+                                '`stackscope` not installed for use in '
+                                'debug mode / `--enable-stackscope`!'
+                            )
 
                     if rvs.get('use_greenback', False):
+                        from ..devx import maybe_init_greenback
                         maybe_mod: ModuleType|None = await maybe_init_greenback()
                         if maybe_mod:
                             log.devx(

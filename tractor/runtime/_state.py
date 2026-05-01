@@ -93,6 +93,7 @@ class RuntimeVars(Struct):
     repl_fixture: bool|Callable = False  # |AbstractContextManager[bool]
     # for `tractor.pause_from_sync()` & `breakpoint()` support
     use_greenback: bool = False
+    use_stackscope: bool = False
 
     # infected-`asyncio`-mode: `trio` running as guest.
     _is_infected_aio: bool = False
@@ -139,8 +140,9 @@ _RUNTIME_VARS_DEFAULTS: dict[str, Any] = {
     # `debug_mode: bool` settings
     '_debug_mode': False,  # bool
     'repl_fixture': False,  # |AbstractContextManager[bool]
-    # for `tractor.pause_from_sync()` & `breakpoint()` support
-    'use_greenback': False,
+    
+    'use_greenback': False,  # `.pause_from_sync()`/`breakpoint()`
+    'use_stackscope': False,  # trio-task-stack dumps on SIGUSR1
 
     # infected-`asyncio`-mode: `trio` running as guest.
     '_is_infected_aio': False,

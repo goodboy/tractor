@@ -381,11 +381,13 @@ def enable_stack_on_sig(
                 message=r"coroutine method '(asend|athrow)' .* was never awaited",
             )
             import stackscope
+            _state._runtime_vars['use_stackscope'] = True
     except ImportError:
         log.warning(
             'The `stackscope` lib is not installed!\n'
             '`Ignoring enable_stack_on_sig() call!\n'
         )
+        assert not _state._runtime_vars['use_stackscope']
         return None
 
     # Capture the trio token if we're inside `trio.run`
