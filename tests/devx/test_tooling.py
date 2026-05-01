@@ -52,6 +52,8 @@ def test_shield_pause(
         ...,
         PexpectSpawner,
     ],
+    start_method: str,
+    request: pytest.FixtureRequest,
 ):
     '''
     Verify the `tractor.pause()/.post_mortem()` API works inside an
@@ -119,6 +121,21 @@ def test_shield_pause(
     # (above) and `end-of-('hanger'` (below).
     handle_out_of_order: bool = False
 
+    # XXX, when capfd is NOT used we don't expect to
+    # see the logging output from the subactor.
+    if (no_capfd := (start_method in [
+            'main_thread_forkserver',
+        ])
+    ):
+        opts = request.config.option
+        assert opts.spawn_backend == start_method
+        # ?XXX? i guess the `testdir` fixture "pretends to" reset
+        # this to the default 'fd'??
+        # assert opts.capture in [
+        #     'sys',
+        #     'no',
+        # ]
+
     if (
         handle_out_of_order
         and
@@ -128,25 +145,30 @@ def test_shield_pause(
          assert 'Relaying `SIGUSR1`[10] to sub-actor' in _before
 
     else:
-        expect(
+        _before = expect(
             child,
             'Relaying `SIGUSR1`\\[10\\] to sub-actor',
         )
-        expect(
-            child,
-            # end-of-subactor's-tree delimiter
-            "end-of-\('hanger'",
-        )
-        _before: str = assert_before(
-            child,
-            [
-                "('hanger'",  # uid line
+        # _before: str = assert_before(
+        #     child,
+        #     ["('hanger'",]  # uid line
+        # )
+        if not no_capfd:
+            expect(
+                child,
+                # end-of-subactor's-tree delimiter
+                "end-of-\('hanger'",
+            )
+            _before: str = assert_before(
+                child,
+                [
+                    "('hanger'",  # uid line
 
-                # TODO!? SEE ABOVE
-                # hanger LOC where it's shield-halted
-                # 'await trio.sleep_forever()  # in subactor',
-            ]
-        )
+                    # TODO!? SEE ABOVE
+                    # hanger LOC where it's shield-halted
+                    # 'await trio.sleep_forever()  # in subactor',
+                ]
+            )
 
 
     # simulate the user sending a ctl-c to the hanging program.
@@ -163,14 +185,19 @@ def test_shield_pause(
         _shutdown_msg,
         timeout=6,
     )
-    assert_before(
-        child,
-        [
-            'raise KeyboardInterrupt',
+    expect_on_teardown: list[str] = [
+        'raise KeyboardInterrupt',
+        'Root actor terminated',
+    ]
+    if not no_capfd:
+        expect_on_teardown += [
             # 'Shutting down actor runtime',
             '#T-800 deployed to collect zombie B0',
             "'--uid', \"('hanger',",
         ]
+    assert_before(
+        child,
+        expect_on_teardown,
     )
 
 
