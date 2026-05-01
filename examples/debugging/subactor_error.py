@@ -9,7 +9,6 @@ async def name_error():
 async def main():
     async with tractor.open_nursery(
         debug_mode=True,
-        # loglevel='transport',
     ) as an:
 
         # TODO: ideally the REPL arrives at this frame in the parent,

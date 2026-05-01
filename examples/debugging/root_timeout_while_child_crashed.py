@@ -1,4 +1,3 @@
-
 import trio
 import tractor
 
@@ -9,16 +8,22 @@ async def key_error():
 
 
 async def main():
-    """Root dies 
+    '''
+    Root is fail-after-cancelled while blocking and child RPC fails
+    simultaneously.
 
-    """
+    '''
     async with tractor.open_nursery(
         debug_mode=True,
-        loglevel='debug'
+        # loglevel='debug'  # ?XXX required?
     ) as n:
 
         # spawn both actors
         portal = await n.run_in_actor(key_error)
+        print(
+            f'Child is up @ {portal.chan.aid.reprol()}'
+        )
+
 
         # XXX: originally a bug caused by this is where root would enter
         # the debugger and clobber the tty used by the repl even though
