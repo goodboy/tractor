@@ -95,6 +95,8 @@ def spawn(
         os.environ['PYTHON_COLORS'] = '0'
         # disable all ANSI color output
         # os.environ['NO_COLOR'] = '1'
+        # ?TODO, doesn't seem to disable prompt color
+        # for `pdbp`?
 
     def set_spawn_method(
         start_method: str,
