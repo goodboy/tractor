@@ -39,8 +39,8 @@ async def main():
     '''
     async with tractor.open_nursery(
         debug_mode=True,
-        loglevel='devx',
-        enable_transports=['uds'],
+        enable_transports=['uds'],  # TODO, apss this via osenv?
+        loglevel='devx',  # XXX, required for test!
     ) as n:
 
         # spawn both actors

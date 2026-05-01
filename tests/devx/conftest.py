@@ -269,13 +269,10 @@ def ctlc(
 
 def expect(
     child,
-
-    # normally a `pdb` prompt by default
-    patt: str,
-
+    patt: str,  # often a `pdbp`-prompt
     **kwargs,
 
-) -> None:
+) -> str:
     '''
     Expect wrapper that prints last seen console
     data before failing.
@@ -286,6 +283,8 @@ def expect(
             patt,
             **kwargs,
         )
+        before = str(child.before.decode())
+        return before
     except TIMEOUT:
         before = str(child.before.decode())
         print(before)
