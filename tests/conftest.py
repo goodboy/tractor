@@ -135,25 +135,30 @@ def pytest_addoption(
         "--ll",
         action="store",
         dest='loglevel',
-        default='ERROR', help="logging level to set when testing"
+        default=None,
+        help="logging level to set when testing",
     )
 
 
 @pytest.fixture(scope='session', autouse=True)
 def loglevel(
     request: pytest.FixtureRequest,
-) -> str:
+) -> str|None:
     import tractor
     orig = tractor.log._default_loglevel
-    level = tractor.log._default_loglevel = request.config.option.loglevel
+    flag_level: str|None = request.config.option.loglevel
+
+    if flag_level is not None:
+        tractor.log._default_loglevel = flag_level
+
     log = tractor.log.get_console_log(
-        level=level,
+        level=flag_level,
         name='tractor',  # <- enable root logger
     )
     log.info(
-        f'Test-harness set runtime loglevel: {level!r}\n'
+        f'Test-harness set runtime loglevel: {flag_level!r}\n'
     )
-    yield level
+    yield flag_level
     tractor.log._default_loglevel = orig
 
 
