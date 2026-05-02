@@ -52,16 +52,30 @@ pytest_plugins: tuple[str, ...] = (
 if TYPE_CHECKING:
     from argparse import Namespace
 
+_cap_sys_passed_as_flag: bool = False
+_cap_fd_set: bool = False
+
 # XXX REQUIRED in order to enforce `--capture=` flag
 # pre test session.
 # https://docs.pytest.org/en/stable/reference/reference.html#bootstrapping-hooks
+@pytest.hookimpl(tryfirst=True)
 def pytest_load_initial_conftests(
     early_config: pytest.Config,
     parser: pytest.Parser,
     args: list[str],
 ):
+    global _cap_sys_passed_as_flag, _cap_fd_set
+
     opts: Namespace = early_config.option
+    if opts.capture == 'fd':
+        _cap_fd_set = True
+
     opts_w_args: Namespace = parser.parse_known_args(args)
+    if opts_w_args.capture == 'fd':
+        _cap_fd_set = True
+
+    if '--capture=sys' in args:
+        _cap_sys_passed_as_flag = True
 
     # XXX, ALWAYS apply capsys for fork based spawners:
     # * main_thread_forkserver
@@ -94,14 +108,23 @@ def pytest_load_initial_conftests(
         (spawner := opts_w_args.spawn_backend) in [
             'main_thread_forkserver',
         ]
-        and
-        opts.capture == 'fd'
     ):
         print(
             f'XXX SETTING CAPSYS due to spawning backend XXX\n'
             f'--spawn-backend={spawner!r}\n'
         )
         opts.capture = 'sys'
+        # ^TODO XXX?/
+        # seems like this doesn't get set by the above!?
+        args.append(
+            '--capture=sys',
+        )
+        out = parser.parse_known_and_unknown_args(
+            args,
+            early_config.option,
+        )
+        assert out[0].capture == 'sys'
+        # breakpoint()
 
     # TODO, set various `$TRACTOR_X*` osenv vars here!
     print(
@@ -187,11 +210,17 @@ def tractor_test(
     # injection (via `__wrapped__`) without leaking the async
     # nature.
     @wraps(wrapped)
-    def wrapper(**kwargs):
+    def wrapper(
+        set_fork_aware_capture: pytest.CaptureFixture|None = None,
+        # ^NOTE when set, the decorated fn declared as fixture-param.
+
+        **kwargs,
+    ):
         __tracebackhide__: bool = hide_tb
 
         # NOTE, ensure we inject any test-fn declared fixture
         # names.
+        sig = inspect.signature(wrapped)
         for kw in [
             'reg_addr',
             'loglevel',
@@ -200,8 +229,12 @@ def tractor_test(
             'tpt_proto',
             'timeout',
         ]:
-            if kw in inspect.signature(wrapped).parameters:
+            if kw in sig.parameters:
                 assert kw in kwargs
+
+        if 'set_fork_aware_capture' in sig.parameters:
+            assert set_fork_aware_capture
+            kwargs['set_fork_aware_capture'] = set_fork_aware_capture
 
         # Extract runtime settings as locals for
         # `open_root_actor()`; these must NOT leak into
@@ -245,7 +278,6 @@ def tractor_test(
                     # invoke test-fn body IN THIS task
                     await wrapped(**kwargs)
 
-        # invoke runtime via a root task.
         return trio.run(
             partial(
                 _main,
@@ -259,13 +291,6 @@ def tractor_test(
 def pytest_addoption(
     parser: pytest.Parser,
 ):
-    # parser.addoption(
-    #     "--ll",
-    #     action="store",
-    #     dest='loglevel',
-    #     default='ERROR', help="logging level to set when testing"
-    # )
-
     parser.addoption(
         "--spawn-backend",
         action="store",
@@ -291,7 +316,7 @@ def pytest_addoption(
         "--enable-stackscope",
         action="store_true",
         dest='enable_stackscope',
-        # default=False,
+        default=False,
         help=(
             'Install `stackscope` SIGUSR1 handler in pytest + '
             'every spawned subactor for live trio task-tree '
@@ -317,6 +342,13 @@ def pytest_addoption(
 def pytest_configure(
     config: pytest.Config,
 ):
+    # opts: Namespace = config.option
+    # print(
+    #     f'PYTEST_CONFIGURE\n'
+    #     f'capture={opts.capture!r}\n'
+    # )
+    # breakpoint()
+
     backend: str = config.option.spawn_backend
     from tractor.spawn._spawn import try_set_start_method
     try:
@@ -412,6 +444,25 @@ def pytest_collection_modifyitems(
                 # first matching mark wins; no value in stacking
                 # multiple `skip`s on the same item.
                 break
+
+
+@pytest.fixture(
+    scope="session",
+    autouse=True,
+)
+def alert_on_finish():
+    '''
+    Ring a terminal notification on full test session
+    completion to alert any would be human.
+
+    '''
+    # TODO, check attached to tty or skip!
+    yield  # run all tests
+    print("\a")  # trigger terminal bell
+    # ?TODO, any other nice-tricks/specific tuis we could try?
+    # - supposedly works in many terminals:
+    #   >> print("\033]5;Alert: Tests Finished\a")
+    # - sway/i3-nag?
 
 
 @pytest.fixture(scope='session')
@@ -538,6 +589,7 @@ def pytest_generate_tests(
             "start_method",
             [spawn_backend],
             scope='module',
+            ids=lambda item: f'start_method={spawn_backend}',
         )
 
     # TODO, parametrize any `tpt_proto: str` declaring tests!
@@ -548,3 +600,86 @@ def pytest_generate_tests(
     #         proto_tpts,  # TODO, double check this list usage!
     #         scope='module',
     #     )
+
+def _is_forking_spawner(
+    start_method: str,
+) -> bool:
+    return start_method in [
+        'main_thread_forkserver',
+        'mp_forkserver',
+    ]
+
+
+@pytest.fixture
+def is_forking_spawner(
+    start_method: str,
+) -> bool:
+    '''
+    Is the `pytest` run using a `fork()`ing process spawning-backend?
+
+    '''
+    return _is_forking_spawner
+
+
+def maybe_xfail_for_spawner(
+    start_method: str,
+    is_forking_spawner: bool,
+) -> None:
+    '''
+    Fork based spawning backends caude issues with `pytest`'s
+    fd-capture mechanism and can cause various suites to hang.
+
+    Instead this helper allows skipping/xfailing from a test
+    when a certain spawner + CLI-flag input is detected.
+
+    '''
+    if (
+        not _cap_sys_passed_as_flag
+        and
+        is_forking_spawner
+    ):
+        pytest.skip(
+            f'Spawner {start_method!r} requires the flag,\n'
+            f'--capture=sys or similar..\n'
+        )
+
+
+def maybe_override_capture(
+    request: pytest.FixtureRequest,
+    start_method: bool,
+):
+    if _is_forking_spawner(start_method):
+        return request.getfixturevalue('capsys')
+
+    return request.getfixturevalue(
+        request.config.option.capture
+    )
+
+
+@pytest.fixture
+def set_fork_aware_capture(
+    request: pytest.FixtureRequest,
+    start_method: str,
+) -> pytest.CaptureFixture|str:
+    '''
+    Force `--capture=sys` method for tests using
+    a forking-spawner backend due to fd-copying issues
+    which can oddly make certain tests hang/fail.
+
+    '''
+    if _cap_sys_passed_as_flag:
+        return 'sys'
+
+    capsys: pytest.CaptureFixture = maybe_override_capture(
+        request=request,
+        start_method=start_method,
+    )
+    return capsys
+    # XXX reset?
+    # with capsys.disabled():
+    #     pass
+    # return partial(
+    #     maybe_override_capture,
+    #     request=request,
+    #     start_method=start_method,
+    # )
