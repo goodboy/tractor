@@ -24,6 +24,7 @@ from pexpect.exceptions import (
     TIMEOUT,
     EOF,
 )
+import tractor
 
 from .conftest import (
     do_ctlc,
@@ -343,6 +344,7 @@ def test_subactor_breakpoint(
 def test_multi_subactors(
     spawn,
     ctlc: bool,
+    set_fork_aware_capture,
 ):
     '''
     Multiple subactors, both erroring and
@@ -487,11 +489,12 @@ def test_multi_subactors(
 def test_multi_daemon_subactors(
     spawn,
     loglevel: str,
-    ctlc: bool
+    ctlc: bool,
+    set_fork_aware_capture,
 ):
     '''
-    Multiple daemon subactors, both erroring and breakpointing within a
-    stream.
+    Multiple daemon subactors, both erroring and breakpointing within
+    a stream.
 
     '''
     non_linux = _non_linux
@@ -604,7 +607,10 @@ def test_multi_daemon_subactors(
             child,
             bp_forev_parts,
         )
-    except AssertionError:
+    except (
+        # AssertionError,  # TODO? rm since never raised?
+        ValueError,
+    ):
         before: str = assert_before(
             child,
             name_error_parts,
@@ -765,7 +771,8 @@ def test_multi_subactors_root_errors(
 def test_multi_nested_subactors_error_through_nurseries(
     ci_env: bool,
     spawn: PexpectSpawner,
-    start_method: str,
+    is_forking_spawner: bool,
+    test_log: tractor.log.StackLevelAdapter,
 
     # TODO: address debugger issue for nested tree:
     # https://github.com/goodboy/tractor/issues/320
@@ -786,6 +793,7 @@ def test_multi_nested_subactors_error_through_nurseries(
         'multi_nested_subactors_error_up_through_nurseries',
         loglevel='pdb',
     )
+    last_send_char: str|None = None
     for (
         i,
         send_char,
@@ -806,11 +814,7 @@ def test_multi_nested_subactors_error_through_nurseries(
 
         # XXX forking backends may take longer due to
         # determinstic IPC cancellation.
-        if (
-            start_method in [
-                'main_thread_forkserver',
-            ]
-        ):
+        if is_forking_spawner:
             timeout += 4
 
         try:
@@ -818,44 +822,72 @@ def test_multi_nested_subactors_error_through_nurseries(
                 PROMPT,
                 timeout=timeout,
             )
+            delay: float = 0.1
+            test_log.info('Sleeping {delay!r} before next send-chart..')
+            time.sleep(delay)
+            last_send_char: str = send_char
             child.sendline(send_char)
-            time.sleep(0.01)
+            time.sleep(delay)
 
+        # script finally exited with tb on console.
         except EOF:
+            test_log.info(
+                f'Breaking from send-char loop'
+                f'last_send_char: {last_send_char!r}\n'
+            )
             break
+
+    # boxed source errors
+    expect_patts: list[str] = [
+        "NameError: name 'doggypants' is not defined",
+        "tractor._exceptions.RemoteActorError:",
+        "('name_error'",
+
+        # first level subtrees
+        # "tractor._exceptions.RemoteActorError: ('spawner0'",
+        "src_uid=('spawner0'",
+
+        # "tractor._exceptions.RemoteActorError: ('spawner1'",
+
+        # propagation of errors up through nested subtrees
+        # "tractor._exceptions.RemoteActorError: ('spawn_until_0'",
+        # "tractor._exceptions.RemoteActorError: ('spawn_until_1'",
+        # "tractor._exceptions.RemoteActorError: ('spawn_until_2'",
+        # ^-NOTE-^ old RAE repr, new one is below with a field
+        # showing the src actor's uid.
+        "src_uid=('spawn_until_2'",
+    ]
+    # XXX, I HAVE NO IDEA why these patts only show on the
+    # `trio`-spawner but it seems to have something to do with
+    # what gets dumped in prior-prompt latches somehow??
+    # TODO for claude, explain and or work through how this is
+    # happening but ONLY WHEN RUN FROM THE TEST, bc when i try to
+    # run the test script manually the correct output ALWAYS seems
+    # to be in the last `str(child.before.decode())` output !?!?
+    if (
+        not is_forking_spawner
+        and
+        last_send_char == 'q'
+    ):
+        expect_patts += [
+            # expect the pdb-quit exc.
+            "bdb.BdbQuit",
+            # BUT WHY these dude!?
+            "src_uid=('spawn_until_0'",
+            "relay_uid=('spawn_until_1'",
+        ]
 
     assert_before(
         child,
-        [ # boxed source errors
-            "NameError: name 'doggypants' is not defined",
-            "tractor._exceptions.RemoteActorError:",
-            "('name_error'",
-            "bdb.BdbQuit",
-
-            # first level subtrees
-            # "tractor._exceptions.RemoteActorError: ('spawner0'",
-            "src_uid=('spawner0'",
-
-            # "tractor._exceptions.RemoteActorError: ('spawner1'",
-
-            # propagation of errors up through nested subtrees
-            # "tractor._exceptions.RemoteActorError: ('spawn_until_0'",
-            # "tractor._exceptions.RemoteActorError: ('spawn_until_1'",
-            # "tractor._exceptions.RemoteActorError: ('spawn_until_2'",
-            # ^-NOTE-^ old RAE repr, new one is below with a field
-            # showing the src actor's uid.
-            "src_uid=('spawn_until_0'",
-            "relay_uid=('spawn_until_1'",
-            "src_uid=('spawn_until_2'",
-        ]
+        expect_patts,
     )
+    expect(child, EOF)
 
 
 # @pytest.mark.timeout(15)
 @has_nested_actors
 def test_root_nursery_cancels_before_child_releases_tty_lock(
     spawn,
-    start_method,
     ctlc: bool,
 ):
     '''

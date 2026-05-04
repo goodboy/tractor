@@ -356,7 +356,8 @@ def assert_before(
         err_on_false=True,
         **kwargs
     )
-    return str(child.before.decode())
+    before: str = str(child.before.decode())
+    return before
 
 
 def do_ctlc(
