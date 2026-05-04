@@ -231,7 +231,8 @@ def find_runaway_subactors(
     `cpu_threshold` (default 95%) — the smoking-gun
     signature of a runaway tight-loop bug (e.g. a C-level
     `recvfrom` loop on a closed socket that missed EOF
-    detection; #452-class issue).
+    detection — see
+    `ai/conc-anal/trio_wakeup_socketpair_busy_loop_under_fork_issue.md`).
 
     `cpu_percent(interval=sample_interval)` is the
     canonical psutil API for a "what %CPU is this proc
@@ -737,7 +738,7 @@ def _track_orphaned_uds_per_test():
     `wait_for_actor`/`find_actor` discovery probes can
     accidentally hit (FileExistsError on rebind, or
     epoll register on a half-closed peer-FIN'd fd → see
-    issue #452). Catching the leak the test that caused
+    issue #454). Catching the leak the test that caused
     it (vs. blanket session-end sweep) makes blame
     obvious + prevents cascade flakiness.
 
@@ -813,10 +814,12 @@ def _detect_runaway_subactors_per_test():
     **Does NOT kill the runaway** — by design.
     The point of this fixture is to make tight-loop bugs
     (e.g. C-level `recvfrom` loop on a closed socket
-    that missed EOF detection — issue #452-class) loudly
-    visible AT the test that triggers, while keeping
-    the live pid available for hands-on diagnosis. The
-    session-end `_reap_orphaned_subactors` fixture will
+    that missed EOF detection — see
+    `ai/conc-anal/trio_wakeup_socketpair_busy_loop_under_fork_issue.md`)
+    loudly visible AT the test that triggers, while
+    keeping the live pid available for hands-on
+    diagnosis. The session-end
+    `_reap_orphaned_subactors` fixture will
     SIGINT-then-SIGKILL any survivors when the test
     session completes normally; if the user Ctrl-C's
     pytest mid-warning, the pid stays alive for as long
@@ -892,8 +895,10 @@ def _detect_runaway_subactors_per_test():
     # by THIS test that survived a normal teardown
     # (i.e. parent's `hard_kill` SIGKILL didn't actually
     # stop the runaway because it was in C tight-loop
-    # somewhere unreachable to signals — see issue #452
-    # forkserver-worker post-fork-close gap).
+    # somewhere unreachable to signals — see
+    # `ai/conc-anal/trio_wakeup_socketpair_busy_loop_under_fork_issue.md`
+    # for the canonical fork-spawn forkserver-worker
+    # post-fork-close gap).
     post_runaways: list[tuple[int, float, str]] = (
         find_runaway_subactors(
             parent_pid,

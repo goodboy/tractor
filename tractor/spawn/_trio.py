@@ -39,7 +39,7 @@ from tractor.runtime._state import (
     current_actor,
     is_root_process,
     debug_mode,
-    get_runtime_vars,
+    # get_runtime_vars,
 )
 from tractor.log import get_logger
 from tractor.discovery._addr import UnwrappedAddress
@@ -282,7 +282,23 @@ async def trio_proc(
 
                 if proc.poll() is None:
                     log.cancel(f"Attempting to hard kill {proc}")
-                    await hard_kill(proc)
+                    await hard_kill(
+                        proc,
+                        # NOTE, pass through so post-SIGKILL we
+                        # can `os.unlink()` the subactor's
+                        # orphaned UDS sock-file(s) — the
+                        # subactor's own
+                        # `_serve_ipc_eps`-`finally:` cleanup
+                        # never runs under SIGKILL. `subactor`
+                        # lets the helper reconstruct the
+                        # sock path via `aid.name + proc.pid`
+                        # when `bind_addrs` is the common
+                        # self-assigned-random case
+                        # (bind_addrs=None at spawn). See
+                        # `_unlink_uds_bind_addrs()` in `_spawn`.
+                        bind_addrs=bind_addrs,
+                        subactor=subactor,
+                    )
 
                 log.debug(f"Joined {proc}")
         else:

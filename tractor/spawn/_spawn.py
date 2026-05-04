@@ -40,7 +40,10 @@ from tractor.runtime._state import (
     _runtime_vars,
 )
 from tractor.log import get_logger
-from tractor.discovery._addr import UnwrappedAddress
+from tractor.discovery._addr import (
+    UnwrappedAddress,
+)
+from ._reap import unlink_uds_bind_addrs
 from tractor.runtime._portal import Portal
 from tractor.runtime._runtime import Actor
 from tractor.msg import types as msgtypes
@@ -279,6 +282,16 @@ async def hard_kill(
     # whilst also hacking on it XD
     # terminate_after: int = 99999,
 
+    *,
+    # Subactor's bind addresses + subactor record, used
+    # for post-SIGKILL UDS sockpath cleanup. Optional for
+    # legacy callers; new call sites should pass at least
+    # `subactor` (which lets us reconstruct the sock path
+    # from `aid.name + proc.pid` when `bind_addrs` is
+    # empty/self-assigned). See `._reap.unlink_uds_bind_addrs()`.
+    bind_addrs: list[UnwrappedAddress] | None = None,
+    subactor: Actor | None = None,
+
 ) -> None:
     '''
     Un-gracefully terminate an OS level `trio.Process` after timeout.
@@ -365,6 +378,21 @@ async def hard_kill(
             f' |_{proc}\n'
         )
         proc.kill()
+
+    # Post-mortem UDS sockpath cleanup. SIGKILL bypassed
+    # the subactor's normal `os.unlink(addr.sockpath)` in
+    # `_serve_ipc_eps`'s `finally:`; the parent has the
+    # bind addrs (or can reconstruct from name + pid) so
+    # we do it here. Runs UNCONDITIONALLY (graceful-exit
+    # case is a no-op via `FileNotFoundError` skip in the
+    # helper) so the cleanup also covers the "cancelled
+    # during spawn" path where the subactor never reached
+    # its IPC server finally block.
+    unlink_uds_bind_addrs(
+        proc,
+        bind_addrs=bind_addrs,
+        subactor=subactor,
+    )
 
 
 async def soft_kill(
