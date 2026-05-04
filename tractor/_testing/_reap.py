@@ -218,6 +218,64 @@ def find_descendants(
     ]
 
 
+def find_runaway_subactors(
+    parent_pid: int,
+    *,
+    cpu_threshold: float = 95.0,
+    sample_interval: float = 0.5,
+    only_pids: set[int]|None = None,
+) -> list[tuple[int, float, str]]:
+    '''
+    Return `(pid, cpu_pct, cmdline)` for any descendant
+    of `parent_pid` currently burning CPU above
+    `cpu_threshold` (default 95%) — the smoking-gun
+    signature of a runaway tight-loop bug (e.g. a C-level
+    `recvfrom` loop on a closed socket that missed EOF
+    detection; #452-class issue).
+
+    `cpu_percent(interval=sample_interval)` is the
+    canonical psutil API for a "what %CPU is this proc
+    using NOW" answer — it samples twice with a delta to
+    compute true utilization.
+
+    `only_pids` filters to a specific pre-snapshotted set
+    (e.g. "pids spawned during this test only"); when
+    `None`, all live descendants are checked.
+
+    Returns `[]` when `psutil` isn't installed or no
+    descendants match.
+
+    '''
+    try:
+        import psutil
+    except ImportError:
+        return []
+
+    candidates: list[int] = find_descendants(parent_pid)
+    if only_pids is not None:
+        candidates = [p for p in candidates if p in only_pids]
+    if not candidates:
+        return []
+
+    runaways: list[tuple[int, float, str]] = []
+    for pid in candidates:
+        try:
+            proc = psutil.Process(pid)
+            cpu: float = proc.cpu_percent(
+                interval=sample_interval,
+            )
+            if cpu < cpu_threshold:
+                continue
+            cmdline: str = ' '.join(proc.cmdline())
+            runaways.append((pid, cpu, cmdline))
+        except (
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+        ):
+            continue
+    return runaways
+
+
 def find_orphans(
     repo_root: pathlib.Path,
 ) -> list[int]:
@@ -728,12 +786,127 @@ def _track_orphaned_uds_per_test():
     if new_orphans:
         import warnings
         warnings.warn(
-            f'UDS sock-file LEAK detected from test '
-            f'(reaping):\n  '
+            'UDS sock-file LEAK detected from test '
+            '(reaping):\n  '
             + '\n  '.join(new_orphans),
             stacklevel=1,
         )
         reap_uds(new_orphans)
+
+
+@pytest.fixture(
+    scope='function',
+    autouse=True,
+)
+def _detect_runaway_subactors_per_test():
+    '''
+    Per-test (function-scoped) autouse runaway-subactor
+    detector.
+
+    Snapshots descendant pids before+after each test;
+    for any pid spawned during the test that's still
+    ALIVE at teardown AND burning >95% CPU, emits a loud
+    warning with `pid`, sampled `cpu%`, full `cmdline`,
+    AND copy-pastable diag commands (`strace`, `lsof`,
+    `ss`, `kill`).
+
+    **Does NOT kill the runaway** — by design.
+    The point of this fixture is to make tight-loop bugs
+    (e.g. C-level `recvfrom` loop on a closed socket
+    that missed EOF detection — issue #452-class) loudly
+    visible AT the test that triggers, while keeping
+    the live pid available for hands-on diagnosis. The
+    session-end `_reap_orphaned_subactors` fixture will
+    SIGINT-then-SIGKILL any survivors when the test
+    session completes normally; if the user Ctrl-C's
+    pytest mid-warning, the pid stays alive for as long
+    as needed.
+
+    Cost: one extra `os.listdir('/proc')` snapshot
+    pre-test, one snapshot + N×`psutil.cpu_percent(0.5)`
+    post-test (only when there ARE new descendants —
+    most tests don't trigger any sampling). Skips
+    silently when `psutil` isn't installed.
+
+    '''
+    parent_pid: int = os.getpid()
+
+    def _emit_runaway_warning(
+        runaways: list[tuple[int, float, str]],
+        when: str,
+    ) -> None:
+        '''
+        Format + emit the runaway warning. Shared between
+        the SETUP-side (pre-yield, catches survivors of a
+        prior hung test) and TEARDOWN-side (post-yield,
+        catches normally-completing tests that left a
+        runaway behind) detection passes.
+
+        '''
+        msg_lines: list[str] = [
+            f'RUNAWAY subactor(s) detected at {when} — '
+            f'burning CPU (>95%):',
+        ]
+        for pid, cpu, cmdline in runaways:
+            msg_lines.extend([
+                f'  pid={pid} cpu={cpu:.1f}% cmdline={cmdline!r}',
+                f'  diagnose live (pid stays alive — NOT killed):',
+                f'    sudo strace -p {pid} -f -tt -e trace=recvfrom,epoll_wait,read,write',
+                f'    sudo readlink /proc/{pid}/fd/* 2>/dev/null | head -20',
+                f'    sudo ss -tnp | grep {pid}',
+                f'    sudo lsof -p {pid}',
+                f'  manual kill when done:',
+                f'    kill -SIGINT {pid}    # graceful first',
+                f'    kill -SIGKILL {pid}   # if SIGINT ignored (busy in C)',
+                '',
+            ])
+        import warnings
+        warnings.warn(
+            '\n'.join(msg_lines),
+            stacklevel=1,
+        )
+
+    # SETUP-side detection: catches runaways inherited
+    # from a PRIOR test that hung (and the user
+    # Ctrl-C'd or pytest-timeout fired) — those tests'
+    # teardown-side detector never ran, but the
+    # subactor is still burning CPU when the next test
+    # starts. The warning comes ONE TEST LATE which is
+    # imperfect but better than silence.
+    pre_existing: set[int] = set(find_descendants(parent_pid))
+    pre_runaways: list[tuple[int, float, str]] = (
+        find_runaway_subactors(
+            parent_pid,
+            only_pids=pre_existing,
+        )
+    )
+    if pre_runaways:
+        _emit_runaway_warning(
+            pre_runaways,
+            when='test SETUP (leftover from prior hung test)',
+        )
+
+    yield
+
+    # TEARDOWN-side detection: catches runaways spawned
+    # by THIS test that survived a normal teardown
+    # (i.e. parent's `hard_kill` SIGKILL didn't actually
+    # stop the runaway because it was in C tight-loop
+    # somewhere unreachable to signals — see issue #452
+    # forkserver-worker post-fork-close gap).
+    post_runaways: list[tuple[int, float, str]] = (
+        find_runaway_subactors(
+            parent_pid,
+            only_pids=set(
+                find_descendants(parent_pid)
+            ) - pre_existing,
+        )
+    )
+    if post_runaways:
+        _emit_runaway_warning(
+            post_runaways,
+            when='test teardown',
+        )
 
 
 @pytest.fixture
