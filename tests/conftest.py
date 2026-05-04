@@ -254,6 +254,7 @@ def daemon(
     tpt_proto: str,
     ci_env: bool,
     test_log: tractor.log.StackLevelAdapter,
+    # set_fork_aware_capture,
 
 ) -> subprocess.Popen:
     '''
@@ -261,8 +262,12 @@ def daemon(
     "remote registrar" for discovery-protocol related tests.
 
     '''
+    # XXX: too much logging will lock up the subproc (smh)
     if loglevel in ('trace', 'debug'):
-        # XXX: too much logging will lock up the subproc (smh)
+        test_log.warning(
+            f'Test harness log level is too verbose: {loglevel!r}\n'
+            f'Reducing to INFO level..'
+        )
         loglevel: str = 'info'
 
     code: str = (
@@ -300,19 +305,19 @@ def daemon(
     # -[ ] UDS: can we do something similar for 'pinging" the
     #     file-socket?
     #
-    global _PROC_SPAWN_WAIT
+    bg_daemon_spawn_delay: float = _PROC_SPAWN_WAIT
     # UDS sockets are **really** fast to bind()/listen()/connect()
     # so it's often required that we delay a bit more starting
     # the first actor-tree..
     if tpt_proto == 'uds':
-        _PROC_SPAWN_WAIT += 1.6
+        bg_daemon_spawn_delay += 1.6
 
     if _non_linux and ci_env:
-        _PROC_SPAWN_WAIT += 1
+        bg_daemon_spawn_delay += 1
 
     # XXX, allow time for the sub-py-proc to boot up.
     # !TODO, see ping-polling ideas above!
-    time.sleep(_PROC_SPAWN_WAIT)
+    time.sleep(bg_daemon_spawn_delay)
 
     assert not proc.returncode
     yield proc
