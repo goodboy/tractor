@@ -851,18 +851,18 @@ def _detect_runaway_subactors_per_test():
             f'burning CPU (>95%):',
         ]
         for pid, cpu, cmdline in runaways:
-            msg_lines.extend([
-                f'  pid={pid} cpu={cpu:.1f}% cmdline={cmdline!r}',
-                f'  diagnose live (pid stays alive — NOT killed):',
-                f'    sudo strace -p {pid} -f -tt -e trace=recvfrom,epoll_wait,read,write',
-                f'    sudo readlink /proc/{pid}/fd/* 2>/dev/null | head -20',
-                f'    sudo ss -tnp | grep {pid}',
-                f'    sudo lsof -p {pid}',
-                f'  manual kill when done:',
-                f'    kill -SIGINT {pid}    # graceful first',
-                f'    kill -SIGKILL {pid}   # if SIGINT ignored (busy in C)',
-                '',
-            ])
+            msg_lines.extend([(
+                f'  pid={pid} cpu={cpu:.1f}% cmdline={cmdline!r}\n'
+                f'  diagnose live (pid stays alive — NOT killed):\n'
+                f'    sudo strace -p {pid} -f -tt -e trace=recvfrom,epoll_wait,read,write\n'
+                f'    sudo readlink /proc/{pid}/fd/* 2>/dev/null | head -20\n'
+                f'    sudo ss -tnp | grep {pid}\n'
+                f'    sudo lsof -p {pid}\n'
+                f'  manual kill when done:\n'
+                f'    kill -SIGINT {pid}    # graceful first\n'
+                f'    kill -SIGKILL {pid}   # if SIGINT ignored (busy in C)\n'
+                f'\n'
+            )])
         import warnings
         warnings.warn(
             '\n'.join(msg_lines),
