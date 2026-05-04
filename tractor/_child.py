@@ -63,6 +63,14 @@ def _actor_child_main(
     sub-interpreter via `Interpreter.call()`.
 
     '''
+    # Apply defensive monkey-patches for upstream `trio`
+    # bugs we've encountered while running tractor — see
+    # `tractor.trionics.patches` for the catalog +
+    # per-patch upstream-fix tracking. Must run BEFORE
+    # any trio runtime init.
+    from .trionics.patches import apply_all
+    apply_all()
+
     subactor = Actor(
         name=uid[0],
         uuid=uid[1],
