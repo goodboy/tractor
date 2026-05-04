@@ -647,13 +647,12 @@ def maybe_xfail_for_spawner(
 def maybe_override_capture(
     request: pytest.FixtureRequest,
     start_method: bool,
-):
+) -> str:
     if _is_forking_spawner(start_method):
-        return request.getfixturevalue('capsys')
+        request.getfixturevalue('capsys')
+        return 'sys'
 
-    return request.getfixturevalue(
-        request.config.option.capture
-    )
+    return request.config.option.capture
 
 
 @pytest.fixture
