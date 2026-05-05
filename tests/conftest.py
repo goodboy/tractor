@@ -7,6 +7,7 @@ import sys
 import subprocess
 import os
 import signal
+import socket
 import platform
 import time
 from pathlib import Path
@@ -244,6 +245,86 @@ def sig_prog(
     assert ret
 
 
+def _wait_for_daemon_ready(
+    reg_addr: tuple,
+    tpt_proto: str,
+    *,
+    deadline: float = 10.0,
+    poll_interval: float = 0.05,
+    proc: subprocess.Popen|None = None,
+) -> None:
+    '''
+    Active-poll the daemon's bind address until it
+    accepts a connection (proving it has called
+    `bind() + listen()` and is ready to handle IPC).
+
+    Replaces the historical blind `time.sleep()` in the
+    `daemon` fixture which was racy under load — see
+    `ai/conc-anal/test_register_duplicate_name_daemon_connect_race_issue.md`.
+
+    Uses stdlib `socket` directly (no trio runtime
+    bootstrap cost) — sufficient because
+    `tractor.run_daemon()` doesn't return from
+    bootstrap until the runtime is fully ready to
+    accept IPC.
+
+    Raises `TimeoutError` on `deadline` exceeded. If
+    `proc` is given, ALSO raises early if the daemon
+    process exits non-zero before the deadline (catches
+    daemon-startup-crash that the blind sleep used to
+    silently mask).
+
+    '''
+    end: float = time.monotonic() + deadline
+    last_exc: Exception|None = None
+    while time.monotonic() < end:
+        # Daemon-died-during-startup early-exit. Without
+        # this, a crashed-on-import daemon would just
+        # eat the full deadline before raising opaque
+        # TimeoutError.
+        if proc is not None and proc.poll() is not None:
+            raise RuntimeError(
+                f'Daemon proc exited (rc={proc.returncode}) '
+                f'before becoming ready to accept on '
+                f'{reg_addr!r}'
+            )
+        try:
+            if tpt_proto == 'tcp':
+                # `socket.create_connection` does the
+                # `socket() + connect()` dance with a
+                # builtin timeout — perfect primitive
+                # for a one-shot probe.
+                with socket.create_connection(
+                    reg_addr,
+                    timeout=poll_interval,
+                ):
+                    return
+            else:
+                # UDS — `reg_addr` is a `(filedir, sockname)`
+                # tuple per `tractor.ipc._uds.UDSAddress.unwrap`.
+                sockpath: str = os.path.join(*reg_addr)
+                sock = socket.socket(socket.AF_UNIX)
+                try:
+                    sock.settimeout(poll_interval)
+                    sock.connect(sockpath)
+                    return
+                finally:
+                    sock.close()
+        except (
+            ConnectionRefusedError,
+            FileNotFoundError,
+            OSError,
+            socket.timeout,
+        ) as exc:
+            last_exc = exc
+            time.sleep(poll_interval)
+    raise TimeoutError(
+        f'Daemon never accepted on {reg_addr!r} within '
+        f'{deadline}s (last connect-attempt exc: '
+        f'{last_exc!r})'
+    )
+
+
 # TODO: factor into @cm and move to `._testing`?
 @pytest.fixture
 def daemon(
@@ -298,26 +379,25 @@ def daemon(
         **kwargs,
     )
 
-    # TODO! we should poll for the registry socket-bind to take place
-    # and only once that's done yield to the requester!
-    # -[ ] TCP: use the `._root.open_root_actor()`::`ping_tpt_socket()`
-    #      closure!
-    # -[ ] UDS: can we do something similar for 'pinging" the
-    #     file-socket?
+    # Active-poll the daemon's bind address until it's
+    # ready to accept connections — replaces the legacy
+    # blind `time.sleep(_PROC_SPAWN_WAIT + uds_bonus)`
+    # which was racy under load (see
+    # `ai/conc-anal/test_register_duplicate_name_daemon_connect_race_issue.md`).
     #
-    bg_daemon_spawn_delay: float = _PROC_SPAWN_WAIT
-    # UDS sockets are **really** fast to bind()/listen()/connect()
-    # so it's often required that we delay a bit more starting
-    # the first actor-tree..
-    if tpt_proto == 'uds':
-        bg_daemon_spawn_delay += 1.6
-
-    if _non_linux and ci_env:
-        bg_daemon_spawn_delay += 1
-
-    # XXX, allow time for the sub-py-proc to boot up.
-    # !TODO, see ping-polling ideas above!
-    time.sleep(bg_daemon_spawn_delay)
+    # Per-test deadline scales with platform: macOS/CI
+    # gets extra headroom; Linux dev boxes need very
+    # little.
+    deadline: float = (
+        15.0 if (_non_linux and ci_env)
+        else 10.0
+    )
+    _wait_for_daemon_ready(
+        reg_addr=reg_addr,
+        tpt_proto=tpt_proto,
+        deadline=deadline,
+        proc=proc,
+    )
 
     assert not proc.returncode
     yield proc
