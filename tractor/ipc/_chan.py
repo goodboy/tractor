@@ -326,8 +326,8 @@ class Channel:
         __tracebackhide__: bool = hide_tb
         try:
             log.transport(
-                '=> send IPC msg:\n\n'
-                f'{pformat(payload)}\n'
+                '=> send IPC msg\n\n'
+                # f'{pformat(payload)}\n'
             )
             # assert self._transport  # but why typing?
             await self._transport.send(
