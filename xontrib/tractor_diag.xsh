@@ -157,7 +157,7 @@ def _pytree(args):
     severity-ordered buckets so leaked / defunct procs
     don't hide in the noise of normal `live` rows.
 
-    usage: pytree <pid|pgrep-pattern> [...]
+    usage: pytree [--tree|-t] <pid|pgrep-pattern> [...]
 
     classification (per-proc, not per-tree):
 
@@ -174,20 +174,43 @@ def _pytree(args):
     descendants show as `live` if they themselves still
     have a real (non-init) parent (the orphan root), but
     the orphan root itself appears in `orphans`.
+
+    Cross-bucket parent annotation (always emitted):
+      when a row's parent (by ppid) lives in a *different*
+      severity bucket, the row is suffixed with
+      `[parent: <pid> (in `<bucket>`)]` so the visual
+      `└─` marker still resolves to a findable parent
+      even when bucketing scatters parent and child into
+      separate sections.
+
+    `--tree` / `-t` flag (opt-in):
+      additionally emit a flat walk-order `## tree`
+      section at the top — a contiguous parent-child
+      tree shape with no severity-grouping. Same procs,
+      no annotations needed because each parent appears
+      directly above its children.
     '''
-    if not args:
-        print('usage: pytree <pid|pgrep-pattern> [...]')
+    flag_tree: bool = False
+    pos_args: list = []
+    for a in args:
+        if a in ('--tree', '-t'):
+            flag_tree = True
+        else:
+            pos_args.append(a)
+
+    if not pos_args:
+        print('usage: pytree [--tree|-t] <pid|pgrep-pattern> [...]')
         return 1
     if psutil is None:
         print('pytree requires psutil; install via `uv pip install psutil`')
         return 1
 
     roots: list = []
-    for a in args:
+    for a in pos_args:
         roots.extend(_resolve_pids(a))
     roots = sorted(set(roots))
     if not roots:
-        print(f'(no procs match: {args})')
+        print(f'(no procs match: {pos_args})')
         return 1
 
     # statuses considered "defunct" — STATUS_ZOMBIE is the
@@ -199,10 +222,15 @@ def _pytree(args):
     }
 
     seen: set = set()
-    live: list = []     # [(proc, depth)]
+    walk_order: list = []  # [(proc, depth)] preserved walk order
+    live: list = []        # [(proc, depth)]
     orphans: list = []
     zombies: list = []
     gone: list = []
+
+    # parent-bucket lookup populated post-classification so
+    # `_row()` can annotate cross-bucket parent refs.
+    pid_to_bucket: dict = {}
 
     for r in roots:
         for (p, depth) in _walk_tree_with_depth(r):
@@ -219,10 +247,14 @@ def _pytree(args):
             # severity order: zombie > orphan > live.
             if status in defunct_statuses:
                 zombies.append(entry)
+                pid_to_bucket[p.pid] = 'zombies'
             elif ppid == 1:
                 orphans.append(entry)
+                pid_to_bucket[p.pid] = 'orphans'
             else:
                 live.append(entry)
+                pid_to_bucket[p.pid] = 'live'
+            walk_order.append(entry)
 
     total: int = len(live) + len(orphans) + len(zombies)
     print(f'# pytree: {total} procs across roots {roots}')
@@ -230,14 +262,44 @@ def _pytree(args):
     hdr = '  ' + 'PID'.rjust(7) + '  ' + 'PPID'.rjust(7) + '  '
     hdr += 'STATUS'.ljust(10) + '  CMD'
 
-    def _row(entry):
+    def _row(entry, bucket: str|None = None):
         '''
         Render `(proc, depth)` as an aligned row. Tree depth is
         rendered as a `└─` marker on the CMD column so PID/PPID/
         STATUS stay column-aligned.
+
+        When `bucket` is given AND the row's parent lives in a
+        *different* bucket, append a `[parent: <pid> (in `<b>`)]`
+        suffix so the `└─` marker can be resolved across the
+        severity-section split.
         '''
         p, depth = entry
         tree_pfx = ('   ' * depth) + ('└─ ' if depth > 0 else '')
+
+        # cross-bucket parent annotation; safe to compute up
+        # front because `p.ppid()` is cheap and rarely
+        # raises (parent pid is read from `/proc/<pid>/stat`,
+        # cached by psutil).
+        parent_anno: str = ''
+        if (
+            bucket is not None
+            and depth > 0
+        ):
+            try:
+                parent_pid: int = p.ppid()
+            except psutil.NoSuchProcess:
+                parent_pid = 0
+            if parent_pid and parent_pid != 1:
+                parent_bucket: str|None = pid_to_bucket.get(parent_pid)
+                if (
+                    parent_bucket is not None
+                    and parent_bucket != bucket
+                ):
+                    parent_anno = (
+                        f'  [parent: {parent_pid} '
+                        f'(in `{parent_bucket}`)]'
+                    )
+
         # NOTE: `psutil.ZombieProcess` is a *subclass* of
         # `psutil.NoSuchProcess`, but the proc is NOT gone —
         # it's a zombie whose `/proc/<pid>/cmdline` is empty/
@@ -249,44 +311,61 @@ def _pytree(args):
             r = '  ' + str(p.pid).rjust(7)
             r += '  ' + str(p.ppid()).rjust(7)
             r += '  ' + p.status().ljust(10)
-            r += '  ' + tree_pfx + cmd
+            r += '  ' + tree_pfx + cmd + parent_anno
             return r
         except psutil.ZombieProcess:
             try:
-                ppid = str(p.ppid())
+                ppid_str = str(p.ppid())
                 name = p.name()
             except psutil.NoSuchProcess:
-                ppid, name = '?', '?'
+                ppid_str, name = '?', '?'
             r = '  ' + str(p.pid).rjust(7)
-            r += '  ' + ppid.rjust(7)
+            r += '  ' + ppid_str.rjust(7)
             r += '  ' + 'zombie'.ljust(10)
-            r += '  ' + tree_pfx + '[' + name + ' <defunct>]'
+            r += '  ' + tree_pfx + '[' + name + ' <defunct>]' + parent_anno
             return r
         except psutil.NoSuchProcess:
             return '  ' + str(p.pid).rjust(7) + '  (gone mid-walk)'
 
-    def _section(title: str, procs: list, hint: str = ''):
+    def _section(
+        title: str,
+        procs: list,
+        hint: str = '',
+        bucket: str|None = None,
+    ):
         print(f'\n## {title} ({len(procs)})' + (f'  — {hint}' if hint else ''))
         if not procs:
             print('  (none)')
             return
         print(hdr)
         for p in procs:
-            print(_row(p))
+            print(_row(p, bucket=bucket))
 
-    # severity-ordered: most concerning first.
+    # `--tree` opt-in: emit a flat walk-order section first
+    # so the parent-child tree shape is contiguous (no
+    # severity-grouping). No `bucket` arg → no cross-bucket
+    # annotation, since each parent appears directly above
+    # its children here.
+    if flag_tree:
+        _section(
+            'tree', walk_order,
+            'flat walk-order, parent-child preserved',
+        )
+
+    # severity-ordered: most concerning first. Each section
+    # passes its own `bucket` name so `_row()` can annotate
+    # rows whose parents live in a different section.
     _section(
         'zombies', zombies,
         'status `Z`/`X`, parent has not reaped',
+        bucket='zombies',
     )
     _section(
         'orphans', orphans,
         '`ppid==1`, reparented to init (leaked / parent gone)',
+        bucket='orphans',
     )
-    _section('live', live)
-
-    if gone:
-        print(f'\n## gone-during-walk ({len(gone)}): {gone}')
+    _section('live', live, bucket='live')
 
     if gone:
         print(f'\n## gone-during-walk ({len(gone)}): {gone}')
