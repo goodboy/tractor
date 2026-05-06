@@ -59,15 +59,18 @@ async def chk_tpts(
 )
 def test_root_passes_tpt_to_sub(
     tpt_proto_key: str,
+    tpt_proto: str,
     reg_addr: tuple,
     debug_mode: bool,
 ):
-    # XXX NOTE, the `reg_addr` addr won't be the same type as the
-    # `tpt_proto_key` would deliver here unless you pass `--tpt-proto
-    # <tpt_proto_key>` on the CLI.
-    #
-    # if tpt_proto_key == 'uds':
-    #     breakpoint()
+    # `reg_addr` is sourced from the CLI `--tpt-proto={tpt_proto}`,
+    # so when the parametrized `tpt_proto_key` differs, the test
+    # asks the runtime to `enable_transports=[<other_proto>]` while
+    # pointing `registry_addrs` at a `reg_addr` of the wrong proto.
+    # The layer-2 guard in `open_root_actor` is expected to fail
+    # fast with `ValueError` on this mismatch (rather than the prior
+    # silent hang during the registrar handshake).
+    proto_mismatch: bool = (tpt_proto_key != tpt_proto)
 
     async def main():
         async with tractor.open_nursery(
@@ -99,4 +102,14 @@ def test_root_passes_tpt_to_sub(
             # shudown sub-actor(s)
             await an.cancel()
 
-    trio.run(main)
+    if proto_mismatch:
+        # mismatched proto must raise `ValueError` from the
+        # `open_root_actor` runtime guard before any subactor spawn.
+        with pytest.raises(ValueError) as excinfo:
+            trio.run(main)
+        msg: str = str(excinfo.value)
+        assert 'enable_transports' in msg
+        assert 'registry_addrs' in msg
+        assert tpt_proto_key in msg or tpt_proto in msg
+    else:
+        trio.run(main)

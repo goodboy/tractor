@@ -371,6 +371,34 @@ async def open_root_actor(
             for uw_addr in uw_reg_addrs
         ]
 
+        # fail-fast on `enable_transports` / `registry_addrs` proto
+        # mismatch — historically this caused a silent indefinite
+        # hang during the registrar handshake (registry was reachable
+        # only via a transport not in `enable_transports`, so the
+        # actor could never connect to register/discover). See
+        # `tests/ipc/test_multi_tpt.py::test_root_passes_tpt_to_sub`
+        # for the foot-gun case + its layer-1 skip-guard.
+        bad_addrs: list[tuple[str, Address]] = [
+            (addr.proto_key, addr)
+            for addr in registry_addrs
+            if addr.proto_key not in enable_transports
+        ]
+        if bad_addrs:
+            raise ValueError(
+                f'`registry_addrs` contains addr(s) whose proto is '
+                f'not in `enable_transports`!\n'
+                f'enable_transports: {enable_transports!r}\n'
+                f'mismatched_addrs:\n'
+                + '\n'.join(
+                    f'  - proto_key={pk!r}  addr={a!r}'
+                    for pk, a in bad_addrs
+                )
+                + '\n\n'
+                f'Either add the missing proto to '
+                f'`enable_transports`, or remove the addr from '
+                f'`registry_addrs`.'
+            )
+
         # Debug-mode is currently only supported for backends whose
         # subactor root runtime is trio-native (so `tractor.devx.
         # debug._tty_lock` works). See `_DEBUG_COMPATIBLE_BACKENDS`
