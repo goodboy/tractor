@@ -222,7 +222,7 @@ def find_runaway_subactors(
     parent_pid: int,
     *,
     cpu_threshold: float = 95.0,
-    sample_interval: float = 0.5,
+    sample_interval: float = 0.05,
     only_pids: set[int]|None = None,
 ) -> list[tuple[int, float, str]]:
     '''
@@ -237,16 +237,30 @@ def find_runaway_subactors(
     `cpu_percent(interval=sample_interval)` is the
     canonical psutil API for a "what %CPU is this proc
     using NOW" answer — it samples twice with a delta to
-    compute true utilization.
+    compute true utilization. Default `sample_interval`
+    of 50ms is enough to register a sustained C-level
+    tight-loop at ~100% but cheap enough to run as part
+    of an autouse per-test fixture without dominating
+    suite wall-clock. Sub-50ms transient bursts are NOT
+    the bug class we're hunting (those are normal Python
+    work) so the lost sensitivity is fine.
 
     `only_pids` filters to a specific pre-snapshotted set
     (e.g. "pids spawned during this test only"); when
-    `None`, all live descendants are checked.
+    `None`, all live descendants are checked. Empty
+    `only_pids` returns `[]` IMMEDIATELY — fast path for
+    tests that didn't spawn anything new.
 
     Returns `[]` when `psutil` isn't installed or no
     descendants match.
 
     '''
+    # Fast-path: caller passed empty `only_pids` —
+    # nothing to sample. Avoids the psutil import + /proc
+    # walk for tests that didn't spawn descendants.
+    if only_pids is not None and not only_pids:
+        return []
+
     try:
         import psutil
     except ImportError:
@@ -718,12 +732,25 @@ def _reap_orphaned_subactors():
 
 @pytest.fixture(
     scope='function',
-    autouse=True,
 )
-def _track_orphaned_uds_per_test():
+def track_orphaned_uds_per_test():
     '''
-    Per-test (function-scoped) autouse UDS sock-file leak
-    detector + reaper.
+    Per-test (function-scoped) UDS sock-file leak
+    detector + reaper. **Opt-in**, NOT autouse.
+
+    Apply at module level on UDS-heavy test files via:
+
+        pytestmark = pytest.mark.usefixtures(
+            'track_orphaned_uds_per_test',
+        )
+
+    The session-end `_reap_orphaned_subactors` fixture
+    is the always-on safety net that catches leaks at
+    suite teardown; this per-test fixture is for the
+    smaller set of modules where blame attribution per
+    test matters (i.e. modules with a HISTORY of leaky
+    teardown that flakifies sibling tests via
+    sock-file rebind races).
 
     Snapshots `${XDG_RUNTIME_DIR}/tractor/` before and
     after each test; any `<name>@<pid>.sock` files
@@ -797,12 +824,18 @@ def _track_orphaned_uds_per_test():
 
 @pytest.fixture(
     scope='function',
-    autouse=True,
 )
-def _detect_runaway_subactors_per_test():
+def detect_runaway_subactors_per_test():
     '''
-    Per-test (function-scoped) autouse runaway-subactor
-    detector.
+    Per-test (function-scoped) runaway-subactor detector.
+    **Opt-in**, NOT autouse.
+
+    Apply at module level on cancellation-cascade-heavy
+    test files via:
+
+        pytestmark = pytest.mark.usefixtures(
+            'detect_runaway_subactors_per_test',
+        )
 
     Snapshots descendant pids before+after each test;
     for any pid spawned during the test that's still
@@ -826,7 +859,7 @@ def _detect_runaway_subactors_per_test():
     as needed.
 
     Cost: one extra `os.listdir('/proc')` snapshot
-    pre-test, one snapshot + N×`psutil.cpu_percent(0.5)`
+    pre-test, one snapshot + N×`psutil.cpu_percent(0.05)`
     post-test (only when there ARE new descendants —
     most tests don't trigger any sampling). Skips
     silently when `psutil` isn't installed.
@@ -876,6 +909,11 @@ def _detect_runaway_subactors_per_test():
     # subactor is still burning CPU when the next test
     # starts. The warning comes ONE TEST LATE which is
     # imperfect but better than silence.
+    #
+    # NB, in the typical clean case `pre_existing` is
+    # empty (no test descendants leftover) and the
+    # `find_runaway_subactors` call short-circuits
+    # without even loading `psutil`.
     pre_existing: set[int] = set(find_descendants(parent_pid))
     pre_runaways: list[tuple[int, float, str]] = (
         find_runaway_subactors(
@@ -899,12 +937,17 @@ def _detect_runaway_subactors_per_test():
     # `ai/conc-anal/trio_wakeup_socketpair_busy_loop_under_fork_issue.md`
     # for the canonical fork-spawn forkserver-worker
     # post-fork-close gap).
+    #
+    # `new_pids` is typically empty for tests that
+    # cleanly tore down their subactor tree; the call
+    # short-circuits before any `psutil` work.
+    new_pids: set[int] = (
+        set(find_descendants(parent_pid)) - pre_existing
+    )
     post_runaways: list[tuple[int, float, str]] = (
         find_runaway_subactors(
             parent_pid,
-            only_pids=set(
-                find_descendants(parent_pid)
-            ) - pre_existing,
+            only_pids=new_pids,
         )
     )
     if post_runaways:
