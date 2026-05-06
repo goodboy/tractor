@@ -1122,20 +1122,32 @@ async def _serve_ipc_eps(
             )
 
     finally:
+        # close every endpoint INDEPENDENTLY: a close raising
+        # mid-iter (e.g. UDS `os.unlink` racing concurrent reap) must
+        # not strand the rest of the eps + must not skip the
+        # `_shutdown.set()` below.
         if eps:
             addr: Address
             ep: Endpoint
-            for addr, ep in server.epsdict().items():
-                ep.close_listener()
-                server._endpoints.remove(ep)
+            for addr, ep in list(server.epsdict().items()):
+                try:
+                    ep.close_listener()
+                except Exception as ep_close_err:
+                    log.exception(
+                        f'Endpoint close raised, continuing teardown\n'
+                        f'  |_{ep!r}\n'
+                        f'  |_{ep_close_err!r}\n'
+                    )
+                finally:
+                    try:
+                        server._endpoints.remove(ep)
+                    except ValueError:
+                        pass
 
-        # actor = _state.current_actor()
-        # if actor.is_arbiter:
-        #     import pdbp; pdbp.set_trace()
-
-        # signal the server is "shutdown"/"terminated"
-        # since no more active endpoints are active.
-        if not server._endpoints:
+        # always signal "shutdown" so `actor.cancel()` →
+        # `ipc_server.wait_for_shutdown()` doesn't deadlock when an
+        # endpoint close raised above.
+        if server._shutdown is not None:
             server._shutdown.set()
 
 @acm
