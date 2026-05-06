@@ -22,7 +22,7 @@ from tractor import (
     Portal,
 )
 from tractor.runtime import _state
-from .conftest import (
+from ..conftest import (
     sig_prog,
     _INT_SIGNAL,
     _INT_RETURN_CODE,
@@ -36,6 +36,17 @@ if TYPE_CHECKING:
 
 
 _non_linux: bool = platform.system() != 'Linux'
+
+
+# NOTE, multi-program tests historically triggered both
+# UDS sock-file leaks (daemon-subproc SIGKILL paths) AND
+# trio `WakeupSocketpair.drain()` busy-loops
+# (`test_register_duplicate_name`). Track + detect
+# per-test as a regression net.
+pytestmark = pytest.mark.usefixtures(
+    'track_orphaned_uds_per_test',
+    'detect_runaway_subactors_per_test',
+)
 
 
 def test_abort_on_sigint(
