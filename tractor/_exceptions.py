@@ -89,6 +89,28 @@ class ActorFailure(RuntimeFailure):
     '''
 
 
+class ActorTooSlowError(RuntimeFailure):
+    '''
+    A peer-`Actor` failed to ack an actor-runtime cancel-cascade
+    request (e.g. `Portal.cancel_actor()` -> `Actor.cancel()`)
+    within the bounded wait window.
+
+    Distinct exc-type (NOT a `trio.TooSlowError` subclass) so that
+    `except trio.TooSlowError:` blocks elsewhere in the test-suite
+    or `tractor` internals do NOT silently mask actor-cancel
+    timeouts — these MUST propagate so a supervisor can escalate
+    to `proc.terminate()` (hard-kill) per SC-discipline:
+
+      graceful cancel-req -> bounded wait -> hard-kill
+
+    Reason: see #subint_forkserver duplicate-name hang
+    diagnosis where `Portal.cancel_actor()` silently swallowed
+    the timeout and the supervisor never escalated, leaving
+    a same-named sibling subactor parked forever.
+
+    '''
+
+
 class InternalError(RuntimeError):
     '''
     Entirely unexpected internal machinery error indicating
