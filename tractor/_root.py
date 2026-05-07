@@ -384,16 +384,17 @@ async def open_root_actor(
             if addr.proto_key not in enable_transports
         ]
         if bad_addrs:
+            mismatch_lines: str = '\n'.join(
+                f'  - proto_key={pk!r}  addr={a!r}'
+                for pk, a in bad_addrs
+            )
             raise ValueError(
                 f'`registry_addrs` contains addr(s) whose proto is '
                 f'not in `enable_transports`!\n'
                 f'enable_transports: {enable_transports!r}\n'
                 f'mismatched_addrs:\n'
-                + '\n'.join(
-                    f'  - proto_key={pk!r}  addr={a!r}'
-                    for pk, a in bad_addrs
-                )
-                + '\n\n'
+                f'{mismatch_lines}\n'
+                f'\n'
                 f'Either add the missing proto to '
                 f'`enable_transports`, or remove the addr from '
                 f'`registry_addrs`.'
