@@ -760,6 +760,26 @@ class _ForkedProc:
         self._pidfd = -1
         return self._returncode
 
+    def terminate(self) -> None:
+        '''
+        OS-level `SIGTERM` to the child. Swallows
+        `ProcessLookupError` (already dead).
+
+        Mirrors `trio.Process.terminate()` /
+        `multiprocessing.Process.terminate()` — sends SIGTERM
+        (graceful, allows the child a chance to clean up via
+        signal-handlers) rather than SIGKILL. Used by
+        `ActorNursery.cancel()`'s per-child escalation when
+        `Portal.cancel_actor()` raises `ActorTooSlowError`,
+        and by the legacy `hard_kill=True` branch on the same
+        path.
+
+        '''
+        try:
+            os.kill(self.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
     def kill(self) -> None:
         '''
         OS-level `SIGKILL` to the child. Swallows
