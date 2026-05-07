@@ -55,6 +55,7 @@ from ..msg import (
     Return,
 )
 from .._exceptions import (
+    ActorTooSlowError,
     NoResult,
     TransportClosed,
 )
@@ -268,6 +269,7 @@ class Portal:
     async def cancel_actor(
         self,
         timeout: float | None = None,
+        raise_on_timeout: bool = False,
 
     ) -> bool:
         '''
@@ -280,6 +282,17 @@ class Portal:
         at `.open_context()` and the definition of
         `._context.Context.cancel()` which CAN be used for this
         purpose.
+
+        `raise_on_timeout` (default `False`):
+
+        - `False` (legacy): on bounded-wait expiry, log at DEBUG
+          and return `False`. Used by callers that issue cancel
+          fire-and-forget and have their own escalation
+          (e.g. `_spawn.soft_kill()` checks `proc.poll()` after).
+        - `True`: on bounded-wait expiry, raise `ActorTooSlowError`
+          so the caller MUST handle the failure explicitly.
+          `ActorNursery.cancel()` opts in so it can escalate via
+          `proc.terminate()` per SC-discipline.
 
         '''
         __runtimeframe__: int = 1  # noqa
@@ -301,15 +314,16 @@ class Portal:
 
         # XXX the one spot we set it?
         chan._cancel_called: bool = True
+        cancel_timeout: float = (
+            timeout
+            or
+            self.cancel_timeout
+        )
         try:
             # send cancel cmd - might not get response
             # XXX: sure would be nice to make this work with
             # a proper shield
-            with trio.move_on_after(
-                timeout
-                or
-                self.cancel_timeout
-            ) as cs:
+            with trio.move_on_after(cancel_timeout) as cs:
                 cs.shield: bool = True
                 await self.run_from_ns(
                     'self',
@@ -317,16 +331,24 @@ class Portal:
                 )
                 return True
 
-            if cs.cancelled_caught:
-                # may timeout and we never get an ack (obvi racy)
-                # but that doesn't mean it wasn't cancelled.
-                log.debug(
-                    f'May have failed to cancel peer?\n'
-                    f'\n'
-                    f'c)=?> {peer_id}\n'
+            # `move_on_after` fired — peer didn't ack within
+            # bounded window. Behaviour depends on
+            # `raise_on_timeout`:
+            assert cs.cancelled_caught
+            if raise_on_timeout:
+                raise ActorTooSlowError(
+                    f'Peer {peer_id} did not ack `Actor.cancel()`'
+                    f'-RPC within bounded wait of '
+                    f'{cancel_timeout!r}s'
                 )
 
-            # if we get here some weird cancellation case happened
+            # legacy fire-and-forget path: log + return False so
+            # the caller can decide whether to escalate.
+            log.debug(
+                f'May have failed to cancel peer?\n'
+                f'\n'
+                f'c)=?> {peer_id}\n'
+            )
             return False
 
         except TransportClosed as tpt_err:
