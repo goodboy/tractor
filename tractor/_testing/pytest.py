@@ -31,6 +31,7 @@ from typing import (
     get_args,
     TYPE_CHECKING,
 )
+import warnings
 
 import pytest
 import tractor
@@ -52,8 +53,19 @@ pytest_plugins: tuple[str, ...] = (
 if TYPE_CHECKING:
     from argparse import Namespace
 
+
 _cap_sys_passed_as_flag: bool = False
-_cap_fd_set: bool = False
+
+# Spawn backends that need `--capture=sys` to avoid the
+# fork-child×pytest-capture-fd deadlock. See the long
+# NOTE in `pytest_load_initial_conftests` below for the
+# full mechanism + tradeoff write-up.
+_CAPSYS_REQUIRED_SPAWNERS: frozenset[str] = frozenset({
+    'main_thread_forkserver',
+    # TODO future variant-2 'subint_forkserver' lands
+    # here too once the impl is unblocked.
+})
+
 
 # XXX REQUIRED in order to enforce `--capture=` flag
 # pre test session.
@@ -64,67 +76,108 @@ def pytest_load_initial_conftests(
     parser: pytest.Parser,
     args: list[str],
 ):
-    global _cap_sys_passed_as_flag, _cap_fd_set
+    '''
+    Validate the `--capture=` × `--spawn-backend=`
+    combination at session-startup.
 
-    opts: Namespace = early_config.option
-    if opts.capture == 'fd':
-        _cap_fd_set = True
+    Background
+    ----------
+    `--capture=sys` is REQUIRED for fork-based spawn backends (e.g.
+    `main_thread_forkserver`): default `--capture=fd` redirects fd
+    1,2 to temp files, and fork children inherit those fds — opaque
+    deadlocks happen in the pytest-capture-machinery ↔ fork-child
+    stdio interaction. `--capture=sys` only redirects Python- level
+    `sys.stdout`/`sys.stderr`, leaving fd 1,2 alone.
 
+    Trade-off (vs. `--capture=fd`):
+
+    - LOST: per-test attribution of subactor *raw-fd* output (C-ext
+      writes, `os.write(2, ...)`, subproc stdout). Not zero — those
+      go to the terminal, captured by CI's terminal-level capture,
+      just not per-test-scoped in the pytest failure report.
+
+    - KEPT: Python-level `print()` + `logging` capture per-test
+      (tractor's logger uses `sys.stderr`, so tractor log output IS
+      still attributed per-test).
+
+    - KEPT: user `pytest -s` for debugging (unaffected).
+
+    Full post-mortem in
+    `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`.
+
+    Validation policy:
+    - **CI mode** (`CI` env-var set): fail-fast at
+      session start if a fork-spawn backend is requested
+      WITHOUT `--capture=sys`. CI must be explicit; no
+      auto-fallbacks. Forces every CI matrix-row's run
+      line to declare its capture mode plainly.
+    - **Local mode** (no `CI` env-var): emit a loud
+      warning + suggest `--capture=sys`, but allow the
+      run to proceed. Lets devs experiment with the bad
+      combo (e.g. to validate whether recent
+      fork-survival fixes have made `--capture=fd` work
+      after all).
+
+    '''
+    global _cap_sys_passed_as_flag
     opts_w_args: Namespace = parser.parse_known_args(args)
-    if opts_w_args.capture == 'fd':
-        _cap_fd_set = True
-
+    spawner: str|None = getattr(
+        opts_w_args,
+        'spawn_backend',
+        None,
+    )
+    capture: str|None = getattr(
+        opts_w_args,
+        'capture',
+        None,
+    )
     if '--capture=sys' in args:
         _cap_sys_passed_as_flag = True
+        assert capture == 'sys'
 
-    # XXX, ALWAYS apply capsys for fork based spawners:
-    # * main_thread_forkserver
-    # * (TODO) subint_forkserver
-    # '--capture=sys',
-    # ^XXX NOTE^ for `main_thread_forkserver` spawner
-    #
-    # => sys-level capture is REQUIRED for fork-based spawn
-    # backends (e.g. `main_thread_forkserver`): default
-    # `--capture=fd` redirects fd 1,2 to temp files, and fork
-    # children inherit those fds — opaque deadlocks happen in
-    # the pytest-capture-machinery ↔ fork-child stdio
-    # interaction. `--capture=sys` only redirects Python-level
-    # `sys.stdout`/`sys.stderr`, leaving fd 1,2 alone.
-    #
-    # Trade-off (vs. `--capture=fd`):
-    # - LOST: per-test attribution of subactor *raw-fd* output
-    #   (C-ext writes, `os.write(2, ...)`, subproc stdout). Not
-    #   zero — those go to the terminal, captured by CI's
-    #   terminal-level capture, just not per-test-scoped in the
-    #   pytest failure report.
-    # - KEPT: Python-level `print()` + `logging` capture per-
-    #   test (tractor's logger uses `sys.stderr`, so tractor
-    #   log output IS still attributed per-test).
-    # - KEPT: user `pytest -s` for debugging (unaffected).
-    #
-    # Full post-mortem in
-    # `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`.
+    in_ci: bool = bool(os.environ.get('CI'))
+
     if (
-        (spawner := opts_w_args.spawn_backend) in [
-            'main_thread_forkserver',
-        ]
+        spawner in _CAPSYS_REQUIRED_SPAWNERS
+        and
+        capture == 'fd'
     ):
-        print(
-            f'XXX SETTING CAPSYS due to spawning backend XXX\n'
-            f'--spawn-backend={spawner!r}\n'
+        msg: str = (
+            f'\n'
+            f'XXX `--spawn-backend={spawner}` REQUIRES '
+            f'`--capture=sys` XXX\n'
+            f'fork-child × `--capture=fd` is a known '
+            f'deadlock pattern.\n'
+            f'See `tractor._testing.pytest`\'s '
+            f'`pytest_load_initial_conftests` docstring '
+            f'for the full mechanism.\n'
+            f'\n'
+            f'Re-invoke with `--capture=sys` (or run '
+            f'with `pytest -s` for no capture).\n'
         )
-        opts.capture = 'sys'
-        # ^TODO XXX?/
-        # seems like this doesn't get set by the above!?
-        args.append(
-            '--capture=sys',
-        )
-        out = parser.parse_known_and_unknown_args(
-            args,
-            early_config.option,
-        )
-        assert out[0].capture == 'sys'
-        # breakpoint()
+        # fail-fast: CI must declare capture explicitly for
+        # fork-spawn backends.
+        if in_ci:
+            pytest.exit(
+                f'{msg}\n'
+                f'FAIL-FAST: CI=1 detected; aborting session.\n',
+                returncode=2,
+            )
+
+        # local: loud warn but let the run proceed so devs can
+        # experiment.
+        else:
+            warnings.warn(
+                f'{msg}\n'
+                f'Local mode (no `CI` env var) — '
+                f'continuing. Expect potential hangs.\n',
+                category=UserWarning,
+                stacklevel=1,
+            )
+            # ??TODO?? is there a way to force the `--capture=sys` sin CLI ??
+            # - [x] ask pytest peeps in chat!
+            # - [x] pytest` issue,
+            #       https://github.com/pytest-dev/pytest/issues/14444
 
     # TODO, set various `$TRACTOR_X*` osenv vars here!
     print(
@@ -399,7 +452,6 @@ def pytest_configure(
             )
             enable_stack_on_sig()
         except ImportError:
-            import warnings
             warnings.warn(
                 '`stackscope` not installed — '
                 '--enable-stackscope is a no-op. '
@@ -622,25 +674,36 @@ def is_forking_spawner(
 
 
 def maybe_xfail_for_spawner(
+    request: pytest.FixtureRequest,
     start_method: str,
     is_forking_spawner: bool,
 ) -> None:
     '''
-    Fork based spawning backends caude issues with `pytest`'s
-    fd-capture mechanism and can cause various suites to hang.
+    Fork based spawning backends cause issues with
+    `pytest`'s fd-capture mechanism and can cause various
+    suites to hang.
 
-    Instead this helper allows skipping/xfailing from a test
-    when a certain spawner + CLI-flag input is detected.
+    This helper allows skipping/xfailing from a test when
+    a fork-spawn backend is being used WITHOUT
+    `--capture=sys`.
 
     '''
+    capture_mode: str = request.config.option.capture
+    # `tee-sys` is also sys-level capture (just additionally writes
+    # to the original `sys.__stdout__/__stderr__`); fork-safe like
+    # `sys`. Only `fd`-level capture is the deadlock pattern.
     if (
-        not _cap_sys_passed_as_flag
+        capture_mode not in (
+            'sys',
+            'tee-sys',
+        )
         and
         is_forking_spawner
     ):
         pytest.skip(
             f'Spawner {start_method!r} requires the flag,\n'
-            f'--capture=sys or similar..\n'
+            f'--capture=sys or --capture=tee-sys..\n'
+            f'(got --capture={capture_mode!r})\n'
         )
 
 
@@ -666,8 +729,13 @@ def set_fork_aware_capture(
     which can oddly make certain tests hang/fail.
 
     '''
-    if _cap_sys_passed_as_flag:
-        return 'sys'
+    # Fast-path: user already passed sys-level capture
+    # (`sys` or `tee-sys`) at the CLI — no override needed.
+    if request.config.option.capture in (
+            'sys',
+            'tee-sys',
+    ):
+        return request.config.option.capture
 
     capsys: pytest.CaptureFixture = maybe_override_capture(
         request=request,
