@@ -6,7 +6,7 @@ prefix-completion treats them as a sub-cmd group — type
 `acli.<TAB>` to see the full set.
 
 Provides:
-  - `acli.pytree <pid|pgrep-pat>`       psutil-backed proc tree,
+  - `acli.ptree <pid|pgrep-pat>`       psutil-backed proc tree,
                                         live + zombies split.
   - `acli.hung_dump <pid|pat> [...]`    kernel `wchan`/`stack` +
                                         `py-spy dump` (incl `--locals`)
@@ -28,7 +28,7 @@ Or source directly:
 Pipe-to-paste idiom (xonsh):
   hung-dump pytest |t /tmp/hung.log
 
-Requires `psutil` for full functionality (`pytree` and the
+Requires `psutil` for full functionality (`ptree` and the
 `hung-dump` tree-walk). Falls back to `pgrep -P` recursion
 if missing.
 """
@@ -44,7 +44,7 @@ except ImportError:
     psutil = None
     print(
         '[tractor-diag] `psutil` missing — '
-        'acli.pytree disabled, acli.hung_dump uses pgrep fallback. '
+        'acli.ptree disabled, acli.hung_dump uses pgrep fallback. '
         '`uv pip install psutil` for full functionality.'
     )
 
@@ -84,7 +84,7 @@ def _walk_tree_with_depth(pid: int):
     '''
     Yield `(proc, depth)` pairs walking `pid`'s tree. `depth==0`
     is the root; `depth==1` are direct children, etc. Used by
-    `pytree` to render parent/child relationships visually.
+    `ptree` to render parent/child relationships visually.
     '''
     try:
         root = psutil.Process(pid)
@@ -105,6 +105,56 @@ def _walk_tree_with_depth(pid: int):
             seen.add(k.pid)
             yield k, d + 1
             stack.append((k, d + 1))
+
+
+def _which_cgroup_slice(pid: int) -> str|None:
+    '''
+    Return which top-level systemd cgroup slice `pid` is
+    rooted in, or `None` if it's not in either:
+
+      - `'system'`: under `/system.slice/...` — typically
+        `.service` units (long-lived daemons explicitly
+        enabled via `systemctl enable`, e.g.
+        `auto-cpufreq.service`, `dbus.service`,
+        `systemd-journald.service`).
+
+      - `'user'`: under `/user.slice/user-<uid>.slice/...`
+        — typically `.scope` units that systemd auto-wraps
+        around desktop-launched apps + login-session
+        procs (e.g. `app-firefox-<id>.scope`,
+        `session-<id>.scope`).
+
+      - `None`: NOT in either slice — pid 1 is NOT
+        managing this proc via cgroup. Combined with
+        `ppid==1`, this is the genuine "leaked / parent
+        died" orphan signal.
+
+    Both slice categories are by-design `ppid==1` (pid 1
+    is actively managing them) and should NOT be flagged
+    as concerning orphans, but distinguishing them is
+    useful: `system.slice` is "real services on this
+    box", `user.slice` is "stuff in your login session".
+
+    Returns `None` on any read error (proc gone, perm
+    denied, non-Linux, etc.) — callers should treat that
+    as "unknown, classify as plain orphan".
+
+    '''
+    try:
+        with open(f'/proc/{pid}/cgroup') as f:
+            cg: str = f.read()
+    except (
+        FileNotFoundError,
+        PermissionError,
+        ProcessLookupError,
+        OSError,
+    ):
+        return None
+    if '/system.slice/' in cg:
+        return 'system'
+    if '/user.slice/' in cg:
+        return 'user'
+    return None
 
 
 def _walk_tree_pgrep(pid: int) -> list:
@@ -157,15 +207,15 @@ def _ensure_sudo_cached() -> bool:
     return rc == 0
 
 
-# --- pytree ---------------------------------------------------
+# --- ptree ---------------------------------------------------
 
-def _pytree(args):
+def _ptree(args):
     '''
     psutil-backed proc tree; per-proc classification into
     severity-ordered buckets so leaked / defunct procs
     don't hide in the noise of normal `live` rows.
 
-    usage: acli.pytree [--tree|-t] <pid|pgrep-pattern> [...]
+    usage: acli.ptree [--tree|-t] <pid|pgrep-pattern> [...]
 
     classification (per-proc, not per-tree):
 
@@ -207,10 +257,10 @@ def _pytree(args):
             pos_args.append(a)
 
     if not pos_args:
-        print('usage: acli.pytree [--tree|-t] <pid|pgrep-pattern> [...]')
+        print('usage: acli.ptree [--tree|-t] <pid|pgrep-pattern> [...]')
         return 1
     if psutil is None:
-        print('pytree requires psutil; install via `uv pip install psutil`')
+        print('ptree requires psutil; install via `uv pip install psutil`')
         return 1
 
     roots: list = []
@@ -233,6 +283,15 @@ def _pytree(args):
     walk_order: list = []  # [(proc, depth)] preserved walk order
     live: list = []        # [(proc, depth)]
     orphans: list = []
+    # `ppid==1` AND rooted in `/system.slice/` cgroup —
+    # real systemd-managed services (e.g. `auto-cpufreq`,
+    # `NetworkManager`).
+    system_slice: list = []
+    # `ppid==1` AND rooted in `/user.slice/.../*.scope` —
+    # desktop-launched apps wrapped by systemd-user in
+    # transient `.scope` units (e.g. Firefox, browsers,
+    # editors started from a launcher).
+    user_slice: list = []
     zombies: list = []
     gone: list = []
 
@@ -252,20 +311,43 @@ def _pytree(args):
                 gone.append(p.pid)
                 continue
             entry = (p, depth)
-            # severity order: zombie > orphan > live.
+            # severity order:
+            #   zombie > orphan > system-slice > user-slice > live
+            # `ppid==1` splits into:
+            #   - `system-slice` (rooted in `/system.slice/` —
+            #     real services, by-design `ppid==1`)
+            #   - `user-slice` (rooted in
+            #     `/user.slice/.../*.scope` — desktop apps
+            #     wrapped by systemd-user, by-design `ppid==1`)
+            #   - `orphans` (everything else with `ppid==1` —
+            #     genuinely concerning).
             if status in defunct_statuses:
                 zombies.append(entry)
                 pid_to_bucket[p.pid] = 'zombies'
             elif ppid == 1:
-                orphans.append(entry)
-                pid_to_bucket[p.pid] = 'orphans'
+                slice_kind: str|None = _which_cgroup_slice(p.pid)
+                if slice_kind == 'system':
+                    system_slice.append(entry)
+                    pid_to_bucket[p.pid] = 'system-slice'
+                elif slice_kind == 'user':
+                    user_slice.append(entry)
+                    pid_to_bucket[p.pid] = 'user-slice'
+                else:
+                    orphans.append(entry)
+                    pid_to_bucket[p.pid] = 'orphans'
             else:
                 live.append(entry)
                 pid_to_bucket[p.pid] = 'live'
             walk_order.append(entry)
 
-    total: int = len(live) + len(orphans) + len(zombies)
-    print(f'# pytree: {total} procs across roots {roots}')
+    total: int = (
+        len(live)
+        + len(orphans)
+        + len(system_slice)
+        + len(user_slice)
+        + len(zombies)
+    )
+    print(f'# ptree: {total} procs across roots {roots}')
 
     hdr = '  ' + 'PID'.rjust(7) + '  ' + 'PPID'.rjust(7) + '  '
     hdr += 'STATUS'.ljust(10) + '  CMD'
@@ -370,8 +452,23 @@ def _pytree(args):
     )
     _section(
         'orphans', orphans,
-        '`ppid==1`, reparented to init (leaked / parent gone)',
+        '`ppid==1`, NOT in a `system.slice`/`user.slice` cgroup '
+        '(likely leaked / parent gone)',
         bucket='orphans',
+    )
+    _section(
+        'system-slice', system_slice,
+        '`ppid==1`, rooted under `/system.slice/` '
+        '(real systemd-managed service — daemon, login '
+        'session manager, etc; not a leak)',
+        bucket='system-slice',
+    )
+    _section(
+        'user-slice', user_slice,
+        '`ppid==1`, rooted under `/user.slice/.../*.scope` '
+        '(desktop-launched app wrapped by systemd-user — '
+        'browser, editor, etc; not a leak)',
+        bucket='user-slice',
     )
     _section('live', live, bucket='live')
 
@@ -633,25 +730,12 @@ def _tractor_reap(args):
         ns.uds_only
     )
 
-    # repo-root resolution: `git rev-parse --show-toplevel`
-    # first, falling back to the xontrib file's parent of
-    # parent. mirrors `scripts/tractor-reap._repo_root()`.
-    try:
-        repo_str: str = sp.check_output(
-            ['git', 'rev-parse', '--show-toplevel'],
-            stderr=sp.DEVNULL,
-            text=True,
-        ).strip()
-        repo: Path = Path(repo_str)
-    except (sp.CalledProcessError, FileNotFoundError):
-        repo: Path = Path(__file__).resolve().parent.parent
-
-    # lazy-import the reap helpers since the package may not
-    # have been on `sys.path` at xontrib-load time (e.g. the
-    # contrib was sourced before activating the venv).
-    import sys
-    if str(repo) not in sys.path:
-        sys.path.insert(0, str(repo))
+    # `tractor` is assumed to be importable in the xonsh env
+    # this xontrib was sourced into (a venv with the package
+    # installed). The standalone `scripts/tractor-reap` does
+    # `git rev-parse --show-toplevel` + `sys.path.insert` for
+    # cold-shell usability — that overhead is unnecessary
+    # here since we're already inside the project's venv.
     from tractor._testing._reap import (
         find_descendants,
         find_orphans,
@@ -670,8 +754,12 @@ def _tractor_reap(args):
             pids: list = find_descendants(ns.parent)
             mode: str = f'descendants of PPid={ns.parent}'
         else:
-            pids = find_orphans(repo)
-            mode = f'orphans (PPid=1, cwd={repo})'
+            pids = find_orphans()
+            mode = (
+                'orphans (PPid==1, intrinsic '
+                'cmdline/comm match — `tractor[…]` or '
+                '`tractor._child`)'
+            )
 
         if not pids:
             print(f'[acli.reap] no {mode} to reap')
@@ -730,7 +818,7 @@ def _tractor_reap(args):
 # `acli.<TAB>` and the full set is suggested. no parent
 # `acli` cmd exists — the dot is purely a naming convention.
 _TCLI_ALIASES: dict = {
-    'acli.pytree': _pytree,
+    'acli.ptree': _ptree,
     'acli.hung_dump': _hung_dump,
     'acli.bindspace_scan': _bindspace_scan,
     'acli.reap': _tractor_reap,
