@@ -188,6 +188,86 @@ def _read_cmdline(pid: int) -> str:
         return ''
 
 
+def _read_comm(pid: int) -> str:
+    '''
+    Read `/proc/<pid>/comm` — the kernel's per-task name
+    (truncated to ~15 bytes on Linux). Set by
+    `setproctitle.setproctitle()` so this is one of the
+    most reliable identifiers for tractor sub-actors —
+    notably, **survives zombie state** (kernel preserves
+    `comm` even after exit, until reaped) where
+    `cmdline`/`environ` may not.
+
+    '''
+    try:
+        with open(f'/proc/{pid}/comm') as f:
+            return f.read().rstrip('\n')
+    except (
+        FileNotFoundError,
+        PermissionError,
+        ProcessLookupError,
+    ):
+        return ''
+
+
+# Intrinsic markers that identify a tractor sub-actor
+# regardless of cwd / venv path / launch context. Used by
+# `_is_tractor_subactor()` below.
+#
+# - cmdline `tractor[`: matches the `setproctitle`-set form
+#   (`tractor[<aid.reprol()>]`) — set in
+#   `_actor_child_main` for ALL backends, mutates argv via
+#   libc so visible in `/proc/<pid>/cmdline`.
+# - cmdline `tractor._child`: matches the legacy
+#   `python -m tractor._child --uid (...)` form. Catches
+#   procs that died before `_actor_child_main` got to call
+#   `setproctitle()` — argv from exec is still kernel-
+#   visible at that point.
+# - comm `tractor[`: same proctitle-set form, but visible
+#   via `/proc/<pid>/comm` (kernel-truncated to ~15 bytes,
+#   `tractor[doggy:`). Critical for ZOMBIES — kernel
+#   preserves `comm` past task-exit until parent reaps,
+#   while `cmdline` for zombies often reads as empty.
+_TRACTOR_PROC_CMDLINE_MARKERS: tuple[str, ...] = (
+    'tractor._child',
+    'tractor[',
+)
+_TRACTOR_PROC_COMM_MARKER: str = 'tractor['
+
+
+def _is_tractor_subactor(pid: int) -> bool:
+    '''
+    Detect whether `pid` is a tractor sub-actor process
+    using **intrinsic** signals — cmdline → comm — in
+    priority order.
+
+    No filesystem-state coupling (cwd / venv path) and no
+    env-var dependency: `setproctitle`-mutated argv (set
+    in `_actor_child_main`) covers all live + most-zombie
+    cases; legacy `python -m tractor._child` cmdline
+    catches anything that died before `setproctitle` ran;
+    kernel `comm` covers zombies that survived past
+    `_actor_child_main` long enough to setproctitle.
+
+    '''
+    # 1. cmdline match — catches both `setproctitle`-set
+    #    `tractor[<aid>]` (live) AND legacy `python -m
+    #    tractor._child` (any) form.
+    cmdline: str = _read_cmdline(pid)
+    if any(m in cmdline for m in _TRACTOR_PROC_CMDLINE_MARKERS):
+        return True
+
+    # 2. Zombie-resilient fallback: kernel-preserved `comm`
+    #    (set by setproctitle). Critical for zombies whose
+    #    `cmdline` reads as empty post-exit but whose
+    #    `comm` survives to `wait()` time.
+    comm: str = _read_comm(pid)
+    if _TRACTOR_PROC_COMM_MARKER in comm:
+        return True
+
+    return False
+
+
 def _iter_live_pids() -> list[int]:
     '''
     Enumerate currently-alive pids from `/proc`. Returns
@@ -291,34 +371,89 @@ def find_runaway_subactors(
     return runaways
 
 
+def _read_status_state(pid: int) -> str | None:
+    '''
+    Return the single-letter task state from
+    `/proc/<pid>/status` (`R`/`S`/`D`/`Z`/`T`/`X`/`I`) or
+    `None` if unreadable. `Z` = zombie.
+
+    '''
+    try:
+        with open(f'/proc/{pid}/status') as f:
+            for line in f:
+                if line.startswith('State:'):
+                    # `State:\tZ (zombie)` -> 'Z'
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1]
+    except (
+        FileNotFoundError,
+        PermissionError,
+        ProcessLookupError,
+    ):
+        return None
+    return None
+
+
 def find_orphans(
-    repo_root: pathlib.Path,
+    repo_root: pathlib.Path|None = None,
 ) -> list[int]:
     '''
-    PIDs that are:
+    PIDs that are reparented to init (`PPid == 1`) AND
+    are tractor sub-actors per `_is_tractor_subactor()`'s
+    intrinsic checks (env-var → cmdline → comm).
 
-    - reparented to init (`PPid == 1`),
-    - have `cwd == <repo_root>`,
-    - and have a `python` in their cmdline.
-
-    This is the "pytest-died-mid-session" case where the
-    subactor forks got reparented. The cwd filter is the
-    critical bit that keeps us from sweeping up unrelated
-    init-children on the box.
+    The `repo_root` arg is kept for back-compat with
+    callers that previously passed it (the old impl used
+    it to filter by cwd) but is no longer required —
+    tractor sub-actor identity is intrinsic to the proc,
+    not its launch context.
 
     '''
-    repo: str = str(repo_root)
+    # `repo_root` kept in signature for back-compat; today
+    # the intrinsic env/cmdline/comm signals identify a
+    # tractor sub-actor without coincidence-of-cwd
+    # matching. Suppressed-arg stays a no-op so existing
+    # callers don't have to change.
+    _ = repo_root  # noqa
     hits: list[int] = []
     for pid in _iter_live_pids():
         if _read_status_ppid(pid) != 1:
             continue
-        cwd: str | None = _read_cwd(pid)
-        if cwd != repo:
+        if _is_tractor_subactor(pid):
+            hits.append(pid)
+    return hits
+
+
+def find_zombies(
+    parent_pid: int|None = None,
+) -> list[int]:
+    '''
+    PIDs in zombie state (`/proc/<pid>/status: State: Z`)
+    that are tractor sub-actors per
+    `_is_tractor_subactor()`.
+
+    When `parent_pid` is given, restricts to descendants
+    of that pid (typical for pytest session-end fixture
+    use). When `None`, scans all zombies on the box.
+
+    Detection for zombies relies primarily on
+    `/proc/<pid>/comm` (kernel-preserved past zombie
+    state, set by `setproctitle`) since
+    `cmdline`/`environ` are usually empty post-exit.
+
+    '''
+    hits: list[int] = []
+    for pid in _iter_live_pids():
+        if _read_status_state(pid) != 'Z':
             continue
-        cmd: str = _read_cmdline(pid)
-        if 'python' not in cmd:
+        if (
+            parent_pid is not None
+            and _read_status_ppid(pid) != parent_pid
+        ):
             continue
-        hits.append(pid)
+        if _is_tractor_subactor(pid):
+            hits.append(pid)
     return hits
 
 
