@@ -21,6 +21,7 @@ import os
 import signal
 import time
 from typing import (
+    Callable,
     TYPE_CHECKING,
 )
 
@@ -47,7 +48,12 @@ if TYPE_CHECKING:
 
 @no_macos
 def test_shield_pause(
-    spawn: PexpectSpawner,
+    spawn: Callable[
+        ...,
+        PexpectSpawner,
+    ],
+    start_method: str,
+    request: pytest.FixtureRequest,
 ):
     '''
     Verify the `tractor.pause()/.post_mortem()` API works inside an
@@ -55,8 +61,10 @@ def test_shield_pause(
     next checkpoint wherein the cancelled will get raised.
 
     '''
-    child = spawn(
-        'shield_hang_in_sub'
+    child: PexpectSpawner = spawn(
+        'shield_hang_in_sub',
+        loglevel='devx',
+        # ^XXX REQUIRED for below patt matching!
     )
     expect(
         child,
@@ -86,38 +94,82 @@ def test_shield_pause(
         # end-of-tree delimiter
         "end-of-\('root'",
     )
-    assert_before(
+    _before: str = assert_before(
         child,
         [
             # 'Srying to dump `stackscope` tree..',
             # 'Dumping `stackscope` tree for actor',
             "('root'",  # uid line
 
-            # TODO!? this used to show?
+            # TODO!? this in-task-code used to show??
             # -[ ] mk reproducable for @oremanj?
+            # => SOLVED? by our `trio_token.run_sync_soon()`
+            #    approach?
             #
             # parent block point (non-shielded)
             # 'await trio.sleep_forever()  # in root',
         ]
     )
-    expect(
-        child,
-        # end-of-tree delimiter
-        "end-of-\('hanger'",
-    )
-    assert_before(
-        child,
-        [
-            # relay to the sub should be reported
-            'Relaying `SIGUSR1`[10] to sub-actor',
 
-            "('hanger'",  # uid line
+    # NOTE, hierarchical-ordering invariant restored by
+    # `_dump_then_relay` (co-scheduled dump+relay on the
+    # trio loop, see `tractor.devx._stackscope`): the
+    # parent's full task-tree prints BEFORE the 'Relaying
+    # `SIGUSR1`' log msg, which prints BEFORE any sub-
+    # actor receives the signal and dumps its own tree.
+    # So the relay log appears BETWEEN `end-of-('root'`
+    # (above) and `end-of-('hanger'` (below).
+    handle_out_of_order: bool = False
 
-            # TODO!? SEE ABOVE
-            # hanger LOC where it's shield-halted
-            # 'await trio.sleep_forever()  # in subactor',
-        ]
-    )
+    # XXX, when capfd is NOT used we don't expect to
+    # see the logging output from the subactor.
+    if (no_capfd := (start_method in [
+            'main_thread_forkserver',
+        ])
+    ):
+        opts = request.config.option
+        assert opts.spawn_backend == start_method
+        # ?XXX? i guess the `testdir` fixture "pretends to" reset
+        # this to the default 'fd'??
+        # assert opts.capture in [
+        #     'sys',
+        #     'no',
+        # ]
+
+    if (
+        handle_out_of_order
+        and
+        "end-of-('hanger'" in _before
+    ):
+         assert "('hanger'" in _before
+         assert 'Relaying `SIGUSR1`[10] to sub-actor' in _before
+
+    else:
+        _before = expect(
+            child,
+            'Relaying `SIGUSR1`\\[10\\] to sub-actor',
+        )
+        # _before: str = assert_before(
+        #     child,
+        #     ["('hanger'",]  # uid line
+        # )
+        if not no_capfd:
+            expect(
+                child,
+                # end-of-subactor's-tree delimiter
+                "end-of-\('hanger'",
+            )
+            _before: str = assert_before(
+                child,
+                [
+                    "('hanger'",  # uid line
+
+                    # TODO!? SEE ABOVE
+                    # hanger LOC where it's shield-halted
+                    # 'await trio.sleep_forever()  # in subactor',
+                ]
+            )
+
 
     # simulate the user sending a ctl-c to the hanging program.
     # this should result in the terminator kicking in since
@@ -133,14 +185,19 @@ def test_shield_pause(
         _shutdown_msg,
         timeout=6,
     )
-    assert_before(
-        child,
-        [
-            'raise KeyboardInterrupt',
+    expect_on_teardown: list[str] = [
+        'raise KeyboardInterrupt',
+        'Root actor terminated',
+    ]
+    if not no_capfd:
+        expect_on_teardown += [
             # 'Shutting down actor runtime',
             '#T-800 deployed to collect zombie B0',
             "'--uid', \"('hanger',",
         ]
+    assert_before(
+        child,
+        expect_on_teardown,
     )
 
 
@@ -156,8 +213,10 @@ def test_breakpoint_hook_restored(
     calls used.
 
     '''
+    # XXX required for `breakpoint()` overload and
+    # thus`tractor.devx.pause_from_sync()`.
+    pytest.importorskip('greenback')
     child = spawn('restore_builtin_breakpoint')
-
     child.expect(PROMPT)
     try:
         assert_before(

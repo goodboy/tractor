@@ -44,15 +44,20 @@ dependencies = [
   "tricycle>=0.4.1,<0.5",
   "wrapt>=1.16.0,<2",
   "colorlog>=6.8.2,<7",
-
   # built-in multi-actor `pdb` REPL
   "pdbp>=1.8.2,<2", # windows only (from `pdbp`)
-
   # typed IPC msging
   "msgspec>=0.20.0",
   "bidict>=0.23.1",
   "multiaddr>=0.2.0",
   "platformdirs>=4.4.0",
+  # per-actor `argv[0]` proc-title for OS-level diag tools
+  # (`ps`, `top`, `psutil`-backed tooling like `acli.pytree`).
+  # Optional at runtime — guarded by `try/except ImportError` in
+  # `tractor.devx._proctitle` — but listed here so default
+  # installs benefit from it. See tracking issue for follow-ups
+  # (e.g. richer formats, per-backend overrides).
+  "setproctitle>=1.3,<2",
 ]
 
 # ------ project ------
@@ -62,6 +67,7 @@ dev = [
   {include-group = 'devx'},
   {include-group = 'testing'},
   {include-group = 'repl'},
+  {include-group = 'sync_pause'},
 ]
 devx = [
   # `tractor.devx` tooling
@@ -84,11 +90,16 @@ testing = [
   # known-hanging `subint`-backend audit tests; see
   # `ai/conc-anal/subint_*_issue.md`).
   "pytest-timeout>=2.3",
+  # used by `tractor._testing._reap` for the
+  # `tractor-reap` zombie-subactor + leaked-shm
+  # cleanup utility (xplatform `Process.memory_maps`,
+  # `Process.open_files`).
+  "psutil>=7.0.0",
 ]
 repl = [
   "pyperclip>=1.9.0",
   "prompt-toolkit>=3.0.50",
-  "xonsh>=0.22.8",
+  "xonsh>=0.23.0",
   "psutil>=7.0.0",
 ]
 lint = [
@@ -129,7 +140,7 @@ sync_pause = {requires-python = ">=3.13, <3.14"}
 # xonsh = { git = 'https://github.com/anki-code/xonsh.git', branch = 'prompt_next_suggestion' }
 # ^ https://github.com/xonsh/xonsh/pull/6048
 # xonsh = { git = 'https://github.com/xonsh/xonsh.git', branch = 'main' }
-xonsh = { path = "../xonsh", editable = true }
+# xonsh = { path = "../xonsh", editable = true }
 
 # [tool.uv.sources.pdbp]
 # XXX, in case we need to tmp patch again.
@@ -198,7 +209,35 @@ all_bullets = true
 
 [tool.pytest.ini_options]
 minversion = '6.0'
-timeout = 200  # per-test hard limit
+# NOTE: `pytest-timeout`'s global per-test cap is intentionally
+# NOT set — both of its enforcement methods break trio's
+# runtime under our fork-based spawn backends:
+#
+# - `method='signal'` (the default; SIGALRM) raises `Failed`
+#   synchronously from the signal handler in trio's main
+#   thread, which leaves `GLOBAL_RUN_CONTEXT` half-installed
+#   ("Trio guest run got abandoned"). EVERY subsequent
+#   `trio.run()` in the same pytest session then bails with
+#   `RuntimeError: Attempted to call run() from inside a
+#   run()` — full-session poison: a single 200s hang
+#   cascades into 30+ false-positive failures across
+#   downstream test files.
+#
+# - `method='thread'` calls `_thread.interrupt_main()` which
+#   can let the resulting `KeyboardInterrupt` escape trio's
+#   `KIManager` under fork-cascade teardown races, killing
+#   the whole pytest session.
+#
+# For tests that legitimately need a wall-clock cap, use
+# `with trio.fail_after(N):` INSIDE the test — trio's own
+# Cancelled machinery handles the timeout cleanly through
+# the actor nursery without disturbing global state. See
+# `tests/test_advanced_streaming.py::test_dynamic_pub_sub`'s
+# module-level NOTE for the canonical pattern.
+#
+# CI environments should rely on job-level wall-clock
+# timeouts (e.g. GitHub Actions `timeout-minutes`) for an
+# escape hatch on genuinely-stuck suites.
 # https://docs.pytest.org/en/stable/reference/reference.html#configuration-options
 testpaths = [
   'tests'
@@ -206,15 +245,27 @@ testpaths = [
 addopts = [
   # TODO: figure out why this isn't working..
   '--rootdir=./tests',
-
   '--import-mode=importlib',
   # don't show frickin captured logs AGAIN in the report..
   '--show-capture=no',
 
+  # load builtin plugin since we need a boostrapping hook,
+  # `pytest_load_initial_conftests()` for `--capture=` per:
+  # https://docs.pytest.org/en/stable/reference/reference.html#bootstrapping-hooks
+  '-p tractor._testing.pytest',
+
   # disable `xonsh` plugin
   # https://docs.pytest.org/en/stable/how-to/plugins.html#disabling-plugins-from-autoloading
   # https://docs.pytest.org/en/stable/how-to/plugins.html#deactivating-unregistering-a-plugin-by-name
-  '-p no:xonsh'
+  '-p no:xonsh',
+
+  # XXX default on non-forking spawners
+  '--capture=fd',
+  # '--capture=sys',
+  # ^XXX NOTE^ ALWAYS SET THIS for `*_forkserver` spawner
+  # backends! see details @
+  # `tractor._testing.pytest.pytest_load_initial_conftests()`
+
 ]
 log_cli = false
 # TODO: maybe some of these layout choices?

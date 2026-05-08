@@ -62,11 +62,9 @@ Usage
 from __future__ import annotations
 import argparse
 import os
-import signal
 import sys
 import threading
 import time
-from typing import Callable
 
 
 # Hard-require py3.14 for the public `concurrent.interpreters`
@@ -84,8 +82,24 @@ except ImportError:
     sys.exit(2)
 
 
+# The actual primitives this script exercises live in
+# `tractor.spawn._subint_forkserver` — we re-import them here
+# rather than inlining so the module and the validation stay
+# in sync. (Early versions of this file had them inline for
+# the "zero tractor imports" isolation guarantee; now that
+# CPython-level feasibility is confirmed, the validated
+# primitives have moved into tractor proper.)
+from tractor.spawn._main_thread_forkserver import (
+    fork_from_worker_thread,
+    wait_child,
+)
+from tractor.spawn._subint_forkserver import (
+    run_subint_in_worker_thread,
+)
+
+
 # ----------------------------------------------------------------
-# small observability helpers
+# small observability helpers (test-harness only)
 # ----------------------------------------------------------------
 
 
@@ -94,49 +108,24 @@ def _banner(title: str) -> None:
     print(f'\n{line}\n{title}\n{line}', flush=True)
 
 
-def _wait_child(
-    pid: int,
-    *,
+def _report(
     label: str,
+    *,
+    ok: bool,
+    status_str: str,
     expect_exit_ok: bool,
-) -> bool:
-    '''
-    Await a forked child's exit status and render pass/fail.
-
-    `expect_exit_ok=True` means we expect a normal exit (code
-    0 via WEXITSTATUS). `expect_exit_ok=False` means we expect
-    an abnormal death (WIFSIGNALED or nonzero WEXITSTATUS) —
-    used for the `control_*` scenario where CPython is
-    supposed to abort the child.
-
-    '''
-    _, status = os.waitpid(pid, 0)
-    exited_normally = os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
-    signaled = os.WIFSIGNALED(status)
-    sig = os.WTERMSIG(status) if signaled else None
-    rc = os.WEXITSTATUS(status) if os.WIFEXITED(status) else None
-
-    if expect_exit_ok:
-        ok = exited_normally
-        expected_str = 'normal exit (rc=0)'
-    else:
-        ok = not exited_normally
-        expected_str = (
-            'abnormal death (signal or nonzero exit)'
-        )
-
-    verdict = 'PASS' if ok else 'FAIL'
-    status_str = (
-        f'signal={signal.Signals(sig).name}'
-        if signaled
-        else f'rc={rc}'
+) -> None:
+    verdict: str = 'PASS' if ok else 'FAIL'
+    expected_str: str = (
+        'normal exit (rc=0)'
+        if expect_exit_ok
+        else 'abnormal death (signal or nonzero exit)'
     )
     print(
         f'[{verdict}] {label}: '
         f'expected {expected_str}; observed {status_str}',
         flush=True,
     )
-    return ok
 
 
 # ----------------------------------------------------------------
@@ -256,74 +245,34 @@ def scenario_main_thread_fork() -> int:
 # ----------------------------------------------------------------
 
 
-def _fork_from_worker_thread(
-    child_target: Callable[[], int] | None = None,
-    label: str = 'worker_thread_fork',
+def _run_worker_thread_fork_scenario(
+    label: str,
+    *,
+    child_target=None,
 ) -> int:
     '''
-    Fork from a main-interp worker thread (not a subint).
-    Returns the child's exit code observed by the parent.
-
-    `child_target` is called IN THE CHILD before `os._exit`.
-    If omitted, the child just `_exit(0)`s immediately.
-
-    `label` is used in the pass/fail banner so reuse of this
-    helper across scenarios reports the scenario name, not
-    just the underlying fork-mechanism name.
+    Thin wrapper: delegate the actual fork to the
+    `tractor.spawn._subint_forkserver` primitive, then wait
+    on the child and render a pass/fail banner.
 
     '''
-    # Use a simple pipe to shuttle the child PID back to main.
-    rfd, wfd = os.pipe()
-
-    def _worker() -> None:
-        pid = os.fork()
-        if pid == 0:
-            # CHILD: close parent's pipe ends, do work, exit.
-            os.close(rfd)
-            os.close(wfd)
-            rc = 0
-            if child_target is not None:
-                try:
-                    rc = child_target() or 0
-                except BaseException as err:
-                    print(
-                        f'  CHILD: child_target raised: '
-                        f'{type(err).__name__}: {err}',
-                        file=sys.stderr, flush=True,
-                    )
-                    rc = 2
-            os._exit(rc)
-        else:
-            # PARENT (still in worker thread): send pid to
-            # main thread via the pipe.
-            os.write(wfd, pid.to_bytes(8, 'little'))
-
-    t = threading.Thread(
-        target=_worker,
-        name=f'worker-fork-thread[{label}]',
-        daemon=False,
-    )
-    t.start()
-    t.join(timeout=10.0)
-    if t.is_alive():
-        print(
-            f'[FAIL] {label}: worker-thread fork driver '
-            f'did not return in 10s',
-            flush=True,
+    try:
+        pid: int = fork_from_worker_thread(
+            child_target=child_target,
+            thread_name=f'worker-fork-thread[{label}]',
         )
+    except RuntimeError as err:
+        print(f'[FAIL] {label}: {err}', flush=True)
         return 1
-
-    pid_bytes = os.read(rfd, 8)
-    os.close(rfd)
-    os.close(wfd)
-    pid = int.from_bytes(pid_bytes, 'little')
     print(f'  forked child pid={pid}', flush=True)
-
-    return 0 if _wait_child(
-        pid,
-        label=label,
+    ok, status_str = wait_child(pid, expect_exit_ok=True)
+    _report(
+        label,
+        ok=ok,
+        status_str=status_str,
         expect_exit_ok=True,
-    ) else 1
+    )
+    return 0 if ok else 1
 
 
 def scenario_worker_thread_fork() -> int:
@@ -332,9 +281,8 @@ def scenario_worker_thread_fork() -> int:
         '(expected: child exits normally — this is the one '
         'that matters)'
     )
-    return _fork_from_worker_thread(
-        child_target=None,
-        label='worker_thread_fork',
+    return _run_worker_thread_fork_scenario(
+        'worker_thread_fork',
     )
 
 
@@ -343,52 +291,39 @@ def scenario_worker_thread_fork() -> int:
 # ----------------------------------------------------------------
 
 
+_CHILD_TRIO_BOOTSTRAP: str = (
+    'import trio\n'
+    'async def _main():\n'
+    '    await trio.sleep(0.05)\n'
+    '    return 42\n'
+    'result = trio.run(_main)\n'
+    'assert result == 42, f"trio.run returned {result}"\n'
+    'print("  CHILD subint: trio.run OK, result=42", '
+    'flush=True)\n'
+)
+
+
 def _child_trio_in_subint() -> int:
     '''
-    CHILD-side: from fork-thread (main-interp), create a fresh
-    subint and run `trio.run()` in it on a dedicated worker
-    thread. Returns 0 on success.
+    CHILD-side `child_target`: drive a trivial `trio.run()`
+    inside a fresh legacy-config subint on a worker thread,
+    using the `tractor.spawn._subint_forkserver.run_subint_in_worker_thread`
+    primitive. Returns 0 on success.
+
     '''
-    child_interp = _interpreters.create('legacy')
-    subint_bootstrap = (
-        'import trio\n'
-        'async def _main():\n'
-        '    await trio.sleep(0.05)\n'
-        '    return 42\n'
-        'result = trio.run(_main)\n'
-        'assert result == 42, f"trio.run returned {result}"\n'
-        'print("  CHILD subint: trio.run OK, result=42", '
-        'flush=True)\n'
-    )
-    err = None
-
-    def _drive() -> None:
-        nonlocal err
-        try:
-            _interpreters.exec(child_interp, subint_bootstrap)
-        except BaseException as e:
-            err = e
-
-    t = threading.Thread(
-        target=_drive,
-        name='child-subint-trio-thread',
-        daemon=False,
-    )
-    t.start()
-    t.join(timeout=10.0)
-
     try:
-        _interpreters.destroy(child_interp)
-    except _interpreters.InterpreterError:
-        pass
-
-    if t.is_alive():
+        run_subint_in_worker_thread(
+            _CHILD_TRIO_BOOTSTRAP,
+            thread_name='child-subint-trio-thread',
+        )
+    except RuntimeError as err:
         print(
-            '  CHILD: subint trio thread did not return in 10s',
+            f'  CHILD: run_subint_in_worker_thread timed out / thread '
+            f'never returned: {err}',
             flush=True,
         )
         return 3
-    if err is not None:
+    except BaseException as err:
         print(
             f'  CHILD: subint bootstrap raised: '
             f'{type(err).__name__}: {err}',
@@ -403,9 +338,9 @@ def scenario_full_architecture() -> int:
         '[arch-full] worker-thread fork + child runs trio in a '
         'subint (end-to-end proposed arch)'
     )
-    return _fork_from_worker_thread(
+    return _run_worker_thread_fork_scenario(
+        'full_architecture',
         child_target=_child_trio_in_subint,
-        label='full_architecture',
     )
 
 

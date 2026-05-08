@@ -148,9 +148,13 @@ jobs:
       - name: Run tests
         run: >
           uv run
-          pytest tests/ -rsx
+          pytest
+          tests/
+          -rsx
           --spawn-backend=${{ matrix.spawn_backend }}
           --tpt-proto=${{ matrix.tpt_proto }}
+          --capture=fd
+        # ^XXX^ can't work with --spawn-method=main_thread_forkserver
 
   # XXX legacy NOTE XXX
   #

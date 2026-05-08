@@ -38,8 +38,14 @@ from ..discovery._addr import (
     UnwrappedAddress,
     mk_uuid,
 )
-from ._state import current_actor, is_main_process
-from ..log import get_logger, get_loglevel
+from ._state import (
+    current_actor,
+    is_main_process,
+)
+from ..log import (
+    get_logger,
+    get_loglevel,
+)
 from ._runtime import Actor
 from ._portal import Portal
 from ..trionics import (
@@ -47,6 +53,7 @@ from ..trionics import (
     collapse_eg,
 )
 from .._exceptions import (
+    ActorTooSlowError,
     ContextCancelled,
 )
 from .._root import (
@@ -60,9 +67,91 @@ if TYPE_CHECKING:
     import multiprocessing as mp
     # from ..ipc._server import IPCServer
     from ..ipc import IPCServer
+    from ..spawn._spawn import ProcessType
 
 
 log = get_logger()
+
+
+async def _try_cancel_then_kill(
+    portal: Portal,
+    # `ProcessType` is `TYPE_CHECKING`-only (defined under that
+    # guard in `..spawn._spawn`) so we stringify here to avoid
+    # eager runtime eval of the annotation at function-def time
+    # (this module has no `from __future__ import annotations`).
+    proc: 'ProcessType',
+    subactor: Actor,
+    debug_mode_active: bool = False,
+) -> None:
+    '''
+    Per-child cancel-then-escalate helper used by
+    `ActorNursery.cancel()`.
+
+    Sends a graceful actor-runtime cancel-RPC via
+    `Portal.cancel_actor(raise_on_timeout=True)`. If the bounded-wait
+    expires before the peer ack's, `ActorTooSlowError` is raised and
+    we escalate via `proc.terminate()` (SIGTERM) per SC-discipline:
+
+      graceful cancel-req -> bounded wait -> hard-kill
+
+    Without this escalation, a same-name sibling subactor whose
+    cancel-RPC failed to ack within `Portal.cancel_timeout` (e.g.
+    under TCP+forkserver register-RPC contention) would park the
+    parent's `soft_kill()` watcher forever waiting on `proc.poll()`,
+    deadlocking nursery `__aexit__`. See `ActorTooSlowError` for
+    the wider write-up.
+
+    '''
+    # XXX, do NOT escalate to `proc.terminate()` while ANY of
+    # the following are true — SIGTERM-ing a sub would tear
+    # down its sub-tree including any descendant proxying
+    # stdio to/from a REPL-locked actor, clobbering the user's
+    # debug session:
+    #
+    # - `Lock.ctx_in_debug is not None`: most precise — some
+    #   actor in the tree is currently REPL-locked. Set in the
+    #   root actor for the lifetime of the lock. Raceable
+    #   (false negative if SIGINT arrives before lock-acquire
+    #   RPC completes).
+    #
+    # - `_runtime_vars['_debug_mode']`: root-actor was opened
+    #   with `debug_mode=True` (via `open_root_actor` /
+    #   `open_nursery`). Set once at root boot, never cleared.
+    #   Catches deep-descendant REPL sessions even when the
+    #   intermediate nurseries didn't pass `debug_mode=` per-
+    #   child.
+    #
+    # - `debug_mode_active`: this nursery has at least one
+    #   child started with an explicit `debug_mode=` arg
+    #   (`ActorNursery._at_least_one_child_in_debug`). Catches
+    #   the case where root is NOT in debug-mode but a
+    #   nursery-direct child opted in.
+    #
+    # Independent because root may NOT be in debug-mode even
+    # when a child is (only the child's `_runtime_vars` is
+    # mutated by per-child `debug_mode=True`). ORing covers
+    # every flavor without false-positively skipping
+    # legitimate hard-kill paths in non-debug trees.
+    if (
+        debug.Lock.ctx_in_debug is not None
+        or
+        _state._runtime_vars.get('_debug_mode', False)
+        or
+        debug_mode_active
+    ):
+        await portal.cancel_actor()
+        return
+
+    try:
+        await portal.cancel_actor(raise_on_timeout=True)
+    except ActorTooSlowError as too_slow:
+        log.error(
+            f'Cancel-ack TIMED OUT for sub-actor\n'
+            f'  uid: {subactor.aid.reprol()!r}\n'
+            f'  reason: {too_slow}\n'
+            f'-> escalating to `proc.terminate()` (hard-kill)\n'
+        )
+        proc.terminate()
 
 
 class ActorNursery:
@@ -428,10 +517,23 @@ class ActorNursery:
                                 else:  # there's no other choice left
                                     proc.terminate()
 
-                        # spawn cancel tasks for each sub-actor
+                        # spawn per-child cancel tasks; the helper
+                        # escalates to hard-kill on
+                        # `ActorTooSlowError` rather than silently
+                        # swallowing the cancel-ack timeout, EXCEPT
+                        # when this nursery has any debug-eligible
+                        # child (in which case we keep legacy
+                        # fire-and-forget semantics to avoid
+                        # clobbering an active REPL).
                         assert portal
                         if portal.channel.connected():
-                            tn.start_soon(portal.cancel_actor)
+                            tn.start_soon(
+                                _try_cancel_then_kill,
+                                portal,
+                                proc,
+                                subactor,
+                                self._at_least_one_child_in_debug,
+                            )
 
                 log.cancel(msg)
         # if we cancelled the cancel (we hung cancelling remote actors)

@@ -1,8 +1,21 @@
 from functools import partial
+import os
 import time
+
+# ?TODO? how to make `pdbp` enforce this?
+# os.environ['PYTHON_COLORS'] = '0'
+# os.environ['NO_COLOR'] = '1'
 
 import trio
 import tractor
+
+# disable `pbdp` prompt colors
+# for prompt matching in test.
+def disable_pdbp_color():
+    if os.environ['PYTHON_COLORS'] == '0':
+        from tractor.devx.debug import _repl
+        _repl.TractorConfig.use_pygments = False
+
 
 # TODO: only import these when not running from test harness?
 # can we detect `pexpect` usage maybe?
@@ -42,6 +55,7 @@ async def start_n_sync_pause(
     ctx: tractor.Context,
 ):
     actor: tractor.Actor = tractor.current_actor()
+    disable_pdbp_color()
 
     # sync to parent-side task
     await ctx.started()
@@ -52,13 +66,15 @@ async def start_n_sync_pause(
 
 
 async def main() -> None:
+    disable_pdbp_color()
     async with (
         tractor.open_nursery(
             debug_mode=True,
             maybe_enable_greenback=True,
-            enable_stack_on_sig=True,
-            # loglevel='warning',
-            # loglevel='devx',
+
+            # XXX flags required for test pattern matching.
+            loglevel='pdb',
+            # enable_stack_on_sig=True,
         ) as an,
         trio.open_nursery() as tn,
     ):
@@ -68,8 +84,8 @@ async def main() -> None:
         p: tractor.Portal  = await an.start_actor(
             'subactor',
             enable_modules=[__name__],
-            # infect_asyncio=True,
             debug_mode=True,
+            # infect_asyncio=True,
         )
 
         # TODO: 3 sub-actor usage cases:

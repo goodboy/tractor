@@ -17,7 +17,7 @@
 Utils to tame mp non-SC madeness
 
 '''
-import platform
+from functools import partial
 
 
 def disable_mantracker():
@@ -27,49 +27,37 @@ def disable_mantracker():
 
     '''
     from multiprocessing.shared_memory import SharedMemory
+    from multiprocessing import (
+        resource_tracker as mantracker,
+    )
 
+    # XXX ALWAYS disable the stdlib's "resource tracker"; it prevents
+    # fork backends and never was useful to us since we're SC
+    # lifetime managing all allocations.
+    class ManTracker(mantracker.ResourceTracker):
+        def register(self, name, rtype):
+            pass
+
+        def unregister(self, name, rtype):
+            pass
+
+        def ensure_running(self):
+            pass
+
+    # "know your land and know your prey"
+    # https://www.dailymotion.com/video/x6ozzco
+    mantracker._resource_tracker = ManTracker()
+    mantracker.register = mantracker._resource_tracker.register
+    mantracker.ensure_running = mantracker._resource_tracker.ensure_running
+    mantracker.unregister = mantracker._resource_tracker.unregister
+    mantracker.getfd = mantracker._resource_tracker.getfd
 
     # 3.13+ only.. can pass `track=False` to disable
     # all the resource tracker bs.
     # https://docs.python.org/3/library/multiprocessing.shared_memory.html
-    if (_py_313 := (
-            platform.python_version_tuple()[:-1]
-            >=
-            ('3', '13')
-        )
-    ):
-        from functools import partial
-        return partial(
-            SharedMemory,
-            track=False,
-        )
-
-    # !TODO, once we drop 3.12- we can obvi remove all this!
-    else:
-        from multiprocessing import (
-            resource_tracker as mantracker,
-        )
-
-        # Tell the "resource tracker" thing to fuck off.
-        class ManTracker(mantracker.ResourceTracker):
-            def register(self, name, rtype):
-                pass
-
-            def unregister(self, name, rtype):
-                pass
-
-            def ensure_running(self):
-                pass
-
-        # "know your land and know your prey"
-        # https://www.dailymotion.com/video/x6ozzco
-        mantracker._resource_tracker = ManTracker()
-        mantracker.register = mantracker._resource_tracker.register
-        mantracker.ensure_running = mantracker._resource_tracker.ensure_running
-        mantracker.unregister = mantracker._resource_tracker.unregister
-        mantracker.getfd = mantracker._resource_tracker.getfd
-
-        # use std type verbatim
-        shmT = SharedMemory
+    shmT = partial(
+        SharedMemory,
+        track=False,
+    )
 
     return shmT

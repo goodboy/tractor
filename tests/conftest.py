@@ -22,7 +22,8 @@ from tractor._testing import (
 
 pytest_plugins: list[str] = [
     'pytester',
-    'tractor._testing.pytest',
+    # NOTE, now loaded in `pytest-ini` section of `pyproject.toml`
+    # 'tractor._testing.pytest',
 ]
 
 _ci_env: bool = os.environ.get('CI', False)
@@ -33,15 +34,10 @@ if platform.system() == 'Windows':
     _KILL_SIGNAL = signal.CTRL_BREAK_EVENT
     _INT_SIGNAL = signal.CTRL_C_EVENT
     _INT_RETURN_CODE = 3221225786
-    _PROC_SPAWN_WAIT = 2
 else:
     _KILL_SIGNAL = signal.SIGKILL
     _INT_SIGNAL = signal.SIGINT
     _INT_RETURN_CODE = 1 if sys.version_info < (3, 8) else -signal.SIGINT.value
-    _PROC_SPAWN_WAIT = (
-        2 if _ci_env
-        else 1
-    )
 
 
 no_windows = pytest.mark.skipif(
@@ -134,25 +130,30 @@ def pytest_addoption(
         "--ll",
         action="store",
         dest='loglevel',
-        default='ERROR', help="logging level to set when testing"
+        default=None,
+        help="logging level to set when testing",
     )
 
 
 @pytest.fixture(scope='session', autouse=True)
 def loglevel(
     request: pytest.FixtureRequest,
-) -> str:
+) -> str|None:
     import tractor
     orig = tractor.log._default_loglevel
-    level = tractor.log._default_loglevel = request.config.option.loglevel
+    flag_level: str|None = request.config.option.loglevel
+
+    if flag_level is not None:
+        tractor.log._default_loglevel = flag_level
+
     log = tractor.log.get_console_log(
-        level=level,
+        level=flag_level,
         name='tractor',  # <- enable root logger
     )
     log.info(
-        f'Test-harness set runtime loglevel: {level!r}\n'
+        f'Test-harness set runtime loglevel: {flag_level!r}\n'
     )
-    yield level
+    yield flag_level
     tractor.log._default_loglevel = orig
 
 
@@ -238,107 +239,14 @@ def sig_prog(
     assert ret
 
 
-# TODO: factor into @cm and move to `._testing`?
-@pytest.fixture
-def daemon(
-    debug_mode: bool,
-    loglevel: str,
-    testdir: pytest.Pytester,
-    reg_addr: tuple[str, int],
-    tpt_proto: str,
-    ci_env: bool,
-    test_log: tractor.log.StackLevelAdapter,
-
-) -> subprocess.Popen:
-    '''
-    Run a daemon root actor as a separate actor-process tree and
-    "remote registrar" for discovery-protocol related tests.
-
-    '''
-    if loglevel in ('trace', 'debug'):
-        # XXX: too much logging will lock up the subproc (smh)
-        loglevel: str = 'info'
-
-    code: str = (
-        "import tractor; "
-        "tractor.run_daemon([], "
-        "registry_addrs={reg_addrs}, "
-        "enable_transports={enable_tpts}, "
-        "debug_mode={debug_mode}, "
-        "loglevel={ll})"
-    ).format(
-        reg_addrs=str([reg_addr]),
-        enable_tpts=str([tpt_proto]),
-        ll="'{}'".format(loglevel) if loglevel else None,
-        debug_mode=debug_mode,
-    )
-    cmd: list[str] = [
-        sys.executable,
-        '-c', code,
-    ]
-    # breakpoint()
-    kwargs = {}
-    if platform.system() == 'Windows':
-        # without this, tests hang on windows forever
-        kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
-
-    proc: subprocess.Popen = testdir.popen(
-        cmd,
-        **kwargs,
-    )
-
-    # TODO! we should poll for the registry socket-bind to take place
-    # and only once that's done yield to the requester!
-    # -[ ] TCP: use the `._root.open_root_actor()`::`ping_tpt_socket()`
-    #      closure!
-    # -[ ] UDS: can we do something similar for 'pinging" the
-    #     file-socket?
-    #
-    global _PROC_SPAWN_WAIT
-    # UDS sockets are **really** fast to bind()/listen()/connect()
-    # so it's often required that we delay a bit more starting
-    # the first actor-tree..
-    if tpt_proto == 'uds':
-        _PROC_SPAWN_WAIT += 1.6
-
-    if _non_linux and ci_env:
-        _PROC_SPAWN_WAIT += 1
-
-    # XXX, allow time for the sub-py-proc to boot up.
-    # !TODO, see ping-polling ideas above!
-    time.sleep(_PROC_SPAWN_WAIT)
-
-    assert not proc.returncode
-    yield proc
-    sig_prog(proc, _INT_SIGNAL)
-
-    # XXX! yeah.. just be reaaal careful with this bc sometimes it
-    # can lock up on the `_io.BufferedReader` and hang..
-    stderr: str = proc.stderr.read().decode()
-    stdout: str = proc.stdout.read().decode()
-    if (
-        stderr
-        or
-        stdout
-    ):
-        print(
-            f'Daemon actor tree produced output:\n'
-            f'{proc.args}\n'
-            f'\n'
-            f'stderr: {stderr!r}\n'
-            f'stdout: {stdout!r}\n'
-        )
-
-    if (rc := proc.returncode) != -2:
-        msg: str = (
-            f'Daemon actor tree was not cancelled !?\n'
-            f'proc.args: {proc.args!r}\n'
-            f'proc.returncode: {rc!r}\n'
-        )
-        if rc < 0:
-            raise RuntimeError(msg)
-
-        test_log.error(msg)
+# NOTE, the `daemon` fixture (+ its `_wait_for_daemon_ready`
+# helper + the post-yield teardown drain logic) has been
+# moved to `tests/discovery/conftest.py` since 100% of its
+# consumers are discovery-protocol tests now living under
+# that subdir. See:
+# - `tests/discovery/test_multi_program.py`
+# - `tests/discovery/test_registrar.py`
+# - `tests/discovery/test_tpt_bind_addrs.py`
 
 
 # @pytest.fixture(autouse=True)

@@ -344,7 +344,18 @@ def close_listener(
 
     '''
     lstnr.socket.close()
-    os.unlink(addr.sockpath)
+    # tolerate the sock-file being already gone — under concurrent
+    # pytest sessions sharing the bindspace dir, another session's
+    # reap path can unlink it first; raising here aborts the
+    # `_serve_ipc_eps` finally before `_shutdown.set()`, deadlocking
+    # `wait_for_shutdown()` on `actor.cancel()`.
+    try:
+        os.unlink(addr.sockpath)
+    except FileNotFoundError:
+        log.warning(
+            f'UDS sock-file already unlinked, skipping\n'
+            f'  |_{addr.sockpath}\n'
+        )
 
 
 async def open_unix_socket_w_passcred(

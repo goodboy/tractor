@@ -4,6 +4,7 @@
 '''
 from __future__ import annotations
 import platform
+import os
 import signal
 import time
 from typing import (
@@ -56,6 +57,7 @@ type PexpectSpawner = Callable[
 @pytest.fixture
 def spawn(
     start_method: str,
+    loglevel: str,
     testdir: pytest.Pytester,
     reg_addr: tuple[str, int],
 
@@ -65,9 +67,19 @@ def spawn(
     run an `./examples/..` script by name.
 
     '''
-    if start_method != 'trio':
+    supported_spawners: set[str] = {
+        'trio',
+        # `examples/debugging/<script>.py` picks up the spawn
+        # backend via the `TRACTOR_SPAWN_METHOD` env-var which
+        # is honored inside `tractor._root.open_root_actor()`,
+        # so no per-script edits are required.
+        'main_thread_forkserver',
+        'subint_forkserver',
+    }
+    if start_method not in supported_spawners:
         pytest.skip(
-            '`pexpect` based tests only supported on `trio` backend'
+            f'`pexpect` based tests NOT supported on spawning-backend: {start_method!r}\n'
+            f'supported-spawners: {supported_spawners!r}'
         )
 
     def unset_colors():
@@ -79,21 +91,64 @@ def spawn(
         https://docs.python.org/3/using/cmdline.html#using-on-controlling-color
 
         '''
-        import os
         # disable colored tbs
         os.environ['PYTHON_COLORS'] = '0'
         # disable all ANSI color output
         # os.environ['NO_COLOR'] = '1'
+        # ?TODO, doesn't seem to disable prompt color
+        # for `pdbp`?
+
+    def set_spawn_method(
+        start_method: str,
+    ):
+        '''
+        Drive the actor-spawn backend inside the spawned
+        `examples/debugging/<script>.py` subproc via env-var
+        (consumed by `tractor._root.open_root_actor()`),
+        without requiring per-script CLI plumbing.
+
+        '''
+        os.environ['TRACTOR_SPAWN_METHOD'] = start_method
+
+    def set_loglevel(
+        loglevel: str|None,
+    ):
+        '''
+        Forward the test-suite parametrized `loglevel` into the
+        spawned `examples/debugging/<script>.py` subproc via
+        env-var (consumed by `tractor._root.open_root_actor()`),
+        so console verbosity can be cranked or silenced from
+        the test harness without per-script edits.
+
+        '''
+        if loglevel:
+            os.environ['TRACTOR_LOGLEVEL'] = loglevel
+        else:
+            os.environ.pop('TRACTOR_LOGLEVEL', None)
 
     spawned: PexpectSpawner|None = None
 
     def _spawn(
         cmd: str,
         expect_timeout: float = 4,
+        start_method: str = start_method,
+        loglevel: str|None = None,
         **mkcmd_kwargs,
     ) -> pty_spawn.spawn:
+        '''
+        Inner closure handed to consumer tests to invoke
+        `pytest.Pytester.spawn`
+
+        '''
         nonlocal spawned
         unset_colors()
+        set_spawn_method(start_method=start_method)
+        set_loglevel(
+            loglevel=loglevel,
+            # ?TODO^ when should this be set by `--ll <level>` ?
+            # by default we apply 'error' but there should be a diff
+            # vs. when the flag IS NOT passed?
+        )
         spawned = testdir.spawn(
             cmd=mk_cmd(
                 cmd,
@@ -137,6 +192,14 @@ def spawn(
         if ptyproc.isalive():
             ptyproc.kill(signal.SIGKILL)
 
+    # Scope our env-var mutations to this single fixture invocation
+    # — both `TRACTOR_SPAWN_METHOD` and `TRACTOR_LOGLEVEL` are
+    # honored by `tractor._root.open_root_actor()` so leaking them
+    # past this test could inadvertently re-route a later in-process
+    # tractor test's spawn-backend / loglevel.
+    os.environ.pop('TRACTOR_SPAWN_METHOD', None)
+    os.environ.pop('TRACTOR_LOGLEVEL', None)
+
     # TODO? ensure we've cleaned up any UDS-paths?
     # breakpoint()
 
@@ -148,21 +211,38 @@ def spawn(
 def ctlc(
     request: pytest.FixtureRequest,
     ci_env: bool,
-
+    start_method: str,
 ) -> bool:
+    '''
+    Parametrize and optionally skip tests which handle
+    ctlc-in-`pdbp`-REPL testing scenarios; certain spawners and actor-tree depths
+    cope very poorly with this..
 
+    In particular the spawning backends from `multiprocessing` are
+    fragile, as can be the default `trio` spawner under certain
+    conditions where SIGINT is relayed down the entire subproc tree.
+
+    '''
     use_ctlc: bool = request.param
     node = request.node
     markers = node.own_markers
     for mark in markers:
-        if mark.name == 'has_nested_actors':
+        if (
+            mark.name == 'has_nested_actors'
+            and
+            start_method not in {
+                # TODO, any spawners we should try again?
+                # - [ ] 'trio' but WITHOUT the SIGINT handler setup
+                #      per subproc?
+                # 'main_thread_forkserver',
+            }
+        ):
             pytest.skip(
                 f'Test {node} has nested actors and fails with Ctrl-C.\n'
                 f'The test can sometimes run fine locally but until'
                 ' we solve' 'this issue this CI test will be xfail:\n'
                 'https://github.com/goodboy/tractor/issues/320'
             )
-
         if (
             mark.name == 'ctlcs_bish'
             and
@@ -189,13 +269,10 @@ def ctlc(
 
 def expect(
     child,
-
-    # normally a `pdb` prompt by default
-    patt: str,
-
+    patt: str,  # often a `pdbp`-prompt
     **kwargs,
 
-) -> None:
+) -> str:
     '''
     Expect wrapper that prints last seen console
     data before failing.
@@ -206,6 +283,8 @@ def expect(
             patt,
             **kwargs,
         )
+        before = str(child.before.decode())
+        return before
     except TIMEOUT:
         before = str(child.before.decode())
         print(before)
@@ -260,10 +339,13 @@ def in_prompt_msg(
 def assert_before(
     child: SpawnBase,
     patts: list[str],
-
     **kwargs,
+) -> str:
+    '''
+    Assert a patter is in `child.before.decode() -> str`,
+    return the full `.before` output on success.
 
-) -> None:
+    '''
     __tracebackhide__: bool = False
 
     assert in_prompt_msg(
@@ -274,7 +356,8 @@ def assert_before(
         err_on_false=True,
         **kwargs
     )
-    return str(child.before.decode())
+    before: str = str(child.before.decode())
+    return before
 
 
 def do_ctlc(

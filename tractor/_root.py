@@ -69,6 +69,20 @@ from ._exceptions import (
 logger = log.get_logger('tractor')
 
 
+# Spawn backends under which `debug_mode=True` is supported.
+# Requirement: the spawned subactor's root runtime must be
+# trio-native so `tractor.devx.debug._tty_lock` works. Matches
+# both the enable-site in `open_root_actor` and the cleanup-
+# site reset of `_runtime_vars['_debug_mode']` — keep them in
+# lockstep when adding backends.
+_DEBUG_COMPATIBLE_BACKENDS: tuple[str, ...] = (
+    'trio',
+    # forkserver children run `_trio_main` in their own OS
+    # process — same child-side runtime shape as `trio_proc`.
+    'main_thread_forkserver',
+)
+
+
 # TODO: stick this in a `@acm` defined in `devx.debug`?
 # -[ ] also maybe consider making this a `wrapt`-deco to
 #     save an indent level?
@@ -227,6 +241,7 @@ async def open_root_actor(
             f'_registry_addrs: {registry_addrs!r}\n'
         )
 
+    # debug.mk_pdb().set_trace()
     async with maybe_block_bp(
         debug_mode=debug_mode,
         maybe_enable_greenback=maybe_enable_greenback,
@@ -270,6 +285,75 @@ async def open_root_actor(
             )
             enable_modules.extend(rpc_module_paths)
 
+        # `TRACTOR_LOGLEVEL` env-var wins over any caller-passed
+        # `loglevel` so devs/test-runs can crank (or silence)
+        # console verbosity without touching application code.
+        env_ll_report: str = ''
+        if env_ll := os.environ.get('TRACTOR_LOGLEVEL'):
+            loglevel = env_ll
+            env_ll_report: str = (
+                f'Detected env-var setting,\n'
+                f'TRACTOR_LOGLEVEL={env_ll!r}\n'
+                f'\n'
+                f'Setting console loglevel per,\n'
+                f'loglevel={loglevel!r}\n'
+            )
+            if (
+                loglevel
+                and
+                loglevel.upper() != env_ll.upper()
+            ):
+                env_ll_report += (
+                    f'\n'
+                    f'NOTE env-var OVERRIDES caller-passed,\n'
+                    f'loglevel={loglevel!r}\n'
+                )
+
+        loglevel: str = (
+            loglevel
+            or
+            log._default_loglevel
+        )
+        loglevel: str = loglevel.upper()
+
+        assert loglevel
+        _log = log.get_console_log(
+            level=loglevel,
+            name='tractor',
+            logger=logger,
+        )
+        assert _log
+        if env_ll_report:
+            _log.info(env_ll_report)
+
+        # `TRACTOR_SPAWN_METHOD` env-var wins over any caller-passed
+        # `start_method` so devs/test-runs can swap the actor spawn
+        # backend without touching application code (e.g. driving
+        # the `examples/debugging/<script>.py` suite under each
+        # backend from `tests/devx/conftest.py::spawn`).
+        if env_sm := os.environ.get('TRACTOR_SPAWN_METHOD'):
+            start_method: str = env_sm
+            env_sm_report: str = (
+                f'Detected env-var setting,\n'
+                f'TRACTOR_SPAWN_METHOD={env_sm!r}\n'
+                f'\n'
+                f'Setting spawn backend as,\n'
+                f'start_method={env_sm!r}\n'
+            )
+            if (
+                start_method
+                and
+                start_method != env_sm
+            ):
+                _log.warning(
+                    env_sm_report
+                    +
+                    f'NOTE env-var OVERRIDES caller-passed,\n'
+                    f'`start_method={start_method!r}`\n'
+                )
+            else:
+                _log.info(env_sm_report)
+
         if start_method is not None:
             _spawn.try_set_start_method(start_method)
 
@@ -286,17 +370,44 @@ async def open_root_actor(
             wrap_address(uw_addr)
             for uw_addr in uw_reg_addrs
         ]
-        loglevel: str = (
-            loglevel
-            or
-            log._default_loglevel
-        )
-        loglevel: str = loglevel.upper()
 
+        # fail-fast on `enable_transports` / `registry_addrs` proto
+        # mismatch — historically this caused a silent indefinite
+        # hang during the registrar handshake (registry was reachable
+        # only via a transport not in `enable_transports`, so the
+        # actor could never connect to register/discover). See
+        # `tests/ipc/test_multi_tpt.py::test_root_passes_tpt_to_sub`
+        # for the foot-gun case + its layer-1 skip-guard.
+        bad_addrs: list[tuple[str, Address]] = [
+            (addr.proto_key, addr)
+            for addr in registry_addrs
+            if addr.proto_key not in enable_transports
+        ]
+        if bad_addrs:
+            mismatch_lines: str = '\n'.join(
+                f'  - proto_key={pk!r}  addr={a!r}'
+                for pk, a in bad_addrs
+            )
+            raise ValueError(
+                f'`registry_addrs` contains addr(s) whose proto is '
+                f'not in `enable_transports`!\n'
+                f'enable_transports: {enable_transports!r}\n'
+                f'mismatched_addrs:\n'
+                f'{mismatch_lines}\n'
+                f'\n'
+                f'Either add the missing proto to '
+                f'`enable_transports`, or remove the addr from '
+                f'`registry_addrs`.'
+            )
+
+        # Debug-mode is currently only supported for backends whose
+        # subactor root runtime is trio-native (so `tractor.devx.
+        # debug._tty_lock` works). See `_DEBUG_COMPATIBLE_BACKENDS`
+        # module-const for the list.
         if (
             debug_mode
             and
-            _spawn._spawn_method == 'trio'
+            _spawn._spawn_method in _DEBUG_COMPATIBLE_BACKENDS
         ):
             _state._runtime_vars['_debug_mode'] = True
 
@@ -318,15 +429,10 @@ async def open_root_actor(
 
         elif debug_mode:
             raise RuntimeError(
-                "Debug mode is only supported for the `trio` backend!"
+                f'Debug mode currently supported only for '
+                f'{_DEBUG_COMPATIBLE_BACKENDS!r} spawn backends, not '
+                f'{_spawn._spawn_method!r}.'
             )
-
-        assert loglevel
-        _log = log.get_console_log(
-            level=loglevel,
-            name='tractor',
-        )
-        assert _log
 
         # TODO: factor this into `.devx._stackscope`!!
         if (
@@ -619,7 +725,7 @@ async def open_root_actor(
             if (
                 debug_mode
                 and
-                _spawn._spawn_method == 'trio'
+                _spawn._spawn_method in _DEBUG_COMPATIBLE_BACKENDS
             ):
                 _state._runtime_vars['_debug_mode'] = False
 
