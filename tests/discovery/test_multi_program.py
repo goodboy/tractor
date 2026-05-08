@@ -86,23 +86,179 @@ def test_register_duplicate_name(
     daemon: subprocess.Popen,
     reg_addr: UnwrappedAddress,
 ):
+    # bug-class-3 breadcrumbs: the *last* `[CANCEL]` line that
+    # appears under `--ll cancel`/`TRACTOR_LOG_FILE=...` names the
+    # cancel-cascade boundary that's parked. Pair with
+    # `_trio_main` entry/exit breadcrumbs in
+    # `tractor/spawn/_entry.py` to triangulate the swallow point.
+    log = tractor.log.get_logger('tractor.tests.test_multi_program')
+
     async def main():
-        async with tractor.open_nursery(
-            registry_addrs=[reg_addr],
-        ) as an:
+        log.cancel('test_register_duplicate_name: enter `main()`')
+        try:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as an:
+                log.cancel(
+                    'test_register_duplicate_name: '
+                    'actor nursery opened'
+                )
 
-            assert not current_actor().is_registrar
+                assert not current_actor().is_registrar
 
-            p1 = await an.start_actor('doggy')
-            p2 = await an.start_actor('doggy')
+                p1 = await an.start_actor('doggy')
+                log.cancel(
+                    'test_register_duplicate_name: '
+                    'spawned doggy #1'
+                )
+                p2 = await an.start_actor('doggy')
+                log.cancel(
+                    'test_register_duplicate_name: '
+                    'spawned doggy #2'
+                )
 
-            async with tractor.wait_for_actor('doggy') as portal:
-                assert portal.channel.uid in (p2.channel.uid, p1.channel.uid)
+                async with tractor.wait_for_actor('doggy') as portal:
+                    log.cancel(
+                        'test_register_duplicate_name: '
+                        '`wait_for_actor` returned'
+                    )
+                    assert portal.channel.uid in (p2.channel.uid, p1.channel.uid)
 
-            await an.cancel()
+                log.cancel(
+                    'test_register_duplicate_name: '
+                    'ABOUT TO CALL `an.cancel()`'
+                )
+                await an.cancel()
+                log.cancel(
+                    'test_register_duplicate_name: '
+                    '`an.cancel()` returned'
+                )
+        finally:
+            log.cancel(
+                'test_register_duplicate_name: '
+                '`open_nursery.__aexit__` returned, leaving `main()`'
+            )
 
     # XXX, run manually since we want to start this root **after**
     # the other "daemon" program with it's own root.
+    trio.run(main)
+
+
+@pytest.mark.parametrize(
+    'n_dups',
+    [
+        2,
+        # `n_dups=4` exposes a SEPARATE pre-existing race: under
+        # rapid same-name spawning against a forkserver +
+        # registrar, ONE of the spawned doggies (typically the
+        # 3rd) `sys.exit(2)`s during boot before completing
+        # parent-handshake. Surfaces now (post the spawn-time
+        # `wait_for_peer_or_proc_death` fix) as `ActorFailure
+        # rc=2`; previously it was silently masked by the
+        # handshake-wait parking forever.
+        #
+        # Tracked separately in,
+        # https://github.com/goodboy/tractor/issues/456 
+        pytest.param(
+            4,
+            marks=pytest.mark.xfail(
+                strict=False,
+                reason=(
+                    'doggy boot-race rc=2 under rapid same-name '
+                    'spawn — separate bug from cancel-cascade'
+                ),
+            ),
+        ),
+        8,
+    ],
+    ids=lambda n: f'n_dups={n}',
+)
+def test_dup_name_cancel_cascade_escalates_to_hard_kill(
+    daemon: subprocess.Popen,
+    reg_addr: UnwrappedAddress,
+    n_dups: int,
+):
+    '''
+    Regression for the duplicate-name cancel-cascade hang under
+    `tcp+main_thread_forkserver`.
+
+    When N actors share a single name and the parent calls
+    `an.cancel()`, the daemon registrar gets N `register_actor` RPCs
+    in tight succession. Under TCP+MTF, kernel-level socket-buffer
+    contention can push at least one sub-actor's cancel-RPC ack past
+    `Portal.cancel_timeout` (default 0.5s).
+
+    Pre-fix, `Portal.cancel_actor()` silently returned `False` on
+    that timeout, the supervisor's outer `move_on_after(3)` never
+    fired (each per-portal task always returned ≤0.5s, never
+    exceeded 3s), and `soft_kill()`'s `await wait_func(proc)` parked
+    forever — deadlocking nursery `__aexit__`.
+
+    Post-fix, `Portal.cancel_actor()` raises `ActorTooSlowError` on
+    the bounded-wait timeout, and `ActorNursery.cancel()`'s
+    per-child wrapper escalates to `proc.terminate()` (hard-kill).
+    The full nursery teardown therefore stays bounded even under
+    pathological timing.
+
+    `n_dups` is parametrized to widen the race window — more
+    same-name siblings = more concurrent register-RPCs at the
+    daemon = higher probability of hitting the contention path.
+
+    '''
+    log = tractor.log.get_logger(
+        'tractor.tests.test_multi_program'
+    )
+
+    # outer hard ceiling: a regression should fail-fast, NOT hang
+    # the test session for minutes. Budget scales with `n_dups`
+    # since each extra same-name sibling adds ~spawn-cost +
+    # potential cancel-ack-timeout escalation latency under
+    # TCP+forkserver. ~5s/sibling + 15s baseline gives plenty of
+    # headroom while still failing-loud on a real hang.
+    fail_after_s: int = 15 + (5 * n_dups)
+
+    async def main():
+        log.cancel(
+            f'enter `main()` n_dups={n_dups}'
+        )
+        with trio.fail_after(fail_after_s):
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as an:
+                portals: list[Portal] = []
+                for i in range(n_dups):
+                    p: Portal = await an.start_actor('doggy')
+                    portals.append(p)
+                    log.cancel(
+                        f'spawned doggy #{i + 1}/{n_dups}'
+                    )
+
+                # at least one of the N must be discoverable by
+                # name; doesn't matter which one (registrar will
+                # have last-wins semantics under same-name).
+                async with tractor.wait_for_actor('doggy') as portal:
+                    expected_uids = {p.channel.uid for p in portals}
+                    assert portal.channel.uid in expected_uids
+
+                # critical section: this MUST return within
+                # `fail_after_s` even when one or more cancel-RPC
+                # acks time out. Pre-fix, this hangs forever.
+                log.cancel('about to call `an.cancel()`')
+                await an.cancel()
+                log.cancel('`an.cancel()` returned')
+
+        # post-teardown sanity: every child proc must be reaped.
+        # If escalation worked, even timed-out cancel-RPCs would
+        # have triggered `proc.terminate()` and the procs are dead.
+        for p in portals:
+            # `Portal.channel.connected()` -> False once the
+            # underlying chan disconnected (clean exit OR
+            # hard-killed proc both produce disconnect).
+            assert not p.channel.connected(), (
+                f'Portal chan still connected post-teardown?\n'
+                f'{p.channel}'
+            )
+
     trio.run(main)
 
 
