@@ -18,15 +18,18 @@
 Variant-2 (future) "subint forkserver" placeholder — reserved
 for the eventual subint-isolated-child runtime variant.
 
-> **Status:** placeholder. Today
-> `--spawn-backend=subint_forkserver` aliases to
-> `main_thread_forkserver_proc` (variant 1, see
-> `tractor.spawn._main_thread_forkserver`). A follow-up commit
-> in this PR series flips the alias to a `NotImplementedError`
-> stub reserving the `'subint_forkserver'` key for the literal
-> subint-hosted-child variant once
-> [jcrist/msgspec#1026](https://github.com/jcrist/msgspec/issues/1026)
-> unblocks PEP 684 isolated-mode subints upstream.
+> **Status:** reserved key, stub impl. Today
+> `--spawn-backend=subint_forkserver` raises a clean
+> `NotImplementedError` from `subint_forkserver_proc()`
+> below, pointing at variant-1
+> (`--spawn-backend=main_thread_forkserver`, see
+> `tractor.spawn._main_thread_forkserver`) and the upstream
+> blocker
+> ([jcrist/msgspec#1026](https://github.com/jcrist/msgspec/issues/1026)).
+> The key is reserved here (not aliased to variant-1) so the
+> literal subint-hosted-child impl can flip in-place once
+> msgspec#1026 unblocks PEP 684 isolated-mode subints
+> upstream — no API churn at the call site.
 
 Future arch — what subints would buy us
 ---------------------------------------
