@@ -368,6 +368,7 @@ from tractor.runtime._portal import Portal
 from ._spawn import (
     cancel_on_completion,
     soft_kill,
+    wait_for_peer_or_proc_death,
 )
 
 if TYPE_CHECKING:
@@ -968,7 +969,18 @@ async def main_thread_forkserver_proc(
                 f' |_{proc}\n'
             )
 
-            event, chan = await ipc_server.wait_for_peer(uid)
+            # race the handshake-wait against proc-death so a
+            # sub that dies during boot (e.g. crashed on import
+            # before reaching `_actor_child_main`, leaving a
+            # zombie + no cmdline) surfaces as `ActorFailure`
+            # instead of parking the spawning task forever on
+            # an unsignalled `_peer_connected[uid]` event.
+            event, chan = await wait_for_peer_or_proc_death(
+                ipc_server,
+                uid,
+                proc_wait=proc.wait,
+                proc_repr=repr(proc),
+            )
 
         except trio.Cancelled:
             cancelled_during_spawn = True
