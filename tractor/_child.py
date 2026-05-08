@@ -77,6 +77,35 @@ def _actor_child_main(
         loglevel=loglevel,
         spawn_method=spawn_method,
     )
+
+    # XXX, set a stable OS-level proc-title BEFORE entering
+    # the trio runtime so `ps`/`top`/`acli.pytree` and
+    # orphan-reapers can identify this actor for its full
+    # lifetime — e.g.
+    #   `tractor[doggy@1027301b]`
+    # vs. the default uninformative
+    #   `python -m tractor._child --uid (...)`
+    #
+    # `setproctitle` mutates `argv[0]` (visible in
+    # `/proc/<pid>/cmdline`) AND the kernel `comm`
+    # (visible in `/proc/<pid>/comm`, kernel-truncated to
+    # ~15 bytes, but preserved through zombie state). Both
+    # surfaces are enough for `_testing._reap` /
+    # `acli.reap` orphan- and zombie-detection to identify
+    # tractor sub-actors via intrinsic signals — no cwd,
+    # venv path, or env-var coincidence-of-implementation
+    # matching needed.
+    #
+    # NB: an earlier draft also wrote `TRACTOR_AID` to
+    # `os.environ` here for `pgrep --env`-style discovery,
+    # but Linux snapshots `/proc/<pid>/environ` at exec/fork
+    # time, so post-fork runtime mutations don't propagate
+    # to the kernel-visible env. The proc-title path
+    # provides equivalent ergonomics
+    # (`pgrep -f 'tractor\['`) without that gotcha.
+    from .devx._proctitle import set_actor_proctitle
+    set_actor_proctitle(subactor)
+
     _trio_main(
         subactor,
         parent_addr=parent_addr,
