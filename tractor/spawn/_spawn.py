@@ -83,11 +83,15 @@ SpawnMethodKey = Literal[
     # runtime, exactly like `trio_proc` but via fork instead
     # of subproc-exec. See `tractor.spawn._main_thread_forkserver`.
     'main_thread_forkserver',
-    # RESERVED for the future variant-2 subint-isolated-child
-    # runtime — gated on jcrist/msgspec#1026 + PEP 684. Today
-    # this key aliases to `main_thread_forkserver_proc`; once
-    # the upstream unblocks land it'll dispatch to the
-    # subint-hosted-trio impl. See
+    # Variant-2: same fork machinery as `main_thread_forkserver`
+    # but the child enters a sub-interpreter to host its
+    # `trio.run()`. Gated on jcrist/msgspec#1026 unblocking
+    # PEP 684 isolated-mode subints upstream — until then
+    # `subint_forkserver_proc` is a clean `NotImplementedError`
+    # stub pointing at variant-1 (`main_thread_forkserver`) +
+    # the upstream blocker. The key is reserved here (not just
+    # aliased to variant-1) so once upstream lands the impl can
+    # flip in-place without API churn. See
     # `tractor.spawn._subint_forkserver`.
     'subint_forkserver',
 ]
