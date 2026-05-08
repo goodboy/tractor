@@ -44,15 +44,20 @@ dependencies = [
   "tricycle>=0.4.1,<0.5",
   "wrapt>=1.16.0,<2",
   "colorlog>=6.8.2,<7",
-
   # built-in multi-actor `pdb` REPL
   "pdbp>=1.8.2,<2", # windows only (from `pdbp`)
-
   # typed IPC msging
   "msgspec>=0.20.0",
   "bidict>=0.23.1",
   "multiaddr>=0.2.0",
   "platformdirs>=4.4.0",
+  # per-actor `argv[0]` proc-title for OS-level diag tools
+  # (`ps`, `top`, `psutil`-backed tooling like `acli.pytree`).
+  # Optional at runtime — guarded by `try/except ImportError` in
+  # `tractor.devx._proctitle` — but listed here so default
+  # installs benefit from it. See tracking issue for follow-ups
+  # (e.g. richer formats, per-backend overrides).
+  "setproctitle>=1.3,<2",
 ]
 
 # ------ project ------
