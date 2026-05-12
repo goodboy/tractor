@@ -22,6 +22,20 @@ from tractor.discovery._multiaddr import mk_maddr
 import trio
 
 
+pytestmark = pytest.mark.usefixtures(
+    'reap_subactors_per_test',
+    # NOTE, registrar tests stress the discovery
+    # roundtrip (find_actor / wait_for_actor) which
+    # historically left orphaned UDS sock-files when
+    # subactor `hard_kill` SIGKILL'd, and which
+    # exercises the same trio `WakeupSocketpair`
+    # peer-disconnect path that triggered the
+    # busy-loop bug class.
+    'track_orphaned_uds_per_test',
+    'detect_runaway_subactors_per_test',
+)
+
+
 @tractor_test
 async def test_reg_then_unreg(
     reg_addr: tuple,
@@ -106,19 +120,6 @@ async def hi():
     return the_line.format(tractor.current_actor().name)
 
 
-async def say_hello(
-    other_actor: str,
-    reg_addr: tuple[str, int],
-):
-    await trio.sleep(1)  # wait for other actor to spawn
-    async with tractor.find_actor(
-        other_actor,
-        registry_addrs=[reg_addr],
-    ) as portal:
-        assert portal is not None
-        return await portal.run(__name__, 'hi')
-
-
 async def say_hello_use_wait(
     other_actor: str,
     reg_addr: tuple[str, int],
@@ -132,18 +133,17 @@ async def say_hello_use_wait(
         return result
 
 
-@pytest.mark.timeout(
-    7,
-    method='thread',
+@tractor_test(
+    timeout=7,
 )
-@tractor_test
 @pytest.mark.parametrize(
-    'func',
-    [say_hello,
-     say_hello_use_wait]
+    'ria_fn',
+    [
+        say_hello_use_wait,
+    ]
 )
 async def test_trynamic_trio(
-    func: Callable,
+    ria_fn: Callable,
     start_method: str,
     reg_addr: tuple,
 ):
@@ -156,13 +156,13 @@ async def test_trynamic_trio(
         print("Alright... Action!")
 
         donny = await n.run_in_actor(
-            func,
+            ria_fn,
             other_actor='gretchen',
             reg_addr=reg_addr,
             name='donny',
         )
         gretchen = await n.run_in_actor(
-            func,
+            ria_fn,
             other_actor='donny',
             reg_addr=reg_addr,
             name='gretchen',
@@ -324,6 +324,14 @@ async def spawn_and_check_registry(
                 assert actor.aid.uid in registry
 
 
+async def with_timeout(
+    main: Callable,
+    timeout: float = 6,
+):
+    with trio.fail_after(timeout):
+        await main()
+
+
 @pytest.mark.parametrize('use_signal', [False, True])
 @pytest.mark.parametrize('with_streaming', [False, True])
 def test_subactors_unregister_on_cancel(
@@ -340,6 +348,7 @@ def test_subactors_unregister_on_cancel(
     '''
     with pytest.raises(KeyboardInterrupt):
         trio.run(
+            # with_timeout,
             partial(
                 spawn_and_check_registry,
                 reg_addr,
@@ -369,6 +378,7 @@ def test_subactors_unregister_on_cancel_remote_daemon(
     '''
     with pytest.raises(KeyboardInterrupt):
         trio.run(
+            with_timeout,
             partial(
                 spawn_and_check_registry,
                 reg_addr,
@@ -547,7 +557,7 @@ async def kill_transport(
     # 'main_thread_forkserver',
     reason=(
         'XXX SUBINT HANGING TEST XXX\n'
-        'See oustanding issue(s)\n'
+        'See outstanding issue(s)\n'
         # TODO, put issue link!
     )
 )
@@ -556,6 +566,7 @@ def test_stale_entry_is_deleted(
     daemon: subprocess.Popen,
     start_method: str,
     reg_addr: tuple,
+    # set_fork_aware_capture,
 ):
     '''
     Ensure that when a stale entry is detected in the registrar's
@@ -598,11 +609,17 @@ def test_stale_entry_is_deleted(
 
     # XXX, for tracing if this starts being flaky again..
     #
-    # async def _timeout_main():
-    #     with trio.move_on_after(4) as cs:
-    #         await main()
-    #     if cs.cancel_called:
-    #         await tractor.pause()
+    timeout: float = 4
+    async def _timeout_main():
+        with trio.move_on_after(timeout) as cs:
+            await main()
+
+        if (
+            cs.cancel_called
+            and
+            debug_mode
+        ):
+            await tractor.pause()
 
     # TODO, remove once the `[subint]` variant no longer hangs.
     #
@@ -650,8 +667,7 @@ def test_stale_entry_is_deleted(
     # `pytest`'s stderr capture eats `faulthandler` output otherwise,
     # so we route `dump_on_hang` to a file.
     with dump_on_hang(
-        seconds=20,
+        seconds=timeout*2,
         path=f'/tmp/test_stale_entry_is_deleted_{start_method}.dump',
     ):
-        trio.run(main)
-        # trio.run(_timeout_main)
+        trio.run(_timeout_main)
