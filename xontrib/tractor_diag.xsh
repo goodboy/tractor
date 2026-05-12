@@ -11,8 +11,11 @@ Provides:
   - `acli.hung_dump <pid|pat> [...]`    kernel `wchan`/`stack` +
                                         `py-spy dump` (incl `--locals`)
                                         for each pid in tree.
-  - `acli.bindspace_scan [<dir>]`       find orphaned tractor UDS
+  - `acli.bindspace_scan [<name>|<dir>]` find orphaned tractor UDS
                                         sock files (no live owner pid).
+                                        bare name -> `$XDG_RUNTIME_DIR/<name>`
+                                        (e.g. `piker`, `tractor`);
+                                        path -> use as-is.
                                         default: `$XDG_RUNTIME_DIR/tractor`.
   - `acli.reap [opts]`                  SC-polite zombie-subactor
                                         reaper + optional `/dev/shm/`
@@ -570,17 +573,35 @@ def _bindspace_scan(args):
     (those whose embedded `<pid>` no longer corresponds to
     a live process).
 
-    usage: acli.bindspace_scan [<dir>]
-    default: `$XDG_RUNTIME_DIR/tractor`
-             (or `/run/user/<uid>/tractor`)
+    usage: acli.bindspace_scan [<name>|<dir>]
+
+    - no arg          -> `$XDG_RUNTIME_DIR/tractor`
+                         (or `/run/user/<uid>/tractor`)
+    - bare `<name>`   -> `$XDG_RUNTIME_DIR/<name>`,
+                         for projects like `piker` that bind
+                         their own sibling sub-dir alongside
+                         tractor's default
+    - path (abs or
+      containing `/`) -> use as-is
+
     '''
+    runtime: str = os.environ.get(
+        'XDG_RUNTIME_DIR',
+        f'/run/user/{os.getuid()}',
+    )
     if args:
-        bs_dir = Path(args[0])
+        arg: str = args[0]
+        if (
+            arg.startswith('/')
+            or
+            '/' in arg
+        ):
+            bs_dir = Path(arg)
+        else:
+            # bare name -> `$XDG_RUNTIME_DIR/<name>` so
+            # callers can say `acli.bindspace_scan piker`
+            bs_dir = Path(runtime) / arg
     else:
-        runtime = os.environ.get(
-            'XDG_RUNTIME_DIR',
-            f'/run/user/{os.getuid()}',
-        )
         bs_dir = Path(runtime) / 'tractor'
 
     if not bs_dir.exists():
@@ -629,9 +650,26 @@ def _bindspace_scan(args):
         print(row)
 
     if bogus:
-        print(f'\n## unparseable ({len(bogus)})')
+        print(
+            f'\n## non-tractor ({len(bogus)})  '
+            f'— filename lacks `@<pid>` suffix, '
+            f'cannot determine liveness intrinsically'
+        )
         for s in bogus:
             print(f'  {s.name}')
+        # show a copy-pastable `ss` cmd per sock so the
+        # caller can resolve listener-PID externally
+        # (e.g. for piker's `chart.sock` / `pikerd.sock`
+        # style flat names). `ss -lpx 'src = <path>'`
+        # prints `users:(("<proc>",pid=<N>,fd=<M>))` for
+        # the listening side; empty output -> nobody's
+        # listening -> safe to unlink.
+        print(
+            '\nto check liveness manually '
+            '(needs `iproute2`/`ss`):'
+        )
+        for s in bogus:
+            print(f"  ss -lpx 'src = {s}'")
 
     if orphans:
         unlink_cmd = ' '.join(str(o[0]) for o in orphans)
