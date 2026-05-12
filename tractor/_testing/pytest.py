@@ -655,7 +655,7 @@ def pytest_generate_tests(
         metafunc.parametrize(
             "start_method",
             [spawn_backend],
-            scope='module',
+            scope='session',
             ids=lambda item: f'start_method={spawn_backend}',
         )
 
@@ -677,7 +677,7 @@ def _is_forking_spawner(
     ]
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def is_forking_spawner(
     start_method: str,
 ) -> bool:
