@@ -611,9 +611,28 @@ def _bindspace_scan(args):
     socks = sorted(bs_dir.glob('*.sock'))
     print(f'## bindspace {bs_dir} ({len(socks)} sock file(s))')
 
-    live: list = []
-    orphans: list = []
+    live_active: list = []  # PID alive AND ppid != 1
+    live_orphaned: list = []  # PID alive AND ppid == 1 (init-adopted)
+    dead_orphans: list = []  # PID gone, sock stale
     bogus: list = []
+
+    def _ppid(pid: int) -> int | None:
+        '''
+        Read `/proc/<pid>/stat` -> ppid. Returns None on race
+        (proc died between `os.kill(pid, 0)` succeeding and this
+        read), permission errors, or non-linux.
+        '''
+        try:
+            with open(f'/proc/{pid}/stat') as f:
+                # field [3] of `man 5 proc` `/proc/<pid>/stat`
+                # NB: field [1] is `(comm)` which can contain
+                # spaces and parens — split from the *last*
+                # `)` to avoid that bullshit.
+                stat: str = f.read()
+            after_comm: str = stat.rsplit(')', 1)[1].strip()
+            return int(after_comm.split()[1])  # state(0) ppid(1)
+        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
+            return None
 
     for s in socks:
         m = _UDS_SOCK_RE.match(s.name)
@@ -624,26 +643,53 @@ def _bindspace_scan(args):
         name = m['name']
         try:
             os.kill(pid, 0)
-            live.append((s, pid, name))
         except ProcessLookupError:
-            orphans.append((s, pid, name))
+            dead_orphans.append((s, pid, name))
+            continue
         except PermissionError:
-            # exists but owned by another user
-            live.append((s, pid, name))
+            # exists but owned by another user — treat as live-active
+            # (we can't read its /proc/<pid>/stat to check ppid)
+            live_active.append((s, pid, name, None))
+            continue
 
-    print(f'\n## live ({len(live)})')
-    if not live:
+        # PID is alive in our euid view; classify by ppid
+        ppid: int | None = _ppid(pid)
+        if ppid == 1:
+            # adopted by init -> the original parent reaped
+            # without cleaning up this sub. Same class as
+            # what `acli.reap` detects.
+            live_orphaned.append((s, pid, name, ppid))
+        else:
+            live_active.append((s, pid, name, ppid))
+
+    print(f'\n## live-active ({len(live_active)})  — PID alive, parent still own it')
+    if not live_active:
         print('  (none)')
-    for s, pid, name in live:
+    for s, pid, name, ppid in live_active:
         row = '  ' + str(pid).rjust(7)
         row += '  ' + name.ljust(32)
         row += '  ' + s.name
+        if ppid is not None:
+            row += f'  (ppid={ppid})'
         print(row)
 
-    print(f'\n## orphaned ({len(orphans)})')
-    if not orphans:
+    print(
+        f'\n## orphaned-alive ({len(live_orphaned)})  '
+        f'— PID alive but `ppid==1`, parent reaped; '
+        f'`acli.reap` candidate'
+    )
+    if not live_orphaned:
         print('  (none)')
-    for s, pid, name in orphans:
+    for s, pid, name, ppid in live_orphaned:
+        row = '  ' + str(pid).rjust(7)
+        row += '  ' + name.ljust(32)
+        row += '  ' + s.name + '  (adopted by init)'
+        print(row)
+
+    print(f'\n## orphaned-dead ({len(dead_orphans)})  — PID gone, sock stale')
+    if not dead_orphans:
+        print('  (none)')
+    for s, pid, name in dead_orphans:
         row = '  ' + str(pid).rjust(7)
         row += '  ' + name.ljust(32)
         row += '  ' + s.name + '  (no live proc)'
@@ -671,9 +717,20 @@ def _bindspace_scan(args):
         for s in bogus:
             print(f"  ss -lpx 'src = {s}'")
 
-    if orphans:
-        unlink_cmd = ' '.join(str(o[0]) for o in orphans)
-        print(f'\nto unlink orphans:\n  rm {unlink_cmd}')
+    if dead_orphans or live_orphaned:
+        print(
+            '\nto sweep BOTH orphaned-alive subs (graceful '
+            'SIGINT -> SIGKILL) AND dead-orphan socks in one shot:'
+        )
+        print('  acli.reap --uds')
+
+    if dead_orphans:
+        unlink_cmd = ' '.join(str(o[0]) for o in dead_orphans)
+        print(
+            '\n(or to unlink dead-orphan socks manually, '
+            "skipping `acli.reap`'s graceful-cancel ladder:)"
+        )
+        print(f'  rm {unlink_cmd}')
 
 
 # --- acli.reap ------------------------------------------------
