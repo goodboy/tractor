@@ -38,6 +38,20 @@ import tractor
 from tractor.spawn._spawn import SpawnMethodKey
 import trio
 
+# Re-export `_testing.trace`'s pytest fixtures so they're
+# picked up by pytest's plugin-discovery (this module is
+# loaded via `pytest_plugins` from `pyproject.toml`). The
+# `noqa: F401` annotations make linters tolerate the
+# unused-looking imports — they're load-bearing for pytest
+# discovery. The fixtures share their `name=` kw with the
+# underlying CM functions; the python-level identifiers
+# below carry the `_fixture` suffix to avoid module-scope
+# collision (see `_testing/trace.py` for details).
+from .trace import (  # noqa: F401
+    afk_alarm_w_trace_fixture,
+    fail_after_w_trace_fixture,
+)
+
 # Spawn-backend keys which may appear in `skipon_spawn_backend`
 # marks ahead of the named backend actually being registered in
 # `tractor.spawn._spawn.SpawnMethodKey`; such marks are inert
