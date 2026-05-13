@@ -220,6 +220,47 @@ def _which_cgroup_slice(pid: int) -> str | None:
     return None
 
 
+def _find_tractor_strays(seen: set[int]) -> list[int]:
+    '''
+    Scan `/proc/*/cmdline` (+ `/comm` as zombie-safe fallback) for
+    `tractor._child` / `tractor[<aid>]` proctitle matches whose
+    `pid` is NOT in the `seen` set.
+
+    Used by `dump_proc_tree(include_strays=True)` to surface ghost
+    subactor trees from PRIOR test runs that aren't descendants of
+    the snapshot's root pid (typically the pytest worker). These
+    are usually the source of cross-test launchpad contamination —
+    e.g. orphaned `tractor._child` procs still squatting on UDS
+    bindspace from a hung-then-killed pytest invocation.
+
+    Returns the pids; caller decides what to do with them
+    (typically: walk their subtrees as additional roots and let
+    the existing zombie/orphan/live classification handle them).
+
+    Reuses `_reap._is_tractor_subactor` for the cmdline/comm
+    intrinsic-marker test so the detection stays in lock-step
+    with the reaper's own definition.
+
+    '''
+    # lazy-imported to avoid module-import cycle: `_reap.py` is a
+    # pytest plugin that imports from this module's siblings.
+    from ._reap import _is_tractor_subactor
+
+    strays: list[int] = []
+    proc = Path('/proc')
+    if not proc.is_dir():
+        return strays
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid: int = int(entry.name)
+        if pid in seen:
+            continue
+        if _is_tractor_subactor(pid):
+            strays.append(pid)
+    return sorted(strays)
+
+
 def _ppid_from_proc(pid: int) -> int | None:
     '''
     Read `ppid` from `/proc/<pid>/stat`. Returns None on race
@@ -295,6 +336,7 @@ def dump_proc_tree(
     roots: list[int],
     *,
     flag_tree: bool = False,
+    include_strays: bool = True,
 ) -> str:
     '''
     Severity-classified proc-tree rendering of `roots` and
@@ -309,6 +351,14 @@ def dump_proc_tree(
 
     `flag_tree=True` additionally prepends a flat walk-order
     `## tree` section preserving parent-child shape.
+
+    `include_strays=True` (default) additionally scans
+    `/proc/*/cmdline` for `tractor._child` / `tractor[<aid>]`
+    procs that are NOT descendants of any provided root — these
+    are typically ghost subactor trees from PRIOR test runs
+    (cross-test launchpad contamination). Their subtrees are
+    walked and classified normally; the bucket counts then
+    include them. See `_find_tractor_strays()`.
 
     '''
     buf = StringIO()
@@ -339,36 +389,64 @@ def dump_proc_tree(
     gone: list = []
     pid_to_bucket: dict = {}
 
-    for r in roots:
-        for (p, depth) in _walk_tree_with_depth(r):
-            if p.pid in seen:
-                continue
-            seen.add(p.pid)
-            try:
-                status: str = p.status()
-                ppid: int = p.ppid()
-            except psutil.NoSuchProcess:
-                gone.append(p.pid)
-                continue
-            entry = (p, depth)
-            if status in defunct_statuses:
-                zombies.append(entry)
-                pid_to_bucket[p.pid] = 'zombies'
-            elif ppid == 1:
-                slice_kind: str | None = _which_cgroup_slice(p.pid)
-                if slice_kind == 'system':
-                    system_slice.append(entry)
-                    pid_to_bucket[p.pid] = 'system-slice'
-                elif slice_kind == 'user':
-                    user_slice.append(entry)
-                    pid_to_bucket[p.pid] = 'user-slice'
+    # lazy-imported, used to override cgroup-slice classification
+    # for `tractor._child` strays (they're orphans regardless of
+    # whether they happen to be in the user.slice / system.slice
+    # cgroup — `desktop-launched app` is the *wrong* read for a
+    # leaked subactor that just happens to inherit user-session
+    # cgroup membership from its now-dead parent).
+    from ._reap import _is_tractor_subactor
+
+    def _classify_walk(walk_roots: list[int]) -> None:
+        '''Walk + classify into the closure-shared bucket lists.'''
+        for r in walk_roots:
+            for (p, depth) in _walk_tree_with_depth(r):
+                if p.pid in seen:
+                    continue
+                seen.add(p.pid)
+                try:
+                    status: str = p.status()
+                    ppid: int = p.ppid()
+                except psutil.NoSuchProcess:
+                    gone.append(p.pid)
+                    continue
+                entry = (p, depth)
+                if status in defunct_statuses:
+                    zombies.append(entry)
+                    pid_to_bucket[p.pid] = 'zombies'
+                elif ppid == 1:
+                    # `tractor._child` procs reparented to init are
+                    # leaked subactors regardless of cgroup-slice —
+                    # short-circuit to `orphans` before falling back
+                    # to the systemd-slice categorization (which is
+                    # only meaningful for NON-tractor procs).
+                    if _is_tractor_subactor(p.pid):
+                        orphans.append(entry)
+                        pid_to_bucket[p.pid] = 'orphans'
+                    else:
+                        slice_kind: str | None = _which_cgroup_slice(p.pid)
+                        if slice_kind == 'system':
+                            system_slice.append(entry)
+                            pid_to_bucket[p.pid] = 'system-slice'
+                        elif slice_kind == 'user':
+                            user_slice.append(entry)
+                            pid_to_bucket[p.pid] = 'user-slice'
+                        else:
+                            orphans.append(entry)
+                            pid_to_bucket[p.pid] = 'orphans'
                 else:
-                    orphans.append(entry)
-                    pid_to_bucket[p.pid] = 'orphans'
-            else:
-                live.append(entry)
-                pid_to_bucket[p.pid] = 'live'
-            walk_order.append(entry)
+                    live.append(entry)
+                    pid_to_bucket[p.pid] = 'live'
+                walk_order.append(entry)
+
+    _classify_walk(roots)
+    explicit_seen: set = set(seen)
+
+    stray_roots: list[int] = []
+    if include_strays:
+        stray_roots = _find_tractor_strays(seen)
+        if stray_roots:
+            _classify_walk(stray_roots)
 
     total: int = (
         len(live)
@@ -378,6 +456,16 @@ def dump_proc_tree(
         + len(zombies)
     )
     echo(f'# ptree: {total} procs across roots {roots}')
+    if stray_roots:
+        n_stray_proc: int = len(seen) - len(explicit_seen)
+        echo(
+            f'#  + {n_stray_proc} `tractor._child` stray proc(s) '
+            f'NOT descendants of {roots} '
+            f'(likely cross-test ghosts; see bindspace dump for '
+            f'their UDS sock state):'
+        )
+        for sr in stray_roots:
+            echo(f'#    stray-root: {sr}')
 
     hdr: str = (
         '  ' + 'PID'.rjust(7)
@@ -472,8 +560,9 @@ def dump_proc_tree(
     )
     _section(
         'orphans', orphans,
-        '`ppid==1`, NOT in a `system.slice`/`user.slice` cgroup '
-        '(likely leaked / parent gone)',
+        '`ppid==1` + leaked: either NOT in a `system.slice`/'
+        '`user.slice` cgroup, OR a known `tractor._child` '
+        'proc (leaked subactor, regardless of cgroup-slice)',
         bucket='orphans',
     )
     _section(
@@ -928,6 +1017,17 @@ def _do_capture_snapshot(
 
     '''
     target_pid: int = pid if pid is not None else os.getpid()
+    # NOTE: print to `sys.__stderr__` (the ORIGINAL unredirected
+    # stderr) rather than `sys.stderr` so the snapshot-path message
+    # bypasses pytest's `--capture=sys` redirection. Under pytest
+    # xfailed/passed tests have their captured streams SUPPRESSED
+    # entirely (and `--show-capture` only affects FAILED tests),
+    # so writing to `sys.stderr` would hide the diag info from the
+    # human running the suite. `__stderr__` is the pre-capture fd,
+    # always lands on the real terminal. Outside pytest (e.g. the
+    # xontrib CLI), `sys.__stderr__ is sys.stderr` so no difference.
+    import sys
+
     try:
         dump_dir: Path = dump_all(
             target_pid,
@@ -940,21 +1040,19 @@ def _do_capture_snapshot(
             allow_sudo_prompt=False,
         )
     except Exception as e:
-        import sys
         print(
             f'[{timeout_kind}_w_trace] '
             f'⚠️  dump_all() failed: {e!r} '
             f'(label={label!r}, pid={target_pid})',
-            file=sys.stderr,
+            file=sys.__stderr__,
         )
         return None
 
-    import sys
     print(
         f'[{timeout_kind}_w_trace] '
         f'⏰ timed out after {seconds}s (label={label!r}, '
         f'pid={target_pid}); snapshot at: {dump_dir}',
-        file=sys.stderr,
+        file=sys.__stderr__,
     )
     return dump_dir
 
@@ -986,10 +1084,21 @@ async def fail_after_w_trace(
         snapshot parent dir. Defaults to
         `$XDG_CACHE_HOME/tractor/hung-dumps/`.
 
-    On `trio.TooSlowError`:
-      1. Capture `dump_all()` (best-effort; failure is logged
-         to stderr but doesn't mask the original exception).
-      2. Re-raise so the test fails normally.
+    Snapshot is taken in EITHER of two cases:
+      1. `trio.fail_after` raises `TooSlowError` at scope-
+         exit (body returned cleanly but past the deadline).
+      2. The body raised a non-`TooSlowError` exception AFTER
+         our scope's cancel had been triggered — e.g. an
+         `open_nursery.__aexit__` wraps the timeout-induced
+         `Cancelled` into a `BaseExceptionGroup` and that
+         BEG escapes BEFORE `trio.fail_after`'s exit-check
+         can raise `TooSlowError`. Without this branch the
+         BEG would propagate untouched and no diag would be
+         captured.
+
+    The captured dump is best-effort (failure is logged to
+    stderr but doesn't mask the original exception). The
+    original exception always propagates.
 
     Example
     -------
@@ -1006,17 +1115,41 @@ async def fail_after_w_trace(
     # importable from a plain-python REPL.
     import trio
 
+    captured: bool = False
     try:
-        with trio.fail_after(seconds):
-            yield
+        with trio.fail_after(seconds) as scope:
+            try:
+                yield
+            except BaseException:
+                # Body raised. If our `fail_after`'s scope had
+                # already cancelled (e.g. deadline hit and a
+                # nursery `__aexit__` wrapped the resulting
+                # `Cancelled` into a `BaseExceptionGroup`), the
+                # body's exc is downstream of OUR timeout —
+                # capture diag now since `trio.fail_after`'s
+                # `TooSlowError` re-raise won't fire when a
+                # different exc is in flight.
+                if scope.cancel_called:
+                    _do_capture_snapshot(
+                        label=label,
+                        pid=pid,
+                        out_dir=out_dir,
+                        seconds=seconds,
+                        timeout_kind='fail_after',
+                    )
+                    captured = True
+                raise
     except trio.TooSlowError:
-        _do_capture_snapshot(
-            label=label,
-            pid=pid,
-            out_dir=out_dir,
-            seconds=seconds,
-            timeout_kind='fail_after',
-        )
+        # Body finished without raising; `fail_after`'s exit-
+        # check fired `TooSlowError`.
+        if not captured:
+            _do_capture_snapshot(
+                label=label,
+                pid=pid,
+                out_dir=out_dir,
+                seconds=seconds,
+                timeout_kind='fail_after',
+            )
         raise
 
 
