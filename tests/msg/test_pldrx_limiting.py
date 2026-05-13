@@ -284,6 +284,11 @@ def test_basic_payload_spec(
     return_value: str|None,
     started_value: int|PldMsg,
     pld_check_started_value: bool,
+
+    set_fork_aware_capture,
+    # ^XXX TODO? for forking spawners, seems to prevent hangs when
+    # --capture=sys not set, but only for a while then the problem
+    # accumulates?
 ):
     '''
     Validate the most basic `PldRx` msg-type-spec semantics around
