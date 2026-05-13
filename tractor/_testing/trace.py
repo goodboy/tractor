@@ -1000,6 +1000,31 @@ class AFKAlarmTimeout(TimeoutError):
     '''
 
 
+# Session-scoped list of snapshot (label, dump_dir) tuples
+# captured by `fail_after_w_trace` / `afk_alarm_w_trace` during
+# the current process lifetime. Populated by
+# `_do_capture_snapshot()` on each successful dump. The
+# `pytest_terminal_summary` hook in `tractor._testing.pytest`
+# reads this at end-of-session to print an index of all
+# snapshot dirs so the human doesn't have to scroll back through
+# captured-stderr lines to find paths.
+_SNAPSHOT_INDEX: list[tuple[str, Path]] = []
+
+
+# TODO: follow-up — `TRACTOR_TRACE_HOLD=1` pause-on-hang mode.
+# When env-var-enabled, `_do_capture_snapshot` would block on
+# `input('press Enter to continue...')` reading from
+# `sys.__stdin__` AFTER the dump succeeds, BEFORE re-raising the
+# original exception. This lets a human invoke
+# `acli.ptree`/`acli.bindspace_scan` from a second terminal
+# while the cancel-cascade is frozen mid-flight — currently
+# impossible because the per-test reaper fixture sweeps
+# orphans within ~0.6s of the timeout firing. See discussion
+# 2026-05-13: orphans visible in snapshot's `trace.txt`
+# (depth_3 / depth_1 init-adopted procs) but invisible to any
+# post-test `acli.*` invocation.
+
+
 def _do_capture_snapshot(
     *,
     label: str,
@@ -1014,6 +1039,10 @@ def _do_capture_snapshot(
 
     Returns the snapshot `Path` on success, `None` if capture
     itself failed (with a banner printed to stderr).
+
+    Appends `(label, dump_dir)` to the session-scoped
+    `_SNAPSHOT_INDEX` on success so the `pytest_terminal_summary`
+    hook can render an index at end-of-session.
 
     '''
     target_pid: int = pid if pid is not None else os.getpid()
@@ -1054,6 +1083,7 @@ def _do_capture_snapshot(
         f'pid={target_pid}); snapshot at: {dump_dir}',
         file=sys.__stderr__,
     )
+    _SNAPSHOT_INDEX.append((label, dump_dir))
     return dump_dir
 
 
