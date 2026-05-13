@@ -144,32 +144,37 @@ def test_register_duplicate_name(
     trio.run(main)
 
 
+# `n_dups` in {4, 8} both expose the SAME pre-existing race:
+# under rapid same-name spawning against a forkserver +
+# registrar, ONE of the spawned doggies `sys.exit(2)`s during
+# boot before completing parent-handshake. Surfaces now (post
+# the spawn-time `wait_for_peer_or_proc_death` fix) as
+# `ActorFailure rc=2`; previously it was silently masked by
+# the handshake-wait parking forever.
+#
+# Larger `n_dups` widens the race window so the boot-race
+# fires more often — n_dups=4 hits ~always, n_dups=8 hits
+# occasionally. Both xfail(strict=False) so the cancel-cascade
+# regression-check still passes when the boot-race happens
+# NOT to fire.
+#
+# Tracked separately in,
+# https://github.com/goodboy/tractor/issues/456
+_DOGGY_BOOT_RACE_XFAIL = pytest.mark.xfail(
+    strict=False,
+    reason=(
+        'doggy boot-race rc=2 under rapid same-name '
+        'spawn — separate bug from cancel-cascade'
+    ),
+)
+
+
 @pytest.mark.parametrize(
     'n_dups',
     [
         2,
-        # `n_dups=4` exposes a SEPARATE pre-existing race: under
-        # rapid same-name spawning against a forkserver +
-        # registrar, ONE of the spawned doggies (typically the
-        # 3rd) `sys.exit(2)`s during boot before completing
-        # parent-handshake. Surfaces now (post the spawn-time
-        # `wait_for_peer_or_proc_death` fix) as `ActorFailure
-        # rc=2`; previously it was silently masked by the
-        # handshake-wait parking forever.
-        #
-        # Tracked separately in,
-        # https://github.com/goodboy/tractor/issues/456 
-        pytest.param(
-            4,
-            marks=pytest.mark.xfail(
-                strict=False,
-                reason=(
-                    'doggy boot-race rc=2 under rapid same-name '
-                    'spawn — separate bug from cancel-cascade'
-                ),
-            ),
-        ),
-        8,
+        pytest.param(4, marks=_DOGGY_BOOT_RACE_XFAIL),
+        pytest.param(8, marks=_DOGGY_BOOT_RACE_XFAIL),
     ],
     ids=lambda n: f'n_dups={n}',
 )
