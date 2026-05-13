@@ -780,3 +780,37 @@ def set_fork_aware_capture(
     #     request=request,
     #     start_method=start_method,
     # )
+
+
+def pytest_terminal_summary(
+    terminalreporter,
+    exitstatus: int,
+    config: pytest.Config,
+) -> None:
+    '''
+    End-of-session summary: list all
+    `fail_after_w_trace`/`afk_alarm_w_trace` snapshot dirs
+    captured during the run so the human doesn't have to scroll
+    back through captured-stderr lines to find dump paths.
+
+    Reads from `tractor._testing.trace._SNAPSHOT_INDEX` which is
+    populated by `_do_capture_snapshot()` on each successful
+    snapshot capture.
+
+    No-op when zero snapshots were captured (most sessions).
+
+    '''
+    from .trace import _SNAPSHOT_INDEX
+
+    if not _SNAPSHOT_INDEX:
+        return
+
+    tr = terminalreporter
+    tr.write_sep('=', 'tractor hang-snapshot index')
+    tr.write_line(
+        f'{len(_SNAPSHOT_INDEX)} `fail_after_w_trace` / '
+        f'`afk_alarm_w_trace` snapshot(s) captured this session:'
+    )
+    for label, path in _SNAPSHOT_INDEX:
+        tr.write_line(f'  {label}')
+        tr.write_line(f'    → {path}')
