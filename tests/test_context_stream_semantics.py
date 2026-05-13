@@ -188,9 +188,16 @@ def test_simple_context(
     pointlessly_open_stream,
     reg_addr: tuple,
     debug_mode: bool,
+    is_forking_spawner: bool,
 ):
 
-    timeout = 1.5 if not platform.system() == 'Windows' else 4
+    timeout: float = 1.5
+    # windows and forking-spawner both have "slower but more
+    # deterministic" cancel teardown.
+    if platform.system() == 'Windows':
+        timeout = 4
+    elif is_forking_spawner:
+        timeout = 3
 
     async def main():
 
