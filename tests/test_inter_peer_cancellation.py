@@ -26,14 +26,30 @@ from tractor._testing import (
 
 from .conftest import cpu_scaling_factor
 
-pytestmark = pytest.mark.skipon_spawn_backend(
-    'subint',
-    reason=(
-        'XXX SUBINT GIL-CONTENTION HANGING TEST XXX\n'
-        'See oustanding issue(s)\n'
-        # TODO, put issue link!
-    )
-)
+pytestmark = [
+    pytest.mark.skipon_spawn_backend(
+        'subint',
+        reason=(
+            'XXX SUBINT GIL-CONTENTION HANGING TEST XXX\n'
+            'Inter-peer cancel cascades under '
+            '`--spawn-backend=subint` trip the abandoned-subint '
+            'GIL-hostage class — see\n'
+            '  - `ai/conc-anal/subint_sigint_starvation_issue.md` '
+            '(GIL-hostage, SIGINT-unresponsive)\n'
+            '  - `ai/conc-anal/subint_cancel_delivery_hang_issue.md` '
+            '(sibling: parent parks on dead chan)\n'
+            '  - https://github.com/goodboy/tractor/issues/379 '
+            '(subint umbrella)\n'
+        )
+    ),
+    # NOTE, inter-peer cancellation tests stress the
+    # multi-actor cancel cascade which under SIGKILL
+    # leaves UDS sock-files orphaned. Track per-test
+    # for blame attribution.
+    pytest.mark.usefixtures(
+        'track_orphaned_uds_per_test',
+    ),
+]
 
 # XXX TODO cases:
 # - [x] WE cancelled the peer and thus should not see any raised
