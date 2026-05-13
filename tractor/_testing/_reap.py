@@ -463,11 +463,20 @@ def reap(
     grace: float = 3.0,
     poll: float = 0.25,
     log=print,
+    include_descendants: bool = True,
 ) -> tuple[list[int], list[int]]:
     '''
-    Deliver SIGINT to each pid, wait up to `grace`
-    seconds for them to exit, then SIGKILL any that
-    survive.
+    Deliver SIGINT to each pid (AND its subtree
+    descendants when `include_descendants=True`, the
+    default), wait up to `grace` seconds for them to
+    exit, then SIGKILL any that survive.
+
+    The subtree-walk is what makes a single `acli.reap`
+    invocation tear down a *full* leaked actor-tree
+    rather than just its init-adopted top. Without it,
+    repeated calls are needed: each pass kills the
+    current `ppid==1` level, the level below becomes
+    init-adopted, next pass kills those, etc.
 
     Returns `(signalled, survivors_killed)` so callers
     can report / assert.
@@ -480,8 +489,43 @@ def reap(
     if not pids:
         return ([], [])
 
+    # Expand each pid into its full subtree (descendants
+    # included) so a multi-level leaked actor-tree gets
+    # torn down in a single pass. Falls back to the
+    # original `pids` list if psutil isn't installed.
+    pids_to_signal: list[int] = list(pids)
+    if include_descendants:
+        try:
+            import psutil
+        except ImportError:
+            psutil = None
+        if psutil is not None:
+            seen: set[int] = set(pids)
+            for root in list(pids):
+                try:
+                    p = psutil.Process(root)
+                    for c in p.children(recursive=True):
+                        if c.pid not in seen:
+                            seen.add(c.pid)
+                            pids_to_signal.append(c.pid)
+                except (
+                    psutil.NoSuchProcess,
+                    psutil.AccessDenied,
+                ):
+                    # raced / unprivileged — skip silently;
+                    # the orphan-root itself still gets the
+                    # signal below.
+                    continue
+            n_extra: int = len(pids_to_signal) - len(pids)
+            if n_extra:
+                log(
+                    f'[tractor-reap] expanded {len(pids)} '
+                    f'orphan-root(s) → {len(pids_to_signal)} '
+                    f'incl. {n_extra} subtree-descendant(s)'
+                )
+
     signalled: list[int] = []
-    for pid in pids:
+    for pid in pids_to_signal:
         try:
             os.kill(pid, signal.SIGINT)
             signalled.append(pid)
