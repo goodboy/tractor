@@ -653,6 +653,7 @@ def pytest_generate_tests(
     #         scope='module',
     #     )
 
+
 def _is_forking_spawner(
     start_method: str,
 ) -> bool:
@@ -670,7 +671,7 @@ def is_forking_spawner(
     Is the `pytest` run using a `fork()`ing process spawning-backend?
 
     '''
-    return _is_forking_spawner
+    return _is_forking_spawner(start_method)
 
 
 def maybe_xfail_for_spawner(
