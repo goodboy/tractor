@@ -57,6 +57,7 @@ from tractor.msg._ops import (
     limit_plds,
 )
 
+
 def enc_nsp(obj: Any) -> Any:
     actor: Actor = tractor.current_actor(
         err_on_no_runtime=False,
@@ -617,6 +618,17 @@ def test_ext_types_over_ipc(
     debug_mode: bool,
     pld_spec: Union[Type],
     add_hooks: bool,
+
+    set_fork_aware_capture,
+    # ^^XXX? for forking spawners
+
+    # capfd: pytest.CaptureFixture,
+    # ^^NOTE, super interesting that if
+    # we disable this below then the tpt-layer
+    # suffers as an "unclean EOF"??
+    # ?TODO, determine why/how that mks sense when addressing,
+    # https://github.com/pytest-dev/pytest/issues/14444
+    #
 ):
     '''
     Ensure we can support extension types coverted using
@@ -725,18 +737,26 @@ def test_ext_types_over_ipc(
 
             await p.cancel_actor()
 
+    async def fa_main():
+        with (
+            trio.fail_after(2),
+            # ?TODO, investigate? see NOTE above..
+            # capfd.disabled(),
+        ):
+            await main()
+
     if (
         NamespacePath in pld_types
         and
         add_hooks
     ):
-        trio.run(main)
+        trio.run(fa_main)
 
     else:
         with pytest.raises(
             expected_exception=tractor.RemoteActorError,
         ) as excinfo:
-            trio.run(main)
+            trio.run(fa_main)
 
         exc = excinfo.value
         # bc `.started(nsp: NamespacePath)` will raise
