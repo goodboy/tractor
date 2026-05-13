@@ -83,10 +83,27 @@ jobs:
 
 
   testing:
-    name: '${{ matrix.os }} Python${{ matrix.python-version }} spawn_backend=${{ matrix.spawn_backend }} tpt_proto=${{ matrix.tpt_proto }}'
-    timeout-minutes: 16
+    name: '${{ matrix.os }} Python${{ matrix.python-version }} spawn_backend=${{ matrix.spawn_backend }} tpt_proto=${{ matrix.tpt_proto }} capture=${{ matrix.capture }}'
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
 
+    # NOTE on the matrix shape — the `capture=` mode follows
+    # `spawn_backend`:
+    #
+    # - `trio` / `mp_*` backends use `--capture=fd` (default)
+    #   for per-test attribution of subactor *raw-fd* output
+    #   in failure reports.
+    # - Fork-based backends (`main_thread_forkserver`,
+    #   `subint_forkserver`) REQUIRE `--capture=sys` because
+    #   fork-child × `--capture=fd` is a known deadlock
+    #   pattern. See the long NOTE in `tractor._testing.pytest`'s
+    #   `pytest_load_initial_conftests` for the mechanism +
+    #   tradeoff write-up.
+    #
+    # If a future matrix row adds a fork-spawn backend
+    # WITHOUT setting `capture: 'sys'`, the
+    # `pytest_load_initial_conftests` hook fail-fasts on `CI=1`
+    # with a clear error msg. So the matrix is self-policing.
     strategy:
       fail-fast: false
       matrix:
@@ -113,6 +130,26 @@ jobs:
           'tcp',
           'uds',
         ]
+        capture: [
+          'fd',  # default for non-fork backends
+        ]
+
+        # Fork-based backends — added via `include:` so each
+        # cell carries its REQUIRED `capture: 'sys'` mode.
+        # Linux-only for now; macOS coverage TBD pending
+        # local validation.
+        include:
+          - os: ubuntu-latest
+            python-version: '3.13'
+            spawn_backend: 'main_thread_forkserver'
+            tpt_proto: 'tcp'
+            capture: 'sys'
+          - os: ubuntu-latest
+            python-version: '3.13'
+            spawn_backend: 'main_thread_forkserver'
+            tpt_proto: 'uds'
+            capture: 'sys'
+
         # https://github.com/orgs/community/discussions/26253#discussioncomment-3250989
         exclude:
           # don't do UDS run on macOS (for now)
@@ -153,8 +190,11 @@ jobs:
           -rsx
           --spawn-backend=${{ matrix.spawn_backend }}
           --tpt-proto=${{ matrix.tpt_proto }}
-          --capture=fd
-        # ^XXX^ can't work with --spawn-method=main_thread_forkserver
+          --capture=${{ matrix.capture }}
+        # NOTE: capture mode is matrix-driven — `fd` for
+        # non-fork backends (per-test fd attribution),
+        # `sys` for fork-based (avoids fork-child x
+        # capture-fd deadlock). See matrix-NOTE above.
 
   # XXX legacy NOTE XXX
   #
