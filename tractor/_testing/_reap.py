@@ -1155,6 +1155,19 @@ def reap_subactors_per_test() -> int:
     (`_reap_orphaned_subactors`) only kicks in at session
     end which is too late to save the cascade.
 
+    Reaps both:
+      1. direct descendants of `pytest` (`PPid==pytest_pid`)
+      2. NEW init-adopted tractor procs (`PPid==1` AND
+         `_is_tractor_subactor`) that appeared between
+         pre-yield and post-yield — these are the leaked
+         subactors whose mid-tier parent died during the
+         cascade, reparenting them to init.
+
+    Pre-yield snapshot of init-adopted tractor procs is
+    used to scope (2) to THIS test's leaks only — without
+    it we'd also reap orphans from concurrent unrelated
+    tractor uses on the box (piker, etc.).
+
     Apply at module-level on the topically-problematic
     test files via:
 
@@ -1174,7 +1187,16 @@ def reap_subactors_per_test() -> int:
 
     '''
     parent_pid: int = os.getpid()
+    # Snapshot pre-existing init-adopted tractor procs so
+    # we can scope post-test reap to NEW orphans only.
+    pre_orphans: set[int] = set(find_orphans())
     yield parent_pid
     pids: list[int] = find_descendants(parent_pid)
+    new_orphans: list[int] = [
+        pid for pid in find_orphans()
+        if pid not in pre_orphans
+    ]
+    if new_orphans:
+        pids.extend(new_orphans)
     if pids:
         reap(pids, grace=3.0)
