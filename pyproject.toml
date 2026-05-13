@@ -77,7 +77,13 @@ testing = [
   # test suite
   # TODO: maybe some of these layout choices?
   # https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
-  "pytest>=8.3.5",
+  # bumped 8.3.5 → 9.0 per upstream security advisory + our
+  # local-only reliance on the post-9.0 capture-machinery shape
+  # (the `sys.__stderr__`-bypass print in
+  # `tractor._testing.trace._do_capture_snapshot` works on 8.x
+  # too, but standardizing on 9.x here ensures `--show-capture`
+  # interactions stay predictable across dev installs).
+  "pytest>=9.0",
   "pexpect>=4.9.0,<5",
 ]
 repl = [
