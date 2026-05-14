@@ -250,6 +250,17 @@ def _ptree(args):
       tree shape with no severity-grouping. Same procs,
       no annotations needed because each parent appears
       directly above its children.
+
+    As a hot tip, you can use this `xonsh`-script snippet to poll
+    a target actor tree:
+
+    .. code-block:: xonsh
+
+        while 1:
+            acli.ptree pytest
+            @.imp.time.sleep(.3)
+            print("\033c", end="")
+
     '''
     flag_tree: bool = False
     pos_args: list = []
