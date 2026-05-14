@@ -69,6 +69,16 @@ def _ptree(args):
     See `tractor._testing.trace.dump_proc_tree()` for the
     bucket semantics + classification details.
 
+    As a hot tip, you can use this `xonsh`-script snippet to poll
+    a target actor tree:
+
+    .. code-block:: xonsh
+
+        while 1:
+            acli.ptree pytest
+            @.imp.time.sleep(.3)
+            print("\033c", end="")
+
     '''
     flag_tree: bool = False
     pos_args: list = []
