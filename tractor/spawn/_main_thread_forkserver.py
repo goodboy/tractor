@@ -380,6 +380,21 @@ if TYPE_CHECKING:
     from tractor.runtime._supervise import ActorNursery
 
 
+# `os.pidfd_open` is **Linux 5.3+ / Python 3.9+ ONLY** —
+# absent on macOS, Windows, and older Linux kernels. We use
+# it for fully trio-cancellable child-wait via
+# `trio.lowlevel.wait_readable(pidfd)`; on platforms without
+# it, `_ForkedProc.wait()` falls back to
+# `to_thread.run_sync(os.waitpid)` which is NOT cancellable
+# by trio scopes. The fallback is a known-regression class
+# for those platforms: a stuck-child cancel cascade can wedge
+# a worker thread on the sync `waitpid()` until the child
+# actually dies — the outer cancel scope's `Cancelled` is
+# silently absorbed by `to_thread.run_sync`'s
+# `abandon_on_cancel=False` semantics.
+_PIDFD_AVAILABLE: bool = hasattr(os, 'pidfd_open')
+
+
 log = get_logger('tractor')
 
 
@@ -695,7 +710,17 @@ class _ForkedProc:
         # ...)` blocks a cache thread on a sync syscall that is
         # NOT trio-cancellable, which prevents outer cancel
         # scopes from unwedging a stuck-child cancel cascade.
-        self._pidfd: int = os.pidfd_open(pid)
+        #
+        # `os.pidfd_open` is Linux-only — absent on macOS,
+        # Windows, and older Linux kernels (<5.3). On those
+        # platforms `_pidfd` stays at -1 and `wait()` falls
+        # back to a worker-thread `os.waitpid` (NOT cancellable
+        # by trio scopes, see _PIDFD_AVAILABLE for the
+        # tradeoff and known regression class).
+        if _PIDFD_AVAILABLE:
+            self._pidfd: int = os.pidfd_open(pid)
+        else:
+            self._pidfd: int = -1
 
     def poll(self) -> int | None:
         '''
@@ -725,10 +750,17 @@ class _ForkedProc:
 
     async def wait(self) -> int:
         '''
-        Async, fully-trio-cancellable wait for the child's
-        exit. Uses `trio.lowlevel.wait_readable()` on the
-        `pidfd` sentinel — same pattern as `trio.Process.wait`
-        and `tractor.spawn._spawn.proc_waiter` (mp backend).
+        Async wait for the child's exit. Uses
+        `trio.lowlevel.wait_readable()` on the `pidfd`
+        sentinel (Linux fast-path, fully trio-cancellable —
+        same pattern as `trio.Process.wait` and
+        `tractor.spawn._spawn.proc_waiter`).
+
+        On platforms WITHOUT `os.pidfd_open` (macOS, Windows,
+        older Linux kernels) falls back to a worker-thread
+        `os.waitpid` which is NOT cancellable by trio scopes —
+        see `_PIDFD_AVAILABLE`'s module-level comment for the
+        regression class on those platforms.
 
         Safe to call multiple times; subsequent calls return
         the cached rc without re-issuing the syscall.
@@ -736,29 +768,45 @@ class _ForkedProc:
         '''
         if self._returncode is not None:
             return self._returncode
-        # Park until the pidfd becomes readable — the OS
-        # signals this exactly once on child exit. Cancellable
-        # via any outer trio cancel scope (this was the key
-        # fix vs. the prior `to_thread.run_sync(os.waitpid,
-        # abandon_on_cancel=False)` which blocked a thread on
-        # a sync syscall and swallowed cancels).
-        await trio.lowlevel.wait_readable(self._pidfd)
-        # pidfd signaled → reap non-blocking to collect the
-        # exit status. `WNOHANG` here is correct: by the time
-        # the pidfd is readable, `waitpid()` won't block.
-        try:
-            _, status = os.waitpid(self.pid, os.WNOHANG)
-        except ChildProcessError:
-            # already reaped by something else
-            status = 0
+
+        if self._pidfd >= 0:
+            # Park until the pidfd becomes readable — the OS
+            # signals this exactly once on child exit. Cancellable
+            # via any outer trio cancel scope (this was the key
+            # fix vs. the prior `to_thread.run_sync(os.waitpid,
+            # abandon_on_cancel=False)` which blocked a thread on
+            # a sync syscall and swallowed cancels).
+            await trio.lowlevel.wait_readable(self._pidfd)
+            # pidfd signaled → reap non-blocking to collect the
+            # exit status. `WNOHANG` here is correct: by the time
+            # the pidfd is readable, `waitpid()` won't block.
+            try:
+                _, status = os.waitpid(self.pid, os.WNOHANG)
+            except ChildProcessError:
+                # already reaped by something else
+                status = 0
+            # pidfd is one-shot; close it so we don't leak fds
+            # across many spawns.
+            try:
+                os.close(self._pidfd)
+            except OSError:
+                pass
+            self._pidfd = -1
+        else:
+            # Fallback path (no pidfd available): block a worker
+            # thread on the sync `os.waitpid` syscall. NOT
+            # trio-cancellable — see `_PIDFD_AVAILABLE` comment.
+            try:
+                _, status = await trio.to_thread.run_sync(
+                    os.waitpid,
+                    self.pid,
+                    0,
+                    abandon_on_cancel=False,
+                )
+            except ChildProcessError:
+                status = 0
+
         self._returncode = self._parse_status(status)
-        # pidfd is one-shot; close it so we don't leak fds
-        # across many spawns.
-        try:
-            os.close(self._pidfd)
-        except OSError:
-            pass
-        self._pidfd = -1
         return self._returncode
 
     def terminate(self) -> None:
