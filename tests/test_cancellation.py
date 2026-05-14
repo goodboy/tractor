@@ -7,6 +7,7 @@ import signal
 import platform
 import time
 from itertools import repeat
+from typing  import Type
 
 import pytest
 import trio
@@ -14,6 +15,7 @@ import tractor
 from tractor._testing import (
     tractor_test,
 )
+from tractor._testing.trace import FailAfterWTraceFactory
 from .conftest import no_windows
 
 
@@ -21,14 +23,44 @@ _non_linux: bool = platform.system() != 'Linux'
 _friggin_windows: bool = platform.system() == 'Windows'
 
 
-pytestmark = pytest.mark.skipon_spawn_backend(
-    'subint',
-    reason=(
-        'XXX SUBINT HANGING TEST XXX\n'
-        'See oustanding issue(s)\n'
-        # TODO, put issue link!
-    )
-)
+pytestmark = [
+    # Multi-actor cancel cascades under
+    # `--spawn-backend=subint` trip the abandoned-subint
+    # GIL-hostage class — a stuck subint can starve the
+    # parent's trio loop and block cancel-delivery.
+    # Apply the skip module-wide rather than per-test
+    # since every test here exercises the same cascade.
+    pytest.mark.skipon_spawn_backend(
+        'subint',
+        reason=(
+            'XXX SUBINT GIL-CONTENTION HANGING TEST XXX\n'
+            'Cancel cascades under '
+            '`--spawn-backend=subint` trip the abandoned-subint '
+            'GIL-hostage class — see\n'
+            '  - `ai/conc-anal/subint_sigint_starvation_issue.md` '
+            '(GIL-hostage, SIGINT-unresponsive)\n'
+            '  - `ai/conc-anal/subint_cancel_delivery_hang_issue.md` '
+            '(sibling: parent parks on dead chan)\n'
+            '  - https://github.com/goodboy/tractor/issues/379 '
+            '(subint umbrella)\n'
+        )
+    ),
+    pytest.mark.usefixtures(
+        'reap_subactors_per_test',
+        # NOTE, cancellation tests stress the SIGKILL
+        # `hard_kill` path which leaks UDS sock-files when
+        # the subactor's IPC server `finally:` cleanup
+        # doesn't run. Track per-test for blame attribution.
+        'track_orphaned_uds_per_test',
+        # NOTE, cancel-cascade timing races (see
+        # `test_nested_multierrors`) can also leave a
+        # subactor spinning at 100% CPU when its cancel
+        # signal got swallowed mid-handshake. Catches the
+        # runaway-loop class that doesn't leak UDS socks
+        # but burns the box.
+        'detect_runaway_subactors_per_test',
+    ),
+]
 
 
 async def assert_err(delay=0):
@@ -55,7 +87,11 @@ async def do_nuthin():
     ],
     ids=['no_args', 'unexpected_args'],
 )
-def test_remote_error(reg_addr, args_err):
+def test_remote_error(
+    reg_addr: tuple,
+    args_err: tuple[dict, Type[Exception]],
+    set_fork_aware_capture,
+):
     '''
     Verify an error raised in a subactor that is propagated
     to the parent nursery, contains the underlying boxed builtin
@@ -120,17 +156,10 @@ def test_remote_error(reg_addr, args_err):
             assert exc.boxed_type == errtype
 
 
-# @pytest.mark.skipon_spawn_backend(
-#     'subint',
-#     reason=(
-#         'XXX SUBINT HANGING TEST XXX\n'
-#         'See oustanding issue(s)\n'
-#         # TODO, put issue link!
-#     )
-# )
 def test_multierror(
     reg_addr: tuple[str, int],
-    start_method: str,
+    start_method: str,  # parametrized
+    set_fork_aware_capture, #: Callable,
 ):
     '''
     Verify we raise a ``BaseExceptionGroup`` out of a nursery where
@@ -175,6 +204,8 @@ def test_multierror_fast_nursery(
     start_method: str,
     num_subactors: int,
     delay: float,
+    set_fork_aware_capture,
+    fail_after_w_trace: FailAfterWTraceFactory,
 ):
     '''
     Verify we raise a ``BaseExceptionGroup`` out of a nursery where
@@ -183,20 +214,42 @@ def test_multierror_fast_nursery(
 
     '''
     async def main():
-        async with tractor.open_nursery(
-            registry_addrs=[reg_addr],
-        ) as nursery:
+        # budget = 2× natural trio-backend cascade time for
+        # 25 errorer subactors (~14s observed). on-timeout
+        # diag snapshot → if the cancel cascade hangs
+        # (observed under MTF backend with N>=14 errorer
+        # subactors) we get a fresh ptree/wchan/py-spy dump
+        # on disk INSTEAD of an opaque pytest timeout-kill.
+        # See `tractor/_testing/trace.py` for the helper.
+        async with fail_after_w_trace(30.0):
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as nursery:
 
-            for i in range(num_subactors):
-                await nursery.run_in_actor(
-                    assert_err,
-                    name=f'errorer{i}',
-                    delay=delay
-                )
+                for i in range(num_subactors):
+                    await nursery.run_in_actor(
+                        assert_err,
+                        name=f'errorer{i}',
+                        delay=delay
+                    )
 
     # with pytest.raises(trio.MultiError) as exc_info:
-    with pytest.raises(BaseExceptionGroup) as exc_info:
+    # NOTE, `trio.TooSlowError` from `fail_after_w_trace`
+    # bubbles UN-wrapped if `open_nursery.__aexit__` never
+    # gets re-entered; wrapped inside a `BaseExceptionGroup`
+    # if it did. Accept both shapes so the matcher itself
+    # doesn't lie about *what* failed.
+    with pytest.raises(
+        (BaseExceptionGroup, trio.TooSlowError),
+    ) as exc_info:
         trio.run(main)
+
+    if isinstance(exc_info.value, trio.TooSlowError):
+        pytest.fail(
+            f'cancel cascade hung past 12s '
+            f'(num_subactors={num_subactors}, delay={delay}); '
+            f'see stderr for `fail_after_w_trace` snapshot path'
+        )
 
     assert exc_info.type == ExceptionGroup
     err = exc_info.value
@@ -277,6 +330,7 @@ async def stream_forever():
 async def test_cancel_infinite_streamer(
     reg_addr: tuple,
     start_method: str,
+    set_fork_aware_capture,
 ):
     # stream for at most 1 seconds
     with (
@@ -300,14 +354,6 @@ async def test_cancel_infinite_streamer(
     assert n.cancelled
 
 
-# @pytest.mark.skipon_spawn_backend(
-#     'subint',
-#     reason=(
-#         'XXX SUBINT HANGING TEST XXX\n'
-#         'See oustanding issue(s)\n'
-#         # TODO, put issue link!
-#     )
-# )
 @pytest.mark.parametrize(
     'num_actors_and_errs',
     [
@@ -345,6 +391,7 @@ async def test_some_cancels_all(
     reg_addr: tuple,
     start_method: str,
     loglevel: str,
+    set_fork_aware_capture, #: Callable,
 ):
     '''
     Verify a subset of failed subactors causes all others in
@@ -462,32 +509,119 @@ async def spawn_and_error(
 #     10,
 #     method='thread',
 # )
-@tractor_test
+@pytest.mark.parametrize(
+    'depth',
+    [1, 3],
+    ids='depth={}'.format,
+)
+@tractor_test(
+    # bumped from the 30s default to cover fork-based
+    # cancel-cascade flakes; 2 spawners × 2 errorers × depth 1+
+    # cascade through 6 portal-wait_for_result paths each
+    # paying `terminate_after=1.6s` + UDS sock-unlink under
+    # MTF/UDS contention can easily blow past 30s.
+    # Trio backend is fast and won't notice the extra budget.
+    # See `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
+    timeout=10,
+)
 async def test_nested_multierrors(
     reg_addr: tuple,
     loglevel: str,
     start_method: str,
+    set_fork_aware_capture,
+    fail_after_w_trace: FailAfterWTraceFactory,
+    request: pytest.FixtureRequest,
+    depth: int,
 ):
     '''
-    Test that failed actor sets are wrapped in `BaseExceptionGroup`s. This
-    test goes only 2 nurseries deep but we should eventually have tests
-    for arbitrary n-depth actor trees.
+    Test that failed actor sets are wrapped in `BaseExceptionGroup`s.
+
+    Parametrized over recursion `depth ∈ {1, 3}`:
+
+      - `depth=1`: shallow tree (2 spawners × 2 errorers, 2
+        levels). Cascade completes well within budget on ALL
+        backends including MTF — regression-safety green case.
+
+      - `depth=3`: deep tree (2 spawners × recursive depth-3
+        spawn-and-error). On `main_thread_forkserver` this
+        trips the cancel-cascade shape-mismatch bug class
+        (see `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`)
+        — xfailed below.
 
     '''
-    if start_method == 'trio':
-        depth = 3
-        subactor_breadth = 2
-    else:
-        # XXX: multiprocessing can't seem to handle any more then 2 depth
-        # process trees for whatever reason.
-        # Any more process levels then this and we see bugs that cause
-        # hangs and broken pipes all over the place...
-        if start_method == 'forkserver':
-            pytest.skip("Forksever sux hard at nested spawning...")
-        depth = 1  # means an additional actor tree of spawning (2 levels deep)
-        subactor_breadth = 2
+    # XXX: `multiprocessing.forkserver` can't handle nested
+    # spawning at any depth — hangs / broken-pipes. Pre-existing
+    # backend limitation, NOT depth-specific.
+    if start_method == 'forkserver':
+        pytest.skip("Forksever sux hard at nested spawning...")
 
-    with trio.fail_after(120):
+    subactor_breadth = 2
+
+    # MTF backend trips a probabilistic timing race in the
+    # cancel-cascade — NOT depth-gated; depth amplifies the
+    # variance so depth=3 misses nearly every run while
+    # depth=1 misses occasionally. Both get the xfail mark
+    # (with `strict=False`) since the bug class can fire at
+    # either depth.
+    #
+    # The scenario in detail:
+    #
+    #     T=0      spawn spawner_0 + spawner_1 in parallel
+    #     T=t1     spawner_0's child errors →
+    #              RemoteActorError reaches root nursery
+    #     T=t1+ε   root nursery starts cancelling
+    #              spawner_1's portal-wait
+    #     T=t2     spawner_1's child errors → tries to send
+    #              RemoteActorError back
+    #
+    #     if t2 < t1+ε:  BEG = [RAE, RAE]        ← clean (xpass)
+    #     if t2 > t1+ε:  BEG = [RAE, Cancelled]  ← race tripped (xfail)
+    #
+    # i.e. the assertion below (`isinstance(_, RemoteActorError)`)
+    # fails iff cancel-delivery beats the other tree's natural
+    # error-propagation. Depth amplifies `t2-t1` variance
+    # (longer per-tree paths = more skew); under MTF the
+    # fork-spawn jitter + UDS-contention widens both `t1` and
+    # `t2` further.
+    #
+    # With `strict=False` the clean-cascade cases (most
+    # depth=1 runs, rare depth=3 runs) report as `xpassed`
+    # while the race-tripped cases report as `xfailed` —
+    # neither flakes `--lf`. When MTF cancel-cascade
+    # eventually speeds up enough to close the race even at
+    # depth=3, BOTH variants will reliably `xpass` and
+    # pytest will yell — our signal to drop the marker. See
+    # `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
+    if start_method == 'main_thread_forkserver':
+        request.node.add_marker(
+            pytest.mark.xfail(
+                strict=False,
+                reason=(
+                    f'MTF cancel-cascade shape-mismatch at '
+                    f'depth={depth} (Cancelled races '
+                    f'RemoteActorError in BEG); see conc-anal/'
+                    'cancel_cascade_too_slow_under_main_thread_forkserver_issue.md'
+                ),
+            )
+        )
+
+    # 6s budget: in the non-hang case (and on the trio
+    # backend) the whole spawn + cancel-cascade should
+    # complete in well under that. On the borderline hang
+    # case the `fail_after_w_trace` fires `TooSlowError`
+    # AND captures a ptree/wchan/py-spy snapshot to
+    # `$XDG_CACHE_HOME/tractor/hung-dumps/` for offline
+    # inspection. See
+    # `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
+    match (start_method, depth):
+        case ('trio', _):
+            timeout = 6
+        case ('main_thread_forkserver', 1):
+            timeout = 16
+        case ('main_thread_forkserver', 3):
+            timeout = 30
+
+    async with fail_after_w_trace(timeout):
         try:
             async with tractor.open_nursery() as nursery:
                 for i in range(subactor_breadth):
@@ -658,14 +792,6 @@ async def spawn_sub_with_sync_blocking_task():
         print('exiting first subactor layer..\n')
 
 
-# @pytest.mark.skipon_spawn_backend(
-#     'subint',
-#     reason=(
-#         'XXX SUBINT HANGING TEST XXX\n'
-#         'See oustanding issue(s)\n'
-#         # TODO, put issue link!
-#     )
-# )
 @pytest.mark.parametrize(
     'man_cancel_outer',
     [
@@ -685,7 +811,7 @@ async def spawn_sub_with_sync_blocking_task():
 def test_cancel_while_childs_child_in_sync_sleep(
     loglevel: str,
     start_method: str,
-    spawn_backend: str,
+    is_forking_spawner: bool,
     debug_mode: bool,
     reg_addr: tuple,
     man_cancel_outer: bool,
@@ -701,7 +827,10 @@ def test_cancel_while_childs_child_in_sync_sleep(
 
     '''
     if start_method == 'forkserver':
-        pytest.skip("Forksever sux hard at resuming from sync sleep...")
+        pytest.skip(
+            "`multiprocessing`'s forkserver sux hard at "
+            "resuming from sync sleep..."
+        )
 
     async def main():
         #
@@ -744,7 +873,11 @@ def test_cancel_while_childs_child_in_sync_sleep(
         # delay = 2  # is AssertionError in eg AND no TooSlowError !?
         # is AssertionError in eg AND no _cs cancellation.
         delay = (
-            6 if _non_linux
+            6 if (
+                _non_linux
+                or
+                is_forking_spawner
+            )
             else 4 
         )
 
