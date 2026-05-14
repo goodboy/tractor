@@ -224,7 +224,19 @@ def _find_tractor_strays(seen: set[int]) -> list[int]:
     '''
     Scan `/proc/*/cmdline` (+ `/comm` as zombie-safe fallback) for
     `tractor._child` / `tractor[<aid>]` proctitle matches whose
-    `pid` is NOT in the `seen` set.
+    `pid` is NOT in the `seen` set AND whose `ppid` disposition
+    indicates the proc belongs to THIS test run's process tree:
+
+      - `ppid == 1`  → init-adopted (parent died) — a real leaked
+        subactor from this (or a prior killed) test run.
+      - `ppid in seen` → subtree-descendant the recursive walk
+        missed due to a race (proc appeared between iterations).
+
+    Procs whose `ppid` points to some OTHER live, non-pytest
+    process are skipped — they belong to a different tractor app
+    (e.g. `piker`, another `pytest` invocation in another shell,
+    a long-running tractor daemon) and falsely flagging them as
+    "cross-test ghosts" of THIS run is misleading.
 
     Used by `dump_proc_tree(include_strays=True)` to surface ghost
     subactor trees from PRIOR test runs that aren't descendants of
@@ -256,7 +268,17 @@ def _find_tractor_strays(seen: set[int]) -> list[int]:
         pid: int = int(entry.name)
         if pid in seen:
             continue
-        if _is_tractor_subactor(pid):
+        if not _is_tractor_subactor(pid):
+            continue
+        # ownership filter: only flag procs whose `ppid` ties them
+        # back to THIS test run (init-adopted orphan, or a
+        # descendant the walk missed).
+        ppid: int | None = _ppid_from_proc(pid)
+        if ppid is None:
+            # proc disappeared between `iterdir()` and `stat` —
+            # treat as gone, don't flag.
+            continue
+        if ppid == 1 or ppid in seen:
             strays.append(pid)
     return sorted(strays)
 
