@@ -21,6 +21,11 @@ Provides:
                                         reaper + optional `/dev/shm/`
                                         + UDS sock-file sweeps.
                                         alias for `scripts/tractor-reap`.
+  - `acli.watch [-n SEC] <alias-name>   run a callable alias in
+                        [alias-args]`   an alt-screen loop with
+                                        flicker-free repaint
+                                        (cursor-home + per-line
+                                        EL + post-draw erase-down).
 
 Loading from repo root:
   xontrib load -p ./xontrib tractor_diag
@@ -32,9 +37,18 @@ Pipe-to-paste idiom (xonsh):
   hung-dump pytest |t /tmp/hung.log
 
 Requires `psutil` for full functionality (`ptree` and the
-`hung-dump` tree-walk). Falls back to `pgrep -P` recursion
-if missing.
+`hung_dump` tree-walk). Falls back to `pgrep -P` recursion if
+missing.
+
 """
+import os
+import sys
+import signal
+import time
+from typing import (
+    Callable,
+)
+
 
 import os
 import re
@@ -56,6 +70,150 @@ except ImportError:
 _UDS_SOCK_RE = re.compile(
     r'^(?P<name>.+)@(?P<pid>\d+)\.sock$'
 )
+
+@aliases.unthreadable
+def watch(
+    args: list[str],
+) -> int:
+    '''
+    A per-term optimized `watch`-like alias for xonsh
+    that runs an arbitrary callable alias in a loop
+    inside the alt-screen buffer. Ctrl-C returns to a
+    pristine shell, SIGWINCH triggers a full redraw,
+    and the per-frame draw uses cursor-home + per-line
+    EL + post-draw erase-down so the loop is flicker-
+    free even when individual lines shrink or grow
+    between frames.
+
+    usage: acli.watch [-n SEC] <alias-name>
+                      [alias-args]...
+
+    Examples:
+
+      acli.watch acli.ptree pytest
+      acli.watch -n 1.0 acli.bindspace_scan piker
+      acli.watch acli.hung_dump pytest
+
+    Only callable aliases (Python functions registered
+    in `aliases`) are supported. Subprocess-style
+    aliases raise an error — wrap them in a thin
+    callable if you need watching.
+
+    Output capture: the watched alias's stdout is
+    redirected into a `StringIO` per frame so we can
+    post-process it (insert `\033[K` before each `\n`).
+    Aliases that write directly to `sys.stdout.buffer`
+    or `os.write(1, ...)` bypass capture; for those the
+    EL-fix won't apply but the loop still functions.
+
+    '''
+    import argparse, io
+    from contextlib import redirect_stdout
+
+    parser = argparse.ArgumentParser(
+        prog='acli.watch',
+        description=watch.__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        '-n', '--interval',
+        type=float,
+        default=0.3,
+        help='poll interval in seconds (default: 0.3)',
+    )
+    parser.add_argument(
+        'alias',
+        help='name of a registered xonsh callable alias',
+    )
+    parser.add_argument(
+        'alias_args',
+        nargs=argparse.REMAINDER,
+        help='args forwarded to the watched alias',
+    )
+
+    try:
+        ns = parser.parse_args(args)
+    except SystemExit as se:
+        return int(se.code) if se.code is not None else 0
+
+    raw = aliases.get(ns.alias)
+    if raw is None:
+        print(
+            f'[acli.watch] no such alias: {ns.alias!r}'
+        )
+        return 1
+
+    # xonsh stores callable aliases as a bare callable
+    # OR wraps them in `[fn, *preset_args]` (depending
+    # on registration path / version). Unwrap both.
+    fn: Callable|None = None
+    preset_args: list = []
+    if callable(raw):
+        fn = raw
+    elif (
+        isinstance(raw, list)
+        and raw
+        and callable(raw[0])
+    ):
+        fn = raw[0]
+        preset_args = list(raw[1:])
+
+    if fn is None:
+        kind: str = type(raw).__name__
+        print(
+            f'[acli.watch] alias {ns.alias!r} is not a '
+            f'callable alias (got {kind}); '
+            f'subprocess-style aliases not supported'
+        )
+        return 1
+
+    _FD: int = sys.stdout.fileno()
+    need_full_clear: bool = False
+
+    def _on_winch(signum, frame):
+        nonlocal need_full_clear
+        need_full_clear = True
+
+    prev_winch = signal.signal(
+        signal.SIGWINCH,
+        _on_winch,
+    )
+    prev_sigint = signal.signal(
+        signal.SIGINT,
+        signal.default_int_handler,
+    )
+
+    os.write(_FD, b'\033[?1049h\033[?25l')
+    try:
+        while True:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                fn(preset_args + ns.alias_args)
+
+            if need_full_clear:
+                os.write(_FD, b'\033[H\033[2J')
+                need_full_clear = False
+            else:
+                os.write(_FD, b'\033[H')
+
+            # `\033[K` (EL) before each newline erases
+            # any stale tail chars left by a longer
+            # prior-frame version of the same line.
+            text: str = buf.getvalue()
+            painted: bytes = (
+                text.replace('\n', '\033[K\n').encode()
+            )
+            os.write(_FD, painted)
+            os.write(_FD, b'\033[J')
+            time.sleep(ns.interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        os.write(_FD, b'\033[?25h\033[?1049l')
+        signal.signal(signal.SIGWINCH, prev_winch)
+        signal.signal(signal.SIGINT, prev_sigint)
+
+    return 0
 
 
 # --- helpers --------------------------------------------------
@@ -212,7 +370,9 @@ def _ensure_sudo_cached() -> bool:
 
 # --- ptree ---------------------------------------------------
 
-def _ptree(args):
+def _ptree(
+    args: list[str],
+):
     '''
     psutil-backed proc tree; per-proc classification into
     severity-ordered buckets so leaked / defunct procs
@@ -251,15 +411,12 @@ def _ptree(args):
       no annotations needed because each parent appears
       directly above its children.
 
-    As a hot tip, you can use this `xonsh`-script snippet to poll
-    a target actor tree:
+    To watch this live with flicker-free repaint
+    (alt-screen, per-line EL, SIGWINCH-aware):
 
     .. code-block:: xonsh
 
-        while 1:
-            acli.ptree pytest
-            @.imp.time.sleep(.3)
-            print("\033c", end="")
+        acli.watch acli.ptree pytest
 
     '''
     flag_tree: bool = False
@@ -928,6 +1085,7 @@ _TCLI_ALIASES: dict = {
     'acli.hung_dump': _hung_dump,
     'acli.bindspace_scan': _bindspace_scan,
     'acli.reap': _tractor_reap,
+    'acli.watch': watch,
 }
 
 for _name, _fn in _TCLI_ALIASES.items():
