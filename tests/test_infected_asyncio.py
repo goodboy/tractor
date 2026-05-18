@@ -30,6 +30,10 @@ from tractor import (
 from tractor.runtime import _state
 from tractor.trionics import BroadcastReceiver
 from tractor._testing import expect_ctxc
+from tractor._testing.trace import (
+    AfkAlarmWTraceFactory,
+    FailAfterWTraceFactory,
+)
 
 
 # Per-test zombie-subactor reaper. Opt-in (NOT autouse) —
@@ -58,7 +62,6 @@ pytestmark = pytest.mark.usefixtures(
     scope='module',
 )
 def delay(debug_mode: bool) -> int:
-    return 1e3
     if debug_mode:
         return 999
     else:
@@ -846,8 +849,25 @@ def test_echoserver_detailed_mechanics(
     raise_error_mid_stream,
 
     is_forking_spawner: bool,
+    fail_after_w_trace: FailAfterWTraceFactory,
 ):
-    async def main():
+    # NOTE: under fork-based backends the cancel-cascade
+    # path is structurally slower than `trio`'s subproc-exec
+    # (per-spawn forkserver-handshake compounds during
+    # teardown). Bump the cap so cross-test contamination
+    # doesn't flake this — see
+    # `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
+    timeout: float = (
+        999 if tractor.debug_mode()
+        else 4 if is_forking_spawner
+        else 1
+    )
+
+    # body factored out so the `fail_after_w_trace`-wrapping
+    # `main()` stays a 2-liner — keeps the deep `open_nursery`
+    # /`open_context`/`open_stream` block at its natural indent
+    # level instead of pushing it under yet another `async with`.
+    async def _body():
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
             debug_mode=debug_mode,
@@ -893,34 +913,21 @@ def test_echoserver_detailed_mechanics(
             # is cancelled by kbi or out of task cancellation
             await p.cancel_actor()
 
-    # NOTE: under fork-based backends the cancel-cascade
-    # path is structurally slower than `trio`'s subproc-exec
-    # (per-spawn forkserver-handshake compounds during
-    # teardown). Bump the cap so cross-test contamination
-    # doesn't flake this — see
-    # `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
-    timeout: float = (
-        999 if tractor.debug_mode()
-        else 4 if is_forking_spawner
-        else 1
-    )
-    with_timeout: bool = (
-        True
-        # False
-    )
-    async def fa_main():
-        if with_timeout:
-            with trio.fail_after(timeout):
-                await main()
-        else:
-            await main()
+    async def main():
+        # on-timeout diag snapshot via `fail_after_w_trace`
+        # — when the cancel cascade hangs under MTF we get a
+        # fresh `ptree`/`wchan`/`py-spy` dump on disk INSTEAD
+        # of an opaque pytest timeout-kill. See
+        # `tractor/_testing/trace.py`.
+        async with fail_after_w_trace(timeout):
+            await _body()
 
     if raise_error_mid_stream:
         with pytest.raises(raise_error_mid_stream):
-            trio.run(fa_main)
+            trio.run(main)
 
     else:
-        trio.run(fa_main)
+        trio.run(main)
 
 
 @tractor.context
@@ -1074,6 +1081,7 @@ def test_sigint_closes_lifetime_stack(
     trio_side_is_shielded: bool,
     send_sigint_to: str,
     is_forking_spawner: bool,
+    afk_alarm_w_trace: AfkAlarmWTraceFactory,
 ):
     '''
     Ensure that an infected child can use the `Actor.lifetime_stack`
@@ -1221,32 +1229,26 @@ def test_sigint_closes_lifetime_stack(
             assert not tmp_file.exists()
             assert ctx.maybe_error
 
-    # outer signal-based AFK-safety guard. mirrors the pattern in
-    # `tests/test_advanced_streaming.py::test_dynamic_pub_sub`: when
-    # the in-band trio cancel path doesn't fire (e.g. parent is
-    # parked in a shielded `await` inside actor-nursery teardown, or
-    # `open_context.__aenter__` hangs waiting for a child's
-    # `StartAck` that never comes), `signal.alarm` raises KBI in the
-    # main thread regardless of trio's scope state. This caps the
-    # absolute wall-clock so an AFK run can't sit for an hour on a
-    # forkserver-launchpad-contamination hang. Only armed under fork-
-    # based backends since the bug class is MTF-specific.
-    _AFK_CAP_S: int = (
-        999 if debug_mode
-        else 10
-    )
-    armed_alarm: bool = (
+    # outer hard wall-clock backstop via `afk_alarm_w_trace`:
+    # when the in-band trio cancel path doesn't fire (e.g.
+    # parent is parked in a shielded `await` inside actor-
+    # nursery teardown, or `open_context.__aenter__` hangs
+    # waiting for a child's `StartAck` that never comes), the
+    # `signal.alarm` inside the CM raises `AFKAlarmTimeout`
+    # in the main thread regardless of trio's scope state —
+    # AND captures a full diag snapshot to
+    # `$XDG_CACHE_HOME/tractor/hung-dumps/` before re-raising.
+    # Only armed under fork-based backends since this hang-
+    # class is MTF-specific.
+    if (
         not debug_mode
         and
         is_forking_spawner
-    )
-    if armed_alarm:
-        signal.alarm(_AFK_CAP_S)
-    try:
+    ):
+        with afk_alarm_w_trace(10):
+            trio.run(main)
+    else:
         trio.run(main)
-    finally:
-        if armed_alarm:
-            signal.alarm(0)
 
 
 
