@@ -931,34 +931,40 @@ class Actor:
                 rvs: dict[str, Any] = spawnspec._runtime_vars
 
                 # `stackscope` SIGUSR1 handler: install when EITHER
-                # `_debug_mode=True` (full multi-actor pdb support
-                # path) OR the `TRACTOR_ENABLE_STACKSCOPE` env var
-                # is set (lighter test-time hang-debug path; see
+                # `use_stackscope` is set in rt-vars OR the
+                # `TRACTOR_ENABLE_STACKSCOPE` env var is set (lighter
+                # test-time hang-debug path; see
                 # `tractor._testing.pytest`'s `--enable-stackscope`
                 # CLI flag — env var propagates via fork-inherited
                 # environ).
+                #
+                # NOTE, intentionally NOT gated on `_debug_mode` so
+                # SIGUSR1 task-tree dumps work in plain (non-pdb)
+                # runs too — esp. in infected-`asyncio` sub-actors
+                # where the default SIGUSR1 action would otherwise
+                # terminate the proc.
+                if (
+                    rvs.get('use_stackscope')
+                    or
+                    os.environ.get('TRACTOR_ENABLE_STACKSCOPE')
+                ):
+                    from ..devx import enable_stack_on_sig
+                    try:
+                        # TODO: maybe return some status msgs upward
+                        # to that we can emit them in `con_status`
+                        # instead?
+                        log.devx(
+                            'Enabling `stackscope` traces on SIGUSR1'
+                        )
+                        enable_stack_on_sig()
+
+                    except ImportError:
+                        log.warning(
+                            '`stackscope` not installed for use in '
+                            'debug mode / `--enable-stackscope`!'
+                        )
+
                 if rvs['_debug_mode']:
-                    if (
-                        rvs.get('use_stackscope')
-                        or
-                        os.environ.get('TRACTOR_ENABLE_STACKSCOPE')
-                    ):
-                        from ..devx import enable_stack_on_sig
-                        try:
-                            # TODO: maybe return some status msgs upward
-                            # to that we can emit them in `con_status`
-                            # instead?
-                            log.devx(
-                                'Enabling `stackscope` traces on SIGUSR1'
-                            )
-                            enable_stack_on_sig()
-
-                        except ImportError:
-                            log.warning(
-                                '`stackscope` not installed for use in '
-                                'debug mode / `--enable-stackscope`!'
-                            )
-
                     if rvs.get('use_greenback', False):
                         from ..devx import maybe_init_greenback
                         maybe_mod: ModuleType|None = await maybe_init_greenback()
