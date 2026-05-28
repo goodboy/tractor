@@ -415,11 +415,12 @@ async def open_root_actor(
             )
 
         # TODO: factor this into `.devx._stackscope`!!
-        if (
-            debug_mode
-            and
-            enable_stack_on_sig
-        ):
+        #
+        # NOTE, intentionally NOT gated on `debug_mode` so SIGUSR1
+        # task-tree dumps work in plain (non-pdb) runs too — esp.
+        # in infected-`asyncio` root processes where the default
+        # SIGUSR1 action would otherwise terminate the proc.
+        if enable_stack_on_sig:
             from .devx._stackscope import enable_stack_on_sig
             enable_stack_on_sig()
 
