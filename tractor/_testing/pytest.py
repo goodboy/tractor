@@ -405,6 +405,46 @@ def pytest_addoption(
         help="Transport protocol to use under the `tractor.ipc.Channel`",
     )
 
+    # console loglevel for the test-session, scoped to the
+    # consuming-project's OWN pkg-hierarchy (see the
+    # `testing_pkg_name` fixture). For `tractor` itself this IS the
+    # runtime loglevel; downstream projects use `--ll` for their own
+    # ("internal") app-logging and `--tl` for tractor-as-runtime.
+    parser.addoption(
+        "--ll",
+        "--loglevel",
+        action="store",
+        dest='loglevel',
+        default=None,
+        help=(
+            "console loglevel to set for the test session, scoped to "
+            "the consuming-project pkg (see `testing_pkg_name`). "
+            "Falls through as the `--tl` default."
+        ),
+    )
+
+    # tractor-as-runtime loglevel, DISTINCT from `--ll` so downstream
+    # projects can split their app-logs from the `tractor.*` runtime
+    # hierarchy. Accepts a `tractor.log` "logging-spec" (see
+    # `tractor.log.apply_logspec()`).
+    parser.addoption(
+        "--tl",
+        "--tractor-loglevel",
+        action="store",
+        dest='tractor_loglevel',
+        default=None,
+        help=(
+            "loglevel (or logging-spec) for `tractor`-as-runtime, "
+            "distinct from `--ll`. Accepts a bare level (eg. "
+            "'info', 'cancel') or a sub-logger filter-spec, "
+            "'<sublog>:<level>,...' (eg. "
+            "'devx:runtime,trionics:cancel'). Falls back to `--ll` "
+            "when unset. Mirrors the logging-spec grammar consumed "
+            "by `tractor.log.apply_logspec()` (see its sub-pkg "
+            "granularity caveat)."
+        ),
+    )
+
 
 def pytest_configure(
     config: pytest.Config,
@@ -545,6 +585,135 @@ def debug_mode(
     '''
     debug_mode: bool = request.config.option.tractor_debug_mode
     return debug_mode
+
+
+@pytest.fixture(scope='session')
+def testing_pkg_name() -> str:
+    '''
+    Root pkg-name of the project consuming this plugin, used to
+    scope `--ll` "internal"/app-level console logging into that
+    project's OWN `tractor.log.get_logger(pkg_name=<.>)` hierarchy
+    — distinct from the `tractor.*` runtime hierarchy configured
+    via `--tl`.
+
+    Defaults to `'tractor'` (so tractor's own suite treats `--ll`
+    as the runtime level). Downstream projects override this from
+    their `conftest.py`, eg.
+
+    .. code:: python
+
+        @pytest.fixture(scope='session')
+        def testing_pkg_name() -> str:
+            return 'modden'
+
+    '''
+    return 'tractor'
+
+
+@pytest.fixture(
+    scope='session',
+    autouse=True,
+)
+def loglevel(
+    request: pytest.FixtureRequest,
+    testing_pkg_name: str,
+) -> str|None:
+    '''
+    Resolve + apply the test-session console loglevels and yield
+    the `tractor`-runtime level (also passed to
+    `open_root_actor(loglevel=<.>)` by `@tractor_test`).
+
+    - `--tl <logspec>`: tractor-runtime level (falls back to the
+      generic `--ll`); applied to the `tractor.*` logger hierarchy
+      and `tractor.log._default_loglevel` via
+      `tractor.log.apply_logspec()`.
+    - `--ll <level>`: the consuming-project's OWN console loglevel,
+      applied to its `testing_pkg_name` hierarchy when that isn't
+      `tractor` itself.
+
+    '''
+    import tractor
+    orig: str = tractor.log._default_loglevel
+
+    ll: str|None = request.config.option.loglevel
+    tl: str|None = request.config.option.tractor_loglevel
+
+    # tractor-runtime loglevel: explicit `--tl` wins, else fall
+    # back to the generic `--ll`, else leave the lib default.
+    logspec: str|None = tl if tl is not None else ll
+    tractor_level: str|None = None
+    if logspec is not None:
+        tractor_level, _ = tractor.log.apply_logspec(
+            logspec,
+            default_level=ll,
+            pkg_name='tractor',
+        )
+        if tractor_level is not None:
+            tractor.log._default_loglevel = tractor_level
+
+    # consuming-project ("internal") console logging at the generic
+    # `--ll` level, scoped to ITS OWN pkg-hierarchy (NOT `tractor.*`)
+    # so downstream projects can split app-logs from runtime-logs.
+    if (
+        ll is not None
+        and
+        testing_pkg_name
+        and
+        testing_pkg_name != 'tractor'
+    ):
+        tractor.log.get_console_log(
+            level=ll,
+            pkg_name=testing_pkg_name,
+            name=testing_pkg_name,
+        )
+
+    log = tractor.log.get_console_log(
+        level=tractor_level,
+        name='tractor',  # <- enable root logger
+    )
+    log.info(
+        f'Test-harness set session loglevels:\n'
+        f'tractor-runtime (`--tl`/`--ll`): {tractor_level!r}\n'
+        f'{testing_pkg_name!r} (`--ll`): {ll!r}\n'
+    )
+    yield tractor_level
+    tractor.log._default_loglevel = orig
+
+
+@pytest.fixture(scope='function')
+def test_log(
+    request: pytest.FixtureRequest,
+    loglevel: str,
+    testing_pkg_name: str,
+) -> tractor.log.StackLevelAdapter:
+    '''
+    Deliver a per test-module-fn logger instance for reporting from
+    within actual test bodies/fixtures.
+
+    For example this can be handy to report certain error cases from
+    exception handlers using `test_log.exception()`.
+
+    The logger is scoped to the consuming-project's
+    `testing_pkg_name` hierarchy so downstream suites' in-test logs
+    land under their own pkg, not `tractor.*`.
+
+    '''
+    modname: str = request.function.__module__
+    log = tractor.log.get_logger(
+        name=modname,
+        pkg_name=testing_pkg_name,
+    )
+    _log = tractor.log.get_console_log(
+        level=loglevel,
+        logger=log,
+        name=modname,
+    )
+    _log.debug(
+        f'In-test-logging requested\n'
+        f'test_log.name: {log.name!r}\n'
+        f'level: {loglevel!r}\n'
+    )
+    yield _log
 
 
 @pytest.fixture(scope='session')
