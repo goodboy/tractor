@@ -543,21 +543,45 @@ def get_logger(
         #   only includes the first 2 sub-pkg name-tokens in the
         #   child-logger's name; the colored "pkg-namespace" header
         #   will then correctly show the same value as `name`.
+        #
+        # XXX, strip the trailing `pkg_path` token ONLY when it
+        # duplicates the caller's leaf-*module* name — which the
+        # console header already renders via its `{filename}` field.
+        # We compare against the caller module's `__name__`/
+        # `__package__` (rather than blindly dropping the last token)
+        # so genuine, possibly-*nested* sub-PACKAGE components stay
+        # addressable as their own sub-loggers:
+        #
+        # - `name='trionics._broadcast'` (a leaf-module, from a
+        #   `get_logger(__name__)`-style call) -> `tractor.trionics`
+        #   (leaf dropped; `_broadcast.py` is in the header).
+        # - `name='devx.debug'` (a real sub-PACKAGE, whether
+        #   auto-derived from a module's `__package__` or passed
+        #   explicitly by a logging-spec) -> `tractor.devx.debug`,
+        #   DISTINCT from a bare `devx` -> `tractor.devx`.
+        #
+        # The previous unconditional `pkg_path = subpkg_path` also ate
+        # the deepest sub-pkg, collapsing `devx.debug` -> `tractor.devx`
+        # and silently breaking per-sub-pkg level control via the
+        # logging-spec; see `tractor.log.LogSpec`/`apply_logspec()`.
+        caller_leaf_mod: str|None = None
+        if (caller_mod := get_caller_mod()):
+            cmod_name: str = getattr(caller_mod, '__name__', '') or ''
+            cmod_pkg: str = getattr(caller_mod, '__package__', '') or ''
+            # a leaf-*module* has `__name__ != __package__`; a package
+            # `__init__` has them equal (so its trailing token is a
+            # real sub-pkg, NOT a leaf-module-filename to strip).
+            if cmod_name and cmod_name != cmod_pkg:
+                caller_leaf_mod = cmod_name.rpartition('.')[2]
+
         if (
-            # XXX, TRY to remove duplication cases
-            # which get warn-logged on below!
-            (
-                # when, subpkg_path == pkg_path
-                subpkg_path
-                and
-                rname == pkg_name
-            )
-            # ) or (
-            #     # when, pkg_path == leaf_mod
-            #     pkg_path
-            #     and
-            #     leaf_mod == pkg_path
-            # )
+            subpkg_path
+            and
+            rname == pkg_name
+            and
+            # only collapse when the trailing token IS the caller's
+            # leaf-module (i.e. the `{filename}` already shows it).
+            leaf_mod == caller_leaf_mod
         ):
             pkg_path = subpkg_path
 
@@ -724,18 +748,25 @@ def get_console_log(
 # - 'sub:info,x:cancel' -> per-sub-logger levels; each `<name>` is
 #                          RELATIVE to `pkg_name` (must NOT include
 #                          the `pkg_name` token itself), eg.
-#                          'devx:runtime,trionics:cancel'.
+#                          'devx.debug:runtime,trionics:cancel'.
 #
-# !GRANULARITY CAVEAT! sub-logger names are matched at the
-# `pkg_name.<name>` *logger* level, which (per `get_logger()`'s
-# name-derivation) is effectively the *sub-package* granularity:
-# - leaf module-names are stripped, so 'devx.debug' collapses to
-#   the same `tractor.devx` logger as a bare 'devx' (you CANNOT
-#   isolate a single leaf-module's emits from its sub-pkg).
+# !GRANULARITY! sub-logger names match at the `pkg_name.<name>`
+# *logger* level — which (per `get_logger()`'s name-derivation) is
+# *sub-PACKAGE* granularity, addressable at ANY nesting depth:
+# - 'devx.debug' -> the `tractor.devx.debug` logger, DISTINCT from a
+#   bare 'devx' -> `tractor.devx` (its parent). Setting `devx` also
+#   gates `devx.debug` via normal stdlib level-inheritance unless the
+#   child sets its own level.
+# - leaf *modules* are intentionally NOT individually addressable:
+#   `get_logger()` drops the leaf module-name from the logger key
+#   since the console header already renders it via `{filename}`, so
+#   every module in a (sub-)pkg shares that pkg's logger. Per-leaf
+#   level control would need a record-filter (see follow-up notes:
+#   `ai/tooling-todos/logspec_leaf_module_granularity_route_b.md`).
 # - top-level lib modules (eg. `tractor.to_asyncio`) emit under the
-#   *root* `pkg_name` logger (their `__package__` IS `pkg_name`),
-#   so a 'to_asyncio:<level>' filter targets a phantom child that
-#   nothing emits to -> no-op. Use the root-level form for those.
+#   *root* `pkg_name` logger (their `__package__` IS `pkg_name`), so
+#   a 'to_asyncio:<level>' entry targets a phantom child that nothing
+#   emits to -> no-op. Use the bare-level/root form for those.
 LogSpec = str|bool
 
 
