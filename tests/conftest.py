@@ -120,74 +120,13 @@ def cpu_scaling_factor() -> float:
     return 1.
 
 
-def pytest_addoption(
-    parser: pytest.Parser,
-):
-    # ?TODO? should this be exposed from our `._testing.pytest`
-    # plugin or should we make it more explicit with `--tl` for
-    # tractor logging like we do in other client projects?
-    parser.addoption(
-        "--ll",
-        action="store",
-        dest='loglevel',
-        default=None,
-        help="logging level to set when testing",
-    )
-
-
-@pytest.fixture(scope='session', autouse=True)
-def loglevel(
-    request: pytest.FixtureRequest,
-) -> str|None:
-    import tractor
-    orig = tractor.log._default_loglevel
-    flag_level: str|None = request.config.option.loglevel
-
-    if flag_level is not None:
-        tractor.log._default_loglevel = flag_level
-
-    log = tractor.log.get_console_log(
-        level=flag_level,
-        name='tractor',  # <- enable root logger
-    )
-    log.info(
-        f'Test-harness set runtime loglevel: {flag_level!r}\n'
-    )
-    yield flag_level
-    tractor.log._default_loglevel = orig
-
-
-@pytest.fixture(scope='function')
-def test_log(
-    request: pytest.FixtureRequest,
-    loglevel: str,
-) -> tractor.log.StackLevelAdapter:
-    '''
-    Deliver a per test-module-fn logger instance for reporting from
-    within actual test bodies/fixtures.
-
-    For example this can be handy to report certain error cases from
-    exception handlers using `test_log.exception()`.
-
-    '''
-    modname: str = request.function.__module__
-    log = tractor.log.get_logger(
-        name=modname,  # <- enable root logger
-        # pkg_name='tests',
-    )
-    _log = tractor.log.get_console_log(
-        level=loglevel,
-        logger=log,
-        name=modname,
-        # pkg_name='tests',
-    )
-    _log.debug(
-        f'In-test-logging requested\n'
-        f'test_log.name: {log.name!r}\n'
-        f'level: {loglevel!r}\n'
-
-    )
-    yield _log
+# NOTE, the `--ll`/`--tl` CLI flags + the `loglevel`, `test_log`
+# and `testing_pkg_name` fixtures have been factored into the
+# `tractor._testing.pytest` plugin (loaded via the `-p` entry in
+# `pyproject.toml`'s `[tool.pytest.ini_options]`) so downstream
+# consuming projects (eg. `modden`) inherit them for free. The
+# plugin's `testing_pkg_name` fixture defaults to `'tractor'`, so
+# this suite keeps treating `--ll` as the runtime loglevel.
 
 
 @pytest.fixture(scope='session')

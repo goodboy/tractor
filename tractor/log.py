@@ -711,6 +711,160 @@ def get_console_log(
     return log
 
 
+# A `tractor` "logging-spec": a compact, code-free way for a
+# consuming project's test-iface (or runtime) to dial-in console
+# loglevels across the lib's logger hierarchy. Mirrors the grammar
+# consumed by `modden.runtime.daemon.setup_tractor_logging()`.
+#
+# Accepted forms (`str|bool`),
+# - `True`              -> enable the `pkg_name` root-logger at
+#                          `default_level` (or 'cancel').
+# - `False`             -> disable (no-op, configure nothing).
+# - 'info'              -> a bare level for the root-logger.
+# - 'sub:info,x:cancel' -> per-sub-logger levels; each `<name>` is
+#                          RELATIVE to `pkg_name` (must NOT include
+#                          the `pkg_name` token itself), eg.
+#                          'devx:runtime,trionics:cancel'.
+#
+# !GRANULARITY CAVEAT! sub-logger names are matched at the
+# `pkg_name.<name>` *logger* level, which (per `get_logger()`'s
+# name-derivation) is effectively the *sub-package* granularity:
+# - leaf module-names are stripped, so 'devx.debug' collapses to
+#   the same `tractor.devx` logger as a bare 'devx' (you CANNOT
+#   isolate a single leaf-module's emits from its sub-pkg).
+# - top-level lib modules (eg. `tractor.to_asyncio`) emit under the
+#   *root* `pkg_name` logger (their `__package__` IS `pkg_name`),
+#   so a 'to_asyncio:<level>' filter targets a phantom child that
+#   nothing emits to -> no-op. Use the root-level form for those.
+LogSpec = str|bool
+
+
+def parse_logspec(
+    logspec: LogSpec,
+    default_level: str|None = None,
+    pkg_name: str = _proj_name,
+
+) -> dict[str|None, str]:
+    '''
+    Parse a `tractor` "logging-spec" (see `LogSpec`) into a
+    `{sublog_name|None: level}` mapping where a `None` key denotes
+    the `pkg_name` root-logger itself.
+
+    '''
+    match logspec:
+
+        # explicit disable -> configure nothing.
+        case False:
+            return {}
+
+        # enable the root-logger at the fallback level.
+        case True:
+            return {None: (default_level or 'cancel')}
+
+        case str(spec):
+            filters: list[str] = [
+                part.strip()
+                for part in spec.split(',')
+                if part.strip()
+            ]
+            # i. a bare level (no sub-logger filtering),
+            #    eg. 'info' | 'cancel'
+            if (
+                len(filters) == 1
+                and
+                ':' not in filters[0]
+            ):
+                return {None: filters[0]}
+
+            # ii. a per-sub-logger filter-spec of the form,
+            #     '<sublog_0>:<level>,<.. N-other-parts>'
+            #     eg. 'to_asyncio:cancel,devx._debug:runtime'
+            out: dict[str|None, str] = {}
+            for log_filter in filters:
+                name, sep, level = log_filter.partition(':')
+                if not sep:
+                    raise ValueError(
+                        f'Invalid `tractor` logging-spec part!\n'
+                        f'{log_filter!r}\n'
+                        f'\n'
+                        f'Mixed bare-level + sub-logger filters are '
+                        f'not supported; every comma-part must be '
+                        f'`<sublog>:<level>`.\n'
+                    )
+                # the sub-logger name is RELATIVE to `pkg_name`;
+                # duplicating the pkg-token is a user error since
+                # the root-logger already IS `pkg_name`.
+                if pkg_name in name.split('.'):
+                    raise ValueError(
+                        f'logging-spec sub-name should NOT include '
+                        f'the `pkg_name={pkg_name!r}` token!\n'
+                        f'got name={name!r}\n'
+                    )
+                out[name] = level
+            return out
+
+        case _:
+            raise ValueError(
+                f'Invalid `tractor` logging-spec!\n'
+                f'{logspec!r}\n'
+            )
+
+
+def apply_logspec(
+    logspec: LogSpec,
+    default_level: str|None = None,
+    pkg_name: str = _proj_name,
+
+) -> tuple[
+    str|None,
+    dict[str, StackLevelAdapter],
+]:
+    '''
+    Parse + apply a `tractor` "logging-spec" (see `parse_logspec()`):
+    enable a `colorlog` stderr console handler for each
+    (sub-)logger named in the spec at its requested level.
+
+    Returns a 2-tuple,
+    - the resolved "primary" runtime-level: the root-logger level if
+      the spec set one, else `default_level`; suitable for passing
+      to `open_root_actor(loglevel=<.>)`,
+    - a `{logger_name: StackLevelAdapter}` map of every logger the
+      spec touched.
+
+    '''
+    specs: dict[str|None, str] = parse_logspec(
+        logspec,
+        default_level=default_level,
+        pkg_name=pkg_name,
+    )
+    logs: dict[str, StackLevelAdapter] = {}
+    for sub_name, level in specs.items():
+        # NOTE, pass the RELATIVE sub-name (no `pkg_name.` prefix)
+        # to avoid `get_logger()`'s duplicate-pkg-token warning;
+        # it re-adds the pkg-name via `.getChild()` internally.
+        log: StackLevelAdapter = get_console_log(
+            level=level,
+            pkg_name=pkg_name,
+            name=(sub_name or pkg_name),
+        )
+        # XXX, a sub-logger filter is "authoritative" for its
+        # subtree: it gets its OWN stderr handler (added by
+        # `get_console_log()` above), so DON'T also let its records
+        # propagate up to a root `pkg_name`-logger handler — that
+        # would double-emit every line when a root-level console
+        # (eg. via `--ll`) is also active. The root-level form
+        # (`sub_name is None`) keeps default propagation.
+        if sub_name is not None:
+            log.logger.propagate = False
+        logs[log.name] = log
+
+    primary_level: str|None = specs.get(None, default_level)
+    return (
+        primary_level,
+        logs,
+    )
+
+
 def get_loglevel() -> str:
     return _default_loglevel
 
