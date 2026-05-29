@@ -20,6 +20,16 @@ def test_root_pkg_not_duplicated_in_logger_name():
     a common `<root_name>.< >` prefix, ensure that it is not
     duplicated in the child's `StackLevelAdapter.name: str`.
 
+    Also pins the explicit-`name` contract: an explicitly passed
+    dotted `name` is treated as a *literal* sub-logger path and is
+    NOT leaf-collapsed. The leaf-module is only dropped when the
+    trailing token duplicates the *caller's own* `__name__` leaf (the
+    `{filename}` field) — see `test_implicit_mod_name_applied_for_child`
+    for that (auto-naming) path. This is what keeps a real (possibly
+    nested) sub-PACKAGE like `subpkg.mod` -> `devx.debug` addressable
+    by the `tractor.log` logging-spec, instead of collapsing to its
+    parent.
+
     '''
     project_name: str = 'pylib'
     pkg_path: str = 'pylib.subpkg.mod'
@@ -38,8 +48,13 @@ def test_root_pkg_not_duplicated_in_logger_name():
     )
 
     assert proj_log is not sublog
+    # the root pkg-name appears exactly once (no `pylib.pylib...`)
     assert sublog.name.count(proj_log.name) == 1
-    assert 'mod' not in sublog.name
+    # explicit dotted `name` is preserved literally (NOT collapsed);
+    # the trailing token survives since it's not the *caller's* own
+    # leaf-module (`test_log_sys`), so this is treated as a literal
+    # sub-pkg path.
+    assert sublog.name == f'{project_name}.subpkg.mod'
 
 
 def test_implicit_mod_name_applied_for_child(
