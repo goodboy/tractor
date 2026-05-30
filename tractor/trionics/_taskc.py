@@ -296,6 +296,9 @@ async def maybe_raise_from_masking_exc(
             if raise_unmasked:
                 raise exc_ctx from exc_match
 
+    else:
+        raise
+
 
 async def start_or_cancel(
     nursery: trio.Nursery,
@@ -344,7 +347,4 @@ async def start_or_cancel(
             # we fall through to re-raise the genuine startup RTE.
             await trio.lowlevel.checkpoint_if_cancelled()
 
-        raise
-
-    else:
         raise
