@@ -262,6 +262,63 @@ class StackLevelAdapter(LoggerAdapter):
         )
 
 
+def add_log_level(
+    name: str,
+    value: int,
+    color: str = 'white',
+) -> None:
+    '''
+    Register a new custom log level with `tractor`'s logging
+    machinery in ONE call — the single pluggable entry-point that
+    keeps the (otherwise hand-synced) pieces consistent:
+
+    - `CUSTOM_LEVELS[name]` (drives the `stacklevel` bump in
+      `StackLevelAdapter.log()` + the `get_logger()` audit).
+    - `logging.addLevelName()` registration.
+    - `STD_PALETTE`/`BOLD_PALETTE` color entries (consumed when
+      `get_console_log()` builds its `ColoredFormatter`).
+    - a same-named (lowercase) emit method bound on
+      `StackLevelAdapter` so `log.<name>('msg')` works (and so
+      `get_logger()`'s per-level method audit passes).
+
+    Idempotent: re-registering an existing name is a no-op-ish
+    refresh (won't clobber an already-bound method).
+
+    '''
+    name_up: str = name.upper()
+    name_lo: str = name.lower()
+
+    CUSTOM_LEVELS[name_up] = value
+    logging.addLevelName(value, name_up)
+    STD_PALETTE[name_up] = color
+    BOLD_PALETTE['bold'][name_up] = f'bold_{color}'
+
+    if not hasattr(StackLevelAdapter, name_lo):
+        # bind via default-arg so `value` is captured (not
+        # late-bound); delegates to `.log()` exactly like the
+        # hand-written level methods above.
+        def _emit(
+            self,
+            msg: str,
+            *,
+            _level: int = value,
+        ) -> None:
+            return self.log(_level, msg)
+
+        _emit.__name__ = name_lo
+        _emit.__qualname__ = f'StackLevelAdapter.{name_lo}'
+        setattr(StackLevelAdapter, name_lo, _emit)
+
+
+# `IO`: child-subproc std-stream relay (see
+# `tractor.trionics._subproc`). Value 21 sits just ABOVE
+# `INFO`(20) so it's SHOWN BY DEFAULT at the usual `info`/`devx`
+# console levels (a `runtime`(15) relay would be silently
+# filtered) yet still distinctly labelled/colored + separately
+# filterable.
+add_log_level('IO', 21, 'purple')
+
+
 # TODO IDEAs:
 # -[ ] move to `.devx.pformat`?
 # -[ ] do per task-name and actor-name color coding
