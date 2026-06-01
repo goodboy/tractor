@@ -162,6 +162,66 @@ def test_implicit_mod_name_applied_for_child(
     assert submod.log.logger in sub_logs
 
 
+def test_io_custom_level_registered():
+    '''
+    The `IO`(21) level (registered via `add_log_level()` at
+    import, for `tractor.trionics._subproc`'s std-stream relay)
+    is fully wired and SHOWN BY DEFAULT at `info`-level consoles
+    since `21 >= INFO(20)`.
+
+    '''
+    import logging
+    assert log.CUSTOM_LEVELS.get('IO') == 21
+    assert logging.getLevelName(21) == 'IO'
+    assert log.STD_PALETTE.get('IO')
+    assert log.BOLD_PALETTE['bold'].get('IO')
+
+    iolog = log.get_logger('io_lvl_test')
+    assert callable(getattr(iolog, 'io', None))
+    # emit must not raise
+    iolog.io('hello from the IO level')
+
+    # 21 >= INFO(20) -> shown when console set to `info`
+    assert 21 >= logging.INFO
+
+
+def test_add_log_level_pluggable():
+    '''
+    `add_log_level()` is the single pluggable entry-point: one
+    call wires `CUSTOM_LEVELS` + `addLevelName` + both palettes +
+    a same-named `StackLevelAdapter` emit method (so
+    `get_logger()`'s per-level audit passes).
+
+    '''
+    import logging
+    name: str = 'XLVL'
+    val: int = 19
+    try:
+        log.add_log_level(name, val, 'cyan')
+
+        assert log.CUSTOM_LEVELS[name] == val
+        assert logging.getLevelName(val) == name
+        assert log.STD_PALETTE[name] == 'cyan'
+        assert log.BOLD_PALETTE['bold'][name] == 'bold_cyan'
+
+        # the audit in `get_logger()` (asserts a method per
+        # `CUSTOM_LEVELS` entry) must still pass.
+        xlog = log.get_logger('xlvl_test')
+        emit = getattr(xlog, name.lower(), None)
+        assert callable(emit)
+        emit('hello from a plugged-in level')
+
+    finally:
+        # best-effort cleanup of our module-global mutations so
+        # later `get_logger()` audits don't see a half-removed
+        # level.
+        log.CUSTOM_LEVELS.pop(name, None)
+        log.STD_PALETTE.pop(name, None)
+        log.BOLD_PALETTE['bold'].pop(name, None)
+        if hasattr(log.StackLevelAdapter, name.lower()):
+            delattr(log.StackLevelAdapter, name.lower())
+
+
 # TODO, moar tests against existing feats:
 # ------ - ------
 # - [ ] color settings?
