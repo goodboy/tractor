@@ -24,7 +24,10 @@ which" at a glance without needing to read full
 `/proc/<pid>/cmdline`.
 
 Format:
-  ``tractor[<aid.reprol()>]``    e.g. ``tractor[doggy@1027301b]``
+  ``<_def_prefix>[<aid.reprol()>]``  e.g. ``_subactor[doggy@1027301b]``
+(prefix from the `_def_prefix` const, flipped `tractor` ->
+`_subactor` so sub-actor procs are visually distinct from the
+root in `ps`/`htop` and the reap-recognition markers.)
 
 Uses the canonical `Aid.reprol()` form
 (``<name>@<uuid_short>``) so the proc-title matches the
@@ -52,7 +55,13 @@ except ImportError:
     _stp = None
 
 
-def set_actor_proctitle(actor: 'Actor') -> str | None:
+_def_prefix: str = '_subactor'
+
+
+def set_actor_proctitle(
+    actor: 'Actor',
+    prefix: str = _def_prefix,
+) -> str | None:
     '''
     Set the calling process's proc-title to identify it as a
     tractor sub-actor.
@@ -69,6 +78,6 @@ def set_actor_proctitle(actor: 'Actor') -> str | None:
     if _stp is None:
         return None
 
-    title: str = f'tractor[{actor.aid.reprol()}]'
+    title: str = f'{prefix}[{actor.aid.reprol()}]'
     _stp.setproctitle(title)
     return title
