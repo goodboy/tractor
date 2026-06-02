@@ -860,7 +860,14 @@ def test_echoserver_detailed_mechanics(
     timeout: float = (
         999 if tractor.debug_mode()
         else 4 if is_forking_spawner
-        else 1
+        # was 1; the `trio` 0.29 -> 0.33 bump slowed the
+        # cancel-cascade so a 1s budget raced the ~1s teardown
+        # deadline. On a deadline-fire the injected
+        # `Cancelled(source='deadline')` wraps the mid-stream
+        # KBI in a `BaseExceptionGroup`, breaking the bare
+        # `pytest.raises(KeyboardInterrupt)` below. See
+        # `ai/conc-anal/trio_033_cancel_cascade_slowdown_depth3_issue.md`.
+        else 4
     )
 
     # body factored out so the `fail_after_w_trace`-wrapping
