@@ -5,6 +5,7 @@
 from __future__ import annotations
 import platform
 import os
+import re
 import signal
 import time
 from typing import (
@@ -294,6 +295,26 @@ def expect(
 PROMPT = r"\(Pdb\+\)"
 
 
+# Strip terminal color / ANSI-VT100 escape sequences so
+# substring matching against REPL + traceback output stays
+# robust to color leakage — Python 3.13's colored tracebacks,
+# `pdbp`'s pygments highlighting, etc. — even when
+# `PYTHON_COLORS=0` (set in the `spawn` fixture) isn't honored
+# by every renderer in the spawned subproc.
+# Regex per https://stackoverflow.com/a/14693789
+_ansi_re: re.Pattern = re.compile(
+    r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])'
+)
+
+
+def ansi_strip(text: str) -> str:
+    '''
+    Remove ANSI/VT100 escape sequences from `text`.
+
+    '''
+    return _ansi_re.sub('', text)
+
+
 def in_prompt_msg(
     child: SpawnBase,
     parts: list[str],
@@ -313,7 +334,7 @@ def in_prompt_msg(
     '''
     __tracebackhide__: bool = False
 
-    before: str = str(child.before.decode())
+    before: str = ansi_strip(str(child.before.decode()))
     for part in parts:
         if part not in before:
             if pause_on_false:
@@ -333,9 +354,9 @@ def in_prompt_msg(
     return True
 
 
-# TODO: todo support terminal color-chars stripping so we can match
-# against call stack frame output from the the 'll' command the like!
-# -[ ] SO answer for stipping ANSI codes: https://stackoverflow.com/a/14693789
+# NB: color-char stripping (so we can match against call-stack
+# frame output from the `ll` command and the like) is handled by
+# `ansi_strip()` applied inside `in_prompt_msg()` + below.
 def assert_before(
     child: SpawnBase,
     patts: list[str],
@@ -356,7 +377,7 @@ def assert_before(
         err_on_false=True,
         **kwargs
     )
-    before: str = str(child.before.decode())
+    before: str = ansi_strip(str(child.before.decode()))
     return before
 
 
