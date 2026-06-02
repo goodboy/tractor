@@ -90,7 +90,6 @@ keys are caller-defined).
 
 '''
 from __future__ import annotations
-
 import os
 import pathlib
 import re
@@ -98,6 +97,9 @@ import signal
 import stat
 import sys
 import time
+
+
+from tractor.devx import _proctitle
 
 # `/dev/shm` is the POSIX-shm filesystem on Linux + FreeBSD.
 # macOS uses `shm_open` syscalls without a fs-visible path,
@@ -230,9 +232,9 @@ def _read_comm(pid: int) -> str:
 #   while `cmdline` for zombies often reads as empty.
 _TRACTOR_PROC_CMDLINE_MARKERS: tuple[str, ...] = (
     'tractor._child',
-    'tractor[',
+    _proctitle._def_prefix,
 )
-_TRACTOR_PROC_COMM_MARKER: str = 'tractor['
+_TRACTOR_PROC_COMM_MARKER: str = _proctitle._def_prefix
 
 
 def _is_tractor_subactor(pid: int) -> bool:

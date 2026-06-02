@@ -8,9 +8,9 @@ after `Actor` construction, so any spawned sub-actor process
 should:
 
   - have `argv[0]` (== `/proc/<pid>/cmdline`) start with
-    `tractor[<aid.reprol()>]`
-  - have `/proc/<pid>/comm` start with `tractor[` (kernel
-    truncates to ~15 bytes)
+    `<_def_prefix>[<aid.reprol()>]` (currently `_subactor[…]`)
+  - have `/proc/<pid>/comm` start with `<_def_prefix>[`
+    (kernel truncates to ~15 bytes)
   - be detected as a tractor sub-actor by
     `_is_tractor_subactor(pid)` via the cmdline marker.
 
@@ -27,7 +27,10 @@ import trio
 import tractor
 
 from tractor.runtime._runtime import Actor
-from tractor.devx._proctitle import set_actor_proctitle
+from tractor.devx._proctitle import (
+    set_actor_proctitle,
+    _def_prefix,
+)
 from tractor._testing._reap import (
     _is_tractor_subactor,
     _read_cmdline,
@@ -41,8 +44,9 @@ _non_linux: bool = platform.system() != 'Linux'
 def test_set_actor_proctitle_format():
     '''
     `set_actor_proctitle()` returns the canonical
-    `tractor[<aid.reprol()>]` form and actually mutates
-    the running proc's title.
+    `<_def_prefix>[<aid.reprol()>]` form (currently
+    `_subactor[…]`) and actually mutates the running
+    proc's title.
 
     '''
     pytest.importorskip(
@@ -60,12 +64,14 @@ def test_set_actor_proctitle_format():
         )
         title: str = set_actor_proctitle(actor)
 
-        # canonical wrapping: `tractor[<aid.reprol()>]`. We
-        # compare against the runtime-computed `reprol()`
-        # rather than a hard-coded value so the test stays
-        # decoupled from `Aid.reprol()`'s internal format
-        # (currently `<name>@<pid>`, but could evolve).
-        expected: str = f'tractor[{actor.aid.reprol()}]'
+        # canonical wrapping: `<_def_prefix>[<aid.reprol()>]`.
+        # We source BOTH the prefix (`_def_prefix`) and the
+        # runtime-computed `reprol()` rather than hard-coding,
+        # so the test stays decoupled from the prefix shape
+        # (flipped to `_subactor` in `3a45dbd5`) AND from
+        # `Aid.reprol()`'s internal format (currently
+        # `<name>@<pid>`, but could evolve).
+        expected: str = f'{_def_prefix}[{actor.aid.reprol()}]'
         assert title == expected
         # sanity: the actor's name must be in the title
         # somewhere (so a future `reprol()` change that
@@ -140,15 +146,17 @@ def test_subactor_proctitle_visible_via_proc():
     )
 
     pid, info = matched[0]
-    # canonical proctitle prefix in cmdline (full form)
-    assert info['cmdline'].startswith('tractor[proctitle_boi@'), (
-        f'cmdline missing `tractor[proctitle_boi@…]` prefix: '
+    # canonical proctitle prefix in cmdline (full form);
+    # prefix sourced from `_def_prefix` so it tracks the
+    # `3a45dbd5` flip (`tractor[` -> `_subactor[`).
+    assert info['cmdline'].startswith(f'{_def_prefix}[proctitle_boi@'), (
+        f'cmdline missing `{_def_prefix}[proctitle_boi@…]` prefix: '
         f'{info["cmdline"]!r}'
     )
     # comm is kernel-truncated to ~15 bytes — just check the
-    # `tractor[` prefix made it.
-    assert info['comm'].startswith('tractor['), (
-        f'comm missing `tractor[` prefix: {info["comm"]!r}'
+    # `<_def_prefix>[` prefix made it.
+    assert info['comm'].startswith(f'{_def_prefix}['), (
+        f'comm missing `{_def_prefix}[` prefix: {info["comm"]!r}'
     )
     # intrinsic-signal detector should match.
     assert info['is_tractor'] is True

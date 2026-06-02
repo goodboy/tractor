@@ -1007,6 +1007,7 @@ def _tractor_reap(args):
         reap,
         reap_shm,
         reap_uds,
+        _TRACTOR_PROC_CMDLINE_MARKERS,
     )
 
     rc: int = 0
@@ -1019,9 +1020,8 @@ def _tractor_reap(args):
         else:
             pids = find_orphans()
             mode = (
-                'orphans (PPid==1, intrinsic '
-                'cmdline/comm match — `tractor[…]` or '
-                '`tractor._child`)'
+                f'orphans (PPid==1, intrinsic '
+                f'cmdline/comm match — {_TRACTOR_PROC_CMDLINE_MARKERS}'
             )
 
         if not pids:
