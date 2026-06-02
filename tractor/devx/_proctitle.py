@@ -52,7 +52,13 @@ except ImportError:
     _stp = None
 
 
-def set_actor_proctitle(actor: 'Actor') -> str | None:
+_def_prefix: str = '_subactor'
+
+
+def set_actor_proctitle(
+    actor: 'Actor',
+    prefix: str = _def_prefix,
+) -> str | None:
     '''
     Set the calling process's proc-title to identify it as a
     tractor sub-actor.
@@ -69,6 +75,6 @@ def set_actor_proctitle(actor: 'Actor') -> str | None:
     if _stp is None:
         return None
 
-    title: str = f'tractor[{actor.aid.reprol()}]'
+    title: str = f'{prefix}[{actor.aid.reprol()}]'
     _stp.setproctitle(title)
     return title
