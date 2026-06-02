@@ -605,17 +605,28 @@ async def test_nested_multierrors(
             )
         )
 
-    # 6s budget: in the non-hang case (and on the trio
-    # backend) the whole spawn + cancel-cascade should
-    # complete in well under that. On the borderline hang
-    # case the `fail_after_w_trace` fires `TooSlowError`
-    # AND captures a ptree/wchan/py-spy snapshot to
+    # Per-backend/-depth budgets: in the non-hang case the
+    # whole spawn + cancel-cascade should complete in well
+    # under these. On the borderline hang case the
+    # `fail_after_w_trace` fires `TooSlowError` AND captures a
+    # ptree/wchan/py-spy snapshot to
     # `$XDG_CACHE_HOME/tractor/hung-dumps/` for offline
     # inspection. See
     # `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
+    #
+    # NOTE: the `trio` depth=3 budget was bumped 6 -> 12s after
+    # the `trio` 0.29 -> 0.33 lock bump (commit c7741bba) slowed
+    # the depth-3 cancel-cascade from <6s to ~7-8s; the 6s
+    # deadline was firing and its `Cancelled(source='deadline')`
+    # (trio 0.33 cancel-reason metadata) collapsed a BEG branch,
+    # breaking the `RemoteActorError` assertion below. depth=1
+    # still finishes in ~3s so keeps the 6s budget. See
+    # `ai/conc-anal/trio_033_cancel_cascade_slowdown_depth3_issue.md`.
     match (start_method, depth):
-        case ('trio', _):
+        case ('trio', 1):
             timeout = 6
+        case ('trio', 3):
+            timeout = 12
         case ('main_thread_forkserver', 1):
             timeout = 16
         case ('main_thread_forkserver', 3):
