@@ -24,7 +24,10 @@ which" at a glance without needing to read full
 `/proc/<pid>/cmdline`.
 
 Format:
-  ``tractor[<aid.reprol()>]``    e.g. ``tractor[doggy@1027301b]``
+  ``<_def_prefix>[<aid.reprol()>]``  e.g. ``_subactor[doggy@1027301b]``
+(prefix from the `_def_prefix` const, flipped `tractor` ->
+`_subactor` so sub-actor procs are visually distinct from the
+root in `ps`/`htop` and the reap-recognition markers.)
 
 Uses the canonical `Aid.reprol()` form
 (``<name>@<uuid_short>``) so the proc-title matches the
