@@ -1144,7 +1144,12 @@ def test_shield_pause(
             "('cancelled_before_pause'",  # actor name
             _repl_fail_msg,
             "trio.Cancelled",
-            "raise Cancelled._create()",
+            # trio >=0.30 raises via a multi-line
+            # `raise Cancelled._create(source=.., reason=..,
+            #  source_task=..)` (cancel-reason metadata), so
+            # match the open-paren form only, NOT the legacy
+            # bare `()`.
+            "raise Cancelled._create(",
 
             # we should be handling a taskc inside
             # the first `.port_mortem()` sin-shield!
@@ -1162,7 +1167,12 @@ def test_shield_pause(
             "('root'",  # actor name
             _repl_fail_msg,
             "trio.Cancelled",
-            "raise Cancelled._create()",
+            # trio >=0.30 raises via a multi-line
+            # `raise Cancelled._create(source=.., reason=..,
+            #  source_task=..)` (cancel-reason metadata), so
+            # match the open-paren form only, NOT the legacy
+            # bare `()`.
+            "raise Cancelled._create(",
 
             # handling a taskc inside the first unshielded
             # `.port_mortem()`.
