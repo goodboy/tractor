@@ -155,7 +155,6 @@ async def maybe_block_bp(
             os.environ.pop('PYTHONBREAKPOINT', None)
 
 
-
 @acm
 async def open_root_actor(
     *,
@@ -186,6 +185,7 @@ async def open_root_actor(
     # enables the multi-process debugger support
     debug_mode: bool = False,
     maybe_enable_greenback: bool = False,  # `.pause_from_sync()/breakpoint()` support
+
     # ^XXX NOTE^ the perf implications of use,
     # https://greenback.readthedocs.io/en/latest/principle.html#performance
     enable_stack_on_sig: bool = False,
