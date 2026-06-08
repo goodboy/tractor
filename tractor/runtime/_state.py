@@ -139,7 +139,7 @@ _RUNTIME_VARS_DEFAULTS: dict[str, Any] = {
     # `debug_mode: bool` settings
     '_debug_mode': False,  # bool
     'repl_fixture': False,  # |AbstractContextManager[bool]
-    
+
     'use_greenback': False,  # `.pause_from_sync()`/`breakpoint()`
     'use_stackscope': False,  # trio-task-stack dumps on SIGUSR1
 
