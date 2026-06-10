@@ -227,7 +227,13 @@ def pytest_addoption(
 def pytest_configure(config):
     backend = config.option.spawn_backend
     from tractor.spawn._spawn import try_set_start_method
-    try_set_start_method(backend)
+    try:
+        try_set_start_method(backend)
+    except RuntimeError as err:
+        # e.g. `--spawn-backend=subint` on Python < 3.14 — turn the
+        # runtime gate error into a clean pytest usage error so the
+        # suite exits with a helpful banner instead of a traceback.
+        raise pytest.UsageError(str(err)) from err
 
     # register custom marks to avoid warnings see,
     # https://docs.pytest.org/en/stable/how-to/writing_plugins.html#registering-custom-markers
