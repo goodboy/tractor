@@ -62,6 +62,7 @@ dev = [
   {include-group = 'devx'},
   {include-group = 'testing'},
   {include-group = 'repl'},
+  {include-group = 'sync_pause'},
 ]
 devx = [
   # `tractor.devx` tooling
