@@ -585,3 +585,41 @@ to force-reap under a still-live supervisor.
 active in another terminal. It's safe (won't touch
 that session's live children in orphan-mode) but can
 race if the target session is mid-teardown.
+
+### c) `--shm` / `--shm-only`: orphan-segment sweep
+
+Because `tractor.ipc._mp_bs.disable_mantracker()`
+turns off `mp.resource_tracker` (see
+`ai/conc-anal/subint_forkserver_mp_shared_memory_issue.md`),
+a hard-crashing actor can leave `/dev/shm/<key>`
+segments behind that nothing else GCs.
+
+```sh
+# process reap THEN shm sweep
+scripts/tractor-reap --shm
+
+# shm sweep only (skip process phase)
+scripts/tractor-reap --shm-only
+
+# dry-run: list candidates, don't unlink
+scripts/tractor-reap --shm -n
+```
+
+**Match criteria** (very conservative — this is a
+shared-system path, can't be wrong):
+- segment is a regular file under `/dev/shm`,
+- owned by the **current uid** (`stat.st_uid`),
+- AND **no live process holds it open** —
+  enumerated by walking every readable
+  `/proc/<pid>/maps` (post-mmap mappings) AND
+  `/proc/<pid>/fd/*` (pre-mmap shm-opened fds).
+
+The "nobody has it open" check is the
+kernel-canonical "is this leaked?" test — same
+answer `lsof /dev/shm/<key>` would give. No
+reliance on tractor-specific naming, so it works
+for any tractor app. Critically, it WILL NOT touch
+segments held by other apps you have running
+(e.g. `piker`, `lttng-ust-*`, `aja-shm-*` —
+verified locally with 81 in-use segments correctly
+preserved).
