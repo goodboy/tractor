@@ -117,7 +117,14 @@ class RuntimeVars(Struct):
             )
 
 
-_runtime_vars: dict[str, Any] = {
+# The "fresh process" defaults — what `_runtime_vars` looks
+# like in a just-booted Python process that hasn't yet entered
+# `open_root_actor()` nor received a parent `SpawnSpec`. Kept
+# as a module-level constant so `get_runtime_vars(clear_values=
+# True)` can reset the live dict back to this baseline (see
+# `tractor.spawn._subint_forkserver` for the one current caller
+# that needs it).
+_RUNTIME_VARS_DEFAULTS: dict[str, Any] = {
     # root of actor-process tree info
     '_is_root': False,  # bool
     '_root_mailbox': (None, None),  # tuple[str|None, str|None]
@@ -138,10 +145,12 @@ _runtime_vars: dict[str, Any] = {
     # infected-`asyncio`-mode: `trio` running as guest.
     '_is_infected_aio': False,
 }
+_runtime_vars: dict[str, Any] = dict(_RUNTIME_VARS_DEFAULTS)
 
 
 def get_runtime_vars(
     as_dict: bool = True,
+    clear_values: bool = False,
 ) -> dict:
     '''
     Deliver a **copy** of the current `Actor`'s "runtime variables".
@@ -150,11 +159,62 @@ def get_runtime_vars(
     form, but the `RuntimeVars` struct should be utilized as possible
     for future calls.
 
-    '''
-    if as_dict:
-        return dict(_runtime_vars)
+    Pure read — **never mutates** the module-level `_runtime_vars`.
 
-    return RuntimeVars(**_runtime_vars)
+    If `clear_values=True`, return a copy of the fresh-process
+    defaults (`_RUNTIME_VARS_DEFAULTS`) instead of the live
+    dict. Useful in combination with `set_runtime_vars()` to
+    reset process-global state back to "cold" — the main caller
+    today is the `subint_forkserver` spawn backend's post-fork
+    child prelude:
+
+        set_runtime_vars(get_runtime_vars(clear_values=True))
+
+    `os.fork()` inherits the parent's full memory image, so the
+    child sees the parent's populated `_runtime_vars` (e.g.
+    `_is_root=True`) which would trip the `assert not
+    self.enable_modules` gate in `Actor._from_parent()` on the
+    subsequent parent→child `SpawnSpec` handshake if left alone.
+
+    '''
+    src: dict = (
+        _RUNTIME_VARS_DEFAULTS
+        if clear_values
+        else _runtime_vars
+    )
+    snapshot: dict = dict(src)
+    if as_dict:
+        return snapshot
+    return RuntimeVars(**snapshot)
+
+
+def set_runtime_vars(
+    rtvars: dict | RuntimeVars,
+) -> None:
+    '''
+    Atomically replace the module-level `_runtime_vars` contents
+    with those of `rtvars` (via `.clear()` + `.update()` so
+    live references to the same dict object remain valid).
+
+    Accepts either the historical `dict` form or the `RuntimeVars`
+    `msgspec.Struct` form (the latter still mostly unused but
+    the blessed forward shape — see the struct's definition).
+
+    Paired with `get_runtime_vars()` as the explicit
+    write-half of the runtime-vars API — prefer this over
+    direct mutation of `_runtime_vars[...]` from new call sites.
+
+    '''
+    if isinstance(rtvars, RuntimeVars):
+        # `msgspec.Struct` → dict via its declared field set;
+        # avoids pulling in `msgspec.structs.asdict` just for
+        # this one call path.
+        rtvars = {
+            field_name: getattr(rtvars, field_name)
+            for field_name in rtvars.__struct_fields__
+        }
+    _runtime_vars.clear()
+    _runtime_vars.update(rtvars)
 
 
 def last_actor() -> Actor|None:
