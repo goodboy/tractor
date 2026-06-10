@@ -194,7 +194,7 @@ def test_loglevel_propagated_to_subactor(
     reg_addr: tuple,
     level: str,
 ):
-    if start_method in ('mp_forkserver', 'subint_forkserver'):
+    if start_method in ('mp_forkserver', 'main_thread_forkserver'):
         pytest.skip(
             "a bug with `capfd` seems to make forkserver capture not work? "
             "(same class as the `mp_forkserver` pre-existing skip — fork-"

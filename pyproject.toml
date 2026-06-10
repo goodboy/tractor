@@ -217,7 +217,7 @@ addopts = [
   '--show-capture=no',
 
   # sys-level capture. REQUIRED for fork-based spawn
-  # backends (e.g. `subint_forkserver`): default
+  # backends (e.g. `main_thread_forkserver`): default
   # `--capture=fd` redirects fd 1,2 to temp files, and fork
   # children inherit those fds — opaque deadlocks happen in
   # the pytest-capture-machinery ↔ fork-child stdio
