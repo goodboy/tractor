@@ -1113,7 +1113,7 @@ def test_sigint_closes_lifetime_stack(
                             if (
                                 send_sigint_to == 'child'
                                 and
-                                start_method == 'subint_forkserver'
+                                start_method == 'main_thread_forkserver'
                             ):
                                 pytest.xfail(
                                     reason=(
