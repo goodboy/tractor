@@ -146,13 +146,12 @@ def spawn(
     ids='ctl-c={}'.format,
 )
 def ctlc(
-    request,
+    request: pytest.FixtureRequest,
     ci_env: bool,
 
 ) -> bool:
 
-    use_ctlc = request.param
-
+    use_ctlc: bool = request.param
     node = request.node
     markers = node.own_markers
     for mark in markers:
