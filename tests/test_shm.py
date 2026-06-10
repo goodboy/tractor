@@ -14,6 +14,14 @@ from tractor.ipc._shm import (
     attach_shm_list,
 )
 
+pytestmark = pytest.mark.skipon_spawn_backend(
+    'subint',
+    reason=(
+        'XXX SUBINT GIL-CONTENTION HANGING TEST XXX\n'
+        'See oustanding issue(s)\n'
+        # TODO, put issue link!
+    )
+)
 
 @tractor.context
 async def child_attach_shml_alot(
