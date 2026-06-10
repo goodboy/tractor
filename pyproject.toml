@@ -79,6 +79,11 @@ testing = [
   # https://docs.pytest.org/en/8.0.x/explanation/goodpractices.html#choosing-a-test-layout-import-rules
   "pytest>=8.3.5",
   "pexpect>=4.9.0,<5",
+  # per-test wall-clock bound (used via
+  # `@pytest.mark.timeout(..., method='thread')` on the
+  # known-hanging `subint`-backend audit tests; see
+  # `ai/conc-anal/subint_*_issue.md`).
+  "pytest-timeout>=2.3",
 ]
 repl = [
   "pyperclip>=1.9.0",

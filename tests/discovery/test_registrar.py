@@ -517,6 +517,22 @@ async def kill_transport(
 
 
 # @pytest.mark.parametrize('use_signal', [False, True])
+#
+# Wall-clock bound via `pytest-timeout` (`method='thread'`).
+# Under `--spawn-backend=subint` this test can wedge in an
+# un-Ctrl-C-able state (abandoned-subint + shared-GIL
+# starvation → signal-wakeup-fd pipe fills → SIGINT silently
+# dropped; see `ai/conc-anal/subint_sigint_starvation_issue.md`).
+# `method='thread'` is specifically required because `signal`-
+# method SIGALRM suffers the same GIL-starvation path and
+# wouldn't fire the Python-level handler.
+# At timeout the plugin hard-kills the pytest process — that's
+# the intended behavior here; the alternative is an unattended
+# suite run that never returns.
+@pytest.mark.timeout(
+    3,  # NOTE should be a 2.1s happy path.
+    method='thread',
+)
 def test_stale_entry_is_deleted(
     debug_mode: bool,
     daemon: subprocess.Popen,
