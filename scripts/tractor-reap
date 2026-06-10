@@ -4,14 +4,26 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 '''
-`tractor-reap` — SC-polite zombie-subactor reaper.
+`tractor-reap` — SC-polite zombie-subactor reaper +
+optional `/dev/shm/` orphan-segment sweep.
 
-Finds `tractor` subactor processes left alive after a
-`pytest` (or any tractor-app) run that failed to fully
-cancel its actor tree, then sends SIGINT with a bounded
-grace window before escalating to SIGKILL.
+Two cleanup phases (run in order when both are enabled):
 
-Detection modes (auto-selected):
+1. **process reap** — finds `tractor` subactor processes
+   left alive after a `pytest` (or any tractor-app) run
+   that failed to fully cancel its actor tree, then sends
+   SIGINT with a bounded grace window before escalating
+   to SIGKILL.
+
+2. **shm sweep** (`--shm` / `--shm-only`) — unlinks
+   `/dev/shm/<file>` entries owned by the current uid
+   that no live process has open (mmap'd or fd-held).
+   Needed because `tractor` disables
+   `mp.resource_tracker` (see `tractor.ipc._mp_bs`), so a
+   hard-crashing actor leaves leaked segments that
+   nothing else GCs.
+
+Process-reap detection modes (auto-selected):
 
     --parent <pid>  : descendant-mode — kill procs whose
                       PPid == <pid>. Use when a parent
@@ -29,14 +41,21 @@ Detection modes (auto-selected):
 
 Usage:
 
-    # after a pytest run crashed/was Ctrl+C'd
+    # process reap only (default)
     scripts/tractor-reap
+
+    # process reap + shm sweep
+    scripts/tractor-reap --shm
+
+    # only the shm sweep, skip process reap
+    scripts/tractor-reap --shm-only
 
     # from inside a still-live supervisor
     scripts/tractor-reap --parent 12345
 
-    # dry-run: list what would be reaped, don't signal
+    # dry-run: list what would be reaped, don't act
     scripts/tractor-reap -n
+    scripts/tractor-reap --shm -n
 
 '''
 import argparse
@@ -83,7 +102,21 @@ def main() -> int:
     parser.add_argument(
         '--dry-run', '-n',
         action='store_true',
-        help='list matched pids but do not signal',
+        help='list matched pids/paths but do not signal/unlink',
+    )
+    parser.add_argument(
+        '--shm',
+        action='store_true',
+        help=(
+            'after process reap, also unlink orphaned '
+            '/dev/shm segments owned by the current user '
+            'that no live process is mapping or holding open'
+        ),
+    )
+    parser.add_argument(
+        '--shm-only',
+        action='store_true',
+        help='skip process reap; only do the shm sweep',
     )
     args = parser.parse_args()
 
@@ -95,29 +128,54 @@ def main() -> int:
     from tractor._testing._reap import (
         find_descendants,
         find_orphans,
+        find_orphaned_shm,
         reap,
+        reap_shm,
     )
 
-    if args.parent is not None:
-        pids: list[int] = find_descendants(args.parent)
-        mode: str = f'descendants of PPid={args.parent}'
-    else:
-        pids = find_orphans(repo)
-        mode = f'orphans (PPid=1, cwd={repo})'
+    rc: int = 0
 
-    if not pids:
-        print(f'[tractor-reap] no {mode} to reap')
-        return 0
+    # --- phase 1: process reap (skipped under --shm-only) ---
+    if not args.shm_only:
+        if args.parent is not None:
+            pids: list[int] = find_descendants(args.parent)
+            mode: str = f'descendants of PPid={args.parent}'
+        else:
+            pids = find_orphans(repo)
+            mode = f'orphans (PPid=1, cwd={repo})'
 
-    if args.dry_run:
-        print(f'[tractor-reap] dry-run — {mode}:\n  {pids}')
-        return 0
+        if not pids:
+            print(f'[tractor-reap] no {mode} to reap')
+        elif args.dry_run:
+            print(
+                f'[tractor-reap] dry-run — {mode}:\n  {pids}'
+            )
+        else:
+            _, survivors = reap(pids, grace=args.grace)
+            if survivors:
+                rc = 1
 
-    signalled, survivors = reap(pids, grace=args.grace)
-    # exit 0 if everyone exited cleanly, else 1 to signal
-    # escalation happened — makes the command useful in
-    # CI health-checks and `||`-chaining.
-    return 0 if not survivors else 1
+    # --- phase 2: shm sweep (opt-in) ---
+    if args.shm or args.shm_only:
+        leaked: list[str] = find_orphaned_shm()
+        if not leaked:
+            print(
+                '[tractor-reap] no orphaned /dev/shm '
+                'segments to sweep'
+            )
+        elif args.dry_run:
+            print(
+                f'[tractor-reap] dry-run — {len(leaked)} '
+                f'orphaned shm segment(s):\n  {leaked}'
+            )
+        else:
+            _, errors = reap_shm(leaked)
+            if errors:
+                rc = 1
+
+    # exit 0 if everything cleaned cleanly, else 1 — useful
+    # for CI health-check chaining.
+    return rc
 
 
 if __name__ == '__main__':
