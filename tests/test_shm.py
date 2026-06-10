@@ -16,14 +16,18 @@ from tractor.ipc._shm import (
 
 pytestmark = pytest.mark.skipon_spawn_backend(
     'subint',
-    'subint_forkserver',
+    # 'subint_forkserver',
     reason=(
         'subint: GIL-contention hanging class.\n'
         'subint_forkserver: `multiprocessing.SharedMemory` '
-        'has known issues with fork-without-exec (mp\'s '
-        'resource_tracker and SharedMemory internals assume '
-        'fresh-process state). RemoteActorError surfaces from '
-        'the shm-attach path. TODO, put issue link!\n'
+        'is fork-without-exec unsafe — child inherits parent\'s '
+        '`resource_tracker` fd → EBADF on first shm op '
+        '(`test_child_attaches_alot`); leaked `/shm_list` from '
+        'a "passing" run cascades into `FileExistsError` across '
+        'parametrize variants (`test_parent_writer_child_reader`). '
+        'Canonical CPython issue class, NOT a tractor bug; full '
+        'tracker doc:\n'
+        'ai/conc-anal/subint_forkserver_mp_shared_memory_issue.md'
     )
 )
 
