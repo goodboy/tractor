@@ -538,13 +538,13 @@ async def kill_transport(
 @pytest.mark.timeout(
     30,
     # NOTE should be a 2.1s happy path.
-    # XXX for `subint_forkserver` this is SUPER SENSITIVE so keep it
-    # higher to avoid flaky runs..
+    # XXX for `main_thread_forkserver` this is SUPER SENSITIVE
+    # so keep it higher to avoid flaky runs..
     method='thread',
 )
 @pytest.mark.skipon_spawn_backend(
     'subint',
-    # 'subint_forkserver',
+    # 'main_thread_forkserver',
     reason=(
         'XXX SUBINT HANGING TEST XXX\n'
         'See oustanding issue(s)\n'
