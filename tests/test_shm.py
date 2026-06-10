@@ -17,6 +17,10 @@ from tractor.ipc._shm import (
 pytestmark = pytest.mark.skipon_spawn_backend(
     'subint',
     # 'subint_forkserver',
+    # XXX we hack around this stdlib limitation by both,
+    # - setting `ShareMemory(track=False)`
+    # - overriding the `mp.ResourceTracker` nonsense in
+    # `.ipc._mp_bs`.
     reason=(
         'subint: GIL-contention hanging class.\n'
         'subint_forkserver: `multiprocessing.SharedMemory` '
