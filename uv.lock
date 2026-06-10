@@ -732,6 +732,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "greenback", marker = "python_full_version < '3.14'" },
     { name = "pexpect" },
     { name = "prompt-toolkit" },
     { name = "psutil" },
@@ -787,6 +788,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "greenback", marker = "python_full_version == '3.13.*'", specifier = ">=1.2.1,<2" },
     { name = "pexpect", specifier = ">=4.9.0,<5" },
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "psutil", specifier = ">=7.0.0" },

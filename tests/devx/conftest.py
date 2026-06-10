@@ -4,6 +4,7 @@
 '''
 from __future__ import annotations
 import platform
+import os
 import re
 import signal
 import time
@@ -90,7 +91,6 @@ def spawn(
         https://docs.python.org/3/using/cmdline.html#using-on-controlling-color
 
         '''
-        import os
         # disable colored tbs
         os.environ['PYTHON_COLORS'] = '0'
         # disable all ANSI color output
@@ -106,7 +106,6 @@ def spawn(
         without requiring per-script CLI plumbing.
 
         '''
-        import os
         os.environ['TRACTOR_SPAWN_METHOD'] = start_method
 
     def set_loglevel(
@@ -120,7 +119,6 @@ def spawn(
         the test harness without per-script edits.
 
         '''
-        import os
         if loglevel:
             os.environ['TRACTOR_LOGLEVEL'] = loglevel
         else:
@@ -192,13 +190,11 @@ def spawn(
         if ptyproc.isalive():
             ptyproc.kill(signal.SIGKILL)
 
-    # Scope our env-var mutations to this single fixture
-    # invocation — both `TRACTOR_SPAWN_METHOD` and
-    # `TRACTOR_LOGLEVEL` are honored by
-    # `tractor._root.open_root_actor()` so leaking them past
-    # this test could inadvertently re-route a later
-    # in-process tractor test's spawn-backend / loglevel.
-    import os
+    # Scope our env-var mutations to this single fixture invocation
+    # — both `TRACTOR_SPAWN_METHOD` and `TRACTOR_LOGLEVEL` are
+    # honored by `tractor._root.open_root_actor()` so leaking them
+    # past this test could inadvertently re-route a later in-process
+    # tractor test's spawn-backend / loglevel.
     os.environ.pop('TRACTOR_SPAWN_METHOD', None)
     os.environ.pop('TRACTOR_LOGLEVEL', None)
 

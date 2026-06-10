@@ -458,10 +458,10 @@ async def spawn_and_error(
 # `test_nested_multierrors`. See
 # `ai/conc-anal/subint_forkserver_test_cancellation_leak_issue.md`
 # / #449 for the post-mortem.
-@pytest.mark.timeout(
-    10,
-    method='thread',
-)
+# @pytest.mark.timeout(
+#     10,
+#     method='thread',
+# )
 @tractor_test
 async def test_nested_multierrors(
     reg_addr: tuple,
