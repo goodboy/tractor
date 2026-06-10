@@ -870,7 +870,7 @@ class Actor:
 
             accept_addrs: list[UnwrappedAddress]|None = None
 
-            if self._spawn_method == "trio":
+            if self._spawn_method in ("trio", "subint"):
 
                 # Receive post-spawn runtime state from our parent.
                 spawnspec: msgtypes.SpawnSpec = await chan.recv()
