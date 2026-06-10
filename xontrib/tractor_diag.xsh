@@ -6,7 +6,7 @@ prefix-completion treats them as a sub-cmd group — type
 `acli.<TAB>` to see the full set.
 
 Provides:
-  - `acli.ptree <pid|pgrep-pat>`       psutil-backed proc tree,
+  - `acli.ptree <pid|pgrep-pat>`        psutil-backed proc tree,
                                         live + zombies split.
   - `acli.hung_dump <pid|pat> [...]`    kernel `wchan`/`stack` +
                                         `py-spy dump` (incl `--locals`)
@@ -17,6 +17,10 @@ Provides:
                                         (e.g. `piker`, `tractor`);
                                         path -> use as-is.
                                         default: `$XDG_RUNTIME_DIR/tractor`.
+  - `acli.dump_all <pid> [--out-dir]    full snapshot bundle —
+                          [--label]`    ptree + hung_dump + bindspace
+                                        written to a timestamped dir
+                                        for sharing / AI introspection.
   - `acli.reap [opts]`                  SC-polite zombie-subactor
                                         reaper + optional `/dev/shm/`
                                         + UDS sock-file sweeps.
@@ -34,7 +38,12 @@ Or source directly:
   source ./xontrib/tractor_diag.xsh
 
 Pipe-to-paste idiom (xonsh):
-  hung-dump pytest |t /tmp/hung.log
+  acli.hung_dump pytest |t /tmp/hung.log
+
+The diagnostic core lives in `tractor._testing.trace` so it
+can also be invoked from inside pytest tests (e.g. via
+`fail_after_w_trace` / `afk_alarm_w_trace` capture-on-hang
+helpers) — these aliases are just thin terminal wrappers.
 
 Requires `psutil` for full functionality (`ptree` and the
 `hung_dump` tree-walk). Falls back to `pgrep -P` recursion if
@@ -50,25 +59,14 @@ from typing import (
 )
 
 
-import os
-import re
-import subprocess as sp
 from pathlib import Path
 
-try:
-    import psutil
-except ImportError:
-    psutil = None
-    print(
-        '[tractor-diag] `psutil` missing — '
-        'acli.ptree disabled, acli.hung_dump uses pgrep fallback. '
-        '`uv pip install psutil` for full functionality.'
-    )
-
-
-# matches tractor's UDS sock naming: `<actor_name>@<pid>.sock`
-_UDS_SOCK_RE = re.compile(
-    r'^(?P<name>.+)@(?P<pid>\d+)\.sock$'
+from tractor._testing.trace import (
+    dump_all as _dump_all,
+    dump_hung_state,
+    dump_proc_tree,
+    resolve_pids,
+    scan_bindspace,
 )
 
 @aliases.unthreadable
@@ -216,159 +214,7 @@ def watch(
     return 0
 
 
-# --- helpers --------------------------------------------------
-
-def _resolve_pids(arg: str) -> list:
-    '''Resolve a numeric pid OR a `pgrep -f` pattern.'''
-    if arg.isdigit():
-        return [int(arg)]
-    try:
-        out = sp.check_output(
-            ['pgrep', '-f', arg],
-            text=True,
-        )
-    except sp.CalledProcessError:
-        return []
-    return [int(p) for p in out.split() if p]
-
-
-def _walk_tree_psutil(pid: int) -> list:
-    '''Flat list `[Process, *descendants]` via psutil.'''
-    try:
-        p = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return []
-    return [p] + p.children(recursive=True)
-
-
-def _walk_tree_with_depth(pid: int):
-    '''
-    Yield `(proc, depth)` pairs walking `pid`'s tree. `depth==0`
-    is the root; `depth==1` are direct children, etc. Used by
-    `ptree` to render parent/child relationships visually.
-    '''
-    try:
-        root = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return
-    yield root, 0
-    stack: list = [(root, 0)]
-    seen: set = {pid}
-    while stack:
-        parent, d = stack.pop()
-        try:
-            kids = parent.children()
-        except psutil.NoSuchProcess:
-            continue
-        for k in kids:
-            if k.pid in seen:
-                continue
-            seen.add(k.pid)
-            yield k, d + 1
-            stack.append((k, d + 1))
-
-
-def _which_cgroup_slice(pid: int) -> str|None:
-    '''
-    Return which top-level systemd cgroup slice `pid` is
-    rooted in, or `None` if it's not in either:
-
-      - `'system'`: under `/system.slice/...` — typically
-        `.service` units (long-lived daemons explicitly
-        enabled via `systemctl enable`, e.g.
-        `auto-cpufreq.service`, `dbus.service`,
-        `systemd-journald.service`).
-
-      - `'user'`: under `/user.slice/user-<uid>.slice/...`
-        — typically `.scope` units that systemd auto-wraps
-        around desktop-launched apps + login-session
-        procs (e.g. `app-firefox-<id>.scope`,
-        `session-<id>.scope`).
-
-      - `None`: NOT in either slice — pid 1 is NOT
-        managing this proc via cgroup. Combined with
-        `ppid==1`, this is the genuine "leaked / parent
-        died" orphan signal.
-
-    Both slice categories are by-design `ppid==1` (pid 1
-    is actively managing them) and should NOT be flagged
-    as concerning orphans, but distinguishing them is
-    useful: `system.slice` is "real services on this
-    box", `user.slice` is "stuff in your login session".
-
-    Returns `None` on any read error (proc gone, perm
-    denied, non-Linux, etc.) — callers should treat that
-    as "unknown, classify as plain orphan".
-
-    '''
-    try:
-        with open(f'/proc/{pid}/cgroup') as f:
-            cg: str = f.read()
-    except (
-        FileNotFoundError,
-        PermissionError,
-        ProcessLookupError,
-        OSError,
-    ):
-        return None
-    if '/system.slice/' in cg:
-        return 'system'
-    if '/user.slice/' in cg:
-        return 'user'
-    return None
-
-
-def _walk_tree_pgrep(pid: int) -> list:
-    '''psutil-less fallback — recursive `pgrep -P`.'''
-    out = [pid]
-    try:
-        kids = sp.check_output(
-            ['pgrep', '-P', str(pid)],
-            text=True,
-        ).split()
-    except sp.CalledProcessError:
-        return out
-    for k in kids:
-        out.extend(_walk_tree_pgrep(int(k)))
-    return out
-
-
-def _ensure_sudo_cached() -> bool:
-    '''
-    Ensure `sudo` credentials are cached so subsequent
-    `sudo -n` calls succeed without prompting.
-
-    Returns True if cached (or successfully refreshed),
-    False if user cancelled or sudo is unavailable.
-
-    Tries `sudo -n true` first as a no-op probe; if that
-    fails, runs `sudo -v` which prompts interactively to
-    validate/refresh the credential timestamp.
-    '''
-    # probe — already cached?
-    cached = sp.run(
-        ['sudo', '-n', 'true'],
-        capture_output=True,
-    ).returncode == 0
-    if cached:
-        return True
-
-    print(
-        '[tractor-diag] needs `sudo` for /proc/<pid>/stack '
-        'and `py-spy dump`; caching creds via `sudo -v`...'
-    )
-    try:
-        rc = sp.run(['sudo', '-v']).returncode
-    except KeyboardInterrupt:
-        print('  cancelled — proceeding without sudo')
-        return False
-    except FileNotFoundError:
-        print('  sudo not on PATH — proceeding without sudo')
-        return False
-    return rc == 0
-
-
-# --- ptree ---------------------------------------------------
+# --- ptree ----------------------------------------------------
 
 def _ptree(
     args: list[str],
@@ -380,36 +226,8 @@ def _ptree(
 
     usage: acli.ptree [--tree|-t] <pid|pgrep-pattern> [...]
 
-    classification (per-proc, not per-tree):
-
-      - zombies:  `status in (Z, X)` — defunct, parent
-                  hasn't reaped (or kernel-marked dead).
-      - orphans:  `ppid == 1` — original parent exited;
-                  has been reparented to init. Includes
-                  the *root* of an abandoned tree AND
-                  any descendant that ended up reparented
-                  to init mid-flight.
-      - live:     real parent (`ppid > 1`), non-defunct.
-
-    Trees of orphan roots are still walked — their
-    descendants show as `live` if they themselves still
-    have a real (non-init) parent (the orphan root), but
-    the orphan root itself appears in `orphans`.
-
-    Cross-bucket parent annotation (always emitted):
-      when a row's parent (by ppid) lives in a *different*
-      severity bucket, the row is suffixed with
-      `[parent: <pid> (in `<bucket>`)]` so the visual
-      `└─` marker still resolves to a findable parent
-      even when bucketing scatters parent and child into
-      separate sections.
-
-    `--tree` / `-t` flag (opt-in):
-      additionally emit a flat walk-order `## tree`
-      section at the top — a contiguous parent-child
-      tree shape with no severity-grouping. Same procs,
-      no annotations needed because each parent appears
-      directly above its children.
+    See `tractor._testing.trace.dump_proc_tree()` for the
+    bucket semantics + classification details.
 
     To watch this live with flicker-free repaint
     (alt-screen, per-line EL, SIGWINCH-aware):
@@ -430,224 +248,19 @@ def _ptree(
     if not pos_args:
         print('usage: acli.ptree [--tree|-t] <pid|pgrep-pattern> [...]')
         return 1
-    if psutil is None:
-        print('ptree requires psutil; install via `uv pip install psutil`')
-        return 1
 
     roots: list = []
     for a in pos_args:
-        roots.extend(_resolve_pids(a))
+        roots.extend(resolve_pids(a))
     roots = sorted(set(roots))
     if not roots:
         print(f'(no procs match: {pos_args})')
         return 1
 
-    # statuses considered "defunct" — STATUS_ZOMBIE is the
-    # common case (`Z`); STATUS_DEAD (`X`) is rarer but kernel-
-    # reported and equally not-coming-back.
-    defunct_statuses: set = {
-        psutil.STATUS_ZOMBIE,
-        getattr(psutil, 'STATUS_DEAD', 'dead'),
-    }
-
-    seen: set = set()
-    walk_order: list = []  # [(proc, depth)] preserved walk order
-    live: list = []        # [(proc, depth)]
-    orphans: list = []
-    # `ppid==1` AND rooted in `/system.slice/` cgroup —
-    # real systemd-managed services (e.g. `auto-cpufreq`,
-    # `NetworkManager`).
-    system_slice: list = []
-    # `ppid==1` AND rooted in `/user.slice/.../*.scope` —
-    # desktop-launched apps wrapped by systemd-user in
-    # transient `.scope` units (e.g. Firefox, browsers,
-    # editors started from a launcher).
-    user_slice: list = []
-    zombies: list = []
-    gone: list = []
-
-    # parent-bucket lookup populated post-classification so
-    # `_row()` can annotate cross-bucket parent refs.
-    pid_to_bucket: dict = {}
-
-    for r in roots:
-        for (p, depth) in _walk_tree_with_depth(r):
-            if p.pid in seen:
-                continue
-            seen.add(p.pid)
-            try:
-                status: str = p.status()
-                ppid: int = p.ppid()
-            except psutil.NoSuchProcess:
-                gone.append(p.pid)
-                continue
-            entry = (p, depth)
-            # severity order:
-            #   zombie > orphan > system-slice > user-slice > live
-            # `ppid==1` splits into:
-            #   - `system-slice` (rooted in `/system.slice/` —
-            #     real services, by-design `ppid==1`)
-            #   - `user-slice` (rooted in
-            #     `/user.slice/.../*.scope` — desktop apps
-            #     wrapped by systemd-user, by-design `ppid==1`)
-            #   - `orphans` (everything else with `ppid==1` —
-            #     genuinely concerning).
-            if status in defunct_statuses:
-                zombies.append(entry)
-                pid_to_bucket[p.pid] = 'zombies'
-            elif ppid == 1:
-                slice_kind: str|None = _which_cgroup_slice(p.pid)
-                if slice_kind == 'system':
-                    system_slice.append(entry)
-                    pid_to_bucket[p.pid] = 'system-slice'
-                elif slice_kind == 'user':
-                    user_slice.append(entry)
-                    pid_to_bucket[p.pid] = 'user-slice'
-                else:
-                    orphans.append(entry)
-                    pid_to_bucket[p.pid] = 'orphans'
-            else:
-                live.append(entry)
-                pid_to_bucket[p.pid] = 'live'
-            walk_order.append(entry)
-
-    total: int = (
-        len(live)
-        + len(orphans)
-        + len(system_slice)
-        + len(user_slice)
-        + len(zombies)
-    )
-    print(f'# ptree: {total} procs across roots {roots}')
-
-    hdr = '  ' + 'PID'.rjust(7) + '  ' + 'PPID'.rjust(7) + '  '
-    hdr += 'STATUS'.ljust(10) + '  CMD'
-
-    def _row(entry, bucket: str|None = None):
-        '''
-        Render `(proc, depth)` as an aligned row. Tree depth is
-        rendered as a `└─` marker on the CMD column so PID/PPID/
-        STATUS stay column-aligned.
-
-        When `bucket` is given AND the row's parent lives in a
-        *different* bucket, append a `[parent: <pid> (in `<b>`)]`
-        suffix so the `└─` marker can be resolved across the
-        severity-section split.
-        '''
-        p, depth = entry
-        tree_pfx = ('   ' * depth) + ('└─ ' if depth > 0 else '')
-
-        # cross-bucket parent annotation; safe to compute up
-        # front because `p.ppid()` is cheap and rarely
-        # raises (parent pid is read from `/proc/<pid>/stat`,
-        # cached by psutil).
-        parent_anno: str = ''
-        if (
-            bucket is not None
-            and depth > 0
-        ):
-            try:
-                parent_pid: int = p.ppid()
-            except psutil.NoSuchProcess:
-                parent_pid = 0
-            if parent_pid and parent_pid != 1:
-                parent_bucket: str|None = pid_to_bucket.get(parent_pid)
-                if (
-                    parent_bucket is not None
-                    and parent_bucket != bucket
-                ):
-                    parent_anno = (
-                        f'  [parent: {parent_pid} '
-                        f'(in `{parent_bucket}`)]'
-                    )
-
-        # NOTE: `psutil.ZombieProcess` is a *subclass* of
-        # `psutil.NoSuchProcess`, but the proc is NOT gone —
-        # it's a zombie whose `/proc/<pid>/cmdline` is empty/
-        # unreadable. Catch it FIRST so we still render a
-        # row (using fields that DO work on zombies: pid,
-        # ppid, status, name).
-        try:
-            cmd = ' '.join(p.cmdline())[:140] or '[' + p.name() + ']'
-            r = '  ' + str(p.pid).rjust(7)
-            r += '  ' + str(p.ppid()).rjust(7)
-            r += '  ' + p.status().ljust(10)
-            r += '  ' + tree_pfx + cmd + parent_anno
-            return r
-        except psutil.ZombieProcess:
-            try:
-                ppid_str = str(p.ppid())
-                name = p.name()
-            except psutil.NoSuchProcess:
-                ppid_str, name = '?', '?'
-            r = '  ' + str(p.pid).rjust(7)
-            r += '  ' + ppid_str.rjust(7)
-            r += '  ' + 'zombie'.ljust(10)
-            r += '  ' + tree_pfx + '[' + name + ' <defunct>]' + parent_anno
-            return r
-        except psutil.NoSuchProcess:
-            return '  ' + str(p.pid).rjust(7) + '  (gone mid-walk)'
-
-    def _section(
-        title: str,
-        procs: list,
-        hint: str = '',
-        bucket: str|None = None,
-    ):
-        print(f'\n## {title} ({len(procs)})' + (f'  — {hint}' if hint else ''))
-        if not procs:
-            print('  (none)')
-            return
-        print(hdr)
-        for p in procs:
-            print(_row(p, bucket=bucket))
-
-    # `--tree` opt-in: emit a flat walk-order section first
-    # so the parent-child tree shape is contiguous (no
-    # severity-grouping). No `bucket` arg → no cross-bucket
-    # annotation, since each parent appears directly above
-    # its children here.
-    if flag_tree:
-        _section(
-            'tree', walk_order,
-            'flat walk-order, parent-child preserved',
-        )
-
-    # severity-ordered: most concerning first. Each section
-    # passes its own `bucket` name so `_row()` can annotate
-    # rows whose parents live in a different section.
-    _section(
-        'zombies', zombies,
-        'status `Z`/`X`, parent has not reaped',
-        bucket='zombies',
-    )
-    _section(
-        'orphans', orphans,
-        '`ppid==1`, NOT in a `system.slice`/`user.slice` cgroup '
-        '(likely leaked / parent gone)',
-        bucket='orphans',
-    )
-    _section(
-        'system-slice', system_slice,
-        '`ppid==1`, rooted under `/system.slice/` '
-        '(real systemd-managed service — daemon, login '
-        'session manager, etc; not a leak)',
-        bucket='system-slice',
-    )
-    _section(
-        'user-slice', user_slice,
-        '`ppid==1`, rooted under `/user.slice/.../*.scope` '
-        '(desktop-launched app wrapped by systemd-user — '
-        'browser, editor, etc; not a leak)',
-        bucket='user-slice',
-    )
-    _section('live', live, bucket='live')
-
-    if gone:
-        print(f'\n## gone-during-walk ({len(gone)}): {gone}')
+    print(dump_proc_tree(roots, flag_tree=flag_tree), end='')
 
 
-# --- hung-dump ------------------------------------------------
+# --- hung-dump -----------------------------------------------
 
 def _hung_dump(args):
     '''
@@ -657,248 +270,116 @@ def _hung_dump(args):
     usage: acli.hung_dump <pid|pgrep-pattern> [...]
 
     note: `/proc/<pid>/stack` and `py-spy dump` typically
-    require CAP_SYS_PTRACE — invoked via `sudo -n`. run
-    `sudo true` first to cache creds.
+    require CAP_SYS_PTRACE — invoked via `sudo -n`. If sudo
+    isn't cached this alias prompts (via `sudo -v`); for the
+    non-interactive equivalent see
+    `tractor._testing.trace.dump_hung_state(allow_sudo_prompt=False)`.
+
     '''
     if not args:
         print('usage: acli.hung_dump <pid|pgrep-pattern> [...]')
         return 1
 
-    # cache sudo creds upfront so per-pid `sudo -n` calls
-    # for `cat /proc/<pid>/stack` and `py-spy dump` don't
-    # each prompt (or silently fail).
-    have_sudo: bool = _ensure_sudo_cached()
-
     roots: list = []
     for a in args:
-        roots.extend(_resolve_pids(a))
+        roots.extend(resolve_pids(a))
     roots = sorted(set(roots))
     if not roots:
         print(f'(no procs match: {args})')
         return 1
 
-    pids: list = []
-    seen: set = set()
-    for r in roots:
-        if psutil is not None:
-            walk = [p.pid for p in _walk_tree_psutil(r)]
-        else:
-            walk = _walk_tree_pgrep(r)
-        for pid in walk:
-            if pid not in seen:
-                seen.add(pid)
-                pids.append(pid)
-
-    print(f'# tree: {pids}')
-    print('\n## ps forest')
-    $[ps -o pid,ppid,pgid,stat,cmd -p @(','.join(map(str, pids)))]
-
-    for pid in pids:
-        print(f'\n## pid {pid}')
-
-        for f in ('wchan', 'stack'):
-            path = Path(f'/proc/{pid}/{f}')
-            try:
-                txt = path.read_text().rstrip()
-                print(f'-- /proc/{pid}/{f} --\n{txt}')
-            except PermissionError:
-                if not have_sudo:
-                    print(
-                        f'-- /proc/{pid}/{f}: '
-                        'PermissionError (no sudo) --'
-                    )
-                    continue
-                try:
-                    txt = sp.check_output(
-                        ['sudo', '-n', 'cat', str(path)],
-                        text=True,
-                        stderr=sp.DEVNULL,
-                    ).rstrip()
-                    print(f'-- /proc/{pid}/{f} (sudo) --\n{txt}')
-                except sp.CalledProcessError:
-                    print(
-                        f'-- /proc/{pid}/{f}: '
-                        'sudo cred expired? rerun --'
-                    )
-            except FileNotFoundError:
-                print(f'-- /proc/{pid}/{f}: proc gone --')
-
-        print(f'-- py-spy {pid} --')
-        if not have_sudo:
-            print('  (skipped — no sudo)')
-            continue
-        try:
-            $[sudo -n py-spy dump --pid @(pid) --locals]
-        except Exception as e:
-            print(f'  (py-spy failed: {e})')
+    print(
+        dump_hung_state(roots, allow_sudo_prompt=True),
+        end='',
+    )
 
 
-# --- bindspace-scan -------------------------------------------
+# --- bindspace-scan ------------------------------------------
 
 def _bindspace_scan(args):
     '''
-    Scan a tractor UDS bindspace dir for orphan sock files
-    (those whose embedded `<pid>` no longer corresponds to
-    a live process).
+    Scan a tractor UDS bindspace dir for orphan sock files.
 
     usage: acli.bindspace_scan [<name>|<dir>]
 
-    - no arg          -> `$XDG_RUNTIME_DIR/tractor`
-                         (or `/run/user/<uid>/tractor`)
-    - bare `<name>`   -> `$XDG_RUNTIME_DIR/<name>`,
-                         for projects like `piker` that bind
-                         their own sibling sub-dir alongside
-                         tractor's default
-    - path (abs or
-      containing `/`) -> use as-is
+    See `tractor._testing.trace.scan_bindspace()` for full arg
+    semantics + output-bucket details.
 
     '''
-    runtime: str = os.environ.get(
-        'XDG_RUNTIME_DIR',
-        f'/run/user/{os.getuid()}',
-    )
-    if args:
-        arg: str = args[0]
-        if (
-            arg.startswith('/')
-            or
-            '/' in arg
-        ):
-            bs_dir = Path(arg)
-        else:
-            # bare name -> `$XDG_RUNTIME_DIR/<name>` so
-            # callers can say `acli.bindspace_scan piker`
-            bs_dir = Path(runtime) / arg
-    else:
-        bs_dir = Path(runtime) / 'tractor'
+    arg: str | None = args[0] if args else None
+    print(scan_bindspace(arg), end='')
 
-    if not bs_dir.exists():
-        print(f'(no bindspace at {bs_dir})')
+
+# --- dump-all (snapshot bundle) ------------------------------
+
+def _dump_all_alias(args):
+    '''
+    Capture a full diag snapshot bundle for a hung proc-tree
+    into a timestamped directory for offline / AI inspection.
+
+    usage: acli.dump_all <pid|pgrep-pat>
+                        [--label <label>]
+                        [--out-dir <path>]
+
+    Writes:
+      <out_dir>/<label>__<ts>/{trace.txt, bindspace.txt, meta.json}
+
+    Defaults:
+      --label   = `manual`
+      --out-dir = `$XDG_CACHE_HOME/tractor/hung-dumps/`
+                  (fallback `~/.cache/tractor/hung-dumps/`)
+
+    '''
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog='acli.dump_all',
+        description=_dump_all_alias.__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        'target',
+        help='pid or pgrep -f pattern',
+    )
+    parser.add_argument(
+        '--label', '-l',
+        default='manual',
+        help='snapshot dir label prefix (default: `manual`)',
+    )
+    parser.add_argument(
+        '--out-dir', '-o',
+        type=Path,
+        default=None,
+        help='snapshot root dir (default: '
+             '$XDG_CACHE_HOME/tractor/hung-dumps/)',
+    )
+    try:
+        ns = parser.parse_args(args)
+    except SystemExit as se:
+        return int(se.code) if se.code is not None else 0
+
+    pids: list = resolve_pids(ns.target)
+    if not pids:
+        print(f'(no procs match: {ns.target})')
         return 1
 
-    socks = sorted(bs_dir.glob('*.sock'))
-    print(f'## bindspace {bs_dir} ({len(socks)} sock file(s))')
+    # snapshot scoped to ONE root — pick the first matched
+    # pid. Multi-root snapshots can be done by invoking
+    # `acli.dump_all <pid>` per root.
+    root_pid: int = pids[0]
+    if len(pids) > 1:
+        print(
+            f'[acli.dump_all] {len(pids)} pids matched '
+            f'{ns.target!r}; snapshotting tree from {root_pid} '
+            f'(re-run per-pid for others: {pids[1:]})'
+        )
 
-    live_active: list = []  # PID alive AND ppid != 1
-    live_orphaned: list = []  # PID alive AND ppid == 1 (init-adopted)
-    dead_orphans: list = []  # PID gone, sock stale
-    bogus: list = []
-
-    def _ppid(pid: int) -> int | None:
-        '''
-        Read `/proc/<pid>/stat` -> ppid. Returns None on race
-        (proc died between `os.kill(pid, 0)` succeeding and this
-        read), permission errors, or non-linux.
-        '''
-        try:
-            with open(f'/proc/{pid}/stat') as f:
-                # field [3] of `man 5 proc` `/proc/<pid>/stat`
-                # NB: field [1] is `(comm)` which can contain
-                # spaces and parens — split from the *last*
-                # `)` to avoid that bullshit.
-                stat: str = f.read()
-            after_comm: str = stat.rsplit(')', 1)[1].strip()
-            return int(after_comm.split()[1])  # state(0) ppid(1)
-        except (FileNotFoundError, PermissionError, ProcessLookupError, OSError):
-            return None
-
-    for s in socks:
-        m = _UDS_SOCK_RE.match(s.name)
-        if not m:
-            bogus.append(s)
-            continue
-        pid = int(m['pid'])
-        name = m['name']
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            dead_orphans.append((s, pid, name))
-            continue
-        except PermissionError:
-            # exists but owned by another user — treat as live-active
-            # (we can't read its /proc/<pid>/stat to check ppid)
-            live_active.append((s, pid, name, None))
-            continue
-
-        # PID is alive in our euid view; classify by ppid
-        ppid: int | None = _ppid(pid)
-        if ppid == 1:
-            # adopted by init -> the original parent reaped
-            # without cleaning up this sub. Same class as
-            # what `acli.reap` detects.
-            live_orphaned.append((s, pid, name, ppid))
-        else:
-            live_active.append((s, pid, name, ppid))
-
-    print(f'\n## live-active ({len(live_active)})  — PID alive, parent still own it')
-    if not live_active:
-        print('  (none)')
-    for s, pid, name, ppid in live_active:
-        row = '  ' + str(pid).rjust(7)
-        row += '  ' + name.ljust(32)
-        row += '  ' + s.name
-        if ppid is not None:
-            row += f'  (ppid={ppid})'
-        print(row)
-
-    print(
-        f'\n## orphaned-alive ({len(live_orphaned)})  '
-        f'— PID alive but `ppid==1`, parent reaped; '
-        f'`acli.reap` candidate'
+    dump_dir = _dump_all(
+        root_pid,
+        out_dir=ns.out_dir,
+        label=ns.label,
+        allow_sudo_prompt=True,  # CLI: ok to prompt
     )
-    if not live_orphaned:
-        print('  (none)')
-    for s, pid, name, ppid in live_orphaned:
-        row = '  ' + str(pid).rjust(7)
-        row += '  ' + name.ljust(32)
-        row += '  ' + s.name + '  (adopted by init)'
-        print(row)
-
-    print(f'\n## orphaned-dead ({len(dead_orphans)})  — PID gone, sock stale')
-    if not dead_orphans:
-        print('  (none)')
-    for s, pid, name in dead_orphans:
-        row = '  ' + str(pid).rjust(7)
-        row += '  ' + name.ljust(32)
-        row += '  ' + s.name + '  (no live proc)'
-        print(row)
-
-    if bogus:
-        print(
-            f'\n## non-tractor ({len(bogus)})  '
-            f'— filename lacks `@<pid>` suffix, '
-            f'cannot determine liveness intrinsically'
-        )
-        for s in bogus:
-            print(f'  {s.name}')
-        # show a copy-pastable `ss` cmd per sock so the
-        # caller can resolve listener-PID externally
-        # (e.g. for piker's `chart.sock` / `pikerd.sock`
-        # style flat names). `ss -lpx 'src = <path>'`
-        # prints `users:(("<proc>",pid=<N>,fd=<M>))` for
-        # the listening side; empty output -> nobody's
-        # listening -> safe to unlink.
-        print(
-            '\nto check liveness manually '
-            '(needs `iproute2`/`ss`):'
-        )
-        for s in bogus:
-            print(f"  ss -lpx 'src = {s}'")
-
-    if dead_orphans or live_orphaned:
-        print(
-            '\nto sweep BOTH orphaned-alive subs (graceful '
-            'SIGINT -> SIGKILL) AND dead-orphan socks in one shot:'
-        )
-        print('  acli.reap --uds')
-
-    if dead_orphans:
-        unlink_cmd = ' '.join(str(o[0]) for o in dead_orphans)
-        print(
-            '\n(or to unlink dead-orphan socks manually, '
-            "skipping `acli.reap`'s graceful-cancel ladder:)"
-        )
-        print(f'  rm {unlink_cmd}')
+    print(f'[acli.dump_all] snapshot written to: {dump_dir}')
 
 
 # --- acli.reap ------------------------------------------------
@@ -1084,6 +565,7 @@ _TCLI_ALIASES: dict = {
     'acli.ptree': _ptree,
     'acli.hung_dump': _hung_dump,
     'acli.bindspace_scan': _bindspace_scan,
+    'acli.dump_all': _dump_all_alias,
     'acli.reap': _tractor_reap,
     'acli.watch': watch,
 }
