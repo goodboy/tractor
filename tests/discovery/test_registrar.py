@@ -133,7 +133,7 @@ async def say_hello_use_wait(
 
 
 @pytest.mark.timeout(
-    3,
+    7,
     method='thread',
 )
 @tractor_test

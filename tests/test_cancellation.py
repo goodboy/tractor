@@ -452,21 +452,8 @@ async def spawn_and_error(
             await nursery.run_in_actor(*args, **kwargs)
 
 
-@pytest.mark.skipon_spawn_backend(
-    'subint_forkserver',
-    reason=(
-        'Passes cleanly with `pytest -s` (no stdout capture) '
-        'but hangs under default `--capture=fd` due to '
-        'pytest-capture-pipe buffer fill from high-volume '
-        'subactor error-log traceback output inherited via fds '
-        '1,2 in fork children. Fix direction: redirect subactor '
-        'stdout/stderr to `/dev/null` in `_child_target` / '
-        '`_actor_child_main` so forkserver children don\'t hold '
-        'pytest\'s capture pipe open. See `ai/conc-anal/'
-        'subint_forkserver_test_cancellation_leak_issue.md` '
-        '"Update — pytest capture pipe is the final gate".'
-    ),
-)
+# NOTE: subint_forkserver skip handled by file-level `pytestmark`
+# above (same pytest-capture-fd hang class as siblings).
 @pytest.mark.timeout(
     10,
     method='thread',
