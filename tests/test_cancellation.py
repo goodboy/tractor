@@ -455,14 +455,16 @@ async def spawn_and_error(
 @pytest.mark.skipon_spawn_backend(
     'subint_forkserver',
     reason=(
-        'Multi-level fork-spawn cancel cascade hang — '
-        'peer-channel `process_messages` loops do not '
-        'exit on `service_tn.cancel_scope.cancel()`. '
-        'See `ai/conc-anal/'
+        'Passes cleanly with `pytest -s` (no stdout capture) '
+        'but hangs under default `--capture=fd` due to '
+        'pytest-capture-pipe buffer fill from high-volume '
+        'subactor error-log traceback output inherited via fds '
+        '1,2 in fork children. Fix direction: redirect subactor '
+        'stdout/stderr to `/dev/null` in `_child_target` / '
+        '`_actor_child_main` so forkserver children don\'t hold '
+        'pytest\'s capture pipe open. See `ai/conc-anal/'
         'subint_forkserver_test_cancellation_leak_issue.md` '
-        'for the full diagnosis + candidate fix directions. '
-        'Drop this mark once the peer-chan-loop exit issue '
-        'is closed.'
+        '"Update — pytest capture pipe is the final gate".'
     ),
 )
 @pytest.mark.timeout(
