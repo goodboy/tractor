@@ -20,7 +20,7 @@ async def main():
     # The ``async with`` will unblock here since the 'some_linguist'
     # actor has completed its main task ``cellar_door``.
 
-    print(await portal.result())
+    print(await portal.wait_for_result())
 
 
 if __name__ == '__main__':
