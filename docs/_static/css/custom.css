@@ -1,0 +1,75 @@
+/* tractor docs: a minimal black + white skin over
+ * `pydata-sphinx-theme` plus RHS-marginalia + d2
+ * diagram styling.
+ */
+html[data-theme="light"] {
+  --pst-color-primary: #000000;
+  --pst-color-secondary: #3d3d3d;
+  --pst-color-accent: #5a5a5a;
+  --pst-color-link: #000000;
+  --pst-color-link-hover: #5a5a5a;
+  --pst-color-inline-code: #1a1a1a;
+  --pst-color-inline-code-links: #000000;
+}
+html[data-theme="dark"] {
+  --pst-color-primary: #ffffff;
+  --pst-color-secondary: #c9c9c9;
+  --pst-color-accent: #a8a8a8;
+  --pst-color-link: #ffffff;
+  --pst-color-link-hover: #bdbdbd;
+  --pst-color-inline-code: #e8e8e8;
+  --pst-color-inline-code-links: #ffffff;
+}
+/* mono-chrome links: rely on underline for
+ * affordance instead of color.
+ */
+.bd-content a:not(.headerlink) {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+/* d2 diagram figures */
+figure.d2-diagram {
+  text-align: center;
+}
+figure.d2-diagram img {
+  max-width: 100%;
+  height: auto;
+}
+/* keep light-rendered svgs legible in dark mode */
+html[data-theme="dark"] figure.d2-diagram img {
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 6px;
+}
+/* prose-anchored right-margin asides (tufte-ish):
+ * float right within the content column on wide
+ * screens, collapse inline on narrow ones.
+ */
+@media (min-width: 960px) {
+  aside.margin,
+  figure.margin,
+  div.margin,
+  figure.d2-margin {
+    float: right;
+    clear: right;
+    width: 44%;
+    margin: 0.2rem 0 1rem 1.4rem;
+    font-size: 0.85rem;
+  }
+}
+/* strip docutils sidebar chrome from margin asides */
+aside.sidebar.margin {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+aside.sidebar.margin > p.sidebar-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.3rem;
+}
+/* landing page hero logo sizing */
+img.hero-logo {
+  max-width: 360px;
+  width: 60%;
+}
