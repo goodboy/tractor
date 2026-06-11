@@ -1,0 +1,62 @@
+name: docs
+
+# build sphinx docs on every PR + push to main;
+# deploy to gh-pages only from main pushes.
+# (see goodboy/tractor#123 for the original ask)
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  # to run workflow manually from the "Actions" tab
+  workflow_dispatch:
+
+# needed by actions/deploy-pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# never run >1 pages deploy at once
+concurrency:
+  group: 'pages'
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 'sphinx build'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install latest uv
+        uses: astral-sh/setup-uv@v6
+
+      # NOTE, no `d2` bin is installed in CI (yet) so
+      # the pre-rendered + committed SVGs under
+      # `docs/_diagrams/` are used as-is; see
+      # `docs/_ext/d2diagrams.py` for the fallback
+      # policy.
+      - name: Build html docs
+        run: |
+          uv sync --no-dev --group docs
+          uv run --no-dev --group docs make -C docs html
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+  deploy:
+    name: 'deploy to gh-pages'
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
