@@ -1,0 +1,27 @@
+# tractor docs diagram: multi-actor streaming
+# pipeline topology from
+# examples/full_fledged_streaming_service.py
+vars: {
+  d2-config: {
+    sketch: true
+    theme-id: 1
+    pad: 16
+    layout-engine: elk
+  }
+}
+direction: right
+s0: "actor 'streamer_0'" {
+  fn: "stream_data(0)"
+}
+s1: "actor 'streamer_1'" {
+  fn: "stream_data(1)"
+}
+agg: "actor 'aggregator'" {
+  fn: "aggregate()"
+}
+main: "root actor" {
+  fn: "main()"
+}
+s0 -> agg: "async for:\nyielded ints"
+s1 -> agg: "async for:\nyielded ints"
+agg -> main: "deduped\nstream"

@@ -1,0 +1,16 @@
+# tractor docs diagram: the layered runtime view
+# inside any single actor process.
+vars: {
+  d2-config: {
+    sketch: true
+    theme-id: 1
+    pad: 16
+    layout-engine: elk
+  }
+}
+grid-rows: 4
+grid-gap: 0
+app: "your app: plain trio tasks + nurseries"
+tractor: "tractor runtime: actors, portals,\ncontexts + streams, RPC"
+ipc: "IPC Channel: msgspec-typed msgs\nover TCP | UDS transports"
+os: "OS: one process per actor"
