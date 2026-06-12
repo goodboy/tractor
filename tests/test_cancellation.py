@@ -596,6 +596,15 @@ async def test_nested_multierrors(
     # depth=3, BOTH variants will reliably `xpass` and
     # pytest will yell — our signal to drop the marker. See
     # `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
+    #
+    # Probe CPU throttle ONCE up-front (folds in the sustained-load
+    # power-cap that static freq reads miss): used BOTH to inflate
+    # the deadline budget below AND to xfail depth=3, whose failure
+    # mode under throttle is a runtime-internal reap deadline — not
+    # a test-budget miss. See `scripts/cpu-perf-check`.
+    from .conftest import cpu_perf_headroom
+    headroom: float = cpu_perf_headroom()
+
     if start_method == 'main_thread_forkserver':
         request.node.add_marker(
             pytest.mark.xfail(
@@ -605,6 +614,34 @@ async def test_nested_multierrors(
                     f'depth={depth} (Cancelled races '
                     f'RemoteActorError in BEG); see conc-anal/'
                     'cancel_cascade_too_slow_under_main_thread_forkserver_issue.md'
+                ),
+            )
+        )
+
+    # Under CPU throttle (incl. the sustained-load power-cap that
+    # static freq reads miss) the DEEP depth=3 tree trips tractor's
+    # INTERNAL reap deadlines (`soft_kill`/`hard_kill`
+    # `move_on_after`/`terminate_after=1.6`) before slow subprocs
+    # exit, injecting a `Cancelled(source='deadline')` into the BEG
+    # — the SAME shape-mismatch class as the MTF xfail above, and
+    # NOT fixable by inflating the test-level budget (the Cancelled
+    # is minted inside the runtime, not by our `fail_after`).
+    # xfail(strict=False) so it auto-clears the moment the box is
+    # un-throttled (`headroom == 1.`); depth=1's shallow tree stays
+    # under those internal deadlines so it just rides the budget
+    # inflation below. See `scripts/cpu-perf-check`.
+    elif (
+        depth == 3
+        and
+        headroom != 1.
+    ):
+        request.node.add_marker(
+            pytest.mark.xfail(
+                strict=False,
+                reason=(
+                    'CPU throttled — tractor reap deadline injects '
+                    'Cancelled into BEG; see conc-anal/'
+                    'trio_033_cancel_cascade_slowdown_depth3_issue.md'
                 ),
             )
         )
@@ -636,11 +673,14 @@ async def test_nested_multierrors(
         case ('main_thread_forkserver', 3):
             timeout = 30
 
-    # headroom for CPU-freq scaling AND/OR slow CI so the inner
-    # snapshot-capturing budget doesn't fire spuriously on a
-    # sluggish runner; see `cpu_scaling_factor()`.
-    from .conftest import cpu_scaling_factor
-    timeout *= cpu_scaling_factor()
+    # inflate the budget by the throttle headroom probed above so
+    # a slow box doesn't masquerade as a deadline regression.
+    # NOTE, `headroom = cpu_perf_headroom()` (set above) is the
+    # SUPERSET of `cpu_scaling_factor()` — it folds in the static
+    # cpu-freq scaling + slow-CI bump AND the sustained-load
+    # throttle probe this depth-3 cascade was the poster child for.
+    if headroom != 1.:
+        timeout *= headroom
 
     async with fail_after_w_trace(timeout):
         try:

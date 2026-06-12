@@ -24,8 +24,14 @@ def test_empty_mngrs_input_raises(
             'actor-cluster teardown hangs intermittently on UDS'
         )
 
+    # inflate under CPU throttle — incl. the sustained-load
+    # power-cap invisible to static freq reads. See
+    # `scripts/cpu-perf-check`.
+    from .conftest import cpu_perf_headroom
+    fail_after_s: float = 3 * cpu_perf_headroom()
+
     async def main():
-        with trio.fail_after(3):
+        with trio.fail_after(fail_after_s):
             async with (
                 open_actor_cluster(
                     modules=[__name__],
@@ -93,6 +99,13 @@ async def test_streaming_to_actor_cluster(
         10 if is_forking_spawner
         else 6
     )
+    # inflate under CPU throttle — incl. the sustained-load
+    # power-cap invisible to static freq reads. See
+    # `scripts/cpu-perf-check`.
+    from .conftest import cpu_perf_headroom
+    headroom: float = cpu_perf_headroom()
+    if headroom != 1.:
+        delay *= headroom
     with trio.fail_after(delay):
         async with (
             open_actor_cluster(modules=[__name__]) as portals,
