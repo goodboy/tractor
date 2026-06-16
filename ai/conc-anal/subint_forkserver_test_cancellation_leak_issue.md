@@ -635,6 +635,192 @@ asymmetric. Not purely depth-determined. Some race
 condition in nursery teardown when multiple
 siblings error simultaneously.
 
+## Update — 2026-04-23 (late, probe iteration 3): hang pinpointed to `wait_for_no_more_peers()`
+
+Further DIAGDEBUG at every milestone in `async_main`
+(runtime UP / EXITED service_tn / EXITED root_tn /
+FINALLY ENTER / RETURNING) plus `_ForkedProc.wait`
+ENTER/RETURNED per-pidfd. Result:
+
+**Every stuck actor reaches `async_main: FINALLY
+ENTER` but NOT `async_main: RETURNING`.**
+
+That isolates the hang to a specific await in
+`async_main`'s finally block at
+`tractor/runtime/_runtime.py:1837+`. The suspect:
+
+```python
+# Ensure all peers (actors connected to us as clients) are finished
+if ipc_server := actor.ipc_server and ipc_server.has_peers(check_chans=True):
+    ...
+    await ipc_server.wait_for_no_more_peers()  # ← UNBOUNDED, blocks forever
+```
+
+`_no_more_peers` is an `Event` set only when
+`server._peers` empties (see
+`ipc/_server.py:526-530`). If ANY peer-handler is
+stuck (the 5 unclosed loops from the earlier pass),
+it keeps its channel in `server._peers`, so the
+event never fires, so the wait hangs.
+
+### Applied fix (partial, landed as defensive-in-depth)
+
+`tractor/runtime/_runtime.py:1981` —
+`wait_for_no_more_peers()` call now wrapped in
+`trio.move_on_after(3.0)` + a warning log when the
+timeout fires. Commented with the full rationale.
+
+**Verified:** with this fix, ALL 15 actors reach
+`async_main: RETURNING` cleanly (up from 10/15
+reaching end before).
+
+**Unfortunately:** the test still hangs past 45s
+total — meaning there's YET ANOTHER unbounded wait
+downstream of `async_main`. The bounded
+`wait_for_no_more_peers` unblocks one level, but
+the cascade has another level above it.
+
+### Candidates for the remaining hang
+
+1. `open_root_actor`'s own finally / post-
+   `async_main` flow in `_root.py` — specifically
+   `await actor.cancel(None)` which has its own
+   internal waits.
+2. The `trio.run()` itself doesn't return even
+   after the root task completes because trio's
+   nursery still has background tasks running.
+3. Maybe `_serve_ipc_eps`'s finally has an await
+   that blocks when peers aren't clearing.
+
+### Current stance
+
+- Defensive `wait_for_no_more_peers` bound landed
+  (good hygiene regardless). Revealing a real
+  deadlock-avoidance gap in tractor's cleanup.
+- Test still hangs → skip-mark restored on
+  `test_nested_multierrors[subint_forkserver]`.
+- The full chain of unbounded waits needs another
+  session of drilling, probably at
+  `open_root_actor` / `actor.cancel` level.
+
+### Summary of this investigation's wins
+
+1. **FD hygiene fix** (`_close_inherited_fds`) —
+   correct, closed orphan-SIGINT sibling issue.
+2. **pidfd-based `_ForkedProc.wait`** — cancellable,
+   matches trio_proc pattern.
+3. **`_parent_chan_cs` wiring** —
+   `Actor.cancel()` now breaks the shielded parent-
+   chan `process_messages` loop.
+4. **`wait_for_no_more_peers` bounded** —
+   prevents the actor-level finally hang.
+5. **Ruled-out hypotheses:** tree-kill missing
+   (wrong), stuck socket recv (wrong).
+6. **Pinpointed remaining unknown:** at least one
+   more unbounded wait in the teardown cascade
+   above `async_main`. Concrete candidates
+   enumerated above.
+
+## Update — 2026-04-23 (VERY late): pytest capture pipe IS the final gate
+
+After landing fixes 1-4 and instrumenting every
+layer down to `tractor_test`'s `trio.run(_main)`:
+
+**Empirical result: with `pytest -s` the test PASSES
+in 6.20s.** Without `-s` (default `--capture=fd`) it
+hangs forever.
+
+DIAG timeline for the root pytest PID (with `-s`
+implied from later verification):
+
+```
+tractor_test: about to trio.run(_main)
+open_root_actor: async_main task started, yielding to test body
+_main: about to await wrapped test fn
+_main: wrapped RETURNED cleanly        ← test body completed!
+open_root_actor: about to actor.cancel(None)
+Actor.cancel ENTER req_chan=False
+Actor.cancel RETURN
+open_root_actor: actor.cancel RETURNED
+open_root_actor: outer FINALLY
+open_root_actor: finally END (returning from ctxmgr)
+tractor_test: trio.run FINALLY (returned or raised)  ← trio.run fully returned!
+```
+
+`trio.run()` fully returns. The test body itself
+completes successfully (pytest.raises absorbed the
+expected `BaseExceptionGroup`). What blocks is
+**pytest's own stdout/stderr capture** — under
+`--capture=fd` default, pytest replaces the parent
+process's fd 1,2 with pipe write-ends it's reading
+from. Fork children inherit those pipe fds
+(because `_close_inherited_fds` correctly preserves
+stdio). High-volume subactor error-log tracebacks
+(7+ actors each logging multiple
+`RemoteActorError`/`ExceptionGroup` tracebacks on
+the error-propagation cascade) fill the 64KB Linux
+pipe buffer. Subactor writes block. Subactor can't
+progress. Process doesn't exit. Parent's
+`_ForkedProc.wait` (now pidfd-based and
+cancellable, but nothing's cancelling here since
+the test body already completed) keeps the pipe
+reader alive... but pytest isn't draining its end
+fast enough because test-teardown/fixture-cleanup
+is in progress.
+
+**Actually** the exact mechanism is slightly
+different: pytest's capture fixture MIGHT be
+actively reading, but faster-than-writer subactors
+overflow its internal buffer. Or pytest might be
+blocked itself on the finalization step.
+
+Either way, `-s` conclusively fixes it.
+
+### Why I ruled this out earlier (and shouldn't have)
+
+Earlier in this investigation I tested
+`test_nested_multierrors` with/without `-s` and
+both hung. That's because AT THAT TIME, fixes 1-4
+weren't all in place yet. The test was hanging at
+multiple deeper levels long before reaching the
+"generate lots of error-log output" phase. Once
+the cascade actually tore down cleanly, enough
+output was produced to hit the capture-pipe limit.
+
+**Classic order-of-operations mistake in
+debugging:** ruling something out too early based
+on a test that was actually failing for a
+different reason.
+
+### Fix direction (next session)
+
+Redirect subactor stdout/stderr to `/dev/null` (or
+a session-scoped log file) in the fork-child
+prelude, right after `_close_inherited_fds()`. This
+severs the inherited pytest-capture pipes and lets
+subactor output flow elsewhere. Under normal
+production use (non-pytest), stdout/stderr would
+be the TTY — we'd want to keep that. So the
+redirect should be conditional or opt-in via the
+`child_sigint`/proc_kwargs flag family.
+
+Alternative: document as a gotcha and recommend
+`pytest -s` for any tests using the
+`subint_forkserver` backend with multi-level actor
+trees. Simpler, user-visible, no code change.
+
+### Current state
+
+- Skip-mark on `test_nested_multierrors[subint_forkserver]`
+  restored with reason pointing here.
+- Test confirmed passing with `-s` after all 4
+  cascade fixes applied.
+- The 4 cascade fixes are NOT wasted — they're
+  correct hardening regardless of the capture-pipe
+  issue, AND without them we'd never reach the
+  "actually produces enough output to fill the
+  pipe" state.
+
 ## Stopgap (landed)
 
 `test_nested_multierrors` skip-marked under
