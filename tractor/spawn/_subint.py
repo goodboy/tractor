@@ -25,13 +25,17 @@ IPC-based actor boundary.
 
 Availability
 ------------
-Runs on py3.13+ via the *private* stdlib `_interpreters` C
-module (which predates the py3.14 public
-`concurrent.interpreters` stdlib wrapper). See the comment
-above the `_interpreters` import below for the trade-offs
-driving the private-API choice. On older runtimes the
-module still imports (so the registry stays
-introspectable) but `subint_proc()` raises.
+Requires Python **3.14+**. The private `_interpreters` C
+module we actually call into has shipped since 3.13, but
+that vintage has a latent bug in its thread/subint
+interaction which wedges tractor's spawn flow after
+`_interpreters.create()` — the driver `threading.Thread`
+silently never makes progress inside `_interpreters.exec()`.
+(Minimal standalone reproductions with threading +
+`_interpreters.exec()` work fine on 3.13; only our
+multi-trio-task usage triggers the hang. 3.14 fixes it.)
+On older runtimes the module still imports (so the registry
+stays introspectable) but `subint_proc()` raises.
 
 '''
 from __future__ import annotations
@@ -47,23 +51,31 @@ from trio import TaskStatus
 
 
 # NOTE: we reach into the *private* `_interpreters` C module
-# rather than `concurrent.interpreters`' public API because the
-# public API only exposes PEP 734's `'isolated'` config
-# (per-interp GIL). Under `'isolated'`, any C extension missing
-# the `Py_mod_multiple_interpreters` slot (PEP 684) refuses to
+# for the actual subint create/exec/destroy calls rather than
+# `concurrent.interpreters`' public API because the public API
+# only exposes PEP 734's `'isolated'` config (per-interp GIL).
+# Under `'isolated'`, any C extension missing the
+# `Py_mod_multiple_interpreters` slot (PEP 684) refuses to
 # import; in our stack that's `msgspec` — which tractor uses
-# pervasively in the IPC layer — so isolated-mode subints can't
-# finish booting the sub-actor's `trio.run()`. msgspec PEP 684
-# support is open upstream at jcrist/msgspec#563.
+# pervasively in the IPC layer — so isolated-mode subints
+# can't finish booting the sub-actor's `trio.run()`. msgspec
+# PEP 684 support is open upstream at jcrist/msgspec#563.
 #
 # Dropping to the `'legacy'` config keeps the main GIL + lets
 # existing C extensions load normally while preserving the
 # state isolation we actually care about for the actor model
-# (separate `sys.modules` / `__main__` / globals). Side win:
-# the private `_interpreters` module has shipped since py3.13
-# (it predates the PEP 734 stdlib landing), so the `subint`
-# backend can run on py3.13+ despite `concurrent.interpreters`
-# itself being 3.14+.
+# (separate `sys.modules` / `__main__` / globals).
+#
+# But — we feature-gate on the **public** `concurrent.interpreters`
+# module (3.14+) even though we only call into the private
+# `_interpreters` module. Reason: the private module has
+# shipped since 3.13, but the thread/subint interactions
+# tractor relies on (`threading.Thread` driving
+# `_interpreters.exec(..., legacy)` while a trio loop runs in
+# the parent + another inside the subint + IPC between them)
+# hang silently on 3.13 and only work cleanly on 3.14. See
+# docstring above for the empirical details. Using the public
+# module's existence as the gate keeps this check honest.
 #
 # Migration path: when msgspec (jcrist/msgspec#563) and any
 # other PEP 684-holdout C deps opt-in, we can switch to the
@@ -85,6 +97,11 @@ from trio import TaskStatus
 # - msgspec PEP 684 upstream tracker:
 #   https://github.com/jcrist/msgspec/issues/563
 try:
+    # gate: presence of the public 3.14 stdlib wrapper (we
+    # don't actually use it below, see NOTE above).
+    from concurrent import interpreters as _public_interpreters  # noqa: F401  # type: ignore
+    # actual driver: the private C module (also present on
+    # 3.13 but we refuse that version — see gate above).
     import _interpreters  # type: ignore
     _has_subints: bool = True
 except ImportError:
@@ -163,9 +180,10 @@ async def subint_proc(
     '''
     if not _has_subints:
         raise RuntimeError(
-            f'The {"subint"!r} spawn backend requires Python 3.13+ '
-            f'(private stdlib `_interpreters` C module; the public '
-            f'`concurrent.interpreters` wrapper lands in py3.14).\n'
+            f'The {"subint"!r} spawn backend requires Python 3.14+.\n'
+            f'(On py3.13 the private `_interpreters` C module '
+            f'exists but tractor\'s spawn flow wedges — see '
+            f'`tractor.spawn._subint` docstring for details.)\n'
             f'Current runtime: {sys.version}'
         )
 
