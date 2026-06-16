@@ -586,6 +586,32 @@ def alert_on_finish():
     # - sway/i3-nag?
 
 
+@pytest.fixture(autouse=True)
+def _reset_runtime_vars():
+    '''
+    Per-test isolation of the process-global
+    `tractor.runtime._state._runtime_vars`.
+
+    `open_root_actor()` writes `_enable_tpts` (and other runtime
+    vars) into this module-global dict, but nothing resets it on
+    actor teardown. Under the in-process `pytest` launchpad a
+    uds-using test therefore leaks `_enable_tpts=['uds']` into a
+    sibling tcp test, which then trips the
+    `registry_addrs`×`enable_transports` proto-guard in
+    `open_root_actor()` with a `ValueError`. Snapshot + restore
+    around every test so no runtime-var state crosses a test
+    boundary.
+
+    '''
+    from tractor.runtime import _state
+    snapshot: dict = dict(_state._runtime_vars)
+    try:
+        yield
+    finally:
+        _state._runtime_vars.clear()
+        _state._runtime_vars.update(snapshot)
+
+
 @pytest.fixture(scope='session')
 def debug_mode(
     request: pytest.FixtureRequest,
