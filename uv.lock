@@ -726,7 +726,7 @@ dev = [
     { name = "prompt-toolkit", specifier = ">=3.0.50" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyperclip", specifier = ">=1.9.0" },
-    { name = "pytest", specifier = ">=9.0" },
+    { name = "pytest", specifier = ">=9.0.3" },
     { name = "stackscope", specifier = ">=0.2.2,<0.3" },
     { name = "typing-extensions", specifier = ">=4.14.1" },
     { name = "xonsh", specifier = ">=0.23.0" },
@@ -747,7 +747,7 @@ subints = [{ name = "msgspec", marker = "python_full_version >= '3.14'", specifi
 sync-pause = [{ name = "greenback", marker = "python_full_version == '3.13.*'", specifier = ">=1.2.1,<2" }]
 testing = [
     { name = "pexpect", specifier = ">=4.9.0,<5" },
-    { name = "pytest", specifier = ">=9.0" },
+    { name = "pytest", specifier = ">=9.0.3" },
 ]
 
 [[package]]
