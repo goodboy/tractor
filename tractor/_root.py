@@ -290,6 +290,10 @@ async def open_root_actor(
         # console verbosity without touching application code.
         env_ll_report: str = ''
         if env_ll := os.environ.get('TRACTOR_LOGLEVEL'):
+            # capture the caller-passed value BEFORE the env-var
+            # clobbers it, else the override-notice below is dead
+            # code (the `!=` compare is always `False`).
+            caller_ll: str|None = loglevel
             loglevel = env_ll
             env_ll_report: str = (
                 f'Detected env-var setting,\n'
@@ -299,14 +303,14 @@ async def open_root_actor(
                 f'loglevel={loglevel!r}\n'
             )
             if (
-                loglevel
+                caller_ll
                 and
-                loglevel.upper() != env_ll.upper()
+                caller_ll.upper() != env_ll.upper()
             ):
                 env_ll_report += (
                     f'\n'
                     f'NOTE env-var OVERRIDES caller-passed,\n'
-                    f'loglevel={loglevel!r}\n'
+                    f'loglevel={caller_ll!r}\n'
                 )
 
         loglevel: str = (
@@ -332,6 +336,9 @@ async def open_root_actor(
         # the `examples/debugging/<script>.py` suite under each
         # backend from `tests/devx/conftest.py::spawn`).
         if env_sm := os.environ.get('TRACTOR_SPAWN_METHOD'):
+            # capture the caller-passed value BEFORE the env-var
+            # clobbers it (else the override-notice is dead code).
+            caller_sm: str|None = start_method
             start_method: str = env_sm
             env_sm_report: str = (
                 f'Detected env-var setting,\n'
@@ -341,15 +348,15 @@ async def open_root_actor(
                 f'start_method={env_sm!r}\n'
             )
             if (
-                start_method
+                caller_sm
                 and
-                start_method != env_sm
+                caller_sm != env_sm
             ):
                 _log.warning(
                     env_sm_report
                     +
                     f'NOTE env-var OVERRIDES caller-passed,\n'
-                    f'`start_method={start_method!r}`\n'
+                    f'`start_method={caller_sm!r}`\n'
                 )
             else:
                 _log.info(env_sm_report)
