@@ -334,8 +334,11 @@ class Portal:
             # `move_on_after` fired — peer didn't ack within
             # bounded window. Behaviour depends on
             # `raise_on_timeout`:
-            assert cs.cancelled_caught
-            if raise_on_timeout:
+            if (
+                cs.cancelled_caught
+                and
+                raise_on_timeout
+            ):
                 raise ActorTooSlowError(
                     f'Peer {peer_id} did not ack `Actor.cancel()`'
                     f'-RPC within bounded wait of '
@@ -344,6 +347,11 @@ class Portal:
 
             # legacy fire-and-forget path: log + return False so
             # the caller can decide whether to escalate.
+            #
+            # NOTE, we also land here in the (unexpected) case where
+            # the shielded `move_on_after` block exits WITHOUT
+            # `return True` and WITHOUT the deadline firing — prefer
+            # a soft `False` over an `assert`-crash mid-teardown.
             log.debug(
                 f'May have failed to cancel peer?\n'
                 f'\n'

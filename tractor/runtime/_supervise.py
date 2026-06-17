@@ -151,7 +151,20 @@ async def _try_cancel_then_kill(
             f'  reason: {too_slow}\n'
             f'-> escalating to `proc.terminate()` (hard-kill)\n'
         )
-        proc.terminate()
+        # XXX, the `subint` backend stores an `int` interp-id in the
+        # `proc` slot (not a `Process`), so it has no `.terminate()`.
+        # Guard here so a cancel-ack timeout doesn't `AttributeError`
+        # once that backend lands; its hard-kill path is a TODO.
+        if hasattr(proc, 'terminate'):
+            proc.terminate()
+        else:
+            log.error(
+                f'Cannot hard-kill sub-actor — backend proc-handle '
+                f'{proc!r} ({type(proc).__name__!r}) has no '
+                f'`.terminate()`!\n'
+                f'  uid: {subactor.aid.reprol()!r}\n'
+                f'TODO: per-backend cancel-escalation.\n'
+            )
 
 
 class ActorNursery:
