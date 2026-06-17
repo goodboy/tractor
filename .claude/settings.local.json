@@ -32,7 +32,7 @@
       "Bash(UV_PROJECT_ENVIRONMENT=py* uv run:*)",
       "Bash(echo EXIT:$?:*)",
       "Bash(echo \"EXIT=$?\")",
-      "Read(//tmp/**)"
+      "Read(/tmp/**)"
     ],
     "deny": [],
     "ask": []
