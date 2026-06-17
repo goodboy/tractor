@@ -6,7 +6,7 @@ import pytest
 import tractor
 
 # XXX `cffi` dun build on py3.14 yet..
-cffi = pytest.importorskip("cffi")
+pytest.importorskip("cffi")
 
 from tractor.ipc._ringbuf import (
     open_ringbuf,

@@ -23,7 +23,7 @@ def test_no_runtime():
         async with tractor.find_actor('doggy'):
             pass
 
-    with pytest.raises(tractor._exceptions.NoRuntime) :
+    with pytest.raises(tractor._exceptions.NoRuntime):
         trio.run(main)
 
 

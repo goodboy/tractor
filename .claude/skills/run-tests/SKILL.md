@@ -16,6 +16,13 @@ allowed-tools:
   - Bash(ls *)
   - Bash(cat *)
   - Bash(jq * .pytest_cache/*)
+  # process inspection + SIGINT-first cleanup ladder (see
+  # the zombie-actor pre-flight / teardown steps below).
+  - Bash(ss *)
+  - Bash(pgrep *)
+  - Bash(pkill *)
+  - Bash(sleep *)
+  - Bash(rm -f /tmp/registry@*.sock)
   - Read
   - Grep
   - Glob
