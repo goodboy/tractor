@@ -103,7 +103,6 @@ class RuntimeVars(Struct):
         key,
         val,
     ) -> None:
-        breakpoint()
         super().__setattr__(key, val)
 
     def update(
