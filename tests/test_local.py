@@ -10,17 +10,21 @@ import tractor
 from tractor._testing import tractor_test
 
 
-@pytest.mark.trio
-async def test_no_runtime():
-    """A registrar must be established before any nurseries
+def test_no_runtime():
+    '''
+    A registrar must be established before any nurseries
     can be created.
 
     (In other words ``tractor.open_root_actor()`` must be
     engaged at some point?)
-    """
-    with pytest.raises(RuntimeError) :
+
+    '''
+    async def main():
         async with tractor.find_actor('doggy'):
             pass
+
+    with pytest.raises(tractor._exceptions.NoRuntime):
+        trio.run(main)
 
 
 @tractor_test

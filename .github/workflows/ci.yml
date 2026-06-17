@@ -37,7 +37,12 @@ jobs:
         run: uv build --sdist --python=3.13
 
       - name: Install sdist from .tar.gz
-        run: python -m pip install dist/*.tar.gz
+        # XXX must install under py3.13 (matching the build's
+        # `--python=3.13`); the runner's default `python` is 3.12
+        # which our `requires-python = ">=3.13"` now rejects.
+        run: |
+          uv venv --python 3.13
+          uv pip install dist/*.tar.gz
 
   # ------ type-check ------
   # mypy:
@@ -148,9 +153,12 @@ jobs:
       - name: Run tests
         run: >
           uv run
-          pytest tests/ -rsx
+          pytest
+          tests/
+          -rsx
           --spawn-backend=${{ matrix.spawn_backend }}
           --tpt-proto=${{ matrix.tpt_proto }}
+          --capture=fd
 
   # XXX legacy NOTE XXX
   #

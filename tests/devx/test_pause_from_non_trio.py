@@ -63,6 +63,9 @@ def test_pause_from_sync(
     `examples/debugging/sync_bp.py`
 
     '''
+    # XXX required for `breakpoint()` overload and
+    # thus`tractor.devx.pause_from_sync()`.
+    pytest.importorskip('greenback')
     child = spawn('sync_bp')
 
     # first `sync_pause()` after nurseries open
@@ -260,6 +263,9 @@ def test_sync_pause_from_aio_task(
     `examples/debugging/asycio_bp.py`
 
     '''
+    # XXX required for `breakpoint()` overload and
+    # thus`tractor.devx.pause_from_sync()`.
+    pytest.importorskip('greenback')
     child = spawn('asyncio_bp')
 
     # RACE on whether trio/asyncio task bps first
