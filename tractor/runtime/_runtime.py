@@ -930,20 +930,23 @@ class Actor:
                 # TODO! -[ ] another `Struct` for rtvs..
                 rvs: dict[str, Any] = spawnspec._runtime_vars
 
-                # `stackscope` SIGUSR1 handler: install when EITHER
-                # `use_stackscope` is set in rt-vars OR the
-                # `TRACTOR_ENABLE_STACKSCOPE` env var is set (lighter
-                # test-time hang-debug path; see
-                # `tractor._testing.pytest`'s `--enable-stackscope`
+                # `stackscope` SIGUSR1 handler: install when ANY of
+                # `_debug_mode` / `use_stackscope` rt-vars OR the
+                # `TRACTOR_ENABLE_STACKSCOPE` env var is set (the
+                # latter being a lighter test-time hang-debug path;
+                # see `tractor._testing.pytest`'s `--enable-stackscope`
                 # CLI flag — env var propagates via fork-inherited
                 # environ).
                 #
-                # NOTE, intentionally NOT gated on `_debug_mode` so
+                # NOTE, NOT *exclusively* gated on `_debug_mode` so
                 # SIGUSR1 task-tree dumps work in plain (non-pdb)
-                # runs too — esp. in infected-`asyncio` sub-actors
-                # where the default SIGUSR1 action would otherwise
-                # terminate the proc.
+                # runs too — but we DO still install under
+                # `_debug_mode` since otherwise the default SIGUSR1
+                # action would terminate the proc, esp. nasty in
+                # infected-`asyncio` sub-actors mid-REPL.
                 if (
+                    rvs.get('_debug_mode')
+                    or
                     rvs.get('use_stackscope')
                     or
                     os.environ.get('TRACTOR_ENABLE_STACKSCOPE')

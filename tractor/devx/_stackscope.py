@@ -248,7 +248,7 @@ def _dump_then_relay(
 
     '''
     try:
-        dump_task_tree()
+        dump_task_tree(write_file=True)
     except BaseException:
         log.exception(
             '`dump_task_tree()` raised (scheduled via '
@@ -314,7 +314,7 @@ def dump_tree_on_sig(
                 return
 
             else:
-                dump_task_tree()
+                dump_task_tree(write_file=True)
 
         except RuntimeError:
             log.exception(
