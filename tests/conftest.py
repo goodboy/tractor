@@ -124,8 +124,12 @@ def cpu_scaling_factor() -> float:
     # headroom. Apply a flat CI bump so every timing-test deadline
     # /assert that keys off this factor gets headroom on CI HW
     # (compounds with any local-throttle factor).
+    #
+    # macOS runners are noticeably slower + noisier than the linux
+    # ones for our multi-actor cancel-cascade tests, so give them
+    # extra headroom (3x vs 2x).
     if _ci_env:
-        factor *= 2
+        factor *= 3 if _non_linux else 2
 
     return factor
 

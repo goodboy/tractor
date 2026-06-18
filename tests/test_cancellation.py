@@ -955,6 +955,12 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
     if _friggin_windows:  # smh
         timeout += 1
 
+    # CPU-scaling / CI latency headroom — macOS CI especially is
+    # slow for this graceful-vs-hard-reap timing race; see
+    # `cpu_scaling_factor()`.
+    from .conftest import cpu_scaling_factor
+    timeout *= cpu_scaling_factor()
+
     async def main():
         start = time.time()
         try:
