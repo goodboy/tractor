@@ -340,9 +340,9 @@ class Portal:
                 raise_on_timeout
             ):
                 raise ActorTooSlowError(
-                    f'Peer {peer_id} did not ack `Actor.cancel()`'
-                    f'-RPC within bounded wait of '
-                    f'{cancel_timeout!r}s'
+                    f'Peer {peer_id} did not ack its '
+                    f'`Actor.cancel()` RPC within bounded wait '
+                    f'of {cancel_timeout!r}s'
                 )
 
             # legacy fire-and-forget path: log + return False so

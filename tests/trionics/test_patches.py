@@ -59,7 +59,7 @@ def test_wakeup_socketpair_drain_eof_patch_works():
     # First call MUST return True; idempotent guard
     # prevents False on subsequent calls within the
     # same process.
-    assert applied is True or applied is False  # idempotent
+    assert isinstance(applied, bool)  # idempotent (order-dependent value)
 
     # Cap wall-clock at 2s; SIGALRM raises in main
     # thread which interrupts the C-level recv loop

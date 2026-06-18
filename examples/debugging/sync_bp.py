@@ -12,7 +12,7 @@ import tractor
 # disable `pbdp` prompt colors
 # for prompt matching in test.
 def disable_pdbp_color():
-    if os.environ['PYTHON_COLORS'] == '0':
+    if os.environ.get('PYTHON_COLORS') == '0':
         from tractor.devx.debug import _repl
         _repl.TractorConfig.use_pygments = False
 

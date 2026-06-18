@@ -24,7 +24,7 @@ import sys
 try:
     import cffi
 except ImportError as ie:
-    if sys.version_info < (3, 14):
+    if sys.version_info >= (3, 14):
         ie.add_note(
             f'The `cffi` pkg has no 3.14 support yet.\n'
         )

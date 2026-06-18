@@ -71,17 +71,18 @@ def dump_task_tree(
     Do a classic `stackscope.extract()` task-tree dump to console at
     `.devx()` level.
 
-    Also unconditionally tee the rendered tree to two
-    capture-bypassing sinks so SIGUSR1 dumps remain visible
-    when the parent process has captured stdio (e.g. pytest's
-    default `--capture=fd`):
+    When `write_file`/`write_tty` are set, ALSO tee the rendered
+    tree to capture-bypassing sinks so SIGUSR1 dumps remain
+    visible when the parent process has captured stdio (e.g.
+    pytest's default `--capture=fd`); the SIGUSR1 handler passes
+    `write_file=True` for exactly this reason:
 
-    - `/tmp/tractor-stackscope-<pid>.log` (append-mode, always
-      written) — guaranteed-readable artifact even under CI
+    - `write_file` -> `/tmp/tractor-stackscope-<pid>.log`
+      (append-mode) — guaranteed-readable artifact even under CI
       / `nohup` / no-tty conditions. `tail -f` to follow.
-    - `/dev/tty` if a controlling terminal is attached —
-      best-effort, ignored if the device is missing or write
-      fails. pytest never captures the tty.
+    - `write_tty` -> `/dev/tty` if a controlling terminal is
+      attached — best-effort, ignored if the device is missing
+      or write fails. pytest never captures the tty.
 
     '''
     import os
