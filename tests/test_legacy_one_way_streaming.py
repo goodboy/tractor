@@ -326,6 +326,12 @@ def time_quad_ex(
     ):
         timeout += 1
 
+    # inflate the cancel-deadline for CPU-freq scaling AND/OR CI
+    # latency (see `cpu_scaling_factor()`) so the example isn't
+    # cancelled mid-stream on a throttled/CI runner.
+    from .conftest import cpu_scaling_factor
+    timeout *= cpu_scaling_factor()
+
     start: float = time.time()
     results: list[int] = trio.run(partial(
         cancel_after,

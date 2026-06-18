@@ -515,14 +515,18 @@ async def spawn_and_error(
     ids='depth={}'.format,
 )
 @tractor_test(
-    # bumped from the 30s default to cover fork-based
-    # cancel-cascade flakes; 2 spawners × 2 errorers × depth 1+
-    # cascade through 6 portal-wait_for_result paths each
-    # paying `terminate_after=1.6s` + UDS sock-unlink under
-    # MTF/UDS contention can easily blow past 30s.
+    # XXX this OUTER `trio.fail_after` wall MUST exceed the
+    # largest INNER `fail_after_w_trace()` budget set in the body
+    # below (max = the MTF depth=3 == 30s case, further scaled by
+    # `cpu_scaling_factor()` on CI/throttle). Otherwise it fires
+    # FIRST and pre-empts the inner snapshot-capturing deadline,
+    # turning a graceful `TooSlowError`+ptree-dump into an opaque
+    # outer timeout-kill (the prior `timeout=10` did exactly this
+    # — it was *smaller* than the 12s trio depth=3 budget, so the
+    # depth-3 case `FAILED` on slow CI instead of dumping).
     # Trio backend is fast and won't notice the extra budget.
     # See `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
-    timeout=10,
+    timeout=40,
 )
 async def test_nested_multierrors(
     reg_addr: tuple,
@@ -631,6 +635,12 @@ async def test_nested_multierrors(
             timeout = 16
         case ('main_thread_forkserver', 3):
             timeout = 30
+
+    # headroom for CPU-freq scaling AND/OR slow CI so the inner
+    # snapshot-capturing budget doesn't fire spuriously on a
+    # sluggish runner; see `cpu_scaling_factor()`.
+    from .conftest import cpu_scaling_factor
+    timeout *= cpu_scaling_factor()
 
     async with fail_after_w_trace(timeout):
         try:

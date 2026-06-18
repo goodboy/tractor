@@ -96,28 +96,38 @@ def cpu_scaling_factor() -> float:
     much to inflate time-limits when CPU-freq scaling is active on
     linux.
 
-    When no scaling info is available (non-linux, missing sysfs),
-    returns 1.0 (i.e. no headroom adjustment needed).
+    When no local scaling info is available (non-linux, missing
+    sysfs) the base factor is 1.0; a flat CI bump is then applied
+    on top (see below).
 
     '''
-    if _non_linux:
-        return 1.
+    factor: float = 1.
+    if not _non_linux:
+        mx = get_cpu_state()
+        cur = get_cpu_state(setting='scaling_max_freq')
+        if (
+            mx is not None
+            and
+            cur is not None
+        ):
+            _mx_pth, max_freq = mx
+            _cur_pth, cur_freq = cur
+            cpu_scaled: float = int(cur_freq) / int(max_freq)
+            if cpu_scaled != 1.:
+                factor = 1. / (
+                    cpu_scaled * 2  # <- bc likely "dual threaded"
+                )
 
-    mx = get_cpu_state()
-    cur = get_cpu_state(setting='scaling_max_freq')
-    if mx is None or cur is None:
-        return 1.
+    # XXX, GH Actions (and most shared) CI runners are slow + noisy
+    # and — unlike a throttled local box — do NOT expose CPU-freq
+    # scaling via sysfs, so the probe above reads 1.0 and adds no
+    # headroom. Apply a flat CI bump so every timing-test deadline
+    # /assert that keys off this factor gets headroom on CI HW
+    # (compounds with any local-throttle factor).
+    if _ci_env:
+        factor *= 2
 
-    _mx_pth, max_freq = mx
-    _cur_pth, cur_freq = cur
-    cpu_scaled: float = int(cur_freq) / int(max_freq)
-
-    if cpu_scaled != 1.:
-        return 1. / (
-            cpu_scaled * 2  # <- bc likely "dual threaded"
-        )
-
-    return 1.
+    return factor
 
 
 # NOTE, the `--ll`/`--tl` CLI flags + the `loglevel`, `test_log`
