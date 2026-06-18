@@ -788,7 +788,7 @@ def test_cancel_via_SIGINT_other_task(
     started from a seperate ``trio`` child  task.
 
     '''
-    from .conftest import cpu_scaling_factor
+    from .conftest import cpu_perf_headroom
 
     pid: int = os.getpid()
     timeout: float = (
@@ -798,8 +798,9 @@ def test_cancel_via_SIGINT_other_task(
     if _friggin_windows:  # smh
         timeout += 1
 
-    # add latency headroom for CPU freq scaling (auto-cpufreq et al.)
-    headroom: float = cpu_scaling_factor()
+    # latency headroom for static cpu-freq scaling + sustained-load
+    # throttle + CI (auto-cpufreq et al.); see `cpu_perf_headroom()`.
+    headroom: float = cpu_perf_headroom()
     if headroom != 1.:
         timeout *= headroom
 
@@ -1002,11 +1003,11 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
     if _friggin_windows:  # smh
         timeout += 1
 
-    # CPU-scaling / CI latency headroom — macOS CI especially is
-    # slow for this graceful-vs-hard-reap timing race; see
-    # `cpu_scaling_factor()`.
-    from .conftest import cpu_scaling_factor
-    timeout *= cpu_scaling_factor()
+    # CPU-scaling / sustained-throttle / CI latency headroom — macOS
+    # CI especially is slow for this graceful-vs-hard-reap timing
+    # race; see `cpu_perf_headroom()`.
+    from .conftest import cpu_perf_headroom
+    timeout *= cpu_perf_headroom()
 
     async def main():
         start = time.time()
