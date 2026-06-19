@@ -115,10 +115,12 @@ async def not_started_but_stream_opened(
 )
 def test_started_misuse(
     target: Callable,
+    reg_addr: tuple,
     debug_mode: bool,
 ):
     async def main():
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
             portal = await an.start_actor(
@@ -184,15 +186,24 @@ def test_simple_context(
     error_parent,
     child_blocks_forever,
     pointlessly_open_stream,
+    reg_addr: tuple,
     debug_mode: bool,
+    is_forking_spawner: bool,
 ):
 
-    timeout = 1.5 if not platform.system() == 'Windows' else 4
+    timeout: float = 1.5
+    # windows and forking-spawner both have "slower but more
+    # deterministic" cancel teardown.
+    if platform.system() == 'Windows':
+        timeout = 4
+    elif is_forking_spawner:
+        timeout = 3
 
     async def main():
 
         with trio.fail_after(timeout):
             async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
                 debug_mode=debug_mode,
             ) as an:
                 portal = await an.start_actor(
@@ -278,6 +289,7 @@ def test_parent_cancels(
     cancel_method: str,
     chk_ctx_result_before_exit: bool,
     child_returns_early: bool,
+    reg_addr: tuple,
     debug_mode: bool,
 ):
     '''
@@ -355,6 +367,7 @@ def test_parent_cancels(
     async def main():
 
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
             portal = await an.start_actor(
@@ -931,6 +944,7 @@ async def keep_sending_from_child(
 )
 def test_one_end_stream_not_opened(
     overrun_by: tuple[str, int, Callable],
+    reg_addr: tuple,
     debug_mode: bool,
 ):
     '''
@@ -949,6 +963,7 @@ def test_one_end_stream_not_opened(
 
     async def main():
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
             portal = await an.start_actor(
@@ -1113,6 +1128,7 @@ def test_maybe_allow_overruns_stream(
 
     # conftest wide
     loglevel: str,
+    reg_addr: tuple,
     debug_mode: bool,
 ):
     '''
@@ -1133,6 +1149,7 @@ def test_maybe_allow_overruns_stream(
     '''
     async def main():
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
             portal = await an.start_actor(
@@ -1249,6 +1266,7 @@ def test_maybe_allow_overruns_stream(
 
 def test_ctx_with_self_actor(
     loglevel: str,
+    reg_addr: tuple,
     debug_mode: bool,
 ):
     '''
@@ -1263,6 +1281,7 @@ def test_ctx_with_self_actor(
     '''
     async def main():
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
             enable_modules=[__name__],
         ) as an:

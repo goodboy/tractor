@@ -27,12 +27,9 @@ async def main():
     '''
     async with tractor.open_nursery(
         debug_mode=True,
-        loglevel='cancel',
-        # loglevel='devx',
-    ) as n:
-
-        p0 = await n.start_actor('bp_forever', enable_modules=[__name__])
-        p1 = await n.start_actor('name_error', enable_modules=[__name__])
+    ) as an:
+        p0 = await an.start_actor('bp_forever', enable_modules=[__name__])
+        p1 = await an.start_actor('name_error', enable_modules=[__name__])
 
         # retreive results
         async with p0.open_stream_from(breakpoint_forever) as stream:

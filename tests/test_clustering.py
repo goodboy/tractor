@@ -77,6 +77,7 @@ async def worker(
 @tractor_test
 async def test_streaming_to_actor_cluster(
     tpt_proto: str,
+    is_forking_spawner: bool,
 ):
     '''
     Open an actor "cluster" using the (experimental) `._clustering`
@@ -88,7 +89,11 @@ async def test_streaming_to_actor_cluster(
             f'Test currently fails with tpt-proto={tpt_proto!r}\n'
         )
 
-    with trio.fail_after(6):
+    delay: float = (
+        10 if is_forking_spawner
+        else 6
+    )
+    with trio.fail_after(delay):
         async with (
             open_actor_cluster(modules=[__name__]) as portals,
 

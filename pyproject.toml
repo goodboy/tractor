@@ -43,15 +43,20 @@ dependencies = [
   "tricycle>=0.4.1,<0.5",
   "wrapt>=1.16.0,<2",
   "colorlog>=6.8.2,<7",
-
   # built-in multi-actor `pdb` REPL
   "pdbp>=1.8.2,<2", # windows only (from `pdbp`)
-
   # typed IPC msging
   "msgspec>=0.20.0",
   "bidict>=0.23.1",
   "multiaddr>=0.2.0",
   "platformdirs>=4.4.0",
+  # per-actor `argv[0]` proc-title for OS-level diag tools
+  # (`ps`, `top`, `psutil`-backed tooling like `acli.pytree`).
+  # Optional at runtime — guarded by `try/except ImportError` in
+  # `tractor.devx._proctitle` — but listed here so default
+  # installs benefit from it. See tracking issue for follow-ups
+  # (e.g. richer formats, per-backend overrides).
+  "setproctitle>=1.3,<2",
 ]
 
 # ------ project ------
@@ -61,6 +66,7 @@ dev = [
   {include-group = 'devx'},
   {include-group = 'testing'},
   {include-group = 'repl'},
+  {include-group = 'sync_pause'},
 ]
 devx = [
   # `tractor.devx` tooling
@@ -84,6 +90,16 @@ testing = [
   # interactions stay predictable across dev installs).
   "pytest>=9.0.3",  # CVE-2025-71176 (insecure tmpdir) patched in 9.0.3
   "pexpect>=4.9.0,<5",
+  # per-test wall-clock bound (used via
+  # `@pytest.mark.timeout(..., method='thread')` on the
+  # known-hanging `subint`-backend audit tests; see
+  # `ai/conc-anal/subint_*_issue.md`).
+  "pytest-timeout>=2.3",
+  # used by `tractor._testing._reap` for the
+  # `tractor-reap` zombie-subactor + leaked-shm
+  # cleanup utility (xplatform `Process.memory_maps`,
+  # `Process.open_files`).
+  "psutil>=7.0.0",
 ]
 repl = [
   "pyperclip>=1.9.0",
@@ -234,15 +250,27 @@ testpaths = [
 addopts = [
   # TODO: figure out why this isn't working..
   '--rootdir=./tests',
-
   '--import-mode=importlib',
   # don't show frickin captured logs AGAIN in the report..
   '--show-capture=no',
 
+  # load builtin plugin since we need a boostrapping hook,
+  # `pytest_load_initial_conftests()` for `--capture=` per:
+  # https://docs.pytest.org/en/stable/reference/reference.html#bootstrapping-hooks
+  '-p tractor._testing.pytest',
+
   # disable `xonsh` plugin
   # https://docs.pytest.org/en/stable/how-to/plugins.html#disabling-plugins-from-autoloading
   # https://docs.pytest.org/en/stable/how-to/plugins.html#deactivating-unregistering-a-plugin-by-name
-  '-p no:xonsh'
+  '-p no:xonsh',
+
+  # XXX default on non-forking spawners
+  '--capture=fd',
+  # '--capture=sys',
+  # ^XXX NOTE^ ALWAYS SET THIS for `*_forkserver` spawner
+  # backends! see details @
+  # `tractor._testing.pytest.pytest_load_initial_conftests()`
+
 ]
 log_cli = false
 # TODO: maybe some of these layout choices?

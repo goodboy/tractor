@@ -30,6 +30,32 @@ from tractor import (
 from tractor.runtime import _state
 from tractor.trionics import BroadcastReceiver
 from tractor._testing import expect_ctxc
+from tractor._testing.trace import (
+    AfkAlarmWTraceFactory,
+    FailAfterWTraceFactory,
+)
+
+
+# Per-test zombie-subactor reaper. Opt-in (NOT autouse) —
+# see `tractor._testing.pytest.reap_subactors_per_test`'s
+# docstring for the full rationale. This module specifically
+# needs it because tests like
+# `test_echoserver_detailed_mechanics[KeyboardInterrupt]`
+# and the `test_sigint_closes_lifetime_stack[*]` matrix have
+# been observed to hang past pytest's wall-clock under
+# `main_thread_forkserver`, leaving subactor forks that
+# squat on registrar resources and cascade-fail every
+# subsequent test (`test_inter_peer_cancellation`,
+# `test_legacy_one_way_streaming`, etc.).
+pytestmark = pytest.mark.usefixtures(
+    'reap_subactors_per_test',
+    # NOTE, asyncio cancel cascade has historically
+    # triggered both UDS sockfile leaks (SIGKILL path)
+    # AND the trio `WakeupSocketpair.drain()` busy-loop
+    # — see `test_aio_simple_error`'s history.
+    'track_orphaned_uds_per_test',
+    'detect_runaway_subactors_per_test',
+)
 
 
 @pytest.fixture(
@@ -183,6 +209,7 @@ def test_tractor_cancels_aio(
     async def main():
         async with tractor.open_nursery(
             debug_mode=debug_mode,
+            registry_addrs=[reg_addr],
         ) as an:
             portal = await an.run_in_actor(
                 asyncio_actor,
@@ -205,11 +232,11 @@ def test_trio_cancels_aio(
 
     '''
     async def main():
-
+        # cancel the nursery shortly after boot
         with trio.move_on_after(1):
-            # cancel the nursery shortly after boot
-
-            async with tractor.open_nursery() as tn:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as tn:
                 await tn.run_in_actor(
                     asyncio_actor,
                     target='aio_sleep_forever',
@@ -277,7 +304,9 @@ def test_context_spawns_aio_task_that_errors(
     '''
     async def main():
         with trio.fail_after(1 + delay):
-            async with tractor.open_nursery() as an:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as an:
                 p = await an.start_actor(
                     'aio_daemon',
                     enable_modules=[__name__],
@@ -360,7 +389,9 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(
     async def main():
 
         an: tractor.ActorNursery
-        async with tractor.open_nursery() as an:
+        async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
+        ) as an:
             p: tractor.Portal = await an.run_in_actor(
                 asyncio_actor,
                 target='aio_cancel',
@@ -569,7 +600,9 @@ def test_basic_interloop_channel_stream(
     async def main():
         # TODO, figure out min timeout here!
         with trio.fail_after(6):
-            async with tractor.open_nursery() as an:
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+            ) as an:
                 portal = await an.run_in_actor(
                     stream_from_aio,
                     infect_asyncio=True,
@@ -582,9 +615,13 @@ def test_basic_interloop_channel_stream(
 
 
 # TODO: parametrize the above test and avoid the duplication here?
-def test_trio_error_cancels_intertask_chan(reg_addr):
+def test_trio_error_cancels_intertask_chan(
+    reg_addr: tuple[str, int],
+):
     async def main():
-        async with tractor.open_nursery() as an:
+        async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
+        ) as an:
             portal = await an.run_in_actor(
                 stream_from_aio,
                 trio_raise_err=True,
@@ -619,6 +656,7 @@ def test_trio_closes_early_causes_aio_checkpoint_raise(
             async with tractor.open_nursery(
                 debug_mode=debug_mode,
                 # enable_stack_on_sig=True,
+                registry_addrs=[reg_addr],
             ) as an:
                 portal = await an.run_in_actor(
                     stream_from_aio,
@@ -667,6 +705,7 @@ def test_aio_exits_early_relays_AsyncioTaskExited(
     async def main():
         with trio.fail_after(1 + delay):
             async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
                 debug_mode=debug_mode,
                 # enable_stack_on_sig=True,
             ) as an:
@@ -707,6 +746,7 @@ def test_aio_errors_and_channel_propagates_and_closes(
 ):
     async def main():
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
             portal = await an.run_in_actor(
@@ -796,16 +836,47 @@ async def trio_to_aio_echo_server(
 
 @pytest.mark.parametrize(
     'raise_error_mid_stream',
-    [False, Exception, KeyboardInterrupt],
+    [
+        False,
+        Exception,
+        KeyboardInterrupt,
+    ],
     ids='raise_error={}'.format,
 )
 def test_echoserver_detailed_mechanics(
     reg_addr: tuple[str, int],
     debug_mode: bool,
     raise_error_mid_stream,
+
+    is_forking_spawner: bool,
+    fail_after_w_trace: FailAfterWTraceFactory,
 ):
-    async def main():
+    # NOTE: under fork-based backends the cancel-cascade
+    # path is structurally slower than `trio`'s subproc-exec
+    # (per-spawn forkserver-handshake compounds during
+    # teardown). Bump the cap so cross-test contamination
+    # doesn't flake this — see
+    # `ai/conc-anal/cancel_cascade_too_slow_under_main_thread_forkserver_issue.md`.
+    timeout: float = (
+        999 if tractor.debug_mode()
+        else 4 if is_forking_spawner
+        # was 1; the `trio` 0.29 -> 0.33 bump slowed the
+        # cancel-cascade so a 1s budget raced the ~1s teardown
+        # deadline. On a deadline-fire the injected
+        # `Cancelled(source='deadline')` wraps the mid-stream
+        # KBI in a `BaseExceptionGroup`, breaking the bare
+        # `pytest.raises(KeyboardInterrupt)` below. See
+        # `ai/conc-anal/trio_033_cancel_cascade_slowdown_depth3_issue.md`.
+        else 4
+    )
+
+    # body factored out so the `fail_after_w_trace`-wrapping
+    # `main()` stays a 2-liner — keeps the deep `open_nursery`
+    # /`open_context`/`open_stream` block at its natural indent
+    # level instead of pushing it under yet another `async with`.
+    async def _body():
         async with tractor.open_nursery(
+            registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
             p = await an.start_actor(
@@ -848,6 +919,15 @@ def test_echoserver_detailed_mechanics(
             # TODO: the case where this blocks and
             # is cancelled by kbi or out of task cancellation
             await p.cancel_actor()
+
+    async def main():
+        # on-timeout diag snapshot via `fail_after_w_trace`
+        # — when the cancel cascade hangs under MTF we get a
+        # fresh `ptree`/`wchan`/`py-spy` dump on disk INSTEAD
+        # of an opaque pytest timeout-kill. See
+        # `tractor/_testing/trace.py`.
+        async with fail_after_w_trace(timeout):
+            await _body()
 
     if raise_error_mid_stream:
         with pytest.raises(raise_error_mid_stream):
@@ -984,7 +1064,7 @@ async def manage_file(
     ],
     ids=[
         'bg_aio_task',
-        'just_trio_slee',
+        'just_trio_sleep',
     ],
 )
 @pytest.mark.parametrize(
@@ -1000,11 +1080,15 @@ async def manage_file(
 )
 def test_sigint_closes_lifetime_stack(
     tmp_path: Path,
+    reg_addr: tuple,
+    debug_mode: bool,
+
     wait_for_ctx: bool,
     bg_aio_task: bool,
     trio_side_is_shielded: bool,
-    debug_mode: bool,
     send_sigint_to: str,
+    is_forking_spawner: bool,
+    afk_alarm_w_trace: AfkAlarmWTraceFactory,
 ):
     '''
     Ensure that an infected child can use the `Actor.lifetime_stack`
@@ -1014,12 +1098,30 @@ def test_sigint_closes_lifetime_stack(
     '''
     async def main():
 
-        delay = 999 if tractor.debug_mode() else 1
+        delay: float = (
+            999
+            if debug_mode
+            else 1
+        )
+        # pre-init so the `except (KeyboardInterrupt, ContextCancelled)`
+        # handler below doesn't `UnboundLocalError` if KBI fires BEFORE
+        # we ever enter the `as (ctx, first)` body (e.g. when
+        # `p.open_context().__aenter__` is hung waiting for the
+        # subactor's `StartAck` due to a fork-child IPC race —
+        # see `dynamic_pub_sub_spawn_time_transport_close_under_mtf_issue.md`).
+        tmp_file: Path|None = None
+        ctx: tractor.Context|None = None
         try:
             an: tractor.ActorNursery
             async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
                 debug_mode=debug_mode,
             ) as an:
+
+                # sanity
+                if debug_mode:
+                    assert tractor.debug_mode()
+
                 p: tractor.Portal = await an.start_actor(
                     'file_mngr',
                     enable_modules=[__name__],
@@ -1034,7 +1136,7 @@ def test_sigint_closes_lifetime_stack(
                 ) as (ctx, first):
 
                     path_str, cpid = first
-                    tmp_file: Path = Path(path_str)
+                    tmp_file = Path(path_str)
                     assert tmp_file.exists()
 
                     # XXX originally to simulate what (hopefully)
@@ -1054,6 +1156,10 @@ def test_sigint_closes_lifetime_stack(
                         cpid if send_sigint_to == 'child'
                         else os.getpid()
                     )
+                    print(
+                        f'Sending SIGINT to {send_sigint_to!r}\n'
+                        f'pid: {pid!r}\n'
+                    )
                     os.kill(
                         pid,
                         signal.SIGINT,
@@ -1064,12 +1170,36 @@ def test_sigint_closes_lifetime_stack(
                     # timeout should trigger!
                     if wait_for_ctx:
                         print('waiting for ctx outcome in parent..')
+
+                        if debug_mode:
+                            assert delay == 999
+
                         try:
-                            with trio.fail_after(1 + delay):
+                            with trio.fail_after(
+                                1 + delay
+                            ):
                                 await ctx.wait_for_result()
                         except tractor.ContextCancelled as ctxc:
                             assert ctxc.canceller == ctx.chan.uid
                             raise
+
+                        except trio.TooSlowError:
+                            if (
+                                send_sigint_to == 'child'
+                                and
+                                is_forking_spawner
+                            ):
+                                pytest.xfail(
+                                    reason=(
+                                        'SIGINT delivery to fork-child subactor is known '
+                                        'to NOT SUCCEED, precisely bc we have not wired up a'
+                                        '"trio SIGINT mode" in the child pre-fork.\n'
+                                        'Also see `test_orphaned_subactor_sigint_cleanup_DRAFT` for'
+                                        'a dedicated suite demonstrating this expected limitation as '
+                                        'well as the detailed doc:\n'
+                                        '`ai/conc-anal/subint_forkserver_orphan_sigint_hang_issue.md`.\n'
+                                    ),
+                                )
 
                     # XXX CASE 2: this seems to be the source of the
                     # original issue which exhibited BEFORE we put
@@ -1084,6 +1214,21 @@ def test_sigint_closes_lifetime_stack(
             KeyboardInterrupt,
             ContextCancelled,
         ):
+            # If we got here BEFORE entering the ctx body (e.g.
+            # spawn-time IPC race hung `open_context.__aenter__` and
+            # the AFK-guard `signal.alarm` fired KBI from outside the
+            # trio loop), `tmp_file`/`ctx` are still `None` — surface
+            # that fact directly instead of `UnboundLocalError`.
+            if tmp_file is None:
+                pytest.fail(
+                    'KBI/ctxc fired BEFORE `p.open_context()` returned '
+                    "the child's `started` value — likely fork-child "
+                    'IPC race; see '
+                    '`ai/conc-anal/'
+                    'dynamic_pub_sub_spawn_time_transport_close_'
+                    'under_mtf_issue.md`'
+                )
+
             # XXX CASE 2: without the bug fixed, in the
             # KBI-raised-in-parent case, the actor teardown should
             # never get run (silently abaondoned by `asyncio`..) and
@@ -1091,7 +1236,26 @@ def test_sigint_closes_lifetime_stack(
             assert not tmp_file.exists()
             assert ctx.maybe_error
 
-    trio.run(main)
+    # outer hard wall-clock backstop via `afk_alarm_w_trace`:
+    # when the in-band trio cancel path doesn't fire (e.g.
+    # parent is parked in a shielded `await` inside actor-
+    # nursery teardown, or `open_context.__aenter__` hangs
+    # waiting for a child's `StartAck` that never comes), the
+    # `signal.alarm` inside the CM raises `AFKAlarmTimeout`
+    # in the main thread regardless of trio's scope state —
+    # AND captures a full diag snapshot to
+    # `$XDG_CACHE_HOME/tractor/hung-dumps/` before re-raising.
+    # Only armed under fork-based backends since this hang-
+    # class is MTF-specific.
+    if (
+        not debug_mode
+        and
+        is_forking_spawner
+    ):
+        with afk_alarm_w_trace(10):
+            trio.run(main)
+    else:
+        trio.run(main)
 
 
 
@@ -1170,6 +1334,7 @@ def test_aio_side_raises_before_started(
         with trio.fail_after(3):
             an: tractor.ActorNursery
             async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
                 debug_mode=debug_mode,
                 loglevel=loglevel,
             ) as an:

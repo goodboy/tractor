@@ -5,10 +5,15 @@ Advanced streaming patterns using bidirectional streams and contexts.
 from collections import Counter
 import itertools
 import platform
+from typing import Type
 
 import pytest
 import trio
 import tractor
+from tractor._testing.trace import (
+    AfkAlarmWTraceFactory,
+    FailAfterWTraceFactory,
+)
 
 
 def is_win():
@@ -76,9 +81,7 @@ async def subscribe(
 
 
 async def consumer(
-
     subs: list[str],
-
 ) -> None:
 
     uid = tractor.current_actor().uid
@@ -108,59 +111,193 @@ async def consumer(
                         print(f'{uid} got: {value}')
 
 
-def test_dynamic_pub_sub():
+# NOTE: deliberately NOT using `@pytest.mark.timeout(...)` —
+# both pytest-timeout enforcement modes break trio under
+# fork-based backends:
+#
+# - `method='signal'` (SIGALRM): the handler synchronously
+#   raises `Failed` in trio's main thread mid-`epoll.poll()`,
+#   leaves `GLOBAL_RUN_CONTEXT` half-installed ("Trio guest
+#   run got abandoned"), and EVERY subsequent `trio.run()`
+#   in the same pytest process bails with
+#   `RuntimeError: Attempted to call run() from inside a
+#   run()` — session-wide poison.
+#
+# - `method='thread'`: calls `_thread.interrupt_main()`
+#   raising `KeyboardInterrupt` into the main thread. Under
+#   fork-based backends with mid-cascade fd-juggling the KBI
+#   can escape trio's `KIManager` and bubble out of pytest
+#   itself — kills the WHOLE session.
+#
+# Instead we use `trio.fail_after()` INSIDE `main()` below:
+# trio's own `Cancelled`/`TooSlowError` machinery handles the
+# timeout, cleanly unwinds the actor nursery's cancel
+# cascade, and only fails the single test (no cross-test
+# state corruption either way).
+#
+# `pyproject.toml`'s default `timeout = 200` is still a
+# last-resort safety net.
+@pytest.mark.parametrize(
+    'expect_cancel_exc', [
+        KeyboardInterrupt,
+        trio.TooSlowError,
+    ],
+    ids=lambda item:
+        f'expect_user_exc_raised={item.__name__}'
+)
+def test_dynamic_pub_sub(
+    reg_addr: tuple,
+    debug_mode: bool,
+    test_log: tractor.log.StackLevelAdapter,
+    reap_subactors_per_test: int,
+    expect_cancel_exc: Type[BaseException],
+
+    is_forking_spawner: bool,
+    set_fork_aware_capture,
+
+    fail_after_w_trace: FailAfterWTraceFactory,
+    afk_alarm_w_trace: AfkAlarmWTraceFactory,
+):
+    failed_to_raise_report: str = (
+        f'Never got a {expect_cancel_exc!r} ??'
+    )
 
     global _registry
 
     from multiprocessing import cpu_count
     cpus = cpu_count()
 
+    # Hard safety cap via trio's own cancellation. NOTE see the
+    # module-level note on why we avoid `pytest-timeout` for this
+    # test. Picked backend-aware: under `trio` backend spawn is
+    # cheap (~1s for `cpus` actors) but fork-based backends pay
+    # a per-spawn cost (forkserver round-trip + IPC peer-handshake)
+    # that can stack up over `cpus - 1` sequential `n.run_in_actor()`
+    # calls — especially on UDS under cross-pytest contention
+    # (#451 / #452). 4s was flaking right at the edge under fork
+    # backends — bumped to 8s with diag-snapshot-on-timeout via
+    # `fail_after_w_trace` so a borderline run still fails loud
+    # but lands a ptree/wchan/py-spy dump in
+    # `$XDG_CACHE_HOME/tractor/hung-dumps/` for inspection.
+    #
+    # XXX caveat: this is an *inner* trio cancel — its `Cancelled`
+    # cannot reach a task parked in a shielded `await` (e.g. inside
+    # actor-nursery teardown). When the in-band cancel path is
+    # itself buggy (the bug-class-3 `raise KBI` swallow we're
+    # currently chasing) this guard does NOT fire and the test
+    # sits forever until external SIGINT. The `afk_alarm_w_trace`
+    # outer guard below is the AFK-safety counterpart (SIGALRM
+    # raises in the main thread regardless of trio scope state).
+    fail_after_s: int = (
+        8
+        if is_forking_spawner
+        else 20
+    )
+
     async def main():
-        async with tractor.open_nursery() as n:
-
-            # name of this actor will be same as target func
-            await n.run_in_actor(publisher)
-
-            for i, sub in zip(
-                range(cpus - 2),
-                itertools.cycle(_registry.keys())
-            ):
-                await n.run_in_actor(
-                    consumer,
-                    name=f'consumer_{sub}',
-                    subs=[sub],
+        # bug-class-3 breadcrumb: tag each level of the cancel path
+        # so when the run hangs and we capture cancel-level logs, the
+        # *last* breadcrumb that fired names the swallow point.
+        test_log.cancel('test_dynamic_pub_sub: enter main()')
+        try:
+            async with fail_after_w_trace(fail_after_s):
+                test_log.cancel(
+                    f'test_dynamic_pub_sub: '
+                    f'enter `fail_after_w_trace({fail_after_s})` scope'
                 )
+                try:
+                    async with tractor.open_nursery(
+                        registry_addrs=[reg_addr],
+                        debug_mode=debug_mode,
+                    ) as n:
+                        test_log.cancel(
+                            'test_dynamic_pub_sub: '
+                            'actor nursery opened'
+                        )
 
-            # make one dynamic subscriber
-            await n.run_in_actor(
-                consumer,
-                name='consumer_dynamic',
-                subs=list(_registry.keys()),
+                        # name of this actor will be same as target func
+                        await n.run_in_actor(publisher)
+
+                        for i, sub in zip(
+                            range(cpus - 2),
+                            itertools.cycle(_registry.keys())
+                        ):
+                            await n.run_in_actor(
+                                consumer,
+                                name=f'consumer_{sub}',
+                                subs=[sub],
+                            )
+
+                        # make one dynamic subscriber
+                        await n.run_in_actor(
+                            consumer,
+                            name='consumer_dynamic',
+                            subs=list(_registry.keys()),
+                        )
+
+                        # block until "cancelled by user"
+                        await trio.sleep(3)
+                        test_log.warning(
+                            f'Raising user cancel exc: '
+                            f'{expect_cancel_exc!r}'
+                        )
+                        test_log.cancel(
+                            f'test_dynamic_pub_sub: '
+                            f'ABOUT TO RAISE {expect_cancel_exc!r}'
+                        )
+                        raise expect_cancel_exc('simulate user cancel!')
+                finally:
+                    test_log.cancel(
+                        'test_dynamic_pub_sub: '
+                        'actor nursery `__aexit__` returned'
+                    )
+            test_log.cancel(
+                'test_dynamic_pub_sub: `fail_after` scope exited'
+            )
+        finally:
+            test_log.cancel(
+                'test_dynamic_pub_sub: leaving `main()`'
             )
 
-            # block until cancelled by user
-            with trio.fail_after(3):
-                await trio.sleep_forever()
+    def _run_and_match():
+        try:
+            trio.run(main)
+            pytest.fail(failed_to_raise_report)
+        except expect_cancel_exc:
+            # parent-side raised the user-cancel exc directly and
+            # it propagated unwrapped; clean path.
+            test_log.exception('Got user-cancel exc AS EXPECTED')
+        except BaseExceptionGroup as err:
+            # under fork-based backends the user-raised cancel
+            # can race with subactor-side stream teardown
+            # (`trio.EndOfChannel` from a publisher's `send()`
+            # whose remote half got cut). The expected exc may
+            # then be nested deeper in the group rather than at
+            # the top level. `BaseExceptionGroup.split()` walks
+            # the exc tree recursively (Python 3.11+).
+            matched, _ = err.split(expect_cancel_exc)
+            if matched is None:
+                pytest.fail(failed_to_raise_report)
 
-    try:
-        trio.run(main)
-    except (
-        trio.TooSlowError,
-        ExceptionGroup,
-    ) as err:
-        if isinstance(err, ExceptionGroup):
-            for suberr in err.exceptions:
-                if isinstance(suberr, trio.TooSlowError):
-                    break
-            else:
-                pytest.fail('Never got a `TooSlowError` ?')
+            test_log.exception('Got user-cancel exc AS EXPECTED')
+
+    # outer SIGALRM-based guard — survives a shielded-await
+    # deadlock since `signal.alarm` raises in the main thread
+    # regardless of trio's scope state, AND captures a full diag
+    # snapshot to `$XDG_CACHE_HOME/tractor/hung-dumps/` before
+    # re-raising. ONLY armed under fork-based backends since the
+    # bug we're chasing is MTF-specific. Cap = `fail_after_s + 5`
+    # so the trio-native path always wins when it works.
+    if is_forking_spawner:
+        with afk_alarm_w_trace(fail_after_s + 5):
+            _run_and_match()
+    else:
+        _run_and_match()
 
 
 @tractor.context
 async def one_task_streams_and_one_handles_reqresp(
-
     ctx: tractor.Context,
-
 ) -> None:
 
     await ctx.started()
@@ -257,7 +394,8 @@ async def echo_ctx_stream(
 
 
 def test_sigint_both_stream_types():
-    '''Verify that running a bi-directional and recv only stream
+    '''
+    Verify that running a bi-directional and recv only stream
     side-by-side will cancel correctly from SIGINT.
 
     '''
@@ -287,9 +425,11 @@ def test_sigint_both_stream_types():
                             assert resp == msg
                             raise KeyboardInterrupt
 
+    # TODO, use pytest.raises() here instead?
+    # (why weren't we originally?)
     try:
         trio.run(main)
-        assert 0, "Didn't receive KBI!?"
+        pytest.fail("Didn't receive KBI!?")
     except KeyboardInterrupt:
         pass
 
@@ -356,7 +496,12 @@ async def inf_streamer(
     print('streamer exited .open_streamer() block')
 
 
+# @pytest.mark.timeout(
+#     6,
+#     method='signal',
+# )
 def test_local_task_fanout_from_stream(
+    reg_addr: tuple,
     debug_mode: bool,
 ):
     '''
@@ -421,4 +566,9 @@ def test_local_task_fanout_from_stream(
 
             await p.cancel_actor()
 
-    trio.run(main)
+    async def w_timeout():
+        with trio.fail_after(6):
+            await main()
+
+    # trio.run(main)
+    trio.run(w_timeout)

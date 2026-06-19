@@ -22,7 +22,8 @@ from tractor._testing import (
 
 pytest_plugins: list[str] = [
     'pytester',
-    'tractor._testing.pytest',
+    # NOTE, now loaded in `pytest-ini` section of `pyproject.toml`
+    # 'tractor._testing.pytest',
 ]
 
 _ci_env: bool = os.environ.get('CI', False)
@@ -33,15 +34,10 @@ if platform.system() == 'Windows':
     _KILL_SIGNAL = signal.CTRL_BREAK_EVENT
     _INT_SIGNAL = signal.CTRL_C_EVENT
     _INT_RETURN_CODE = 3221225786
-    _PROC_SPAWN_WAIT = 2
 else:
     _KILL_SIGNAL = signal.SIGKILL
     _INT_SIGNAL = signal.SIGINT
     _INT_RETURN_CODE = 1 if sys.version_info < (3, 8) else -signal.SIGINT.value
-    _PROC_SPAWN_WAIT = (
-        2 if _ci_env
-        else 1
-    )
 
 
 no_windows = pytest.mark.skipif(
@@ -100,91 +96,51 @@ def cpu_scaling_factor() -> float:
     much to inflate time-limits when CPU-freq scaling is active on
     linux.
 
-    When no scaling info is available (non-linux, missing sysfs),
-    returns 1.0 (i.e. no headroom adjustment needed).
+    When no local scaling info is available (non-linux, missing
+    sysfs) the base factor is 1.0; a flat CI bump is then applied
+    on top (see below).
 
     '''
-    if _non_linux:
-        return 1.
+    factor: float = 1.
+    if not _non_linux:
+        mx = get_cpu_state()
+        cur = get_cpu_state(setting='scaling_max_freq')
+        if (
+            mx is not None
+            and
+            cur is not None
+        ):
+            _mx_pth, max_freq = mx
+            _cur_pth, cur_freq = cur
+            cpu_scaled: float = int(cur_freq) / int(max_freq)
+            if cpu_scaled != 1.:
+                factor = 1. / (
+                    cpu_scaled * 2  # <- bc likely "dual threaded"
+                )
 
-    mx = get_cpu_state()
-    cur = get_cpu_state(setting='scaling_max_freq')
-    if mx is None or cur is None:
-        return 1.
+    # XXX, GH Actions (and most shared) CI runners are slow + noisy
+    # and — unlike a throttled local box — do NOT expose CPU-freq
+    # scaling via sysfs, so the probe above reads 1.0 and adds no
+    # headroom. Apply a flat CI bump so every timing-test deadline
+    # /assert that keys off this factor gets headroom on CI HW
+    # (compounds with any local-throttle factor).
+    #
+    # macOS runners are noticeably slower + noisier than the linux
+    # ones for our multi-actor cancel-cascade tests, so give them
+    # extra headroom (3x vs 2x).
+    if _ci_env:
+        factor *= 3 if _non_linux else 2
 
-    _mx_pth, max_freq = mx
-    _cur_pth, cur_freq = cur
-    cpu_scaled: float = int(cur_freq) / int(max_freq)
-
-    if cpu_scaled != 1.:
-        return 1. / (
-            cpu_scaled * 2  # <- bc likely "dual threaded"
-        )
-
-    return 1.
-
-
-def pytest_addoption(
-    parser: pytest.Parser,
-):
-    # ?TODO? should this be exposed from our `._testing.pytest`
-    # plugin or should we make it more explicit with `--tl` for
-    # tractor logging like we do in other client projects?
-    parser.addoption(
-        "--ll",
-        action="store",
-        dest='loglevel',
-        default='ERROR', help="logging level to set when testing"
-    )
-
-
-@pytest.fixture(scope='session', autouse=True)
-def loglevel(request) -> str:
-    import tractor
-    orig = tractor.log._default_loglevel
-    level = tractor.log._default_loglevel = request.config.option.loglevel
-    log = tractor.log.get_console_log(
-        level=level,
-        name='tractor',  # <- enable root logger
-    )
-    log.info(
-        f'Test-harness set runtime loglevel: {level!r}\n'
-    )
-    yield level
-    tractor.log._default_loglevel = orig
+    return factor
 
 
-@pytest.fixture(scope='function')
-def test_log(
-    request,
-    loglevel: str,
-) -> tractor.log.StackLevelAdapter:
-    '''
-    Deliver a per test-module-fn logger instance for reporting from
-    within actual test bodies/fixtures.
-
-    For example this can be handy to report certain error cases from
-    exception handlers using `test_log.exception()`.
-
-    '''
-    modname: str = request.function.__module__
-    log = tractor.log.get_logger(
-        name=modname,  # <- enable root logger
-        # pkg_name='tests',
-    )
-    _log = tractor.log.get_console_log(
-        level=loglevel,
-        logger=log,
-        name=modname,
-        # pkg_name='tests',
-    )
-    _log.debug(
-        f'In-test-logging requested\n'
-        f'test_log.name: {log.name!r}\n'
-        f'level: {loglevel!r}\n'
-
-    )
-    yield _log
+# NOTE, the `--ll`/`--tl` CLI flags + the `loglevel`, `test_log`
+# and `testing_pkg_name` fixtures have been factored into the
+# `tractor._testing.pytest` plugin (loaded via the `-p` entry in
+# `pyproject.toml`'s `[tool.pytest.ini_options]`) so downstream
+# consuming projects (eg. `modden`) inherit them for free. The
+# plugin's `testing_pkg_name` fixture defaults to `'tractor'`, so
+# this suite keeps treating `--ll` as the runtime loglevel.
 
 
 @pytest.fixture(scope='session')
@@ -236,107 +192,14 @@ def sig_prog(
     assert ret
 
 
-# TODO: factor into @cm and move to `._testing`?
-@pytest.fixture
-def daemon(
-    debug_mode: bool,
-    loglevel: str,
-    testdir: pytest.Pytester,
-    reg_addr: tuple[str, int],
-    tpt_proto: str,
-    ci_env: bool,
-    test_log: tractor.log.StackLevelAdapter,
-
-) -> subprocess.Popen:
-    '''
-    Run a daemon root actor as a separate actor-process tree and
-    "remote registrar" for discovery-protocol related tests.
-
-    '''
-    if loglevel in ('trace', 'debug'):
-        # XXX: too much logging will lock up the subproc (smh)
-        loglevel: str = 'info'
-
-    code: str = (
-        "import tractor; "
-        "tractor.run_daemon([], "
-        "registry_addrs={reg_addrs}, "
-        "enable_transports={enable_tpts}, "
-        "debug_mode={debug_mode}, "
-        "loglevel={ll})"
-    ).format(
-        reg_addrs=str([reg_addr]),
-        enable_tpts=str([tpt_proto]),
-        ll="'{}'".format(loglevel) if loglevel else None,
-        debug_mode=debug_mode,
-    )
-    cmd: list[str] = [
-        sys.executable,
-        '-c', code,
-    ]
-    # breakpoint()
-    kwargs = {}
-    if platform.system() == 'Windows':
-        # without this, tests hang on windows forever
-        kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
-
-    proc: subprocess.Popen = testdir.popen(
-        cmd,
-        **kwargs,
-    )
-
-    # TODO! we should poll for the registry socket-bind to take place
-    # and only once that's done yield to the requester!
-    # -[ ] TCP: use the `._root.open_root_actor()`::`ping_tpt_socket()`
-    #      closure!
-    # -[ ] UDS: can we do something similar for 'pinging" the
-    #     file-socket?
-    #
-    global _PROC_SPAWN_WAIT
-    # UDS sockets are **really** fast to bind()/listen()/connect()
-    # so it's often required that we delay a bit more starting
-    # the first actor-tree..
-    if tpt_proto == 'uds':
-        _PROC_SPAWN_WAIT += 1.6
-
-    if _non_linux and ci_env:
-        _PROC_SPAWN_WAIT += 1
-
-    # XXX, allow time for the sub-py-proc to boot up.
-    # !TODO, see ping-polling ideas above!
-    time.sleep(_PROC_SPAWN_WAIT)
-
-    assert not proc.returncode
-    yield proc
-    sig_prog(proc, _INT_SIGNAL)
-
-    # XXX! yeah.. just be reaaal careful with this bc sometimes it
-    # can lock up on the `_io.BufferedReader` and hang..
-    stderr: str = proc.stderr.read().decode()
-    stdout: str = proc.stdout.read().decode()
-    if (
-        stderr
-        or
-        stdout
-    ):
-        print(
-            f'Daemon actor tree produced output:\n'
-            f'{proc.args}\n'
-            f'\n'
-            f'stderr: {stderr!r}\n'
-            f'stdout: {stdout!r}\n'
-        )
-
-    if (rc := proc.returncode) != -2:
-        msg: str = (
-            f'Daemon actor tree was not cancelled !?\n'
-            f'proc.args: {proc.args!r}\n'
-            f'proc.returncode: {rc!r}\n'
-        )
-        if rc < 0:
-            raise RuntimeError(msg)
-
-        test_log.error(msg)
+# NOTE, the `daemon` fixture (+ its `_wait_for_daemon_ready`
+# helper + the post-yield teardown drain logic) has been
+# moved to `tests/discovery/conftest.py` since 100% of its
+# consumers are discovery-protocol tests now living under
+# that subdir. See:
+# - `tests/discovery/test_multi_program.py`
+# - `tests/discovery/test_registrar.py`
+# - `tests/discovery/test_tpt_bind_addrs.py`
 
 
 # @pytest.fixture(autouse=True)

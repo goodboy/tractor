@@ -15,15 +15,22 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-This is the "bootloader" for actors started using the native trio backend.
+The "bootloader" for sub-actors spawned via the native `trio`
+backend (the default `python -m tractor._child` CLI entry) and
+the in-process `subint` backend (`tractor.spawn._subint`).
 
 """
+from __future__ import annotations
 import argparse
-
 from ast import literal_eval
+from typing import TYPE_CHECKING
 
 from .runtime._runtime import Actor
 from .spawn._entry import _trio_main
+
+if TYPE_CHECKING:
+    from .discovery._addr import UnwrappedAddress
+    from .spawn._spawn import SpawnMethodKey
 
 
 def parse_uid(arg):
@@ -39,6 +46,73 @@ def parse_ipaddr(arg):
         return arg
 
 
+def _actor_child_main(
+    uid: tuple[str, str],
+    loglevel: str | None,
+    parent_addr: UnwrappedAddress | None,
+    infect_asyncio: bool,
+    spawn_method: SpawnMethodKey = 'trio',
+
+) -> None:
+    '''
+    Construct the child `Actor` and dispatch to `_trio_main()`.
+
+    Shared entry shape used by both the `python -m tractor._child`
+    CLI (trio/mp subproc backends) and the `subint` backend, which
+    invokes this from inside a fresh `concurrent.interpreters`
+    sub-interpreter via `Interpreter.call()`.
+
+    '''
+    # Apply defensive monkey-patches for upstream `trio`
+    # bugs we've encountered while running tractor — see
+    # `tractor.trionics.patches` for the catalog +
+    # per-patch upstream-fix tracking. Must run BEFORE
+    # any trio runtime init.
+    from .trionics.patches import apply_all
+    apply_all()
+
+    subactor = Actor(
+        name=uid[0],
+        uuid=uid[1],
+        loglevel=loglevel,
+        spawn_method=spawn_method,
+    )
+
+    # XXX, set a stable OS-level proc-title BEFORE entering
+    # the trio runtime so `ps`/`top`/`acli.pytree` and
+    # orphan-reapers can identify this actor for its full
+    # lifetime — e.g.
+    #   `tractor[doggy@1027301b]`
+    # vs. the default uninformative
+    #   `python -m tractor._child --uid (...)`
+    #
+    # `setproctitle` mutates `argv[0]` (visible in
+    # `/proc/<pid>/cmdline`) AND the kernel `comm`
+    # (visible in `/proc/<pid>/comm`, kernel-truncated to
+    # ~15 bytes, but preserved through zombie state). Both
+    # surfaces are enough for `_testing._reap` /
+    # `acli.reap` orphan- and zombie-detection to identify
+    # tractor sub-actors via intrinsic signals — no cwd,
+    # venv path, or env-var coincidence-of-implementation
+    # matching needed.
+    #
+    # NB: an earlier draft also wrote `TRACTOR_AID` to
+    # `os.environ` here for `pgrep --env`-style discovery,
+    # but Linux snapshots `/proc/<pid>/environ` at exec/fork
+    # time, so post-fork runtime mutations don't propagate
+    # to the kernel-visible env. The proc-title path
+    # provides equivalent ergonomics
+    # (`pgrep -f 'tractor\['`) without that gotcha.
+    from .devx._proctitle import set_actor_proctitle
+    set_actor_proctitle(subactor)
+
+    _trio_main(
+        subactor,
+        parent_addr=parent_addr,
+        infect_asyncio=infect_asyncio,
+    )
+
+
 if __name__ == "__main__":
     __tracebackhide__: bool = True
 
@@ -49,15 +123,10 @@ if __name__ == "__main__":
     parser.add_argument("--asyncio", action='store_true')
     args = parser.parse_args()
 
-    subactor = Actor(
-        name=args.uid[0],
-        uuid=args.uid[1],
+    _actor_child_main(
+        uid=args.uid,
         loglevel=args.loglevel,
-        spawn_method="trio"
-    )
-
-    _trio_main(
-        subactor,
         parent_addr=args.parent_addr,
         infect_asyncio=args.asyncio,
+        spawn_method='trio',
     )

@@ -36,6 +36,11 @@ async def just_bp(
 
 async def main():
 
+    # !TODO, parametrize the --tpt-proto={key} with osenv vars just
+    # like we do for loglevel/spawn-backend!
+    # - [ ] run on both tpts for all such debugger tests?
+    # - [ ] special skip for macos!
+    #
     if platform.system() != 'Darwin':
         tpt = 'uds'
     else:

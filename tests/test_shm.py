@@ -14,6 +14,20 @@ from tractor.ipc._shm import (
     attach_shm_list,
 )
 
+pytestmark = pytest.mark.skipon_spawn_backend(
+    'subint',
+    # NOTE, `main_thread_forkserver` works for these tests
+    # via the `mp.SharedMemory(track=False)` +
+    # `mp.resource_tracker` monkey-patch in `.ipc._mp_bs`.
+    # Without that workaround the fork-inherited
+    # `resource_tracker` fd would EBADF on first shm op +
+    # cascade into `FileExistsError` across parametrize
+    # variants. Tracker doc:
+    # `ai/conc-anal/subint_forkserver_mp_shared_memory_issue.md`.
+    reason=(
+        'subint: GIL-contention hanging class.\n'
+    )
+)
 
 @tractor.context
 async def child_attach_shml_alot(
