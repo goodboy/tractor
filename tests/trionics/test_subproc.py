@@ -14,6 +14,7 @@ Hermetic `trio`-only coverage (no actor-runtime needed):
 
 '''
 from functools import partial
+import platform
 import subprocess
 
 import pytest
@@ -69,6 +70,10 @@ def test_stdout_relayed_per_line(monkeypatch):
     assert any('line=3' in r for r in out_lines)
 
 
+@pytest.mark.skipif(
+    platform.system() != 'Linux',
+    reason='reads `/proc/self/fd` — Linux-only',
+)
 def test_parent_tty_isolated(monkeypatch):
     records = _capture_relay(monkeypatch)
 
