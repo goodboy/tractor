@@ -340,7 +340,16 @@ async def start_or_cancel(
         if (
             rte.args
             and
-            'started' in rte.args[0]
+            isinstance(rte.args[0], str)
+            and
+            # match trio's *exact* "child exited without calling
+            # task_status.started()" wording — a bare `'started'`
+            # substring would also match a child task's OWN
+            # `RuntimeError(...started...)` and (under cancellation)
+            # demote it to a `Cancelled`, losing the real error. The
+            # `isinstance` guard also avoids a `TypeError` when
+            # `rte.args[0]` isn't a `str`.
+            'child exited without calling' in rte.args[0]
         ):
             # re-raises the in-flight `trio.Cancelled` IFF we're
             # under effective cancellation; else a cheap no-op and
