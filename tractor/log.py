@@ -281,8 +281,11 @@ def add_log_level(
       `StackLevelAdapter` so `log.<name>('msg')` works (and so
       `get_logger()`'s per-level method audit passes).
 
-    Idempotent: re-registering an existing name is a no-op-ish
-    refresh (won't clobber an already-bound method).
+    Idempotent: re-registering an existing name refreshes its
+    value + color in place. The bound `StackLevelAdapter.<name>`
+    method reads the current `CUSTOM_LEVELS` value at call time, so
+    it tracks the new level across re-registration (the method
+    object is bound once, never re-bound/clobbered).
 
     '''
     name_up: str = name.upper()
@@ -294,16 +297,18 @@ def add_log_level(
     BOLD_PALETTE['bold'][name_up] = f'bold_{color}'
 
     if not hasattr(StackLevelAdapter, name_lo):
-        # bind via default-arg so `value` is captured (not
-        # late-bound); delegates to `.log()` exactly like the
-        # hand-written level methods above.
+        # read the level from `CUSTOM_LEVELS[name_up]` at CALL time
+        # (NOT captured at bind time) so a later
+        # `add_log_level(name, <new-value>)` re-registration stays
+        # consistent with this once-bound method. The closure binds
+        # *this* call's `name_up` local (stable, never reassigned),
+        # so there's no late-binding hazard. Delegates to `.log()`
+        # exactly like the hand-written level methods above.
         def _emit(
             self,
             msg: str,
-            *,
-            _level: int = value,
         ) -> None:
-            return self.log(_level, msg)
+            return self.log(CUSTOM_LEVELS[name_up], msg)
 
         _emit.__name__ = name_lo
         _emit.__qualname__ = f'StackLevelAdapter.{name_lo}'
