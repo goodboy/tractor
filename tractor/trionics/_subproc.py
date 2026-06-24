@@ -42,6 +42,22 @@ log = get_logger()
 _UNSET = object()
 
 
+# cap the stderr bytes retained for a rc!=0 `CalledProcessError`
+# note: a long-lived (`check=True`) child could otherwise buffer
+# its ENTIRE stderr history in parent mem — keep only the TAIL
+# (the bytes nearest the failure, which are what you want to see).
+_STDERR_NOTE_TAIL_BYTES: int = 16 * 1024
+
+
+def _decode_line(raw: bytes) -> str:
+    '''
+    Decode one relayed line: replace undecodable bytes and trim a
+    trailing carriage-return (so CRLF-term'd lines read clean).
+
+    '''
+    return raw.decode(errors='replace').rstrip('\r')
+
+
 def _add_stderr_note(
     cpe: subprocess.CalledProcessError,
     stderr_bytes: bytes,
@@ -65,6 +81,7 @@ async def _relay_stream_lines(
     emit: Callable[[str], None]|None = None,
     tag: str = '',
     accum: bytearray|None = None,
+    accum_cap: int|None = None,
 ) -> None:
     '''
     Concurrently drain a child subproc's `stdout`/`stderr`
@@ -95,15 +112,21 @@ async def _relay_stream_lines(
         async for chunk in stream:       # ends at child-exit EOF
             if accum is not None:
                 accum += chunk
+                # bound retained bytes to the TAIL (see caller +
+                # `_STDERR_NOTE_TAIL_BYTES`) so a chatty long-lived
+                # child can't grow parent mem without limit.
+                if (
+                    accum_cap is not None
+                    and
+                    len(accum) > accum_cap
+                ):
+                    del accum[:len(accum) - accum_cap]
             if emit is None:
                 continue                 # drain(+accum)-only
             buf: bytes = residual + chunk
             *lines, residual = buf.split(b'\n')
             for raw in lines:
-                line: str = raw.decode(
-                    errors='replace',
-                ).rstrip('\r')
-                emit(f'[{tag}] {line}')
+                emit(f'[{tag}] {_decode_line(raw)}')
 
     # flush any trailing partial (un-newline-term'd) line @ EOF
     if (
@@ -111,10 +134,7 @@ async def _relay_stream_lines(
         and
         residual
     ):
-        line: str = residual.decode(
-            errors='replace',
-        ).rstrip('\r')
-        emit(f'[{tag}] {line}')
+        emit(f'[{tag}] {_decode_line(residual)}')
 
 
 async def supervise_run_process(
@@ -293,6 +313,7 @@ async def supervise_run_process(
                     emit=emit if relay_stderr else None,
                     tag=f'{tag}:err',
                     accum=stderr_accum,
+                    accum_cap=_STDERR_NOTE_TAIL_BYTES,
                 )
             )
 
