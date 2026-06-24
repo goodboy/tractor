@@ -160,7 +160,7 @@ async def supervise_run_process(
     # non-relay `stdout` override; defaults (via `_UNSET`) to
     # `DEVNULL` so we NEVER inherit (+ thus can't clobber) the
     # parent controlling-tty.
-    stdout: int = _UNSET,
+    stdout: int|None = _UNSET,
 
     task_status: trio.TaskStatus[
         trio.Process
@@ -178,11 +178,14 @@ async def supervise_run_process(
 
     - surfaces a rc!=0 `subprocess.CalledProcessError`
       DETERMINISTICALLY: we pass `check=False` to `trio` and
-      do our OWN post-drain rc-check, (re)building + raising a
-      BARE CPE (with a `.stderr` note) from this coro's body
-      AFTER the child exits — so there's no nursery-eg-wrapped
-      CPE to catch/`collapse_eg`, and the relay reader is never
-      race-cancelled mid-drain.
+      do our OWN post-drain rc-check, (re)building + raising the
+      CPE (with a `.stderr` note) from this coro's body AFTER the
+      child exits — so it's never wrapped by `trio.run_process`'s
+      INTERNAL nursery nor race-cancelled mid-drain. It IS still
+      raised as a task into the *parent* `tn`, so — like any
+      `tn.start()`-task raise — it surfaces `ExceptionGroup`-
+      wrapped under `trio>=0.33`; unwrap via `except*` or
+      `trionics.collapse_eg()`.
 
     - ALWAYS isolates the parent controlling-tty
       (`stdin=DEVNULL`, and `stdout=DEVNULL` unless
@@ -339,6 +342,10 @@ async def supervise_run_process(
             if stderr_accum is not None
             else b''
         )
+        # NOTE: stdout is NOT captured (DEVNULL unless overridden)
+        # so the CPE carries only (tail-bounded) stderr; a cmd that
+        # logs failures to *stdout* should `relay_stdout=True` to
+        # surface them in the note.
         cpe = subprocess.CalledProcessError(
             returncode=trio_proc.returncode,
             cmd=trio_proc.args,
