@@ -36,4 +36,5 @@ from ._beg import (
 )
 from ._taskc import (
     maybe_raise_from_masking_exc as maybe_raise_from_masking_exc,
+    start_or_cancel as start_or_cancel,
 )

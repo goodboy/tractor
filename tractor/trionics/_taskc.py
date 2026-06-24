@@ -27,6 +27,9 @@ from types import (
     TracebackType,
 )
 from typing import (
+    Any,
+    Awaitable,
+    Callable,
     Type,
     TYPE_CHECKING,
 )
@@ -294,4 +297,63 @@ async def maybe_raise_from_masking_exc(
                 raise exc_ctx from exc_match
 
     else:
+        raise
+
+
+async def start_or_cancel(
+    nursery: trio.Nursery,
+    async_fn: Callable[..., Awaitable[Any]],
+    *args,
+    name: object = None,
+
+) -> Any:
+    '''
+    Like `trio.Nursery.start()` but DON'T mask an out-of-band
+    cancellation as a (lossy) startup failure.
+
+    `trio.Nursery.start()` raises a generic
+    `RuntimeError("child exited without calling
+    task_status.started()")` whenever the started task exits
+    BEFORE calling `task_status.started()` — INCLUDING the very
+    common case where the child was cancelled out-of-band by an
+    *ancestor* cancel-scope erroring/cancelling. In that case the
+    original `trio.Cancelled` is swallowed and the caller is left
+    with an opaque, root-cause-detached `RuntimeError`.
+
+    This wrapper re-surfaces any ambient (effective, hence
+    ancestor-inclusive) cancellation via
+    `trio.lowlevel.checkpoint_if_cancelled()` so the real
+    `trio.Cancelled` (carrying trio's auto-generated reason which
+    points at the true root exc) propagates instead. Only when we
+    are NOT under cancellation is the "didn't call `.started()`"
+    `RuntimeError` a genuine startup-protocol bug worth surfacing,
+    so it's re-raised as-is in that case.
+
+    '''
+    try:
+        return await nursery.start(
+            async_fn,
+            *args,
+            name=name,
+        )
+    except RuntimeError as rte:
+        if (
+            rte.args
+            and
+            isinstance(rte.args[0], str)
+            and
+            # match trio's *exact* "child exited without calling
+            # task_status.started()" wording — a bare `'started'`
+            # substring would also match a child task's OWN
+            # `RuntimeError(...started...)` and (under cancellation)
+            # demote it to a `Cancelled`, losing the real error. The
+            # `isinstance` guard also avoids a `TypeError` when
+            # `rte.args[0]` isn't a `str`.
+            'child exited without calling' in rte.args[0]
+        ):
+            # re-raises the in-flight `trio.Cancelled` IFF we're
+            # under effective cancellation; else a cheap no-op and
+            # we fall through to re-raise the genuine startup RTE.
+            await trio.lowlevel.checkpoint_if_cancelled()
+
         raise
