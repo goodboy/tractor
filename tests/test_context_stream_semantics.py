@@ -263,9 +263,18 @@ def test_simple_context(
         except error_parent:
             pass
         except BaseExceptionGroup as beg:
-            # XXX: on windows it seems we may have to expect the group error
+            # XXX: on windows — and under `trio>=0.33`'s strict
+            # exception-groups, where a lone `error_parent` now
+            # arrives wrapped in a 1-exc `ExceptionGroup` rather than
+            # collapsed to the bare exc — accept either the
+            # `error_parent` nested in the group OR a cancel-only
+            # (multi-cancelled) group.
             from tractor.trionics import is_multi_cancelled
-            assert is_multi_cancelled(beg)
+            assert (
+                is_multi_cancelled(beg)
+                or
+                beg.subgroup(error_parent) is not None
+            )
     else:
         trio.run(main)
 
