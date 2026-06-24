@@ -190,7 +190,14 @@ async def supervise_run_process(
             )
 
     '''
-    emit: Callable[[str], None] = getattr(log, relay_level)
+    # resolve the relay emit-method ONLY when actually relaying so
+    # a bad/typo'd `relay_level` can't crash a NON-relay call (and
+    # we don't bind an unused method on the common silent path).
+    emit: Callable[[str], None]|None = (
+        getattr(log, relay_level)
+        if (relay_stdout or relay_stderr)
+        else None
+    )
     tag: str = (
         label
         or
