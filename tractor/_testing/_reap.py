@@ -90,7 +90,6 @@ keys are caller-defined).
 
 '''
 from __future__ import annotations
-
 import os
 import pathlib
 import re
@@ -98,6 +97,9 @@ import signal
 import stat
 import sys
 import time
+
+
+from tractor.devx import _proctitle
 
 # `/dev/shm` is the POSIX-shm filesystem on Linux + FreeBSD.
 # macOS uses `shm_open` syscalls without a fs-visible path,
@@ -214,25 +216,25 @@ def _read_comm(pid: int) -> str:
 # regardless of cwd / venv path / launch context. Used by
 # `_is_tractor_subactor()` below.
 #
-# - cmdline `tractor[`: matches the `setproctitle`-set form
-#   (`tractor[<aid.reprol()>]`) — set in
-#   `_actor_child_main` for ALL backends, mutates argv via
-#   libc so visible in `/proc/<pid>/cmdline`.
+# - cmdline `_subactor[` (`_proctitle._def_prefix`): matches
+#   the `setproctitle`-set form (`_subactor[<aid.reprol()>]`)
+#   — set in `_actor_child_main` for ALL backends, mutates
+#   argv via libc so visible in `/proc/<pid>/cmdline`.
 # - cmdline `tractor._child`: matches the legacy
 #   `python -m tractor._child --uid (...)` form. Catches
 #   procs that died before `_actor_child_main` got to call
 #   `setproctitle()` — argv from exec is still kernel-
 #   visible at that point.
-# - comm `tractor[`: same proctitle-set form, but visible
+# - comm `_subactor[`: same proctitle-set form, but visible
 #   via `/proc/<pid>/comm` (kernel-truncated to ~15 bytes,
-#   `tractor[doggy:`). Critical for ZOMBIES — kernel
+#   `_subactor[doggy:`). Critical for ZOMBIES — kernel
 #   preserves `comm` past task-exit until parent reaps,
 #   while `cmdline` for zombies often reads as empty.
 _TRACTOR_PROC_CMDLINE_MARKERS: tuple[str, ...] = (
     'tractor._child',
-    'tractor[',
+    _proctitle._def_prefix,
 )
-_TRACTOR_PROC_COMM_MARKER: str = 'tractor['
+_TRACTOR_PROC_COMM_MARKER: str = _proctitle._def_prefix
 
 
 def _is_tractor_subactor(pid: int) -> bool:
@@ -251,7 +253,7 @@ def _is_tractor_subactor(pid: int) -> bool:
 
     '''
     # 1. cmdline match — catches both `setproctitle`-set
-    #    `tractor[<aid>]` (live) AND legacy `python -m
+    #    `_subactor[<aid>]` (live) AND legacy `python -m
     #    tractor._child` (any) form.
     cmdline: str = _read_cmdline(pid)
     if any(m in cmdline for m in _TRACTOR_PROC_CMDLINE_MARKERS):
