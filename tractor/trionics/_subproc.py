@@ -201,6 +201,20 @@ async def supervise_run_process(
     # MANAGED keys below override on conflict.
     rp_kwargs: dict = dict(run_process_kwargs)
 
+    # XXX reject `trio`'s `capture_stdout`/`capture_stderr`: they
+    # ALIAS our MANAGED `stdout`/`stderr` keys, so forwarding them
+    # makes `trio.run_process` raise an opaque
+    # `ValueError("can't specify both ...")`. Fail LOUD + early
+    # with a pointer to the supported knobs instead.
+    for _cap_kw in ('capture_stdout', 'capture_stderr'):
+        if _cap_kw in rp_kwargs:
+            raise ValueError(
+                f'{_cap_kw!r} is unsupported here; use '
+                f'`relay_stdout=`/`relay_stderr=` for a live relay, '
+                f'or the `stdout=` override / default `check=True` '
+                f'stderr-capture instead.'
+            )
+
     # XXX ALWAYS isolate the controlling-tty's stdin.
     rp_kwargs['stdin'] = subprocess.DEVNULL
 
@@ -210,6 +224,16 @@ async def supervise_run_process(
     if relay_stdout:
         rp_kwargs['stdout'] = subprocess.PIPE
     elif stdout is not _UNSET:
+        # XXX a bare `stdout=PIPE` override has NO drain reader
+        # (only `relay_stdout` spins one up), so it would deadlock
+        # once the ~64KiB OS pipe buffer fills — reject it.
+        if stdout is subprocess.PIPE:
+            raise ValueError(
+                'Use `relay_stdout=True` to PIPE *and* drain '
+                'stdout; a bare `stdout=subprocess.PIPE` override '
+                'has no reader and will deadlock once the ~64KiB '
+                'pipe buffer fills.'
+            )
         rp_kwargs['stdout'] = stdout
     else:
         rp_kwargs['stdout'] = subprocess.DEVNULL
