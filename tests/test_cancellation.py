@@ -780,21 +780,28 @@ def test_cancel_via_SIGINT_other_task(
     async def main():
         # should never timeout since SIGINT should cancel the current program
         with trio.fail_after(timeout):
-            async with (
-
-                # XXX ?TODO? why no work!?
-                # tractor.trionics.collapse_eg(),
-                trio.open_nursery(
-                    strict_exception_groups=False,
-                ) as tn,
-            ):
+            async with trio.open_nursery() as tn:
                 await tn.start(spawn_and_sleep_forever)
                 if 'mp' in spawn_backend:
                     time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)
 
-    with pytest.raises(KeyboardInterrupt):
+    # SIGINT -> `KeyboardInterrupt`; under `trio>=0.25`'s strict
+    # exception-groups the KI surfaces wrapped in a (cancel-padded)
+    # `BaseExceptionGroup` rather than bare — so accept either form
+    # (replaces the now-deprecated `strict_exception_groups=False`,
+    # and `collapse_eg()` can't help since the group is multi-exc:
+    # the KI rides alongside the child-task `Cancelled`s).
+    with pytest.raises(BaseException) as excinfo:
         trio.run(main)
+    exc = excinfo.value
+    assert (
+        isinstance(exc, KeyboardInterrupt)
+        or (
+            isinstance(exc, BaseExceptionGroup)
+            and exc.subgroup(KeyboardInterrupt) is not None
+        )
+    )
 
 
 async def spin_for(period=3):
