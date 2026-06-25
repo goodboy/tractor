@@ -122,7 +122,13 @@ def test_register_duplicate_name(
                         'test_register_duplicate_name: '
                         '`wait_for_actor` returned'
                     )
-                    assert portal.channel.uid in (p2.channel.uid, p1.channel.uid)
+                    assert (
+                        (portal.channel.aid.name, portal.channel.aid.uuid)
+                        in (
+                            (p2.channel.aid.name, p2.channel.aid.uuid),
+                            (p1.channel.aid.name, p1.channel.aid.uuid),
+                        )
+                    )
 
                 log.cancel(
                     'test_register_duplicate_name: '
@@ -242,8 +248,14 @@ def test_dup_name_cancel_cascade_escalates_to_hard_kill(
                 # name; doesn't matter which one (registrar will
                 # have last-wins semantics under same-name).
                 async with tractor.wait_for_actor('doggy') as portal:
-                    expected_uids = {p.channel.uid for p in portals}
-                    assert portal.channel.uid in expected_uids
+                    expected_uids = {
+                        (p.channel.aid.name, p.channel.aid.uuid)
+                        for p in portals
+                    }
+                    assert (
+                        (portal.channel.aid.name, portal.channel.aid.uuid)
+                        in expected_uids
+                    )
 
                 # critical section: this MUST return within
                 # `fail_after_s` even when one or more cancel-RPC
