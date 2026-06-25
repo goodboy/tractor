@@ -351,7 +351,7 @@ async def test_cancel_infinite_streamer(
 
     # we support trio's cancellation system
     assert cancel_scope.cancelled_caught
-    assert n.cancelled
+    assert n.cancel_called
 
 
 @pytest.mark.parametrize(
@@ -465,7 +465,7 @@ async def test_some_cancels_all(
         elif isinstance(err, tractor.RemoteActorError):
             assert err.boxed_type == err_type
 
-        assert an.cancelled is True
+        assert an.cancel_called is True
         assert not an._children
     else:
         pytest.fail("Should have gotten a remote assertion error?")
