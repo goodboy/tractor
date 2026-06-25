@@ -345,9 +345,9 @@ class PldRx(Struct):
                         exc=mte,
                         cid=msg.cid,
                         src_uid=(
-                            ipc.chan.uid
+                            (ipc.chan.aid.name, ipc.chan.aid.uuid)
                             if not is_started_send_side
-                            else ipc._actor.uid
+                            else (ipc._actor.aid.name, ipc._actor.aid.uuid)
                         ),
                     )
                     mte._ipc_msg = err_msg
@@ -711,7 +711,7 @@ async def drain_to_final_msg(
                         'Cancelling `MsgStream` drain since '
                         f'{reason}\n'
                         f'\n'
-                        f'<= {ctx.chan.uid}\n'
+                        f'<= {(ctx.chan.aid.name, ctx.chan.aid.uuid)}\n'
                         f'  |_{ctx._nsf}()\n'
                         f'\n'
                         f'=> {ctx._task}\n'
@@ -726,7 +726,7 @@ async def drain_to_final_msg(
                 else:
                     report: str = (
                         'Ignoring "yield" msg during `ctx.result()` drain..\n'
-                        f'<= {ctx.chan.uid}\n'
+                        f'<= {(ctx.chan.aid.name, ctx.chan.aid.uuid)}\n'
                         f'  |_{ctx._nsf}()\n\n'
                         f'=> {ctx._task}\n'
                         f'  |_{ctx._stream}\n\n'

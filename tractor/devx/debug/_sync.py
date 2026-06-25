@@ -92,11 +92,11 @@ async def maybe_wait_for_debugger(
         # tearing down.
         ctx_in_debug: Context|None = Lock.ctx_in_debug
         in_debug: tuple[str, str]|None = (
-            ctx_in_debug.chan.uid
+            (ctx_in_debug.chan.aid.name, ctx_in_debug.chan.aid.uuid)
             if ctx_in_debug
             else None
         )
-        if in_debug == current_actor().uid:
+        if in_debug == (current_actor().aid.name, current_actor().aid.uuid):
             log.debug(
                 msg
                 +

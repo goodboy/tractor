@@ -418,7 +418,7 @@ class MsgStream(trio.abc.Channel):
             # it can't traverse the transport.
             log.warning(
                 f'Stream was already destroyed?\n'
-                f'actor: {ctx.chan.uid}\n'
+                f'actor: {(ctx.chan.aid.name, ctx.chan.aid.uuid)}\n'
                 f'ctx id: {ctx.cid}'
             )
             drained.append(re)
@@ -700,7 +700,7 @@ async def open_stream_from_ctx(
         task: str = trio.lowlevel.current_task().name
         raise RuntimeError(
             'Stream opened after `Context.cancel()` called..?\n'
-            f'task: {actor.uid[0]}:{task}\n'
+            f'task: {actor.aid.name}:{task}\n'
             f'{ctx}'
         )
 
@@ -823,7 +823,7 @@ async def open_stream_from_ctx(
                 except KeyError:
                     log.warning(
                         f'Stream was already destroyed?\n'
-                        f'actor: {ctx.chan.uid}\n'
+                        f'actor: {(ctx.chan.aid.name, ctx.chan.aid.uuid)}\n'
                         f'ctx id: {ctx.cid}'
                     )
 
