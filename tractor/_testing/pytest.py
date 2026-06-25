@@ -491,6 +491,16 @@ def pytest_configure(
         'cases (e.g. the `subint` GIL-starvation class documented '
         'in `ai/conc-anal/subint_sigint_starvation_issue.md`).'
     )
+    config.addinivalue_line(
+        'markers',
+        'has_nested_actors: test spawns nested (>1-level) subactor '
+        'trees.'
+    )
+    config.addinivalue_line(
+        'markers',
+        'trio: legacy mark for tests meant to run under the `trio` '
+        'spawn backend (e.g. `test_local.py`).'
+    )
 
     # `--enable-stackscope`: install SIGUSR1 → trio task-tree
     # dump in pytest itself + propagate to every subactor via
