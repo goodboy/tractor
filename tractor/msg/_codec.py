@@ -371,7 +371,7 @@ class MsgCodec(Struct):
     A IPC msg interchange format lib's encoder + decoder pair.
 
     Pretty much nothing more then delegation to underlying
-    `msgspec.<interchange-protocol>.Encoder/Decoder`s for now.
+    `msgspec.<interchange-protocol>.Encoder/Decoder`\\ s for now.
 
     '''
     _enc: msgpack.Encoder

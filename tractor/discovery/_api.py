@@ -253,6 +253,7 @@ async def query_actor(
     listening @ `regaddr`.
 
     Yields a `tuple` of `(addr, reg_portal)` where,
+
     - `addr` is the transport protocol (socket) address or `None` if
       no entry under that name exists,
     - `reg_portal` is the `Portal` (or `LocalPortal` when the
@@ -439,7 +440,7 @@ async def wait_for_actor(
 ) -> AsyncGenerator[Portal, None]:
     '''
     Wait on at least one peer actor to register `name` with the
-    registrar, yield a `Portal to the first registree.
+    registrar, yield a `Portal` to the first registree.
 
     '''
     actor: Actor = current_actor()

@@ -120,12 +120,12 @@ async def gather_contexts(
     None,
 ]:
     '''
-    Concurrently enter a sequence of async context managers (`acm`s),
+    Concurrently enter a sequence of async context managers (`acm`\\ s),
     each scheduled in a separate `trio.Task` and deliver their
-    unwrapped `yield`-ed values in the same order once all `@acm`s
+    unwrapped `yield`-ed values in the same order once all `@acm`\\ s
     in every task have entered.
 
-    On exit, all `acm`s are subsequently and concurrently exited with
+    On exit, all `acm`\\ s are subsequently and concurrently exited with
     **no order guarantees**.
 
     This function is somewhat similar to a batch of non-blocking

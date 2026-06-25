@@ -321,6 +321,7 @@ def open_crash_handler(
     `typer` users so they can quickly wrap cmd endpoints which get
     automatically wrapped to use the runtime's `debug_mode: bool`
     AND `pdbp.pm()` around any code that is PRE-runtime entry
+
     - any sync code which runs BEFORE the main call to
       `trio.run()`.
 
