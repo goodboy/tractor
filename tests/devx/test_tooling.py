@@ -92,7 +92,7 @@ def test_shield_pause(
     expect(
         child,
         # end-of-tree delimiter
-        "end-of-\('root'",
+        r"end-of-\('root'",
     )
     _before: str = assert_before(
         child,
@@ -157,7 +157,7 @@ def test_shield_pause(
             expect(
                 child,
                 # end-of-subactor's-tree delimiter
-                "end-of-\('hanger'",
+                r"end-of-\('hanger'",
             )
             _before: str = assert_before(
                 child,
