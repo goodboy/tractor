@@ -22,7 +22,7 @@ async def main():
         portal = await n.run_in_actor(
             breakpoint_forever,
         )
-        await portal.result()
+        await portal.wait_for_result()
 
 
 if __name__ == '__main__':

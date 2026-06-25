@@ -17,11 +17,6 @@ permissions:
   pages: write
   id-token: write
 
-# never run >1 pages deploy at once
-concurrency:
-  group: 'pages'
-  cancel-in-progress: true
-
 jobs:
   build:
     name: 'sphinx build'
@@ -52,6 +47,12 @@ jobs:
     name: 'deploy to gh-pages'
     if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
     needs: build
+    # serialize deploys but NEVER cancel an in-flight one
+    # mid-upload; queue the next instead (scoped to this job so
+    # PR builds can't cancel a production deploy).
+    concurrency:
+      group: 'pages'
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment:
       name: github-pages

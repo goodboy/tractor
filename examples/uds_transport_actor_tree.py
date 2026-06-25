@@ -4,9 +4,9 @@ Demonstrate an actor tree which talks over unix-domain-socket
 `enable_transports=['uds']` when opening the root and every
 subactor inherits the preference.
 
-The child's channel address is a filesystem socket path (no
-TCP port in sight!) and, as a kernel-provided bonus, the
-peer's pid is exchanged for free via `SO_PEERCRED`.
+Every channel address is a filesystem socket path (no TCP port
+in sight!) and, as a kernel-provided bonus, the peer's pid is
+exchanged for free via `SO_PEERCRED`.
 
 '''
 import os
@@ -38,12 +38,17 @@ async def main() -> None:
         # filesystem socket path, NOT a (host, port) pair!
         raddr = portal.chan.raddr
         assert raddr.proto_key == 'uds'
+        # NOTE, `.sockpath` is the *shared listener* socket file
+        # (named for the root registrar) this channel rode in
+        # on, NOT a per-child path; the child-specific identity
+        # we get for free is the kernel-reported peer pid (via
+        # `SO_PEERCRED`).
         print(
             f'portal chan tpt proto: {raddr.proto_key!r}\n'
-            f'portal chan sock file: {raddr.sockpath}\n'
+            f'listener sock file: {raddr.sockpath}\n'
             f'kernel-reported peer pid: {raddr.maybe_pid}\n'
         )
-        # ask the child for its own bind addr: also a
+        # ask the child for its OWN distinct bind addr: another
         # socket-file path under the runtime dir.
         print(f'child says: {await portal.run(report_addr)}')
         await portal.cancel_actor()

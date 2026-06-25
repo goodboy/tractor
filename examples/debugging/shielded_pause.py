@@ -78,7 +78,7 @@ async def main():
         portal: tractor.Portal = await n.run_in_actor(
             cancelled_before_pause,
         )
-        await portal.result()
+        await portal.wait_for_result()
 
         # ensure the same works in the root actor!
         await pm_on_cancelled()

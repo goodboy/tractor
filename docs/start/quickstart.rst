@@ -141,7 +141,7 @@ breakfast - run this while monitoring your process tree::
 
    Every subactor (best-effort, via the optional
    ``setproctitle`` dep) re-titles its OS process like
-   ``_subactor[worker_0@<uuid>]``, so ``pstree``/``htop``/
+   ``_subactor[worker_0@<pid>]``, so ``pstree``/``htop``/
    ``pgrep -f`` can tell your actors apart at a glance.
 
 You'll see something like::

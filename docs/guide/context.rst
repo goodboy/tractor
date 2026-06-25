@@ -302,9 +302,9 @@ Overruns and backpressure
 
 Stream msgs land in a bounded per-context buffer on the receiver
 side. A sender that outpaces a non-consuming receiver *overruns*
-it and the runtime raises :exc:`tractor.StreamOverrun` (also a
-:exc:`trio.TooSlowError`) instead of buffering without bound — SC
-discipline applies to memory too.
+it and the runtime raises ``StreamOverrun`` (from
+``tractor._exceptions``; also a :exc:`trio.TooSlowError`) instead
+of buffering without bound — SC discipline applies to memory too.
 
 Your knobs:
 

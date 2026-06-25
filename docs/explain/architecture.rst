@@ -192,13 +192,14 @@ spawn backend, selected with the ``start_method`` kwarg to
    names (forkserver is posix-only). Mostly interesting for
    ecosystem compat and start-up-latency tuning.
 
-``'subint'`` (experimental, py3.14+)
-   Each actor runs as a `PEP 734`_ sub-interpreter
-   (``concurrent.interpreters``) driven on its own OS thread
-   *inside the parent process*: interpreter-level
-   shared-nothing isolation with much faster start-up. Yes,
-   this bends the one-actor-one-process rule; the rest of the
-   model is unchanged.
+``'subint'`` (in development, py3.14+)
+   On the roadmap (not yet selectable via ``start_method`` on
+   this release): run each actor as a `PEP 734`_
+   sub-interpreter (``concurrent.interpreters``) driven on its
+   own OS thread *inside the parent process* — interpreter-level
+   shared-nothing isolation with much faster start-up. Yes, this
+   bends the one-actor-one-process rule; the rest of the model
+   is unchanged.
 
 The ``TRACTOR_SPAWN_METHOD`` env-var beats any caller-passed
 ``start_method``, so you can swap backends under an unmodified
