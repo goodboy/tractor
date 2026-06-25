@@ -398,7 +398,7 @@ async def handle_stream_from_peer(
         uid,
         None,
     )
-    if event:
+    if event is not None:
         con_status_steps += (
             ' -> Waking subactor spawn waiters: '
             f'{event.statistics().tasks_waiting}\n'
