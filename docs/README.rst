@@ -110,6 +110,11 @@ Alongside all this we ofc offer "releases" on PyPi::
 Just note that YMMV since the main git branch is often much further
 ahead then any latest release.
 
+Hacking on the docs themselves? The build + live-preview one-liners
+(incl. nix-shell specifics) are collected in `notes_to_self/howtodocs.md
+<https://github.com/goodboy/tractor/blob/main/notes_to_self/howtodocs.md>`_,
+and rendered as the "Building these docs" section of our dev-tips guide.
+
 
 Example codez
 -------------
