@@ -72,7 +72,12 @@ def get_rando_addr(
             #   `test_tpt_bind_addrs::bind-subset-reg`),
             # - across parallel pytest sessions, the pid bias
             #   makes coincident port choices unlikely.
-            port: int = 1000 + (
+            # NB. floor at 1024, NOT 1000: ports <1024 are PRIVILEGED
+            # on linux (`net.ipv4.ip_unprivileged_port_start = 1024`),
+            # so a non-root `.bind()` on one raises `PermissionError`.
+            # The old `1000 +` floor could roll 1000-1023 -> flaky
+            # `[Errno 13] Permission denied` registry-listener binds.
+            port: int = 1024 + (
                 random.randint(0, 8999) + os.getpid()
             ) % 9000
             testrun_reg_addr = (
