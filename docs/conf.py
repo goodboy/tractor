@@ -99,9 +99,12 @@ html_static_path = ['_static']
 html_css_files = ['css/custom.css']
 html_show_sourcelink = False
 html_theme_options = {
+    # theme-adaptive navbar logo: faces transparent, linework
+    # near-black on light / near-white on dark (pydata swaps by
+    # the active theme). Matches the landing hero's wireframe.
     'logo': {
-        'image_light': '_static/tractor_logo_side.svg',
-        'image_dark': '_static/tractor_logo_side.svg',
+        'image_light': '_static/tractor_logo_nav_light.svg',
+        'image_dark': '_static/tractor_logo_nav_dark.svg',
         'alt_text': 'tractor',
     },
     'github_url': 'https://github.com/goodboy/tractor',

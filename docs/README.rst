@@ -709,6 +709,6 @@ channel`_!
     :target: https://tractor.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
 
-.. |logo| image:: _static/tractor_logo_side.svg
+.. |logo| image:: _static/tractor_logo_wire.svg
     :width: 250
     :align: middle
