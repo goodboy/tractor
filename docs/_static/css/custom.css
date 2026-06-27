@@ -68,8 +68,15 @@ aside.sidebar.margin > p.sidebar-title {
   font-size: 0.9rem;
   margin-bottom: 0.3rem;
 }
-/* landing page hero logo sizing */
-img.hero-logo {
-  max-width: 360px;
+/* landing-page hero logo (inline svg): the linework uses
+ * `fill: currentColor` so it inherits the theme text colour
+ * (auto-flips light<->dark), and the faces are transparent so
+ * the page background shows through. */
+svg.hero-logo {
+  display: block;
   width: 60%;
+  max-width: 360px;
+  height: auto;
+  margin: 0 auto 1.5rem;
+  color: var(--pst-color-text-base);
 }

@@ -1,7 +1,5 @@
-.. image:: _static/tractor_logo_side.svg
-   :class: hero-logo
-   :align: center
-   :alt: tractor
+.. raw:: html
+   :file: _static/tractor_logo_hero.html
 
 tractor
 =======
