@@ -74,9 +74,112 @@ aside.sidebar.margin > p.sidebar-title {
  * the page background shows through. */
 svg.hero-logo {
   display: block;
-  width: 60%;
   max-width: 360px;
   height: auto;
-  margin: 0 auto 1.5rem;
   color: var(--pst-color-text-base);
+}
+/* 3-up landing hero row: name | logo | tagline, with a centered
+ * sub-tagline beneath. */
+.hero-row {
+  display: flex;
+  align-items: center;
+  /* left-anchored single row; tighter gap so the logo sits over
+   * the sub-line and the tagline over the prose below it (stack
+   * only on mobile, via the media query). */
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: clamp(0.5rem, 2vw, 1.5rem);
+  margin: 0 0 0.25rem;
+}
+.hero-row svg.hero-logo {
+  /* override the stacked-hero sizing for the inline row */
+  width: clamp(240px, 34vw, 360px);
+  margin: 0;
+}
+.hero-row .hero-tag {
+  margin: 0;
+  /* keep it on a single line beside the logo */
+  max-width: none;
+  white-space: nowrap;
+  font-size: clamp(1rem, 2.1vw, 1.4rem);
+  font-weight: 400;
+  line-height: 1.15;
+  color: var(--pst-color-text-base);
+}
+.hero-row .hero-tag {
+  min-width: 0;
+}
+.hero-sub {
+  /* wrap at the prose width (not the logo's), with a line of
+   * space before the prose section below. */
+  margin: 0 0 4rem;
+  max-width: none;
+  text-align: left;
+  font-size: 1.05rem;
+  color: var(--pst-color-text-muted);
+}
+/* the page carries a single rst <h1> ("tractor") for semantics
+ * + SEO, but the visual title is the hero — so hide the doc
+ * title accessibly (still read by screen readers + search). */
+#tractor > h1 {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* smaller section headings on the landing only */
+#sixty-seconds-of-why > :is(h1, h2),
+#dig-in > :is(h1, h2),
+#features > :is(h1, h2),
+#where-do-i-start > :is(h1, h2) {
+  font-size: 1.75rem;
+}
+/* extra breathing room before the first landing section */
+#sixty-seconds-of-why {
+  margin-top: 4rem;
+}
+/* pull the section's `tl;dr` margin-note up so its top edge is
+ * level with the heading (default floats it beside the body). */
+#sixty-seconds-of-why aside.margin {
+  margin-top: -3.75rem;
+}
+/* stack the 3-up hero only on real mobile */
+@media (max-width: 640px) {
+  .hero-row {
+    flex-direction: column;
+  }
+  .hero-row .hero-tag {
+    max-width: none;
+  }
+}
+/* navbar brand: the "distributed SC" tagline next to the logo
+ * (the logo `text` value), kept small + muted like a sub-line. */
+.navbar-brand .title {
+  /* match the centered nav tabs (Bootstrap leaves the nav-link
+   * size/weight vars empty → ~1rem / normal); `inline-block` is
+   * the real underline fix — it stops the parent brand-link's
+   * :hover underline from propagating onto the text (a block
+   * child's `text-decoration:none` can't cancel an ancestor's
+   * underline). */
+  display: inline-block;
+  font-size: 1rem;
+  font-weight: 400;
+  text-decoration: none;
+}
+/* it's a brand mark, not a content link — never underline the
+ * brand text (base / hover / focus). */
+.navbar-brand,
+.navbar-brand:hover,
+.navbar-brand:focus,
+.navbar-brand:visited:hover,
+.navbar-brand .title,
+.navbar-brand:hover .title {
+  text-decoration: none !important;
+  border-bottom: 0 !important;
 }

@@ -106,6 +106,9 @@ html_theme_options = {
         'image_light': '_static/tractor_logo_nav_light.svg',
         'image_dark': '_static/tractor_logo_nav_dark.svg',
         'alt_text': 'tractor',
+        # text shown to the right of the navbar logo (à la
+        # polars).
+        'text': 'tractor',
     },
     'github_url': 'https://github.com/goodboy/tractor',
     'navbar_align': 'content',

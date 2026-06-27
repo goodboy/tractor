@@ -1,22 +1,22 @@
-.. raw:: html
-   :file: _static/tractor_logo_hero.html
-
 tractor
 =======
-**distributed structured concurrency**: a
-multi-processing runtime built on (and shaped
-entirely like) trio_.
+
+.. raw:: html
+   :file: _static/tractor_hero.html
 
 ``tractor`` provides parallelism via ``trio``
-*"actors"*: independent Python **processes** (ie.
-*non-shared-memory threads*) each running a ``trio``
-task tree, all composed into a *distributed
-supervision tree* with end-to-end `structured
-concurrency`_ (SC) — spawning, cancellation, error
-propagation and teardown that work **across
-processes** (and hosts) exactly the way they work
-across tasks.
+*"actors"*:
 
+- independent Python **processes** each running a
+  ``trio`` task tree,
+- all composed into a *distributed supervision tree*
+  with end-to-end SC_,
+- spawning, cancellation, error propagation and
+  teardown that work **across processes** (and hosts)
+  exactly the way they work across tasks.
+
+Sixty seconds of why
+--------------------
 .. margin:: tl;dr
 
    It's **just** ``trio``, but with nurseries that
@@ -24,8 +24,6 @@ across tasks.
    you can read a ``trio`` program you can read a
    ``tractor`` one — that's the whole pitch.
 
-Sixty seconds of why
---------------------
 Spawn one actor per core, crash the root on purpose,
 and watch the runtime contain the blast: errors
 propagate, *every* child is reaped, zero zombies —
@@ -140,7 +138,6 @@ then come back and hit :doc:`start/quickstart`.
    Project <project/index>
 
 .. _trio: https://github.com/python-trio/trio
-.. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _SC: https://en.wikipedia.org/wiki/Structured_concurrency
 .. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
 .. _trio docs: https://trio.readthedocs.io/en/latest/
