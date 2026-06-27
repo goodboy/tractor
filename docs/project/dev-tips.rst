@@ -156,6 +156,22 @@ every save::
         --group docs sphinx-autobuild docs docs/_build/html
     # then open http://127.0.0.1:8000
 
+**Share on your LAN**: bind the server to all interfaces
+(``--host 0.0.0.0``) instead of localhost, then hand a peer on
+your subnet ``http://<your-lan-ip>:8000``::
+
+    nix develop .#docs -c uv run --with sphinx-autobuild \
+        --group docs sphinx-autobuild docs docs/_build/html \
+        --host 0.0.0.0 --port 8000
+
+or statically serve an already-built tree (no rebuild-on-save)::
+
+    python -m http.server -d docs/_build/html --bind 0.0.0.0 8000
+
+``hostname -I`` prints the IP to share; note it's an
+unauthenticated server bound to every interface, so keep it to a
+trusted LAN.
+
 How the diagrams resolve,
 
 - ``.d2`` sources live in ``docs/diagrams/``; their rendered

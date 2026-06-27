@@ -42,6 +42,36 @@ nix develop .#docs -c uv run --with sphinx-autobuild \
 # then open http://127.0.0.1:8000
 ```
 
+## Share it on your LAN
+
+To let someone on your subnet view the docs, bind the server to
+all interfaces (`--host 0.0.0.0`) instead of just localhost, then
+hand them `http://<your-lan-ip>:8000`.
+
+Live-reload, LAN-visible:
+
+```
+nix develop .#docs -c uv run --with sphinx-autobuild --group docs \
+    sphinx-autobuild docs docs/_build/html --host 0.0.0.0 --port 8000
+```
+
+Or just statically serve an already-built `docs/_build/html` (no
+rebuild-on-save):
+
+```
+python -m http.server -d docs/_build/html --bind 0.0.0.0 8000
+```
+
+Find the IP to give them (first one is usually your LAN iface):
+
+```
+hostname -I
+```
+
+> Heads-up: this is an unauthenticated static server bound to
+> every interface — fine on a trusted LAN, but don't leave it
+> running on an untrusted/public network.
+
 ## Diagrams (`d2`)
 
 - `.d2` sources live in `docs/diagrams/`; their rendered SVGs are
