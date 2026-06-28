@@ -1,4 +1,4 @@
-|logo| ``tractor``: distributed structurred concurrency
+|logo| ``tractor``: distributed structured concurrency
 
 ``tractor`` is a `structured concurrency`_ (SC), multi-processing_ runtime built on trio_.
 
@@ -57,6 +57,7 @@ Features
   `discovery`_ sys with plans to support multiple `modern protocol`_
   approaches.
 - Various ``trio`` extension APIs via ``tractor.trionics`` such as,
+
   - task fan-out `broadcasting`_,
   - multi-task-single-resource-caching and fan-out-to-multi
     ``__aenter__()`` APIs for ``@acm`` functions,
@@ -98,7 +99,7 @@ the code base::
 
     # but @goodboy prefers the more explicit (and shell agnostic)
     # https://docs.astral.sh/uv/configuration/environment/#uv_project_environment
-    UV_PROJECT_ENVIRONMENT="tractor_py313
+    UV_PROJECT_ENVIRONMENT="tractor_py313"
 
     # hint hint, enter @goodboy's fave shell B)
     uv run --dev xonsh
@@ -118,84 +119,24 @@ and rendered as the "Building these docs" section of our dev-tips guide.
 
 Example codez
 -------------
-In ``tractor``'s (very lacking) documention we prefer to point to
-example scripts in the repo over duplicating them in docs, but with
-that in mind here are some definitive snippets to try and hook you
-into digging deeper.
-
-
-Run a func in a process
-***********************
-Use ``trio``'s style of focussing on *tasks as functions*:
+We prefer to point you at the runnable scripts under ``examples/``
+- each is CI-run and ``literalinclude``-d straight into the docs, so
+what you read there is what actually runs - rather than duplicate a
+pile of them here. But here's the one-minute pitch: spawn a subactor
+per core, open a ``Context`` into each, then crash the root *on
+purpose* and watch the runtime reap the whole tree - zero zombies,
+guaranteed.
 
 .. code:: python
 
-    """
-    Run with a process monitor from a terminal using::
-
-        $TERM -e watch -n 0.1  "pstree -a $$" \
-            & python examples/parallelism/single_func.py \
-            && kill $!
-
-    """
-    import os
-
-    import tractor
-    import trio
-
-
-    async def burn_cpu():
-
-        pid = os.getpid()
-
-        # burn a core @ ~ 50kHz
-        for _ in range(50000):
-            await trio.sleep(1/50000/50)
-
-        return os.getpid()
-
-
-    async def main():
-
-        async with tractor.open_nursery() as n:
-
-            portal = await n.run_in_actor(burn_cpu)
-
-            #  burn rubber in the parent too
-            await burn_cpu()
-
-            # wait on result from target function
-            pid = await portal.result()
-
-        # end of nursery block
-        print(f"Collected subproc {pid}")
-
-
-    if __name__ == '__main__':
-        trio.run(main)
-
-
-This runs ``burn_cpu()`` in a new process and reaps it on completion
-of the nursery block.
-
-If you only need to run a sync function and retreive a single result, you
-might want to check out `trio-parallel`_.
-
-
-Zombie safe: self-destruct a process tree
-*****************************************
-``tractor`` tries to protect you from zombies, no matter what.
-
-.. code:: python
-
-    """
+    '''
     Run with a process monitor from a terminal using::
 
         $TERM -e watch -n 0.1  "pstree -a $$" \
             & python examples/parallelism/we_are_processes.py \
             && kill $!
 
-    """
+    '''
     from multiprocessing import cpu_count
     import os
 
@@ -203,27 +144,70 @@ Zombie safe: self-destruct a process tree
     import trio
 
 
-    async def target():
-        print(
-            f"Yo, i'm '{tractor.current_actor().name}' "
-            f"running in pid {os.getpid()}"
-        )
-
+    @tractor.context
+    async def endpoint(
+        ctx: tractor.Context,
+    ):
+        actor_name: str = tractor.current_actor().name
+        pid: int = os.getpid()
+        await ctx.started((actor_name, pid))
         await trio.sleep_forever()
 
 
+    async def spawn_and_open_ep(
+        an: tractor.ActorNursery,
+        i: int,
+    ) -> None:
+        '''
+        Spawn a subactor, start a remote `endpoint()`-task in it.
+
+        '''
+        ptl: tractor.Portal = await an.start_actor(
+            name=f'worker_{i}',
+            enable_modules=[__name__],
+        )
+        ctx: tractor.Context
+        async with ptl.open_context(endpoint) as (
+            ctx,
+            (sub_name, sub_pid),
+        ):
+            print(
+                f'Started ep-task in subactor,\n'
+                f'{i}::{sub_name!r}@{sub_pid}\n'
+            )
+            await ctx.wait_for_result()
+
+
     async def main():
+        '''
+        Spawn a subactor-per-CPU then self-destruct the cluster.
 
-        async with tractor.open_nursery() as n:
-
+        '''
+        tn: trio.Nursery
+        an: tractor.ActorNursery
+        async with (
+            tractor.open_nursery(
+                # XXX coming soon!
+                # https://github.com/goodboy/tractor/pull/463
+                # start_method='main_thread_forkserver',
+            ) as an,
+            # spawn subs concurrently (in bg `trio.Task`s) so each
+            # actor's cold `import tractor` (~0.4s, see #470) overlaps
+            # instead of stacking; once forkserver (#463) lands, spawn
+            # is cheap enough to just loop sequentially.
+            trio.open_nursery() as tn,
+        ):
             for i in range(cpu_count()):
-                await n.run_in_actor(target, name=f'worker_{i}')
-
-            print('This process tree will self-destruct in 1 sec...')
-            await trio.sleep(1)
-
-            # raise an error in root actor/process and trigger
-            # reaping of all minions
+                tn.start_soon(
+                    spawn_and_open_ep,
+                    an,
+                    i,
+                )
+            destruct_in: int = 2
+            print(
+                f'This tree will self-destruct in {destruct_in}s..\n'
+            )
+            await trio.sleep(destruct_in)
             raise Exception('Self Destructed')
 
 
@@ -234,343 +218,16 @@ Zombie safe: self-destruct a process tree
             print('Zombies Contained')
 
 
-If you can create zombie child processes (without using a system signal)
-it **is a bug**.
-
-
-"Native" multi-process debugging
-********************************
-Using the magic of `pdbp`_ and our internal IPC, we've
-been able to create a native feeling debugging experience for
-any (sub-)process in your ``tractor`` tree.
-
-.. code:: python
-
-    from os import getpid
-
-    import tractor
-    import trio
-
-
-    async def breakpoint_forever():
-        "Indefinitely re-enter debugger in child actor."
-        while True:
-            yield 'yo'
-            await tractor.breakpoint()
-
-
-    async def name_error():
-        "Raise a ``NameError``"
-        getattr(doggypants)
-
-
-    async def main():
-        """Test breakpoint in a streaming actor.
-        """
-        async with tractor.open_nursery(
-            debug_mode=True,
-            loglevel='error',
-        ) as n:
-
-            p0 = await n.start_actor('bp_forever', enable_modules=[__name__])
-            p1 = await n.start_actor('name_error', enable_modules=[__name__])
-
-            # retreive results
-            stream = await p0.run(breakpoint_forever)
-            await p1.run(name_error)
-
-
-    if __name__ == '__main__':
-        trio.run(main)
-
-
-You can run this with::
-
-    >>> python examples/debugging/multi_daemon_subactors.py
-
-And, yes, there's a built-in crash handling mode B)
-
-We're hoping to add a respawn-from-repl system soon!
-
-
-SC compatible bi-directional streaming
-**************************************
-Yes, you saw it here first; we provide 2-way streams
-with reliable, transitive setup/teardown semantics.
-
-Our nascent api is remniscent of ``trio.Nursery.start()``
-style invocation:
-
-.. code:: python
-
-    import trio
-    import tractor
-
-
-    @tractor.context
-    async def simple_rpc(
-
-        ctx: tractor.Context,
-        data: int,
-
-    ) -> None:
-        '''Test a small ping-pong 2-way streaming server.
-
-        '''
-        # signal to parent that we're up much like
-        # ``trio_typing.TaskStatus.started()``
-        await ctx.started(data + 1)
-
-        async with ctx.open_stream() as stream:
-
-            count = 0
-            async for msg in stream:
-
-                assert msg == 'ping'
-                await stream.send('pong')
-                count += 1
-
-            else:
-                assert count == 10
-
-
-    async def main() -> None:
-
-        async with tractor.open_nursery() as n:
-
-            portal = await n.start_actor(
-                'rpc_server',
-                enable_modules=[__name__],
-            )
-
-            # XXX: this syntax requires py3.9
-            async with (
-
-                portal.open_context(
-                    simple_rpc,
-                    data=10,
-                ) as (ctx, sent),
-
-                ctx.open_stream() as stream,
-            ):
-
-                assert sent == 11
-
-                count = 0
-                # receive msgs using async for style
-                await stream.send('ping')
-
-                async for msg in stream:
-                    assert msg == 'pong'
-                    await stream.send('ping')
-                    count += 1
-
-                    if count >= 9:
-                        break
-
-
-            # explicitly teardown the daemon-actor
-            await portal.cancel_actor()
-
-
-    if __name__ == '__main__':
-        trio.run(main)
-
-
-See original proposal and discussion in `#53`_ as well
-as follow up improvements in `#223`_ that we'd love to
-hear your thoughts on!
-
-.. _#53: https://github.com/goodboy/tractor/issues/53
-.. _#223: https://github.com/goodboy/tractor/issues/223
-
-
-Worker poolz are easy peasy
-***************************
-The initial ask from most new users is *"how do I make a worker
-pool thing?"*.
-
-``tractor`` is built to handle any SC (structured concurrent) process
-tree you can imagine; a "worker pool" pattern is a trivial special
-case.
-
-We have a `full worker pool re-implementation`_ of the std-lib's
-``concurrent.futures.ProcessPoolExecutor`` example for reference.
-
-You can run it like so (from this dir) to see the process tree in
-real time::
-
-    $TERM -e watch -n 0.1  "pstree -a $$" \
-        & python examples/parallelism/concurrent_actors_primes.py \
-        && kill $!
-
-This uses no extra threads, fancy semaphores or futures; all we need
-is ``tractor``'s IPC!
-
-"Infected ``asyncio``" mode
-***************************
-Have a bunch of ``asyncio`` code you want to force to be SC at the process level?
-
-Check out our experimental system for `guest`_-mode controlled
-``asyncio`` actors:
-
-.. code:: python
-
-    import asyncio
-    from statistics import mean
-    import time
-
-    import trio
-    import tractor
-
-
-    async def aio_echo_server(
-        chan: tractor.to_asyncio.LinkedTaskChannel,
-    ) -> None:
-
-        # a first message must be sent **from** this ``asyncio``
-        # task or the ``trio`` side will never unblock from
-        # ``tractor.to_asyncio.open_channel_from():``
-        chan.started_nowait('start')
-
-        while True:
-            # echo the msg back
-            chan.send_nowait(await chan.get())
-            await asyncio.sleep(0)
-
-
-    @tractor.context
-    async def trio_to_aio_echo_server(
-        ctx: tractor.Context,
-    ):
-        # this will block until the ``asyncio`` task sends a "first"
-        # message.
-        async with tractor.to_asyncio.open_channel_from(
-            aio_echo_server,
-        ) as (chan, first):
-
-            assert first == 'start'
-            await ctx.started(first)
-
-            async with ctx.open_stream() as stream:
-
-                async for msg in stream:
-                    await chan.send(msg)
-
-                    out = await chan.receive()
-                    # echo back to parent actor-task
-                    await stream.send(out)
-
-
-    async def main():
-
-        async with tractor.open_nursery() as n:
-            p = await n.start_actor(
-                'aio_server',
-                enable_modules=[__name__],
-                infect_asyncio=True,
-            )
-            async with p.open_context(
-                trio_to_aio_echo_server,
-            ) as (ctx, first):
-
-                assert first == 'start'
-
-                count = 0
-                async with ctx.open_stream() as stream:
-
-                    delays = []
-                    send = time.time()
-
-                    await stream.send(count)
-                    async for msg in stream:
-                        recv = time.time()
-                        delays.append(recv - send)
-                        assert msg == count
-                        count += 1
-                        send = time.time()
-                        await stream.send(count)
-
-                        if count >= 1e3:
-                            break
-
-            print(f'mean round trip rate (Hz): {1/mean(delays)}')
-            await p.cancel_actor()
-
-
-    if __name__ == '__main__':
-        trio.run(main)
-
-
-Yes, we spawn a python process, run ``asyncio``, start ``trio`` on the
-``asyncio`` loop, then send commands to the ``trio`` scheduled tasks to
-tell ``asyncio`` tasks what to do XD
-
-The ``asyncio``-side task receives a single
-``chan: LinkedTaskChannel`` handle providing a ``trio``-like
-API: ``.started_nowait()``, ``.send_nowait()``, ``.get()``
-and more. Feel free to sling your opinion in `#273`_!
-
-
-.. _#273: https://github.com/goodboy/tractor/issues/273
-
-
-Higher level "cluster" APIs
-***************************
-To be extra terse the ``tractor`` devs have started hacking some "higher
-level" APIs for managing actor trees/clusters. These interfaces should
-generally be condsidered provisional for now but we encourage you to try
-them and provide feedback. Here's a new API that let's you quickly
-spawn a flat cluster:
-
-.. code:: python
-
-    import trio
-    import tractor
-
-
-    async def sleepy_jane():
-        uid = tractor.current_actor().uid
-        print(f'Yo i am actor {uid}')
-        await trio.sleep_forever()
-
-
-    async def main():
-        '''
-        Spawn a flat actor cluster, with one process per
-        detected core.
-
-        '''
-        portal_map: dict[str, tractor.Portal]
-        results: dict[str, str]
-
-        # look at this hip new syntax!
-        async with (
-
-            tractor.open_actor_cluster(
-                modules=[__name__]
-            ) as portal_map,
-
-            trio.open_nursery() as n,
-        ):
-
-            for (name, portal) in portal_map.items():
-                n.start_soon(portal.run, sleepy_jane)
-
-            await trio.sleep(0.5)
-
-            # kill the cluster with a cancel
-            raise KeyboardInterrupt
-
-
-    if __name__ == '__main__':
-        try:
-            trio.run(main)
-        except KeyboardInterrupt:
-            pass
-
-
-.. _full worker pool re-implementation: https://github.com/goodboy/tractor/blob/master/examples/parallelism/concurrent_actors_primes.py
+If you can create zombie child processes (without using a system
+signal) it **is a bug** - please report it!
+
+Want more? Our docs walk the flagship multi-process debugger,
+bidirectional streaming over a ``Context``, cancellation, discovery,
+"infected ``asyncio``", typed messaging and worker-pool / cluster
+patterns - each backed by a runnable script:
+
+- docs: https://goodboy.github.io/tractor/
+- examples: https://github.com/goodboy/tractor/tree/main/examples
 
 
 Under the hood
