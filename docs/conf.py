@@ -41,6 +41,10 @@ extensions = [
     'sphinx.ext.intersphinx',
     'sphinx.ext.viewcode',
     'sphinx.ext.todo',
+    # emit a `.nojekyll` so GitHub Pages serves the `_static/`
+    # + `_images/` dirs (Jekyll would otherwise drop `_`-prefixed
+    # paths and break all styling/assets).
+    'sphinx.ext.githubpages',
     'sphinx_design',
     'sphinx_copybutton',
     'sphinxext.opengraph',
@@ -93,6 +97,9 @@ intersphinx_mapping = {
 
 html_theme = 'pydata_sphinx_theme'
 html_title = 'tractor'
+# canonical site root (GitHub Pages); drives <link rel=canonical>,
+# og:url + any future sitemap. Update if a custom domain is added.
+html_baseurl = 'https://goodboy.github.io/tractor/'
 html_logo = '_static/tractor_logo_side.svg'
 html_favicon = '_static/tractor_logo_side.svg'
 html_static_path = ['_static']
