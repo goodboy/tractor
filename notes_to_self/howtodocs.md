@@ -38,9 +38,14 @@ Rebuilds + refreshes the browser on every save:
 
 ```
 nix develop .#docs -c uv run --with sphinx-autobuild \
-    --group docs sphinx-autobuild docs docs/_build/html
+    --group docs sphinx-autobuild docs docs/_build/html \
+    --watch examples
 # then open http://127.0.0.1:8000
 ```
+
+The `--watch examples` is what makes edits to ``literalinclude``-d
+example scripts live-reload too: those files live *outside* `docs/`,
+so autobuild won't notice them changing without it.
 
 ## Share it on your LAN
 
@@ -52,7 +57,8 @@ Live-reload, LAN-visible:
 
 ```
 nix develop .#docs -c uv run --with sphinx-autobuild --group docs \
-    sphinx-autobuild docs docs/_build/html --host 0.0.0.0 --port 8000
+    sphinx-autobuild docs docs/_build/html --host 0.0.0.0 --port 8000 \
+    --watch examples
 ```
 
 Or just statically serve an already-built `docs/_build/html` (no

@@ -24,8 +24,10 @@ Sixty seconds of why
    you can read a ``trio`` program you can read a
    ``tractor`` one — that's the whole pitch.
 
-Spawn one actor per core, crash the root on purpose,
-and watch the runtime contain the blast: errors
+Spawn one actor per core, open a ``Context`` into
+each — the child ``started()``-handshakes its name
+and pid back — then crash the root on purpose and
+watch the runtime contain the blast: errors
 propagate, *every* child is reaped, zero zombies —
 guaranteed (it's a bug otherwise).
 
