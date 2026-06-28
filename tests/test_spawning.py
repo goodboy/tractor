@@ -65,7 +65,7 @@ async def spawn(
 
             assert len(an._children) == 1
             assert (
-                portal.channel.uid
+                portal.channel.aid.uid
                 in
                 tractor.current_actor().ipc_server._peers
             )

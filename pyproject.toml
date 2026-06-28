@@ -279,4 +279,25 @@ log_cli = false
 
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-console_output_style
 console_output_style = 'progress'
+
+# `pexpect` (used only by the `devx` debugger REPL tests) allocates
+# its child pty via stdlib `pty.py:os.forkpty()`, which CPython
+# 3.12+ flags as unsafe in a multi-threaded process. This is NOT
+# ours to fix at source — we never call `forkpty()`; pexpect does.
+# UPSTREAM to actually resolve: pexpect would need to avoid
+# `forkpty()` under multithreading (or perform the pty spawn before
+# any thread starts); until then this single third-party warning is
+# the one we filter rather than fix.
+filterwarnings = [
+  'ignore:This process \(pid=\d+\) is multi-threaded, use of forkpty\(\):DeprecationWarning',
+
+  # `tests/test_legacy_one_way_streaming.py` exists *specifically*
+  # to exercise the DEPRECATED `@tractor.stream` async-gen API, so
+  # its decoration-time `DeprecationWarning` is expected — and since
+  # it fires at import (module-level decorators) it can't be caught
+  # by a per-test mark, hence this test-wide ini filter. Real
+  # library users still see the warning; drop this once the legacy
+  # `@tractor.stream` / `Portal.open_stream_from()` API is removed.
+  'ignore:`@tractor.stream decorated funcs:DeprecationWarning',
+]
 # ------ tool.pytest ------

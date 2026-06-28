@@ -62,7 +62,10 @@ def enc_nsp(obj: Any) -> Any:
     actor: Actor = tractor.current_actor(
         err_on_no_runtime=False,
     )
-    uid: tuple[str, str]|None = None if not actor else actor.uid
+    uid: tuple[str, str]|None = (
+        None if not actor
+        else actor.aid.uid
+    )
     print(f'{uid} ENC HOOK')
 
     match obj:
@@ -95,7 +98,10 @@ def dec_nsp(
     actor: Actor = tractor.current_actor(
         err_on_no_runtime=False,
     )
-    uid: tuple[str, str]|None = None if not actor else actor.uid
+    uid: tuple[str, str]|None = (
+        None if not actor
+        else actor.aid.uid
+    )
     print(
         f'{uid}\n'
         'CUSTOM DECODE\n'
@@ -419,7 +425,8 @@ async def send_back_values(
     and ensure we can round trip a func ref with our parent.
 
     '''
-    uid: tuple = tractor.current_actor().uid
+    _aid = tractor.current_actor().aid
+    uid: tuple = _aid.uid
 
     # init state in sub-actor should be default
     chk_codec_applied(

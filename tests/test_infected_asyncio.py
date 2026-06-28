@@ -956,7 +956,7 @@ async def manage_file(
     '''
 
     tmp_path: Path = Path(tmp_path_str)
-    tmp_file: Path = tmp_path / f'{" ".join(ctx._actor.uid)}.file'
+    tmp_file: Path = tmp_path / f'{" ".join(ctx._actor.aid.uid)}.file'
 
     # create a the tmp file and tell the parent where it's at
     assert not tmp_file.is_file()
@@ -1180,7 +1180,7 @@ def test_sigint_closes_lifetime_stack(
                             ):
                                 await ctx.wait_for_result()
                         except tractor.ContextCancelled as ctxc:
-                            assert ctxc.canceller == ctx.chan.uid
+                            assert ctxc.canceller == ctx.chan.aid.uid
                             raise
 
                         except trio.TooSlowError:
@@ -1300,7 +1300,7 @@ async def caching_ep(
             },
 
             # lock around current actor task access
-            key=tractor.current_actor().uid,
+            key=tractor.current_actor().aid.uid,
 
         ) as (cache_hit, (clients, chan)),
     ):

@@ -38,6 +38,7 @@ import wrapt
 
 from ..log import get_logger
 from .._context import Context
+from ..msg import Yield
 
 
 __all__ = ['pub']
@@ -88,7 +89,18 @@ async def fan_out_to_ctxs(
             if ctx_payloads:
                 for ctx, payload in ctx_payloads:
                     try:
-                        await ctx.send_yield(payload)
+                        # NOTE: inline the (now-deprecated)
+                        # `Context.send_yield()` body to drop its
+                        # `DeprecationWarning` without a behaviour change.
+                        # The "proper" fix is migrating BOTH sides to
+                        # `open_context()`/`open_stream()`, but the
+                        # subscriber still uses the legacy
+                        # `Portal.open_stream_from()` (no `started()`
+                        # handshake) so `Context.open_stream()` can't be
+                        # used here yet — see this module's rework TODO.
+                        await ctx.chan.send(
+                            Yield(cid=ctx.cid, pld=payload)
+                        )
                     except (
                         # That's right, anything you can think of...
                         trio.ClosedResourceError, ConnectionResetError,
@@ -117,7 +129,7 @@ def modify_subs(
 
     Effectively a symbol subscription api.
     """
-    log.info(f"{ctx.chan.uid} changed subscription to {topics}")
+    log.info(f"{ctx.chan.aid.uid} changed subscription to {topics}")
 
     # update map from each symbol to requesting client's chan
     for topic in topics:

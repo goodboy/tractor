@@ -34,7 +34,7 @@ async def test_self_is_registered(reg_addr):
     assert actor.is_registrar
     with trio.fail_after(0.2):
         async with tractor.wait_for_actor('root') as portal:
-            assert portal.channel.uid[0] == 'root'
+            assert portal.channel.aid.name == 'root'
 
 
 @tractor_test
