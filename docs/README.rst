@@ -23,16 +23,11 @@ model" looks like, and that's **intentional**.
 
 Where do i start!?
 ------------------
-The first step to grok ``tractor`` is to get an intermediate
-knowledge of ``trio`` and **structured concurrency** B)
+New to ``trio`` and **structured concurrency**? Our docs collect the
+best starting points and then walk you straight into a hands-on
+quickstart:
 
-Some great places to start are,
-
-- the seminal `blog post`_
-- obviously the `trio docs`_
-- wikipedia's nascent SC_ page
-- the fancy diagrams @ libdill-docs_
-
+  https://goodboy.github.io/tractor/start/quickstart.html
 
 Features
 --------
@@ -121,114 +116,20 @@ Example codez
 -------------
 We prefer to point you at the runnable scripts under ``examples/``
 - each is CI-run and ``literalinclude``-d straight into the docs, so
-what you read there is what actually runs - rather than duplicate a
-pile of them here. But here's the one-minute pitch: spawn a subactor
-per core, open a ``Context`` into each, then crash the root *on
-purpose* and watch the runtime reap the whole tree - zero zombies,
-guaranteed.
+what you read there is what actually runs - rather than inline a
+pile of them here. The one-minute pitch: spawn a subactor per core,
+open a ``Context`` into each, then crash the root *on purpose* and
+watch the runtime reap the whole tree - zero zombies, guaranteed (if
+you can make a zombie child without a system signal, it **is a
+bug**).
 
-.. code:: python
-
-    '''
-    Run with a process monitor from a terminal using::
-
-        $TERM -e watch -n 0.1  "pstree -a $$" \
-            & python examples/parallelism/we_are_processes.py \
-            && kill $!
-
-    '''
-    from multiprocessing import cpu_count
-    import os
-
-    import tractor
-    import trio
-
-
-    @tractor.context
-    async def endpoint(
-        ctx: tractor.Context,
-    ):
-        actor_name: str = tractor.current_actor().name
-        pid: int = os.getpid()
-        await ctx.started((actor_name, pid))
-        await trio.sleep_forever()
-
-
-    async def spawn_and_open_ep(
-        an: tractor.ActorNursery,
-        i: int,
-    ) -> None:
-        '''
-        Spawn a subactor, start a remote `endpoint()`-task in it.
-
-        '''
-        ptl: tractor.Portal = await an.start_actor(
-            name=f'worker_{i}',
-            enable_modules=[__name__],
-        )
-        ctx: tractor.Context
-        async with ptl.open_context(endpoint) as (
-            ctx,
-            (sub_name, sub_pid),
-        ):
-            print(
-                f'Started ep-task in subactor,\n'
-                f'{i}::{sub_name!r}@{sub_pid}\n'
-            )
-            await ctx.wait_for_result()
-
-
-    async def main():
-        '''
-        Spawn a subactor-per-CPU then self-destruct the cluster.
-
-        '''
-        tn: trio.Nursery
-        an: tractor.ActorNursery
-        async with (
-            tractor.open_nursery(
-                # XXX coming soon!
-                # https://github.com/goodboy/tractor/pull/463
-                # start_method='main_thread_forkserver',
-            ) as an,
-            # spawn subs concurrently (in bg `trio.Task`s) so each
-            # actor's cold `import tractor` (~0.4s, see #470) overlaps
-            # instead of stacking; once forkserver (#463) lands, spawn
-            # is cheap enough to just loop sequentially.
-            trio.open_nursery() as tn,
-        ):
-            for i in range(cpu_count()):
-                tn.start_soon(
-                    spawn_and_open_ep,
-                    an,
-                    i,
-                )
-            destruct_in: int = 2
-            print(
-                f'This tree will self-destruct in {destruct_in}s..\n'
-            )
-            await trio.sleep(destruct_in)
-            raise Exception('Self Destructed')
-
-
-    if __name__ == '__main__':
-        try:
-            trio.run(main)
-        except Exception:
-            print('Zombies Contained')
-
-
-If you can create zombie child processes (without using a system
-signal) it **is a bug** - please report it!
-
-Want more? Our docs walk the flagship multi-process debugger,
-bidirectional streaming over a ``Context``, cancellation, discovery,
-"infected ``asyncio``", typed messaging and worker-pool / cluster
-patterns - each backed by a runnable script:
+See it run - plus the full tour (the flagship multi-process
+debugger, bidirectional streaming over a ``Context``, cancellation,
+discovery, "infected ``asyncio``", typed messaging and worker-pool /
+cluster patterns) - in the docs:
 
 - docs: https://goodboy.github.io/tractor/
 - examples: https://github.com/goodboy/tractor/tree/main/examples
-
 
 Under the hood
 --------------
@@ -291,27 +192,11 @@ understandable ways; being an "actor model" is just one way to describe
 properties of the system.
 
 
-What's on the TODO:
--------------------
-Help us push toward the future of distributed `Python`.
-
-- Erlang-style supervisors via composed context managers (see `#22
-  <https://github.com/goodboy/tractor/issues/22>`_)
-- Typed messaging protocols (ex. via ``msgspec.Struct``, see `#36
-  <https://github.com/goodboy/tractor/issues/36>`_)
-- Typed capability-based (dialog) protocols ( see `#196
-  <https://github.com/goodboy/tractor/issues/196>`_ with draft work
-  started in `#311 <https://github.com/goodboy/tractor/pull/311>`_)
-- **macOS is now officially supported** and tested in CI
-  alongside Linux!
-- We **recently disabled CI-testing on windows** and need
-  help getting it running again! (see `#327
-  <https://github.com/goodboy/tractor/pull/327>`_). **We do
-  have windows support** (and have for quite a while) but
-  since no active hacker exists in the user-base to help
-  test on that OS, for now we're not actively maintaining
-  testing due to the added hassle and general latency..
-
+What's on the TODO
+------------------
+The roadmap lives with our docs - see `what the future holds
+<https://goodboy.github.io/tractor/project/index.html#what-the-future-holds>`_
+for where ``tractor`` is headed.
 
 Feel like saying hi?
 --------------------
@@ -322,36 +207,25 @@ say hi, please feel free to reach us in our `matrix channel`_.  If
 matrix seems too hip, we're also mostly all in the the `trio gitter
 channel`_!
 
-.. _structured concurrent: https://trio.discourse.group/t/concise-definition-of-structured-concurrency/228
 .. _distributed: https://en.wikipedia.org/wiki/Distributed_computing
 .. _multi-processing: https://en.wikipedia.org/wiki/Multiprocessing
 .. _trio: https://github.com/python-trio/trio
 .. _nurseries: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/#nurseries-a-structured-replacement-for-go-statements
 .. _actor model: https://en.wikipedia.org/wiki/Actor_model
 .. _trionic: https://trio.readthedocs.io/en/latest/design.html#high-level-design-principles
-.. _async sandwich: https://trio.readthedocs.io/en/latest/tutorial.html#async-sandwich
 .. _3 axioms: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=162s
 .. .. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
 .. _adherance to: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=1821s
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
 .. _broadcasting: https://github.com/goodboy/tractor/pull/229
-.. _modern procotol: https://en.wikipedia.org/wiki/Rendezvous_protocol
 .. _pdbp: https://github.com/mdmintz/pdbp
 .. _pdb++: https://github.com/pdbpp/pdbpp
 .. _cheap or nasty: https://zguide.zeromq.org/docs/chapter7/#The-Cheap-or-Nasty-Pattern
 .. _(un)protocol: https://zguide.zeromq.org/docs/chapter7/#Unprotocols
 .. _discovery: https://zguide.zeromq.org/docs/chapter8/#Discovery
 .. _modern protocol: https://en.wikipedia.org/wiki/Rendezvous_protocol
-.. _messages: https://en.wikipedia.org/wiki/Message_passing
-.. _trio docs: https://trio.readthedocs.io/en/latest/
-.. _blog post: https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/
 .. _structured concurrency: https://en.wikipedia.org/wiki/Structured_concurrency
-.. _SC: https://en.wikipedia.org/wiki/Structured_concurrency
-.. _libdill-docs: https://sustrik.github.io/libdill/structured-concurrency.html
-.. _unrequirements: https://en.wikipedia.org/wiki/Actor_model#Direct_communication_and_asynchrony
-.. _async generators: https://www.python.org/dev/peps/pep-0525/
-.. _trio-parallel: https://github.com/richardsheridan/trio-parallel
 .. _uv: https://docs.astral.sh/uv/
 .. _msgspec: https://jcristharif.com/msgspec/
 .. _guest: https://trio.readthedocs.io/en/stable/reference-lowlevel.html?highlight=guest%20mode#using-guest-mode-to-run-trio-on-top-of-other-event-loops
@@ -362,9 +236,9 @@ channel`_!
 .. |gh_actions| image:: https://github.com/goodboy/tractor/actions/workflows/ci.yml/badge.svg?branch=main
     :target: https://github.com/goodboy/tractor/actions/workflows/ci.yml
 
-.. |docs| image:: https://readthedocs.org/projects/tractor/badge/?version=latest
-    :target: https://tractor.readthedocs.io/en/latest/?badge=latest
-    :alt: Documentation Status
+.. |docs| image:: https://github.com/goodboy/tractor/actions/workflows/docs.yml/badge.svg?branch=main
+    :target: https://goodboy.github.io/tractor/
+    :alt: Documentation
 
 .. |logo| image:: _static/tractor_logo_wire.svg
     :width: 250
