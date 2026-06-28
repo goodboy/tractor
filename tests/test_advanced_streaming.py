@@ -69,7 +69,7 @@ async def subscribe(
             new_subs = set(new_subs)
             remove = new_subs - _registry.keys()
 
-            print(f'setting sub to {new_subs} for {(ctx.chan.aid.name, ctx.chan.aid.uuid)}')
+            print(f'setting sub to {new_subs} for {ctx.chan.aid.uid}')
 
             # remove old subs
             for sub in remove:
@@ -85,7 +85,7 @@ async def consumer(
 ) -> None:
 
     _aid = tractor.current_actor().aid
-    uid = (_aid.name, _aid.uuid)
+    uid = _aid.uid
 
     async with tractor.wait_for_actor('publisher') as portal:
         async with portal.open_context(subscribe) as (ctx, first):

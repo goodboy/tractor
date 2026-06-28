@@ -311,7 +311,7 @@ def test_parent_cancels(
         ctx: Context,
     ) -> None:
         actor: Actor = current_actor()
-        uid: tuple = (actor.aid.name, actor.aid.uuid)
+        uid: tuple = actor.aid.uid
         _ctxc: ContextCancelled|None = None
 
         if (
@@ -712,9 +712,9 @@ async def test_parent_exits_ctx_after_child_enters_stream(
                 assert (
                     ctxc.canceller
                     ==
-                    (current_actor().aid.name, current_actor().aid.uuid)
+                    current_actor().aid.uid
                     ==
-                    (root.aid.name, root.aid.uuid)
+                    root.aid.uid
                 )
 
                 # channel should still be up
@@ -1219,7 +1219,7 @@ def test_maybe_allow_overruns_stream(
 
                 if cancel_ctx:
                     assert isinstance(res, ContextCancelled)
-                    assert tuple(res.canceller) == (current_actor().aid.name, current_actor().aid.uuid)
+                    assert tuple(res.canceller) == current_actor().aid.uid
 
                 else:
                     print(f'RX ROOT SIDE RESULT {res}')

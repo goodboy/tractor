@@ -123,10 +123,10 @@ def test_register_duplicate_name(
                         '`wait_for_actor` returned'
                     )
                     assert (
-                        (portal.channel.aid.name, portal.channel.aid.uuid)
+                        portal.channel.aid.uid
                         in (
-                            (p2.channel.aid.name, p2.channel.aid.uuid),
-                            (p1.channel.aid.name, p1.channel.aid.uuid),
+                            p2.channel.aid.uid,
+                            p1.channel.aid.uid,
                         )
                     )
 
@@ -249,11 +249,11 @@ def test_dup_name_cancel_cascade_escalates_to_hard_kill(
                 # have last-wins semantics under same-name).
                 async with tractor.wait_for_actor('doggy') as portal:
                     expected_uids = {
-                        (p.channel.aid.name, p.channel.aid.uuid)
+                        p.channel.aid.uid
                         for p in portals
                     }
                     assert (
-                        (portal.channel.aid.name, portal.channel.aid.uuid)
+                        portal.channel.aid.uid
                         in expected_uids
                     )
 

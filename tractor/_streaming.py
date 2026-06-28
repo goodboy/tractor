@@ -418,7 +418,7 @@ class MsgStream(trio.abc.Channel):
             # it can't traverse the transport.
             log.warning(
                 f'Stream was already destroyed?\n'
-                f'actor: {(ctx.chan.aid.name, ctx.chan.aid.uuid)}\n'
+                f'actor: {ctx.chan.aid.uid}\n'
                 f'ctx id: {ctx.cid}'
             )
             drained.append(re)
@@ -823,7 +823,7 @@ async def open_stream_from_ctx(
                 except KeyError:
                     log.warning(
                         f'Stream was already destroyed?\n'
-                        f'actor: {(ctx.chan.aid.name, ctx.chan.aid.uuid)}\n'
+                        f'actor: {ctx.chan.aid.uid}\n'
                         f'ctx id: {ctx.cid}'
                     )
 

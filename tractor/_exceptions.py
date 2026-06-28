@@ -1223,7 +1223,7 @@ def pack_error(
         str,
         str | tuple[str, str]
     ] = {}
-    our_uid: tuple = (current_actor().aid.name, current_actor().aid.uuid)
+    our_uid: tuple[str, str] = current_actor().aid.uid
 
     if (
         isinstance(exc, RemoteActorError)

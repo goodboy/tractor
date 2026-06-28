@@ -129,7 +129,7 @@ def modify_subs(
 
     Effectively a symbol subscription api.
     """
-    log.info(f"{(ctx.chan.aid.name, ctx.chan.aid.uuid)} changed subscription to {topics}")
+    log.info(f"{ctx.chan.aid.uid} changed subscription to {topics}")
 
     # update map from each symbol to requesting client's chan
     for topic in topics:

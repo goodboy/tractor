@@ -64,7 +64,7 @@ def enc_nsp(obj: Any) -> Any:
     )
     uid: tuple[str, str]|None = (
         None if not actor
-        else (actor.aid.name, actor.aid.uuid)
+        else actor.aid.uid
     )
     print(f'{uid} ENC HOOK')
 
@@ -100,7 +100,7 @@ def dec_nsp(
     )
     uid: tuple[str, str]|None = (
         None if not actor
-        else (actor.aid.name, actor.aid.uuid)
+        else actor.aid.uid
     )
     print(
         f'{uid}\n'
@@ -426,7 +426,7 @@ async def send_back_values(
 
     '''
     _aid = tractor.current_actor().aid
-    uid: tuple = (_aid.name, _aid.uuid)
+    uid: tuple = _aid.uid
 
     # init state in sub-actor should be default
     chk_codec_applied(
