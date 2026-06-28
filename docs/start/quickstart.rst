@@ -144,26 +144,41 @@ breakfast - run this while monitoring your process tree::
    ``_subactor[worker_0@<pid>]``, so ``pstree``/``htop``/
    ``pgrep -f`` can tell your actors apart at a glance.
 
-You'll see something like::
+You'll see something like (one subactor per core - 24 on this box,
+trimmed here)::
 
     $ python examples/parallelism/we_are_processes.py
-    Yo, i'm 'worker_2' running in pid 1777246
-    Yo, i'm 'worker_0' running in pid 1777244
-    Yo, i'm 'worker_3' running in pid 1777247
-    Yo, i'm 'worker_1' running in pid 1777245
-    This process tree will self-destruct in 1 sec...
+    This tree will self-destruct in 2s..
+
+    Started ep-task in subactor,
+    0::'worker_0'@218140
+
+    Started ep-task in subactor,
+    2::'worker_2'@218134
+
+    Started ep-task in subactor,
+    1::'worker_1'@218137
+
+    Started ep-task in subactor,
+    3::'worker_3'@218132
+
     Zombies Contained
 
-(The worker lines land in whatever order the OS schedules them;
-they're separate *processes*, racing, and that's the point.)
+(The ``Started ep-task`` lines land in whatever order the OS
+schedules them; they're separate *processes*, racing, and that's
+the point.)
 
-An actor is spawned per core, each parks itself in
-``trio.sleep_forever()``... and then the root *crashes on
-purpose*. The ``ActorNursery`` responds with hard ``trio``
-discipline: every child is cancelled, every process is reaped,
-the error propagates to ``trio.run()``, and your terminal prints
-``Zombies Contained``. No orphans, no ``kill -9`` archaeology in
-``htop`` afterwards.
+One subactor is spawned per core - concurrently, from background
+``trio`` tasks, so each child's cold ``import tractor`` overlaps
+instead of stacking. Each runs a ``@tractor.context``
+``endpoint()`` that ``ctx.started()``-hands its name and pid back
+through ``Portal.open_context()`` (those ``Started ep-task``
+lines), then parks in ``trio.sleep_forever()``. Then the root
+*crashes on purpose* and the ``ActorNursery`` responds with hard
+``trio`` discipline: every child is cancelled, every process is
+reaped, the error propagates to ``trio.run()``, and your terminal
+prints ``Zombies Contained``. No orphans, no ``kill -9``
+archaeology in ``htop`` afterwards.
 
 .. note::
 
