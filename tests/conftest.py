@@ -236,6 +236,12 @@ def _measure_sustained_headroom(
         # under-shoots and still trips the marginal cases).
         if frac >= throttle_gate:
             return 1.
+        # a 0/parked-core freq read would `ZeroDivisionError` the
+        # inverse below — silently swallowed by the outer `except`
+        # into a 1.0 (no-throttle), defeating the probe on exactly
+        # the broken box it should flag; read 0 as max throttle.
+        if frac <= 0:
+            return max_headroom
         return min(max_headroom, 1. / frac)
 
     except Exception:

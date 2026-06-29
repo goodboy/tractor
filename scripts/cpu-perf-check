@@ -112,21 +112,28 @@ def main(
     print(f'\n=== sustained {ncpu}-core load ({secs:.0f}s) — the real test ===')
     stop: float = time.perf_counter() + secs
     procs = [
-        mp.Process(target=_burn, args=(stop,))
+        mp.Process(target=_burn, args=(stop,), daemon=True)
         for _ in range(ncpu)
     ]
     for p in procs:
         p.start()
 
-    # skip the initial ~0.6s ramp, then sample steady-state
+    # skip the initial ~0.6s ramp, then sample steady-state.
+    # `try/finally` so a Ctrl-C / sampling error still reaps the
+    # burners instead of leaving stray CPU hogs (daemon=True is the
+    # backstop should we exit abnormally before the join).
     samples: list[int] = []
-    time.sleep(0.6)
-    while time.perf_counter() < stop - 0.2:
-        if (fr := _cur_freqs_mhz()):
-            samples.append(sum(fr) // len(fr))
-        time.sleep(0.3)
-    for p in procs:
-        p.join()
+    try:
+        time.sleep(0.6)
+        while time.perf_counter() < stop - 0.2:
+            if (fr := _cur_freqs_mhz()):
+                samples.append(sum(fr) // len(fr))
+            time.sleep(0.3)
+    finally:
+        for p in procs:
+            p.terminate()
+        for p in procs:
+            p.join()
 
     if not (samples and pkg_max):
         print('  could not sample cur freq — assume OK')

@@ -205,16 +205,18 @@ class UDSAddress(
             else:
                 prefix: str = 'no_runtime_actor'
 
-            # XXX, no live actor -> no `Aid` to key off, so append a
-            # per-CALL token: w/o a runtime the sockname is otherwise
-            # a pure fn of `(prefix, pid)`, so two `get_random()`
-            # calls in one proc alias to the SAME sockpath and the
-            # 2nd `.bind()` trips `EADDRINUSE`. The token makes each
-            # call a distinct file. Safe vs `._reap` cleanup which
-            # only reconstructs the runtime `{name}@{pid}` convention
-            # (above), never these `no_runtime_*` socks.
-            token: str = uuid4().hex[:6]
-            sockname: str = f'{prefix}@{pid}.{token}'
+            # XXX, no live actor -> no `Aid` to key off, so mix a
+            # per-CALL token into the NAME part for uniqueness:
+            # w/o a runtime the sockname is otherwise a pure fn of
+            # `(prefix, pid)`, so two `get_random()` calls in one
+            # proc alias to the SAME sockpath and the 2nd `.bind()`
+            # trips `EADDRINUSE`. Token goes BEFORE `@{pid}` so the
+            # canonical `...@{pid}.sock` suffix stays intact for the
+            # reapers keyed off it: `._testing._reap`'s
+            # `(?P<name>.+)@(?P<pid>\d+)\.sock` regex, and the
+            # `spawn._reap` `{name}@{pid}.sock` reconstruction.
+            token: str = uuid4().hex[:8]
+            sockname: str = f'{prefix}.{token}@{pid}'
 
         sockpath: Path = Path(f'{sockname}.sock')
         return UDSAddress(
