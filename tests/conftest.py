@@ -171,7 +171,8 @@ def _measure_sustained_headroom(
 
     def _read_mhz(path: str) -> int|None:
         try:
-            return int(open(path).read()) // 1000
+            with open(path) as f:
+                return int(f.read()) // 1000
         except OSError:
             return None
 
@@ -187,9 +188,13 @@ def _measure_sustained_headroom(
             return 1.
 
         def _burn(stop: float) -> None:
+            # fixed-width (64-bit-masked) arithmetic keeps this a
+            # steady ALU load; an unmasked `x` grows ~x**2/iter into
+            # a huge bigint, degenerating into noisy alloc/mul-bound
+            # work (and needless memory) across N procs.
             x: int = 1
             while time.perf_counter() < stop:
-                x += x * x ^ 0x5
+                x = (x + (x * x ^ 0x5)) & 0xFFFF_FFFF_FFFF_FFFF
 
         # explicit `fork` ctx so we're immune to whatever global
         # mp start-method tractor/the suite may have set (`spawn`

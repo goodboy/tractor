@@ -77,9 +77,13 @@ def _pkg_max_mhz() -> int:
 
 
 def _burn(stop: float) -> None:
+    # fixed-width (64-bit-masked) arithmetic keeps this a steady
+    # ALU load; an unmasked `x` grows ~x**2/iter into a huge bigint,
+    # degenerating into noisy alloc/mul-bound work (and needless
+    # memory) across N procs.
     x: int = 1
     while time.perf_counter() < stop:
-        x += x * x ^ 0x5
+        x = (x + (x * x ^ 0x5)) & 0xFFFF_FFFF_FFFF_FFFF
 
 
 def main(
