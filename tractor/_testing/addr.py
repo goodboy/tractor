@@ -50,9 +50,14 @@ def get_rando_addr(
     fight over the bind, cascading into a chain of
     "Address already in use" failures.
 
-    For UDS this concern doesn't apply: `UDSAddress.get_random()`
-    already builds socket paths from `os.getpid()` so each
-    pytest process gets its own socket-path namespace.
+    For UDS the *cross*-process concern is handled by keying
+    socket paths off `os.getpid()` (each pytest process gets its
+    own namespace). *Within* a process — where `get_random()` has
+    no live runtime to name from — it also appends a per-call
+    `uuid4` token, so two calls (e.g. a `reg_addr` + a distinct
+    bind addr in one test body) yield distinct sockpaths rather
+    than aliasing to the same `name@pid.sock` and tripping
+    `EADDRINUSE`.
 
     '''
     addr_type: Type[_addr.Addres] = _addr._address_types[tpt_proto]

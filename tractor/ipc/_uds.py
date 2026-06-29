@@ -36,6 +36,7 @@ from typing import (
     TYPE_CHECKING,
     ClassVar,
 )
+from uuid import uuid4
 
 import msgspec
 import trio
@@ -204,7 +205,16 @@ class UDSAddress(
             else:
                 prefix: str = 'no_runtime_actor'
 
-            sockname: str = f'{prefix}@{pid}'
+            # XXX, no live actor -> no `Aid` to key off, so append a
+            # per-CALL token: w/o a runtime the sockname is otherwise
+            # a pure fn of `(prefix, pid)`, so two `get_random()`
+            # calls in one proc alias to the SAME sockpath and the
+            # 2nd `.bind()` trips `EADDRINUSE`. The token makes each
+            # call a distinct file. Safe vs `._reap` cleanup which
+            # only reconstructs the runtime `{name}@{pid}` convention
+            # (above), never these `no_runtime_*` socks.
+            token: str = uuid4().hex[:6]
+            sockname: str = f'{prefix}@{pid}.{token}'
 
         sockpath: Path = Path(f'{sockname}.sock')
         return UDSAddress(
