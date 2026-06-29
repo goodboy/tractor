@@ -144,6 +144,12 @@ Hold up, is this an "actor model"?
 Let's stop and ask how many canon actor model papers
 you've actually read ;)
 
+From our experience many "actor systems" aren't really
+"actor models" since they **don't adhere** to the `3
+axioms`_ and pay even less attention to the problem of
+`unbounded non-determinism`_ — which was the whole
+point for creating the model in the first place.
+
 From `the author's mouth`_, the **only** requirement
 is `adherence to`_ the `3 axioms`_::
 
@@ -153,6 +159,13 @@ is `adherence to`_ the `3 axioms`_::
     - create a finite number of new actors
     - designate a new behavior to process subsequent
       messages
+
+Want to debate whether that makes us a "real" actor
+model? Chime in on our chat, or on one of these issues
+*after you've read everything in them* ;)
+
+- `#210 <https://github.com/goodboy/tractor/issues/210>`_
+- `#18 <https://github.com/goodboy/tractor/issues/18>`_
 
 ``tractor`` adheres — actors exchange msgs, spawn
 actors, and swap behaviors — **with no extra API** to
@@ -205,3 +218,4 @@ up the process tree.
 .. _the author's mouth: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=162s
 .. _adherence to: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=1821s
 .. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
+.. _unbounded non-determinism: https://en.wikipedia.org/wiki/Unbounded_nondeterminism

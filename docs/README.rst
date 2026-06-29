@@ -133,64 +133,20 @@ cluster patterns) - in the docs:
 
 Under the hood
 --------------
-``tractor`` is an attempt to pair trionic_ `structured concurrency`_ with
-distributed Python. You can think of it as a ``trio``
-*-across-processes* or simply as an opinionated replacement for the
-stdlib's ``multiprocessing`` but built on async programming primitives
-from the ground up.
+``tractor`` is an attempt to pair trionic_ `structured
+concurrency`_ with distributed Python - think of it as ``trio``
+*-across-processes*, or as an opinionated replacement for the
+stdlib's ``multiprocessing`` built on async primitives from the
+ground up. But really it **is just** ``trio``: nurseries that
+spawn *processes* and cancel-able streaming IPC between them. If
+you can drive ``trio``, you can drive ``tractor``.
 
-Don't be scared off by this description. ``tractor`` **is just** ``trio``
-but with nurseries for process management and cancel-able streaming IPC.
-If you understand how to work with ``trio``, ``tractor`` will give you
-the parallelism you may have been needing.
+"But wait - don't 'actors' have mailboxes and messages and
+stuff?!" Well, we've got (well referenced) opinions on what an "actor
+model" **actually is** (tl;dr: the `3 axioms`_, not the cultural
+baggage) - that whole riff lives in our docs:
 
-
-Wait, huh?! I thought "actors" have messages, and mailboxes and stuff?!
-***********************************************************************
-Let's stop and ask how many canon actor model papers have you actually read ;)
-
-From our experience many "actor systems" aren't really "actor models"
-since they **don't adhere** to the `3 axioms`_ and pay even less
-attention to the problem of *unbounded non-determinism* (which was the
-whole point for creation of the model in the first place).
-
-From the author's mouth, **the only thing required** is `adherance to`_
-the `3 axioms`_, *and that's it*.
-
-``tractor`` adheres to said base requirements of an "actor model"::
-
-    In response to a message, an actor may:
-
-    - send a finite number of new messages
-    - create a finite number of new actors
-    - designate a new behavior to process subsequent messages
-
-
-**and** requires *no further api changes* to accomplish this.
-
-If you want do debate this further please feel free to chime in on our
-chat or discuss on one of the following issues *after you've read
-everything in them*:
-
-- https://github.com/goodboy/tractor/issues/210
-- https://github.com/goodboy/tractor/issues/18
-
-
-Let's clarify our parlance
-**************************
-Whether or not ``tractor`` has "actors" underneath should be mostly
-irrelevant to users other then for referring to the interactions of our
-primary runtime primitives: each Python process + ``trio.run()``
-+ surrounding IPC machinery. These are our high level, base
-*runtime-units-of-abstraction* which both *are* (as much as they can
-be in Python) and will be referred to as our *"actors"*.
-
-The main goal of ``tractor`` is is to allow for highly distributed
-software that, through the adherence to *structured concurrency*,
-results in systems which fail in predictable, recoverable and maybe even
-understandable ways; being an "actor model" is just one way to describe
-properties of the system.
-
+  https://goodboy.github.io/tractor/explain/sc-distributed.html#hold-up-is-this-an-actor-model
 
 What's on the TODO
 ------------------
@@ -215,7 +171,6 @@ channel`_!
 .. _trionic: https://trio.readthedocs.io/en/latest/design.html#high-level-design-principles
 .. _3 axioms: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=162s
 .. .. _3 axioms: https://en.wikipedia.org/wiki/Actor_model#Fundamental_concepts
-.. _adherance to: https://www.youtube.com/watch?v=7erJ1DV_Tlo&t=1821s
 .. _trio gitter channel: https://gitter.im/python-trio/general
 .. _matrix channel: https://matrix.to/#/!tractor:matrix.org
 .. _broadcasting: https://github.com/goodboy/tractor/pull/229
