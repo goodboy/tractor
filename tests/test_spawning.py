@@ -153,9 +153,9 @@ async def test_most_beautiful_word(
     # actor spawn + IPC round-trip is comfortably sub-second on a
     # warm box, but slow/noisy CI runners (esp. macOS) blow a flat
     # 1s deadline. Scale for CI/CPU-throttle headroom — `== 1s`
-    # locally where `cpu_scaling_factor()` is `1.0`.
-    from .conftest import cpu_scaling_factor
-    with trio.fail_after(1 * cpu_scaling_factor()):
+    # locally where `cpu_perf_headroom()` is `1.0`.
+    from .conftest import cpu_perf_headroom
+    with trio.fail_after(1 * cpu_perf_headroom()):
         async with tractor.open_nursery(
             debug_mode=debug_mode,
         ) as an:

@@ -213,12 +213,12 @@ def test_open_local_sub_to_stream(
     N local tasks using `trionics.maybe_open_context()`.
 
     '''
-    from .conftest import cpu_scaling_factor
+    from .conftest import cpu_perf_headroom
     timeout: float = (
         4
         if not platform.system() == "Windows"
         else 10
-    ) * cpu_scaling_factor()
+    ) * cpu_perf_headroom()
 
     if debug_mode:
         timeout = 999

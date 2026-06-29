@@ -326,11 +326,11 @@ def time_quad_ex(
     ):
         timeout += 1
 
-    # inflate the cancel-deadline for CPU-freq scaling AND/OR CI
-    # latency (see `cpu_scaling_factor()`) so the example isn't
-    # cancelled mid-stream on a throttled/CI runner.
-    from .conftest import cpu_scaling_factor
-    timeout *= cpu_scaling_factor()
+    # inflate the cancel-deadline for static cpu-freq scaling +
+    # sustained-load throttle + CI latency (see `cpu_perf_headroom()`)
+    # so the example isn't cancelled mid-stream on a throttled/CI box.
+    from .conftest import cpu_perf_headroom
+    timeout *= cpu_perf_headroom()
 
     start: float = time.time()
     results: list[int] = trio.run(partial(
@@ -379,8 +379,8 @@ def test_a_quadruple_example(
     # https://github.com/AdnanHodzic/auto-cpufreq?tab=readme-ov-file#example-config-file-contents
     #
     # HENCE this below latency-headroom compensation logic..
-    from .conftest import cpu_scaling_factor
-    headroom: float = cpu_scaling_factor()
+    from .conftest import cpu_perf_headroom
+    headroom: float = cpu_perf_headroom()
     if headroom != 1.:
         this_fast = this_fast_on_linux * headroom
         test_log.warning(

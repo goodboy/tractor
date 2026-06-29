@@ -160,7 +160,7 @@ def test_example(
             'root-causing. Passes on Linux.'
         )
 
-    from .conftest import cpu_scaling_factor
+    from .conftest import cpu_perf_headroom
 
     timeout: float = (
         60
@@ -168,8 +168,9 @@ def test_example(
         else 16
     )
 
-    # add latency headroom for CPU freq scaling (auto-cpufreq et al.)
-    headroom: float = cpu_scaling_factor()
+    # add latency headroom for CPU freq scaling/throttle
+    # (auto-cpufreq et al.)
+    headroom: float = cpu_perf_headroom()
     if headroom != 1.:
         timeout *= headroom
 

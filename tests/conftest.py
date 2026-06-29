@@ -134,6 +134,150 @@ def cpu_scaling_factor() -> float:
     return factor
 
 
+# session-cached sustained-load throttle multiplier — measured
+# once (lazily) on the first `cpu_perf_headroom()` call. `None`
+# = not-yet-measured.
+_sustained_headroom: float|None = None
+
+
+def _measure_sustained_headroom(
+    secs: float = 0.9,
+    # a healthy all-core sustained clock holds AT/ABOVE this
+    # fraction of the package single-core max ceiling (boost sags
+    # under full multi-core load even un-throttled, but not far);
+    # at/above it we assume no throttle and return 1.0.
+    throttle_gate: float = 0.6,
+    max_headroom: float = 4.,
+) -> float:
+    '''
+    One-shot all-core burn returning a latency multiplier
+    (>= 1.0) that reflects *sustained-load* CPU throttle.
+
+    Catches the firmware/EC power-cap clamp (AMD PPT/STAPM &
+    friends) that pins achieved `scaling_cur_freq` to a fraction
+    of the ceiling under multi-core load while EVERY static knob
+    (`governor`, `scaling_max_freq`, `EPP`, `platform_profile`)
+    still reads "full performance". That cap is INVISIBLE to
+    `cpu_scaling_factor()` and is the gremlin behind mass `trio`
+    deadline-miss failures on byte-identical code — see
+    `scripts/cpu-perf-check`.
+
+    Best-effort: returns 1.0 on non-linux / missing sysfs / any
+    error so it can never break a test run.
+
+    '''
+    import glob
+    import multiprocessing as mp
+
+    def _read_mhz(path: str) -> int|None:
+        try:
+            with open(path) as f:
+                return int(f.read()) // 1000
+        except OSError:
+            return None
+
+    try:
+        maxs: list[int] = [
+            v for f in glob.glob(
+                '/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_max_freq'
+            )
+            if (v := _read_mhz(f)) is not None
+        ]
+        pkg_max: int = max(maxs) if maxs else 0
+        if not pkg_max:
+            return 1.
+
+        def _burn(stop: float) -> None:
+            # fixed-width (64-bit-masked) arithmetic keeps this a
+            # steady ALU load; an unmasked `x` grows ~x**2/iter into
+            # a huge bigint, degenerating into noisy alloc/mul-bound
+            # work (and needless memory) across N procs.
+            x: int = 1
+            while time.perf_counter() < stop:
+                x = (x + (x * x ^ 0x5)) & 0xFFFF_FFFF_FFFF_FFFF
+
+        # explicit `fork` ctx so we're immune to whatever global
+        # mp start-method tractor/the suite may have set (`spawn`
+        # would re-exec + re-import 24x — slow and pointless here).
+        ctx = mp.get_context('fork')
+        ncpu: int = os.cpu_count() or 1
+        stop: float = time.perf_counter() + secs
+        procs = [
+            ctx.Process(target=_burn, args=(stop,), daemon=True)
+            for _ in range(ncpu)
+        ]
+        for p in procs:
+            p.start()
+
+        # skip the ~0.4s boost window so we sample the steady
+        # state AFTER any power-cap has engaged.
+        samples: list[int] = []
+        time.sleep(0.4)
+        while time.perf_counter() < stop - 0.1:
+            curs: list[int] = [
+                v for f in glob.glob(
+                    '/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq'
+                )
+                if (v := _read_mhz(f)) is not None
+            ]
+            if curs:
+                samples.append(sum(curs) // len(curs))
+            time.sleep(0.15)
+        for p in procs:
+            p.join()
+
+        if not samples:
+            return 1.
+        frac: float = (sum(samples) // len(samples)) / pkg_max
+        # below the gate we read it as a power-cap throttle. The
+        # spawn/IPC/fork-bound work these budgets guard slows ~1:1
+        # with the achieved-vs-max freq ratio, so compensate by the
+        # FULL inverse fraction (a boost-discounted factor
+        # under-shoots and still trips the marginal cases).
+        if frac >= throttle_gate:
+            return 1.
+        # a 0/parked-core freq read would `ZeroDivisionError` the
+        # inverse below — silently swallowed by the outer `except`
+        # into a 1.0 (no-throttle), defeating the probe on exactly
+        # the broken box it should flag; read 0 as max throttle.
+        if frac <= 0:
+            return max_headroom
+        return min(max_headroom, 1. / frac)
+
+    except Exception:
+        return 1.
+
+
+def cpu_perf_headroom() -> float:
+    '''
+    Latency-headroom multiplier (>= 1.0) covering BOTH cpu-perf
+    throttle classes — multiply a test's deadline by it, e.g.
+    `timeout *= cpu_perf_headroom()`:
+
+      - static cpu-freq scaling — via `cpu_scaling_factor()`
+        (governor/policy lowered the `scaling_max_freq` ceiling).
+
+      - sustained-load power-cap throttle — via
+        `_measure_sustained_headroom()` (firmware/EC PPT/STAPM
+        clamps achieved freq under load while every static knob
+        reads "performance"; INVISIBLE to the static check). This
+        is the gremlin behind mass `trio` deadline-miss failures
+        on unchanged code — see
+        `ai/conc-anal/trio_033_cancel_cascade_slowdown_depth3_issue.md`.
+
+    The sustained probe runs ONCE per session (cached); the cost
+    is a ~0.9s all-core burn on first call only.
+
+    '''
+    global _sustained_headroom
+    static: float = cpu_scaling_factor()
+    if _non_linux:
+        return static
+    if _sustained_headroom is None:
+        _sustained_headroom = _measure_sustained_headroom()
+    return max(static, _sustained_headroom)
+
+
 # NOTE, the `--ll`/`--tl` CLI flags + the `loglevel`, `test_log`
 # and `testing_pkg_name` fixtures have been factored into the
 # `tractor._testing.pytest` plugin (loaded via the `-p` entry in

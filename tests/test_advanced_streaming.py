@@ -189,11 +189,18 @@ def test_dynamic_pub_sub(
     # sits forever until external SIGINT. The `afk_alarm_w_trace`
     # outer guard below is the AFK-safety counterpart (SIGALRM
     # raises in the main thread regardless of trio scope state).
-    fail_after_s: int = (
+    fail_after_s: float = (
         8
         if is_forking_spawner
         else 20
     )
+    # inflate under CPU throttle — incl. the sustained-load
+    # power-cap invisible to static freq reads — so a slow box
+    # doesn't trip the deadline. See `scripts/cpu-perf-check`.
+    from .conftest import cpu_perf_headroom
+    headroom: float = cpu_perf_headroom()
+    if headroom != 1.:
+        fail_after_s *= headroom
 
     async def main():
         # bug-class-3 breadcrumb: tag each level of the cancel path

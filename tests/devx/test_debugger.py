@@ -794,6 +794,14 @@ def test_multi_nested_subactors_error_through_nurseries(
         loglevel='pdb',
     )
     last_send_char: str|None = None
+
+    # inflate pexpect waits under CPU throttle — incl. the
+    # sustained-load power-cap invisible to static freq reads — so
+    # a slow-to-boot child REPL doesn't trip a false `TIMEOUT`.
+    # See `scripts/cpu-perf-check`.
+    from ..conftest import cpu_perf_headroom
+    headroom: float = cpu_perf_headroom()
+
     for (
         i,
         send_char,
@@ -816,6 +824,9 @@ def test_multi_nested_subactors_error_through_nurseries(
         # determinstic IPC cancellation.
         if is_forking_spawner:
             timeout += 4
+
+        if headroom != 1.:
+            timeout *= headroom
 
         try:
             child.expect(
