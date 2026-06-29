@@ -1,0 +1,19 @@
+# tractor docs diagram: multi-actor debugger REPL
+# serialization via the root actor's tty lock.
+vars: {
+  d2-config: {
+    sketch: true
+    theme-id: 1
+    pad: 16
+    layout-engine: elk
+  }
+}
+shape: sequence_diagram
+mary: "subactor 'mary'"
+root: "root actor\n(owns the tty)"
+bob: "subactor 'bob'"
+mary -> root: "tractor.pause(): acquire tty lock"
+root -> mary: "granted: pdb REPL is yours"
+bob -> root: "tractor.pause(): acquire tty lock"
+mary -> root: "continue: release lock"
+root -> bob: "granted: pdb REPL is yours"

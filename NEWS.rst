@@ -78,6 +78,7 @@ Bug Fixes
   for ``asyncio``-side errors to not propagate due to a race condition.
 
   The implementation fix summary is:
+
   - add state to signal the end of the ``trio`` side task to be
     read by the ``asyncio`` side and always cancel any ongoing
     task in such cases.

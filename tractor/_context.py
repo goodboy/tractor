@@ -135,19 +135,21 @@ class Context:
     communication context.
 
     (We've also considered other names and ideas:
-     - "communicating tasks scope": cts
-     - "distributed task scope": dts
-     - "communicating tasks context": ctc
 
-     **Got a better idea for naming? Make an issue dawg!**
+    - "communicating tasks scope": cts
+    - "distributed task scope": dts
+    - "communicating tasks context": ctc
+
+    **Got a better idea for naming? Make an issue dawg!**
     )
 
     NB: This class should **never be instatiated directly**, it is
     allocated by the runtime in 2 ways:
-     - by entering `Portal.open_context()` which is the primary
-       public API for any "parent" task or,
-     - by the RPC machinery's `._rpc._invoke()` as a `ctx` arg
-       to a remotely scheduled "child" function.
+
+    - by entering `Portal.open_context()` which is the primary
+      public API for any "parent" task or,
+    - by the RPC machinery's `._rpc._invoke()` as a `ctx` arg
+      to a remotely scheduled "child" function.
 
     AND is always constructed using the below `mk_context()`.
 
@@ -443,6 +445,7 @@ class Context:
         '''
         Records whether cancellation has been requested for this context
         by a call to  `.cancel()` either due to,
+
         - an explicit call by some local task,
         - or an implicit call due to an error caught inside
           the `Portal.open_context()` block.
@@ -554,6 +557,7 @@ class Context:
         Only as an FYI, in the "child" side case it can also be
         set but never is readable by any task outside the RPC
         machinery in `._invoke()` since,:
+
         - when a child side calls `.cancel()`, `._scope.cancel()`
           is called immediately and handled specially inside
           `._invoke()` to raise a `ContextCancelled` which is then
@@ -1033,8 +1037,8 @@ class Context:
         `._scope.cancel()` and delivering an `ContextCancelled`
         ack msg in reponse.
 
-        Behaviour:
-        ---------
+        **Behaviour:**
+
         - after the far end cancels, the `.cancel()` calling side
           should receive a `ContextCancelled` with the
           `.canceller: tuple` uid set to the current `Actor.aid.uid`.
@@ -1505,7 +1509,8 @@ class Context:
         TODO->( this is doc-driven-dev content not yet actual ;P )
 
         The final "outcome" from an IPC context which can be any of:
-        - some `outcome.Value` which boxes the returned output from the peer task's 
+
+        - some `outcome.Value` which boxes the returned output from the peer task's
           `@context`-decorated remote task-as-func, or
         - an `outcome.Error` wrapping an exception raised that same RPC task
           after a fault or cancellation, or
@@ -2066,7 +2071,7 @@ async def open_context_from_portal(
     allows for deterministic setup and teardown of a remotely
     scheduled task in another remote actor. Once opened, the 2 now
     "linked" tasks run completely in parallel in each actor's
-    runtime with their enclosing `trio.CancelScope`s kept in
+    runtime with their enclosing `trio.CancelScope`\\ s kept in
     a synced state wherein if either side errors or cancels an
     equivalent error is relayed to the other side via an SC-compat
     IPC protocol.

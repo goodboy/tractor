@@ -252,6 +252,7 @@ class ActorNursery:
         '''
         Records whether cancellation has been requested for this
         actor-nursery by a call to  `.cancel()` either due to,
+
         - an explicit call by some actor-local-task,
         - an implicit call due to an error/cancel emited inside
           the `tractor.open_nursery()` block.

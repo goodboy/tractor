@@ -453,7 +453,7 @@ class Error(
     # omit_defaults=True,
 ):
     '''
-    A pkt that wraps `RemoteActorError`s for relay and raising.
+    A pkt that wraps `RemoteActorError`\\ s for relay and raising.
 
     Fields are 1-to-1 meta-data as needed originally by
     `RemoteActorError.msgdata: dict` but now are defined here.

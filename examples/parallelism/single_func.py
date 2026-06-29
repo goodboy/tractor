@@ -33,7 +33,7 @@ async def main():
         await burn_cpu()
 
         # wait on result from target function
-        pid = await portal.result()
+        pid = await portal.wait_for_result()
 
     # end of nursery block
     print(f"Collected subproc {pid}")

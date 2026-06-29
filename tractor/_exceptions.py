@@ -823,12 +823,13 @@ class ContextCancelled(RemoteActorError):
 
         - (simulating) an IPC transport network outage
         - a (malicious) pkt sent specifically to cancel an actor's
-          runtime non-gracefully without ensuring ongoing RPC tasks are 
-          incrementally cancelled as is done with:
-          `Actor`
-          |_`.cancel()`
-          |_`.cancel_soon()`
-          |_`._cancel_task()`
+          runtime non-gracefully without ensuring ongoing RPC tasks are
+          incrementally cancelled as is done with::
+
+              `Actor`
+              |_`.cancel()`
+              |_`.cancel_soon()`
+              |_`._cancel_task()`
 
         '''
         value: tuple[str, str]|None = self._ipc_msg.canceller

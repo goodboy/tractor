@@ -1,0 +1,33 @@
+# tractor docs diagram: the inter-actor `Context`
+# dialog; tractor's SC-transitive msg protocol as
+# seen from both sides of `Portal.open_context()`.
+vars: {
+  d2-config: {
+    sketch: true
+    theme-id: 1
+    pad: 16
+    layout-engine: elk
+  }
+}
+shape: sequence_diagram
+parent: "parent task\n(Portal)"
+child: "child actor task\n(@tractor.context fn)"
+parent -> child: "Start: open_context(fn, **kwargs)"
+child -> parent: "StartAck"
+child -> parent: "Started: await ctx.started(value)"
+parent -> child: "Yield: stream.send()"
+child -> parent: "Yield: stream.send()"
+parent -> child: "Stop: stream closed"
+child -> parent: "Return: fn return value"
+# the non-graceful endings: errors/cancels always
+# propagate, both ways (`ContextCancelled` rides in
+# an `Error` msg, hence the `Error: ...` labels).
+"... or, instead of a graceful Return": {
+  parent-initiated: {
+    parent -> child: "ctx.cancel()  |  parent-side error"
+    child -> parent: "Error: ContextCancelled"
+  }
+  child-initiated: {
+    child -> parent: "Error: child raised  |  ContextCancelled"
+  }
+}

@@ -35,8 +35,8 @@ async def main():
             name='gretchen',
             other_actor='donny',
         )
-        print(await gretchen.result())
-        print(await donny.result())
+        print(await gretchen.wait_for_result())
+        print(await donny.wait_for_result())
         print("CUTTTT CUUTT CUT!!! Donny!! You're supposed to say...")
 
 

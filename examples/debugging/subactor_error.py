@@ -18,10 +18,10 @@ async def main():
         p: tractor.Portal = await an.run_in_actor(name_error)
 
         # with this style, should raise on this line
-        await p.result()
+        await p.wait_for_result()
 
         # with this alt style should raise at `open_nusery()`
-        # return await p.result()
+        # return await p.wait_for_result()
 
 
 if __name__ == '__main__':

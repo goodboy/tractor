@@ -1,0 +1,31 @@
+# tractor docs diagram: the hero supervision tree.
+# A process tree of trio-task-trees; every arrow is
+# a parent which *must wait* on its children.
+vars: {
+  d2-config: {
+    sketch: true
+    theme-id: 1
+    pad: 16
+    layout-engine: elk
+  }
+}
+direction: down
+root: "root actor" {
+  main: "main()"
+  an: "ActorNursery"
+  main -> an: opens
+}
+w0: "subactor\n'worker_0'" {
+  tasks: "trio task tree"
+}
+w1: "subactor\n'worker_1'" {
+  main: "serve()"
+  an: "ActorNursery"
+  main -> an: opens
+}
+gc: "subactor\n'deeper'" {
+  tasks: "trio task tree"
+}
+root.an -> w0: "spawns +\nsupervises"
+root.an -> w1: "spawns +\nsupervises"
+w1.an -> gc: "spawns +\nsupervises"

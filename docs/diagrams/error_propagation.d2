@@ -1,0 +1,27 @@
+# tractor docs diagram: one-cancels-all error
+# propagation up a (sub-)actor tree; no zombies,
+# no lost errors.
+vars: {
+  d2-config: {
+    sketch: true
+    theme-id: 1
+    pad: 16
+    layout-engine: elk
+  }
+}
+direction: down
+root: "root actor\n(ActorNursery)"
+gertie: "subactor 'gertie'\n(healthy, gets cancelled)"
+bobbie: "subactor 'bobbie'\nraises NameError"
+root -> gertie: supervises
+root -> bobbie: supervises
+bobbie -> root: "RemoteActorError\n(boxed NameError)" {
+  style: {
+    stroke-dash: 3
+  }
+}
+root -> gertie: "cancel()" {
+  style: {
+    stroke-dash: 3
+  }
+}

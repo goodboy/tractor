@@ -1,0 +1,23 @@
+# tractor docs diagram: "infected asyncio" mode;
+# trio runs as a guest on the asyncio loop with
+# SC supervision linking tasks across both.
+vars: {
+  d2-config: {
+    sketch: true
+    theme-id: 1
+    pad: 16
+    layout-engine: elk
+  }
+}
+direction: down
+sub: "subactor process (infect_asyncio=True)" {
+  aio: "asyncio event loop" {
+    aiotask: "asyncio.Task\naio_echo_server()"
+    trio: "trio (guest mode)" {
+      triotask: "trio task\n@tractor.context fn"
+    }
+    trio.triotask <-> aiotask: "LinkedTaskChannel\n.send()/.receive()"
+  }
+}
+parent: "parent actor (pure trio)"
+parent <-> sub.aio.trio.triotask: "IPC: Context + MsgStream"

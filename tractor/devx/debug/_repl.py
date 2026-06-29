@@ -187,7 +187,7 @@ def mk_pdb() -> PdbREPL:
 
     FURTHER, the `pdbp.Pdb` instance is configured to be `trio`
     "compatible" from a SIGINT handling perspective; we mask out
-    the default `pdb` handler and instead apply `trio`s default
+    the default `pdb` handler and instead apply `trio`\\ s default
     which mostly addresses all issues described in:
 
      - https://github.com/python-trio/trio/issues/1155

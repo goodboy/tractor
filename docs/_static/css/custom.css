@@ -1,0 +1,185 @@
+/* tractor docs: a minimal black + white skin over
+ * `pydata-sphinx-theme` plus RHS-marginalia + d2
+ * diagram styling.
+ */
+html[data-theme="light"] {
+  --pst-color-primary: #000000;
+  --pst-color-secondary: #3d3d3d;
+  --pst-color-accent: #5a5a5a;
+  --pst-color-link: #000000;
+  --pst-color-link-hover: #5a5a5a;
+  --pst-color-inline-code: #1a1a1a;
+  --pst-color-inline-code-links: #000000;
+}
+html[data-theme="dark"] {
+  --pst-color-primary: #ffffff;
+  --pst-color-secondary: #c9c9c9;
+  --pst-color-accent: #a8a8a8;
+  --pst-color-link: #ffffff;
+  --pst-color-link-hover: #bdbdbd;
+  --pst-color-inline-code: #e8e8e8;
+  --pst-color-inline-code-links: #ffffff;
+}
+/* mono-chrome links: rely on underline for
+ * affordance instead of color.
+ */
+.bd-content a:not(.headerlink) {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+/* d2 diagram figures */
+figure.d2-diagram {
+  text-align: center;
+}
+figure.d2-diagram img {
+  max-width: 100%;
+  height: auto;
+}
+/* keep light-rendered svgs legible in dark mode */
+html[data-theme="dark"] figure.d2-diagram img {
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 6px;
+}
+/* prose-anchored right-margin asides (tufte-ish):
+ * float right within the content column on wide
+ * screens, collapse inline on narrow ones.
+ */
+@media (min-width: 960px) {
+  aside.margin,
+  figure.margin,
+  div.margin,
+  figure.d2-margin {
+    float: right;
+    clear: right;
+    width: 44%;
+    margin: 0.2rem 0 1rem 1.4rem;
+    font-size: 0.85rem;
+  }
+}
+/* strip docutils sidebar chrome from margin asides */
+aside.sidebar.margin {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+aside.sidebar.margin > p.sidebar-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.3rem;
+}
+/* landing-page hero logo (inline svg): the linework uses
+ * `fill: currentColor` so it inherits the theme text colour
+ * (auto-flips light<->dark), and the faces are transparent so
+ * the page background shows through. */
+svg.hero-logo {
+  display: block;
+  max-width: 360px;
+  height: auto;
+  color: var(--pst-color-text-base);
+}
+/* 3-up landing hero row: name | logo | tagline, with a centered
+ * sub-tagline beneath. */
+.hero-row {
+  display: flex;
+  align-items: center;
+  /* left-anchored single row; tighter gap so the logo sits over
+   * the sub-line and the tagline over the prose below it (stack
+   * only on mobile, via the media query). */
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: clamp(0.5rem, 2vw, 1.5rem);
+  margin: 0 0 0.25rem;
+}
+.hero-row svg.hero-logo {
+  /* override the stacked-hero sizing for the inline row */
+  width: clamp(240px, 34vw, 360px);
+  margin: 0;
+}
+.hero-row .hero-tag {
+  margin: 0;
+  /* keep it on a single line beside the logo */
+  max-width: none;
+  white-space: nowrap;
+  font-size: clamp(1rem, 2.1vw, 1.4rem);
+  font-weight: 400;
+  line-height: 1.15;
+  color: var(--pst-color-text-base);
+}
+.hero-row .hero-tag {
+  min-width: 0;
+}
+.hero-sub {
+  /* wrap at the prose width (not the logo's), with a line of
+   * space before the prose section below. */
+  margin: 0 0 4rem;
+  max-width: none;
+  text-align: left;
+  font-size: 1.05rem;
+  color: var(--pst-color-text-muted);
+}
+/* the page carries a single rst <h1> ("tractor") for semantics
+ * + SEO, but the visual title is the hero — so hide the doc
+ * title accessibly (still read by screen readers + search). */
+#tractor > h1 {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* smaller section headings on the landing only */
+#sixty-seconds-of-why > :is(h1, h2),
+#dig-in > :is(h1, h2),
+#features > :is(h1, h2),
+#where-do-i-start > :is(h1, h2) {
+  font-size: 1.75rem;
+}
+/* extra breathing room before the first landing section */
+#sixty-seconds-of-why {
+  margin-top: 4rem;
+}
+/* pull the section's `tl;dr` margin-note up so its top edge is
+ * level with the heading (default floats it beside the body). */
+#sixty-seconds-of-why aside.margin {
+  margin-top: -3.75rem;
+}
+/* stack the 3-up hero only on real mobile */
+@media (max-width: 640px) {
+  .hero-row {
+    flex-direction: column;
+  }
+  .hero-row .hero-tag {
+    max-width: none;
+  }
+}
+/* navbar brand: the "distributed SC" tagline next to the logo
+ * (the logo `text` value), kept small + muted like a sub-line. */
+.navbar-brand .title {
+  /* match the centered nav tabs (Bootstrap leaves the nav-link
+   * size/weight vars empty → ~1rem / normal); `inline-block` is
+   * the real underline fix — it stops the parent brand-link's
+   * :hover underline from propagating onto the text (a block
+   * child's `text-decoration:none` can't cancel an ancestor's
+   * underline). */
+  display: inline-block;
+  font-size: 1rem;
+  font-weight: 400;
+  text-decoration: none;
+}
+/* it's a brand mark, not a content link — never underline the
+ * brand text (base / hover / focus). */
+.navbar-brand,
+.navbar-brand:hover,
+.navbar-brand:focus,
+.navbar-brand:visited:hover,
+.navbar-brand .title,
+.navbar-brand:hover .title {
+  text-decoration: none !important;
+  border-bottom: 0 !important;
+}
