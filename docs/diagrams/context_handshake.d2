@@ -19,3 +19,15 @@ parent -> child: "Yield: stream.send()"
 child -> parent: "Yield: stream.send()"
 parent -> child: "Stop: stream closed"
 child -> parent: "Return: fn return value"
+# the non-graceful endings: errors/cancels always
+# propagate, both ways (`ContextCancelled` rides in
+# an `Error` msg, hence the `Error: ...` labels).
+"... or, instead of a graceful Return": {
+  parent-initiated: {
+    parent -> child: "ctx.cancel()  |  parent-side error"
+    child -> parent: "Error: ContextCancelled"
+  }
+  child-initiated: {
+    child -> parent: "Error: child raised  |  ContextCancelled"
+  }
+}

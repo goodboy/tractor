@@ -46,8 +46,10 @@ Usage,
 from __future__ import annotations
 
 import enum
+import hashlib
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess as sp
@@ -273,6 +275,17 @@ class D2Diagram(SphinxDirective):
         )
         if width := self.options.get('width'):
             img['width'] = width
+        # content-hash the rendered svg so the served
+        # `<img src>` carries a `?v=<hash>` cache-buster
+        # (sphinx tags css/js this way but not images);
+        # without it an edited diagram keeps showing the
+        # browser's stale copy at the stable
+        # `_images/<stem>.svg` url on autobuild reload.
+        if out.exists():
+            img['d2_stem'] = out.stem
+            img['d2_cachebust'] = hashlib.sha256(
+                out.read_bytes()
+            ).hexdigest()[:8]
         fig = nodes.figure()
         fig += img
         classes: list[str] = (
@@ -318,11 +331,50 @@ def _reset_seen(
     _seen_outputs.clear()
 
 
+def _cachebust_d2_images(
+    app: Sphinx,
+    pagename: str,
+    templatename: str,
+    context: dict,
+    doctree,
+) -> None:
+    '''
+    Append a ``?v=<content-hash>`` query to every d2
+    diagram ``<img src>`` in the rendered page ``body``
+    so a browser re-fetches an *edited* SVG instead of
+    its stale cached copy at the stable
+    ``_images/<stem>.svg`` url (sphinx cache-busts
+    css/js this way, but not images).
+
+    Scoped strictly to d2 images (those carrying the
+    `d2_cachebust` attr set in `D2Diagram.run()`); all
+    other markup is left untouched.
+
+    '''
+    if doctree is None or 'body' not in context:
+        return
+    busts: dict[str, str] = {}
+    for img in doctree.findall(nodes.image):
+        if ver := img.get('d2_cachebust'):
+            busts[img['d2_stem']] = ver
+    if not busts:
+        return
+    body: str = context['body']
+    for stem, ver in busts.items():
+        body = re.sub(
+            r'(src="[^"]*?' + re.escape(stem) + r'\.svg)(")',
+            rf'\1?v={ver}\2',
+            body,
+        )
+    context['body'] = body
+
+
 def setup(app: Sphinx) -> dict:
     app.add_config_value('d2_bin', None, 'env')
     app.add_config_value('d2_args', [], 'env')
     app.add_directive('d2', D2Diagram)
     app.connect('builder-inited', _reset_seen)
+    app.connect('html-page-context', _cachebust_d2_images)
     return {
         'version': '0.1.0',
         # NB: run() writes the rendered SVG during the
