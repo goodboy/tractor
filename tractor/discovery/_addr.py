@@ -23,8 +23,6 @@ from typing import (
     TYPE_CHECKING,
 )
 
-import platform
-import socket
 from trio import (
     SocketListener,
 )
@@ -34,6 +32,10 @@ from ..runtime._state import (
     _def_tpt_proto,
 )
 from ..ipc._tcp import TCPAddress
+from ..ipc._uds import (
+    UDSAddress,
+    HAS_UDS,
+)
 
 if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs ~4.5ms
@@ -43,21 +45,6 @@ else:
     Actor = Any
 
 log = get_logger()
-
-
-HAS_AF_UNIX = getattr(socket, "AF_UNIX", None) is not None
-IS_WINDOWS = platform.system() == "Windows"
-
-UDSAddress = None       # so references exist but do nothing on Windows
-
-if HAS_AF_UNIX and not IS_WINDOWS:
-    try:
-        from ..ipc._uds import UDSAddress as _UDSAddress
-        UDSAddress = _UDSAddress
-    except Exception as e:
-        log.warning("UDS backend import failed: %s", e)
-else:
-    log.warning("UDS backend disabled on this platform.")
 
 # TODO, maybe breakout the netns key to a struct?
 # class NetNs(Struct)[str, int]:
@@ -192,11 +179,8 @@ class Address(Protocol):
 _address_types: dict[str, Type[Address]] = {
     'tcp': TCPAddress,
 }
-
-if UDSAddress is not None:
+if HAS_UDS:
     _address_types['uds'] = UDSAddress
-else:
-    log.warning("Skipping UDS address type: no UDS backend available.")
 
 
 # TODO! really these are discovery sys default addrs ONLY useful for
@@ -204,11 +188,8 @@ else:
 _default_lo_addrs: dict[str, UnwrappedAddress] = {
     'tcp': TCPAddress.get_root().unwrap(),
 }
-
-if UDSAddress is not None:
+if HAS_UDS:
     _default_lo_addrs['uds'] = UDSAddress.get_root().unwrap()
-else:
-    log.warning("Skipping UDS default loopback address: no UDS backend available.")
 
 
 def get_address_cls(name: str) -> Type[Address]:

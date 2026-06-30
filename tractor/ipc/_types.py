@@ -19,11 +19,9 @@ IPC subsys type-lookup helpers?
 
 '''
 from typing import Type
-import platform
 import socket
 import trio
 
-from tractor.log import get_logger
 from tractor.ipc._transport import (
     MsgTransportKey,
     MsgTransport,
@@ -32,68 +30,37 @@ from tractor.ipc._tcp import (
     TCPAddress,
     MsgpackTCPStream,
 )
+from tractor.ipc._uds import (
+    UDSAddress,
+    MsgpackUDSStream,
+    HAS_UDS,
+)
 
-log = get_logger()
+# the UDS backend is importable everywhere but only *usable* where
+# `trio` reports `has_unix` (i.e. POSIX). On Windows / no-`AF_UNIX`
+# hosts `HAS_UDS` is `False` and the runtime registers TCP only.
+Address = TCPAddress|UDSAddress
 
-# ------------------------------------------------------------
-# Optional UDS backend (Windows / some Pythons may not have AF_UNIX)
-# ------------------------------------------------------------
-HAS_AF_UNIX = getattr(socket, "AF_UNIX", None) is not None
-IS_WINDOWS = platform.system() == "Windows"
-
-HAS_UDS = False
-UDSAddress = None  # type: ignore
-MsgpackUDSStream = None  # type: ignore
-
-if HAS_AF_UNIX and not IS_WINDOWS:
-    try:
-        from tractor.ipc._uds import (  # type: ignore
-            UDSAddress as _UDSAddress,
-            MsgpackUDSStream as _MsgpackUDSStream,
-        )
-        UDSAddress = _UDSAddress  # type: ignore
-        MsgpackUDSStream = _MsgpackUDSStream  # type: ignore
-        HAS_UDS = True
-    except Exception as e:
-        log.warning("UDS backend unavailable (%s); continuing without it.", e)
-else:
-    if not HAS_AF_UNIX:
-        log.warning("AF_UNIX not exposed by this Python; disabling UDS backend.")
-    elif IS_WINDOWS:
-        # Even if the Windows kernel supports AF_UNIX, CPython may not expose it,
-        # and this project currently targets POSIX for the UDS backend.
-        log.warning("Windows detected; disabling UDS backend.")
-
-# ------------------------------------------------------------
-# Public types and transport registries
-# ------------------------------------------------------------
-
-# Address is TCP-only unless UDS is available.
-if HAS_UDS:
-    Address = TCPAddress | UDSAddress  # type: ignore
-else:
-    Address = TCPAddress  # type: ignore
-
-# Manually updated list of all supported msg transport types
+# manually updated list of all supported msg transport types
 _msg_transports: list[Type[MsgTransport]] = [
     MsgpackTCPStream,
 ]
 if HAS_UDS:
-    _msg_transports.append(MsgpackUDSStream)  # type: ignore
+    _msg_transports.append(MsgpackUDSStream)
 
-# Map MsgTransportKey -> transport type
+# map a `MsgTransportKey` to its `MsgTransport` type
 _key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
-    ("msgpack", "tcp"): MsgpackTCPStream,
+    ('msgpack', 'tcp'): MsgpackTCPStream,
 }
 if HAS_UDS:
-    _key_to_transport[("msgpack", "uds")] = MsgpackUDSStream  # type: ignore
+    _key_to_transport[('msgpack', 'uds')] = MsgpackUDSStream
 
-# Map Address wrapper -> transport type
-_addr_to_transport: dict[Type[Address], Type[MsgTransport]] = {  # type: ignore
+# map an `Address`-wrapper to its `MsgTransport` type
+_addr_to_transport: dict[Type[Address], Type[MsgTransport]] = {
     TCPAddress: MsgpackTCPStream,
 }
 if HAS_UDS:
-    _addr_to_transport[UDSAddress] = MsgpackUDSStream  # type: ignore
+    _addr_to_transport[UDSAddress] = MsgpackUDSStream
 
 
 # ------------------------------------------------------------
@@ -132,8 +99,10 @@ def transport_from_stream(
         if fam in (socket.AF_INET, getattr(socket, "AF_INET6", None)):
             transport = "tcp"
 
-        # Only consider AF_UNIX when both Python exposes it and our backend is active
-        if transport is None and HAS_UDS and HAS_AF_UNIX and fam == socket.AF_UNIX:  # type: ignore[attr-defined]
+        # only consider `AF_UNIX` when the UDS backend is active;
+        # `HAS_UDS` short-circuits before `socket.AF_UNIX` so this
+        # stays safe on hosts where that constant is absent.
+        if transport is None and HAS_UDS and fam == socket.AF_UNIX:  # type: ignore[attr-defined]
             transport = "uds"
 
         if transport is None:
