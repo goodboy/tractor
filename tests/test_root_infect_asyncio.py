@@ -9,6 +9,17 @@ from functools import partial
 import pytest
 import trio
 import tractor
+
+# `infect_asyncio` mode is unsupported on Windows (see
+# `test_infected_asyncio`); skip at COLLECTION before the
+# asyncio-interop imports below so the CI leg completes.
+import platform
+if platform.system() == 'Windows':
+    pytest.skip(
+        'infect_asyncio mode is unsupported on Windows',
+        allow_module_level=True,
+    )
+
 from tractor import (
     to_asyncio,
 )

@@ -62,16 +62,17 @@ from .. import log
 from ..discovery._addr import Address
 from ._chan import Channel
 from ._transport import MsgTransport
-from ._uds import UDSAddress
-from ._tcp import TCPAddress
+
 
 if TYPE_CHECKING:
     from ..runtime._runtime import Actor
     from ..runtime._supervise import ActorNursery
 
 
-log = log.get_logger()
+from ._tcp import TCPAddress
+from ._uds import UDSAddress
 
+log = log.get_logger()
 
 async def maybe_wait_on_canced_subs(
     uid: tuple[str, str],

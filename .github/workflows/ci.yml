@@ -91,6 +91,11 @@ jobs:
     name: '${{ matrix.os }} Python${{ matrix.python-version }} spawn_backend=${{ matrix.spawn_backend }} tpt_proto=${{ matrix.tpt_proto }}'
     timeout-minutes: 16
     runs-on: ${{ matrix.os }}
+    # Windows support is nascent: keep its legs informational so a
+    # known-incomplete area doesn't block merges. The `import
+    # tractor` smoke step below is the hard signal for this job;
+    # promote the whole leg to required once the suite is green.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
 
     strategy:
       fail-fast: false
@@ -98,6 +103,7 @@ jobs:
         os: [
           ubuntu-latest,
           macos-latest,
+          windows-latest,
         ]
         python-version: [
           '3.13',
@@ -122,6 +128,10 @@ jobs:
         exclude:
           # don't do UDS run on macOS (for now)
           - os: macos-latest
+            tpt_proto: 'uds'
+          # UDS is POSIX-only; Windows has no `AF_UNIX` so the
+          # backend is intentionally unavailable there.
+          - os: windows-latest
             tpt_proto: 'uds'
 
     steps:
@@ -149,6 +159,12 @@ jobs:
 
       - name: List deps tree
         run: uv tree
+
+      # hard signal for the Windows import-safety fix: `import
+      # tractor` must succeed everywhere, and `HAS_UDS` reflects
+      # platform capability (False on Windows, True on POSIX).
+      - name: 'Smoke: import tractor'
+        run: uv run python -c "import tractor; from tractor.ipc._uds import HAS_UDS; print('import tractor OK | HAS_UDS=', HAS_UDS)"
 
       - name: Run tests
         run: >

@@ -1,9 +1,21 @@
 import time
+import platform
 
 import trio
 import pytest
 
 import tractor
+
+# `tractor.ipc._ringbuf` is built on linux `eventfd(2)`; importing
+# it pulls in `tractor.ipc._linux` whose module-level
+# `ffi.dlopen(None)` raises on non-linux. Skip the whole module at
+# COLLECTION before that crashing import runs (a `pytestmark` skip
+# is too late — markers apply only after the import succeeds).
+if platform.system() != 'Linux':
+    pytest.skip(
+        'ringbuf (eventfd) IPC is linux-only',
+        allow_module_level=True,
+    )
 
 # XXX `cffi` dun build on py3.14 yet..
 pytest.importorskip("cffi")

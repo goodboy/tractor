@@ -32,13 +32,15 @@ from ..runtime._state import (
     _def_tpt_proto,
 )
 from ..ipc._tcp import TCPAddress
-from ..ipc._uds import UDSAddress
+from ..ipc._uds import (
+    UDSAddress,
+    HAS_UDS,
+)
 
 if TYPE_CHECKING:
     from ..runtime._runtime import Actor
 
 log = get_logger()
-
 
 # TODO, maybe breakout the netns key to a struct?
 # class NetNs(Struct)[str, int]:
@@ -170,25 +172,36 @@ class Address(Protocol):
         ...
 
 
-_address_types: bidict[str, Type[Address]] = {
-    'tcp': TCPAddress,
-    'uds': UDSAddress
-}
+# the address types available on this host: TCP always, UDS only
+# where usable (`HAS_UDS`). Both registries derive from this single
+# list via each type's `proto_key`.
+_address_protos: list[Type[Address]] = [TCPAddress]
+if HAS_UDS:
+    _address_protos.append(UDSAddress)
+
+_address_types: bidict[str, Type[Address]] = bidict({
+    cls.proto_key: cls
+    for cls in _address_protos
+})
 
 
 # TODO! really these are discovery sys default addrs ONLY useful for
 # when none is provided to a root actor on first boot.
-_default_lo_addrs: dict[
-    str,
-    UnwrappedAddress
-] = {
-    'tcp': TCPAddress.get_root().unwrap(),
-    'uds': UDSAddress.get_root().unwrap(),
+_default_lo_addrs: dict[str, UnwrappedAddress] = {
+    cls.proto_key: cls.get_root().unwrap()
+    for cls in _address_protos
 }
 
 
 def get_address_cls(name: str) -> Type[Address]:
-    return _address_types[name]
+    try:
+        return _address_types[name]
+    except KeyError:
+        raise NotImplementedError(
+            f'No IPC transport backend for {name!r} on this '
+            f'platform!\n'
+            f'(available: {list(_address_types)})\n'
+        )
 
 
 def is_wrapped_addr(addr: any) -> bool:
@@ -286,7 +299,14 @@ def default_lo_addrs(
     for an input transport key set.
 
     '''
-    return [
-        _default_lo_addrs[transport]
-        for transport in transports
-    ]
+    lo_addrs: list[UnwrappedAddress] = []
+    for transport in transports:
+        try:
+            lo_addrs.append(_default_lo_addrs[transport])
+        except KeyError:
+            raise NotImplementedError(
+                f'No default loopback addr for transport '
+                f'{transport!r} on this platform!\n'
+                f'(available: {list(_default_lo_addrs)})\n'
+            )
+    return lo_addrs
