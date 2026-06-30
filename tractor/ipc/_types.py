@@ -41,26 +41,28 @@ from tractor.ipc._uds import (
 # hosts `HAS_UDS` is `False` and the runtime registers TCP only.
 Address = TCPAddress|UDSAddress
 
-# manually updated list of all supported msg transport types
+# the available msg-transport backends on this host: TCP always,
+# UDS only where usable (`HAS_UDS`). The lookup maps below are all
+# DERIVED from this single list via each backend's ClassVars
+# (`codec_key`, `address_type`) — register a backend here and every
+# map picks it up; no per-map `if HAS_UDS` to keep in sync.
 _msg_transports: list[Type[MsgTransport]] = [
     MsgpackTCPStream,
 ]
 if HAS_UDS:
     _msg_transports.append(MsgpackUDSStream)
 
-# map a `MsgTransportKey` to its `MsgTransport` type
+# map a `MsgTransportKey` -> `MsgTransport` type
 _key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
-    ('msgpack', 'tcp'): MsgpackTCPStream,
+    (t.codec_key, t.address_type.proto_key): t
+    for t in _msg_transports
 }
-if HAS_UDS:
-    _key_to_transport[('msgpack', 'uds')] = MsgpackUDSStream
 
-# map an `Address`-wrapper to its `MsgTransport` type
+# map an `Address`-wrapper -> `MsgTransport` type
 _addr_to_transport: dict[Type[Address], Type[MsgTransport]] = {
-    TCPAddress: MsgpackTCPStream,
+    t.address_type: t
+    for t in _msg_transports
 }
-if HAS_UDS:
-    _addr_to_transport[UDSAddress] = MsgpackUDSStream
 
 
 # ------------------------------------------------------------
