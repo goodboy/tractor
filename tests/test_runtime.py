@@ -73,6 +73,11 @@ async def test_lifetime_stack_wipes_tmpfile(
         1.6 if error_in_child
         else 1
     )
+    # scale for slow/noisy CI (esp. macOS) so the child error
+    # propagates before the deadline; otherwise `move_on_after`
+    # cancels first and flips the `error_in_child=True` assert.
+    from .conftest import cpu_perf_headroom
+    timeout *= cpu_perf_headroom()
     try:
         with trio.move_on_after(timeout) as cs:
             async with tractor.open_nursery(
