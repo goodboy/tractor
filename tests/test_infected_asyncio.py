@@ -20,6 +20,18 @@ from typing import (
 import pytest
 import trio
 import tractor
+
+# `infect_asyncio` mode is unsupported on Windows (asyncio's
+# `ProactorEventLoop` is incompatible with our `trio` guest-mode
+# interop and currently hangs/crashes the run). Skip the module on
+# Windows so the CI leg completes + reports the rest of the suite.
+import platform
+if platform.system() == 'Windows':
+    pytest.skip(
+        'infect_asyncio mode is unsupported on Windows',
+        allow_module_level=True,
+    )
+
 from tractor import (
     current_actor,
     Actor,
