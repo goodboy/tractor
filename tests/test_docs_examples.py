@@ -178,10 +178,11 @@ def test_example(
         code = ex.read()
 
         with run_example_in_subproc(code) as proc:
+            out = None
             err = None
             try:
                 if not proc.poll():
-                    _, err = proc.communicate(timeout=timeout)
+                    out, err = proc.communicate(timeout=timeout)
 
             except subprocess.TimeoutExpired as e:
                 test_log.exception(
@@ -190,9 +191,34 @@ def test_example(
                 proc.kill()
                 err = e.stderr
 
+            errmsg: str = err.decode() if err else ''
+
+            # XXX, ALWAYS surface the subproc's full stderr
+            # whenever it exits non-zero!
+            #
+            # The prior impl only raised when the LAST stderr
+            # line contained 'Error', swallowing any crash whose
+            # traceback ends in a non-`XxxError:` line; in
+            # particular EVERY `tractor` root-actor crash ends
+            # with the strict-EG collapse note,
+            # '( ^^^ this exc was collapsed from a group ^^^ )',
+            # so ALL such failures were reduced to a bare
+            # `assert 1 == 0` in CI logs.. see GH #473.
+            rc: int|None = proc.returncode
+            if rc:
+                outmsg: str = out.decode() if out else ''
+                raise Exception(
+                    f'Example script exited with rc={rc} !?\n'
+                    f'\n'
+                    f'stdout:\n'
+                    f'{outmsg}\n'
+                    f'\n'
+                    f'stderr:\n'
+                    f'{errmsg}\n'
+                )
+
             # if we get some gnarly output let's aggregate and raise
-            if err:
-                errmsg = err.decode()
+            if errmsg:
                 errlines = errmsg.splitlines()
                 last_error = errlines[-1]
                 if (
