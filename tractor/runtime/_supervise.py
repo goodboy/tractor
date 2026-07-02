@@ -438,8 +438,6 @@ class ActorNursery:
             ),
             bind_addrs=bind_addrs,
             loglevel=loglevel,
-            # use the run_in_actor nursery
-            nursery=self._ria_nursery,
             infect_asyncio=infect_asyncio,
             inherit_parent_main=inherit_parent_main,
             proc_kwargs=proc_kwargs
@@ -580,6 +578,51 @@ class ActorNursery:
         self._join_procs.set()
 
 
+async def _reap_ria_portals(
+    an: ActorNursery,
+    errors: dict[tuple[str, str], BaseException],
+    ria_children: list[tuple[Portal, Actor]]|None = None,
+) -> None:
+    '''
+    Wait on and stash the final result/error from every
+    `.run_in_actor()`-spawned child then cancel its actor
+    runtime, one `_spawn.cancel_on_completion()` task per
+    child.
+
+    Replaces the per-child reaper task formerly spawned by
+    the spawn backends (keyed off
+    `._cancel_after_result_on_exit` membership) which
+    required routing such children into the (now removable)
+    `._ria_nursery`. Only call AFTER `._join_procs` is set
+    so user code inside the nursery block retains exclusive
+    result-await access; see the "manually await results"
+    note in `spawn._mp.mp_proc()`.
+
+    '''
+    if ria_children is None:
+        ria_children: list[tuple[Portal, Actor]] = [
+            (portal, subactor)
+            for subactor, _, portal in an._children.values()
+            if portal in an._cancel_after_result_on_exit
+        ]
+    if not ria_children:
+        return
+
+    async with (
+        collapse_eg(),
+        trio.open_nursery() as tn,
+    ):
+        portal: Portal
+        subactor: Actor
+        for portal, subactor in ria_children:
+            tn.start_soon(
+                _spawn.cancel_on_completion,
+                portal,
+                subactor,
+                errors,
+            )
+
+
 @acm
 async def _open_and_supervise_one_cancels_all_nursery(
     actor: Actor,
@@ -640,6 +683,11 @@ async def _open_and_supervise_one_cancels_all_nursery(
                         f'>}} {len(an._children)}\n'
                     )
                     an._join_procs.set()
+
+                    # collect results (and errors) from all
+                    # `.run_in_actor()` children then cancel
+                    # each, one reaper task per child.
+                    await _reap_ria_portals(an, errors)
 
                 except BaseException as _inner_err:
                     inner_err = _inner_err
@@ -704,8 +752,38 @@ async def _open_and_supervise_one_cancels_all_nursery(
                                 # '------ - ------'
                             )
 
+                        # snapshot `.run_in_actor()` children
+                        # BEFORE cancelling: each backend
+                        # spawn-task pops its `._children`
+                        # entry as the proc gets reaped.
+                        ria_children: list = [
+                            (portal, subactor)
+                            for subactor, _, portal
+                            in an._children.values()
+                            if portal in
+                            an._cancel_after_result_on_exit
+                        ]
                         # cancel all subactors
                         await an.cancel()
+
+                        # then collect any already-relayed
+                        # results/errors from ria children.
+                        # Tightly bounded: anything
+                        # collectable is already queued in
+                        # the local ctx (relayed BEFORE the
+                        # cancel above); a child hard-killed
+                        # without relaying just parks its
+                        # reaper which then self-cleans (a
+                        # `trio.Cancelled` result is never
+                        # stashed), mirroring the old
+                        # backend-side reaper-vs-`soft_kill`
+                        # cancel race.
+                        with trio.move_on_after(0.5):
+                            await _reap_ria_portals(
+                                an,
+                                errors,
+                                ria_children=ria_children,
+                            )
 
             # ria_nursery scope end
 
