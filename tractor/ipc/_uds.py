@@ -301,7 +301,16 @@ async def start_listener(
             f'>{{\n'
             f'|_{bs!r}\n'
         )
-        bs.mkdir()
+        bs.mkdir(
+            # ensure the full ancestor tree for any nested
+            # (custom `filedir`) bindspace; the default
+            # `get_rt_dir()` space is pre-created but a custom
+            # one may have missing parents.
+            parents=True,
+            # avoid `FileExistsError` from racing actors, same
+            # guard as in `get_rt_dir()`.
+            exist_ok=True,
+        )
 
     with _reraise_as_connerr(
         src_excs=(
@@ -554,11 +563,18 @@ class MsgpackUDSStream(MsgpackTransport):
     ]:
         sock: trio.socket.socket = stream.socket
 
-        # NOTE XXX, it's unclear why one or the other ends up being
-        # `bytes` versus the socket-file-path, i presume it's
-        # something to do with who is the server (called `.listen()`)?
-        # maybe could be better implemented using another info-query
-        # on the socket like,
+        # NOTE, the `bytes` case is a linux-only artifact: setting
+        # `SO_PASSCRED` (see `open_unix_socket_w_passcred()`)
+        # causes the kernel to *autobind* the un-named client
+        # sock to an abstract-namespace addr which python
+        # delivers as `bytes`; the listener-bound end is always
+        # the fs-path `str`. On platforms WITHOUT autobind
+        # (macOS et al) the un-bound end instead reports as an
+        # empty `str` so BOTH names arrive as `str`s and the
+        # real fs-path is whichever is non-empty: `peername` on
+        # the connect side, `sockname` on the accept side.
+        #
+        # for socket-api deats see,
         # https://beej.us/guide/bgnet/html/split-wide/system-calls-or-bust.html#gethostnamewho-am-i
         sockname: str|bytes = sock.getsockname()
         # https://beej.us/guide/bgnet/html/split-wide/system-calls-or-bust.html#getpeernamewho-are-you
@@ -570,8 +586,24 @@ class MsgpackUDSStream(MsgpackTransport):
             case (bytes(), str()):
                 sock_path: Path = Path(sockname)
 
-            case (str(), str()):  # XXX, likely macOS
-                sock_path: Path = Path(peername)
+            # XXX, no-autobind case (macOS): the un-bound end
+            # is `''`, NOT a `bytes` abstract-ns addr; taking
+            # `peername` unconditionally (as prior impl did)
+            # delivers garbage `Path('')` addrs on the accept
+            # side!
+            case (str(), str()):
+                bound_name: str = (
+                    peername
+                    or
+                    sockname
+                )
+                if not bound_name:
+                    raise ValueError(
+                        f'Empty UDS (peername, sockname) pair ??\n'
+                        f'peername: {peername!r}\n'
+                        f'sockname: {sockname!r}\n'
+                    )
+                sock_path: Path = Path(bound_name)
 
             case _:
                 raise TypeError(
