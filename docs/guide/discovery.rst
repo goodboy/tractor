@@ -62,6 +62,28 @@ the one-and-only registrar; boot then fails loudly with a
 ``RuntimeError`` if some other process already bound the registry
 socket(s).
 
+A dedicated registrar
+---------------------
+That second rule — *"if a registrar answers, boot as a plain
+root"* — is all you need to run the registry as its own
+**standalone process**, decoupled from any app tree's root. Boot
+a bare ``tractor.run_daemon([], registry_addrs=[...])`` (a root
+actor that does nothing but hold the registry), point your app
+tree at the same ``registry_addrs``, and every actor discovers
+through that *external* registrar instead of a tree-local one:
+
+.. literalinclude:: ../../examples/dedicated_registrar.py
+   :caption: examples/dedicated_registrar.py
+   :language: python
+
+This is the "registrar as a subsystem, not the root actor" shape.
+Two caveats today (both tracked as #472 follow-ups):
+``enable_transports`` is single-proto per runtime, so a registrar
+can't yet serve multiple backends at once; and there's no way to
+spawn a registrar as a *sub*-actor of a shared tree (only as its
+own root), since ``start_actor()`` has no custom-``actor_cls``
+hook.
+
 Looking up actors
 -----------------
 
