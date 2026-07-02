@@ -41,6 +41,7 @@ async def fan_out_squares(
     aggregated squares to our parent.
 
     '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
         portals: list[tractor.Portal] = []
         for i in (1, 2):
@@ -67,6 +68,7 @@ async def fan_out_squares(
             )
 
         # fan out one sub-RPC per input val, concurrently.
+        tn: trio.Nursery
         async with trio.open_nursery() as tn:
             for i, x in enumerate(vals):
                 tn.start_soon(
@@ -83,8 +85,9 @@ async def fan_out_squares(
 
 
 async def main() -> None:
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'supervisor',
             enable_modules=[__name__],
         )

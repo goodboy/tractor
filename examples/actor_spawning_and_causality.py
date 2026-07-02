@@ -2,17 +2,18 @@ import trio
 import tractor
 
 
-async def cellar_door():
+async def cellar_door() -> str:
     assert not tractor.is_root_process()
     return "Dang that's beautiful"
 
 
-async def main():
+async def main() -> None:
     """The main ``tractor`` routine.
     """
+    n: tractor.ActorNursery
     async with tractor.open_nursery() as n:
 
-        portal = await n.run_in_actor(
+        portal: tractor.Portal = await n.run_in_actor(
             cellar_door,
             name='some_linguist',
         )

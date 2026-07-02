@@ -59,8 +59,9 @@ async def point_doubler(
 
 
 async def main() -> None:
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'point_doubler',
             enable_modules=[__name__],
         )

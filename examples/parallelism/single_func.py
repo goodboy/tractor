@@ -12,7 +12,7 @@ import tractor
 import trio
 
 
-async def burn_cpu():
+async def burn_cpu() -> int:
 
     pid = os.getpid()
 
@@ -23,17 +23,18 @@ async def burn_cpu():
     return os.getpid()
 
 
-async def main():
+async def main() -> None:
 
+    n: tractor.ActorNursery
     async with tractor.open_nursery() as n:
 
-        portal = await n.run_in_actor(burn_cpu)
+        portal: tractor.Portal = await n.run_in_actor(burn_cpu)
 
         #  burn rubber in the parent too
         await burn_cpu()
 
         # wait on result from target function
-        pid = await portal.wait_for_result()
+        pid: int = await portal.wait_for_result()
 
     # end of nursery block
     print(f"Collected subproc {pid}")

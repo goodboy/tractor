@@ -54,8 +54,9 @@ async def consume(
 
 
 async def main() -> None:
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'ticker',
             enable_modules=[__name__],
         )
@@ -67,6 +68,7 @@ async def main() -> None:
             ctx.open_stream() as stream,
         ):
             assert first == 5
+            tn: trio.Nursery
             async with trio.open_nursery() as tn:
                 # use `.start()` so each consumer is known
                 # to be subscribed before the ticks flow.
