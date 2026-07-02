@@ -50,7 +50,6 @@ from tractor.msg import (
     pretty_struct,
 )
 from ._spawn import (
-    cancel_on_completion,
     hard_kill,
     soft_kill,
 )
@@ -195,31 +194,16 @@ async def trio_proc(
         with trio.CancelScope(shield=True):
             await actor_nursery._join_procs.wait()
 
-        async with trio.open_nursery() as nursery:
-            if portal in actor_nursery._cancel_after_result_on_exit:
-                nursery.start_soon(
-                    cancel_on_completion,
-                    portal,
-                    subactor,
-                    errors
-                )
-
-            # This is a "soft" (cancellable) join/reap which
-            # will remote cancel the actor on a ``trio.Cancelled``
-            # condition.
-            await soft_kill(
-                proc,
-                trio.Process.wait,  # XXX, uses `pidfd_open()` below.
-                portal
-            )
-
-            # cancel result waiter that may have been spawned in
-            # tandem if not done already
-            log.cancel(
-                'Cancelling portal result reaper task\n'
-                f'c)> {subactor.aid.reprol()!r}\n'
-            )
-            nursery.cancel_scope.cancel()
+        # This is a "soft" (cancellable) join/reap which
+        # will remote cancel the actor on a ``trio.Cancelled``
+        # condition. Any `.run_in_actor()` result-reaping
+        # happens up in the `ActorNursery` machinery (see
+        # `_supervise._reap_ria_portals()`), NOT here.
+        await soft_kill(
+            proc,
+            trio.Process.wait,  # XXX, uses `pidfd_open()` below.
+            portal
+        )
 
     finally:
         # XXX NOTE XXX: The "hard" reap since no actor zombies are
