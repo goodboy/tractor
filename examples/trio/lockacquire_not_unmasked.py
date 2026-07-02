@@ -32,8 +32,8 @@ async def acquire_singleton_lock(
 
 
 async def hold_lock_forever(
-    task_status=trio.TASK_STATUS_IGNORED
-):
+    task_status: trio.TaskStatus = trio.TASK_STATUS_IGNORED,
+) -> None:
     async with (
         tractor.trionics.maybe_raise_from_masking_exc(),
         acquire_singleton_lock() as lock,
@@ -46,7 +46,7 @@ async def main(
     ignore_special_cases: bool,
     loglevel: str = 'info',
     debug_mode: bool = True,
-):
+) -> None:
     async with (
         trio.open_nursery() as tn,
 
