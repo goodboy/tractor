@@ -229,6 +229,53 @@ Gate (trio backend, all 0-failure):
   completing within an 800s bound — but split across the
   above three runs EVERY module passed under step B.
 
+## Step-B2 outcome (2026-07-02, done in tree)
+
+Step B committed as `9201a2ed` (code) + `d2e812fb` (docs), then
+branched to `drop_ria_nursery`. Step B2 (the deferred
+handler-merge) implemented on top (uncommitted):
+
+- the two nested handlers in
+  `_open_and_supervise_one_cancels_all_nursery` collapse to
+  ONE `except BaseException as _scope_err` + the existing
+  `finally`. The `outer_err`/`inner_err` locals go away.
+
+Why it's safe (trace, not hope): the OLD inner handler records
+`errors[actor.aid.uid]` as its FIRST statement (before any
+await). So whenever an error path runs, `errors` is non-empty.
+The OLD outer handler was only reachable via leakage from the
+inner handler (it catches `BaseException`, so nothing from the
+`yield` scope bypasses it) — and by then `errors` is already
+populated, so the `finally`'s `raise` from `errors` ALWAYS
+superseded the outer handler's own `raise`. i.e. the outer
+`raise` was dead. The outer handler's other effects
+(`_scope_error`, a 2nd debugger-wait, child-cancel) are
+redundant with the merged handler + `finally`. So one handler
++ `finally` is observably equivalent.
+
+Residual nuance (accepted): in the rare "`trio.Cancelled`
+delivered during the non-shielded `maybe_wait_for_debugger`"
+path, the merged form may leave `_cancel_called` False (cancel
+happens after the wait), so `open_nursery`'s tb-hiding guard
+(`not cancel_called and _scope_error`) can show a tb it
+previously hid. More informative, not less; no test asserts on
+it.
+
+Gate (box ran ~2.7x slow this session, load-induced
+`TooSlowError` flakiness on timing tests — NOT code; see
+[[env_cpu_throttle_masquerades_as_regression]]):
+- baseline (pre-B2 tip `9201a2ed`) full suite
+  (`-k 'not dynamic_pub_sub'`) = 300 passed + 1
+  `test_ext_types_over_ipc` `TooSlowError` that passes 6/6 in
+  isolation (4.89s).
+- B2 error/cancel gate (`test_cancellation remote_exc_relay
+  inter_peer_cancellation advanced_faults oob_cancellation
+  to_actor spawning local rpc`) = 71 passed, 1 xfailed
+  (125s).
+- B2 full-suite run: see `b2_full.log` (result appended on
+  completion). RECOMMEND a clean full-suite run on a
+  normal-speed box before this merges.
+
 ## Verification gate
 
 - `tests/test_cancellation.py test_spawning.py test_local.py
