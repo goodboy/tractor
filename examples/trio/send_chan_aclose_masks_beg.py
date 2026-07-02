@@ -134,7 +134,7 @@ async def main(
 
     raise_unmasked: bool = False,
     loglevel: str = 'info',
-):
+) -> None:
     tractor.log.get_console_log(level=loglevel)
 
     # the `.aclose()` being checkpoints on these

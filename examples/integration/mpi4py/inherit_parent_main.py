@@ -33,15 +33,16 @@ async def main() -> None:
     rank = MPI.COMM_WORLD.Get_rank()
     print(f"[parent] rank={rank}  pid={os.getpid()}", flush=True)
 
+    an: tractor.ActorNursery
     async with tractor.open_nursery(start_method='trio') as an:
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'mpi-child',
             enable_modules=[child_fn.__module__],
             # Without this the child replays __main__, which
             # re-imports mpi4py and crashes on MPI_Init.
             inherit_parent_main=False,
         )
-        result = await portal.run(child_fn)
+        result: str = await portal.run(child_fn)
         print(f"[parent] got: {result}", flush=True)
         await portal.cancel_actor()
 
