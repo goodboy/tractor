@@ -71,7 +71,7 @@ async def cancelled_before_pause(
     await pm_on_cancelled()
 
 
-async def main():
+async def main() -> None:
     async with tractor.open_nursery(
         debug_mode=True,
     ) as n:

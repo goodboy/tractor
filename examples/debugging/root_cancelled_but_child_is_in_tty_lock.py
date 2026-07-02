@@ -10,6 +10,7 @@ async def name_error():
 async def spawn_until(depth=0):
     """"A nested nursery that triggers another ``NameError``.
     """
+    n: tractor.ActorNursery
     async with tractor.open_nursery() as n:
         if depth < 1:
             # await n.run_in_actor('breakpoint_forever', breakpoint_forever)
@@ -23,7 +24,7 @@ async def spawn_until(depth=0):
             )
 
 
-async def main():
+async def main() -> None:
     '''
     The process tree should look as approximately as follows when the
     debugger first engages:

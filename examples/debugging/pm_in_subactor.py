@@ -18,7 +18,7 @@ async def name_error(
         raise
 
 
-async def main():
+async def main() -> None:
     '''
     Test 3 `PdbREPL` entries:
       - one in the child due to manual `.post_mortem()`,

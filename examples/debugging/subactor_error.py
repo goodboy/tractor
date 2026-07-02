@@ -6,7 +6,7 @@ async def name_error():
     getattr(doggypants)  # noqa (on purpose)
 
 
-async def main():
+async def main() -> None:
     async with tractor.open_nursery(
         debug_mode=True,
     ) as an:
