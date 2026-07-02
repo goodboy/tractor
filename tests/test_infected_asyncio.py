@@ -207,18 +207,27 @@ def test_tractor_cancels_aio(
 
     '''
     async def main():
-        async with tractor.open_nursery(
-            debug_mode=debug_mode,
-            registry_addrs=[reg_addr],
-        ) as an:
-            portal = await an.run_in_actor(
-                asyncio_actor,
-                target='aio_sleep_forever',
-                expect_err='trio.Cancelled',
-                infect_asyncio=True,
-            )
-            # cancel the entire remote runtime
-            await portal.cancel_actor()
+        # anti-hang wall-clock cap: a per-test `trio.fail_after`
+        # is the blessed guard here since `pytest-timeout`'s
+        # global cap is intentionally off (see the `pyproject`
+        # NOTE — it breaks trio under fork backends). Generous +
+        # CPU-headroom-scaled bc this is an anti-hang guard, not
+        # a perf assertion; a wedged ria-reaper once hung this
+        # test forever (the `._ria_nursery`-removal regression).
+        from .conftest import cpu_perf_headroom
+        with trio.fail_after(9 * cpu_perf_headroom()):
+            async with tractor.open_nursery(
+                debug_mode=debug_mode,
+                registry_addrs=[reg_addr],
+            ) as an:
+                portal = await an.run_in_actor(
+                    asyncio_actor,
+                    target='aio_sleep_forever',
+                    expect_err='trio.Cancelled',
+                    infect_asyncio=True,
+                )
+                # cancel the entire remote runtime
+                await portal.cancel_actor()
 
     trio.run(main)
 
