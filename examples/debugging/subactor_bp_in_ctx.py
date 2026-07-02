@@ -34,7 +34,7 @@ async def just_bp(
 
 
 
-async def main():
+async def main() -> None:
 
     # !TODO, parametrize the --tpt-proto={key} with osenv vars just
     # like we do for loglevel/spawn-backend!

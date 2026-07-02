@@ -20,7 +20,7 @@ async def name_error():
     getattr(doggypants)  # noqa
 
 
-async def main():
+async def main() -> None:
     '''
     Test breakpoint in a streaming actor.
 

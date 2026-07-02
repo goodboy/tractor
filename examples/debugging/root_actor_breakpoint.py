@@ -2,7 +2,7 @@ import trio
 import tractor
 
 
-async def main():
+async def main() -> None:
 
     async with tractor.open_root_actor(
         debug_mode=True,

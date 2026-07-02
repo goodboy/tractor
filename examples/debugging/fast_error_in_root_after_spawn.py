@@ -35,7 +35,7 @@ async def open_ctx(
         assert first is None
 
 
-async def main():
+async def main() -> None:
 
     async with tractor.open_nursery(
         debug_mode=True,

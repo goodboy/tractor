@@ -12,7 +12,7 @@ async def breakpoint_forever():
         await tractor.pause()
 
 
-async def main():
+async def main() -> None:
 
     async with tractor.open_nursery(
         debug_mode=True,

@@ -7,7 +7,7 @@ async def key_error():
     return {}['doggy']
 
 
-async def main():
+async def main() -> None:
     '''
     Root is fail-after-cancelled while blocking and child RPC fails
     simultaneously.

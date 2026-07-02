@@ -17,6 +17,7 @@ async def name_error():
 async def spawn_error():
     """"A nested nursery that triggers another ``NameError``.
     """
+    n: tractor.ActorNursery
     async with tractor.open_nursery() as n:
         portal = await n.run_in_actor(
             name_error,
@@ -25,7 +26,7 @@ async def spawn_error():
         return await portal.result()
 
 
-async def main():
+async def main() -> None:
     """The main ``tractor`` routine.
 
     The process tree should look as approximately as follows:
