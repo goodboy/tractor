@@ -238,9 +238,31 @@ Toward capability-based msging
 The ``pld_spec`` + codec-hook layer is the foundation for the
 long-game: **capability-based msging** where each dialog's
 type contract doubles as a capability grant, negotiated as part
-of the protocol itself. That work is tracked in `#196`_ (with the
-original typed-proto epic in `#36`_); if strongly-typed
-distributed systems get you going, we'd love your input.
+of the protocol itself. The epic is tracked in `#196`_ (evolving
+the original typed-proto work in `#36`_), and the most recent
+concrete step is `#365`_ — driving the whole ``pld_spec`` off
+plain type-annotations (e.g. annotating a context's
+``open_stream()`` with ``msgspec.Struct`` subtypes) instead of
+explicit ``pld_spec=`` kwargs.
+
+You don't have to wait for that, though: the decorator-level
+``@tractor.context(pld_spec=...)`` shown above is already the
+*higher-level* way to pin a dialog's payload contract, while
+``tractor.msg._ops.limit_plds()`` is the lower-level, per-block
+escape hatch. Both are exercised end-to-end in
+``tests/msg/test_pldrx_limiting.py`` and
+``tests/msg/test_ext_types_msgspec.py``.
+
+On the codec-hook side, the ``enc_hook``/``dec_hook`` pair is
+today only reachable via ``tractor.msg._ops``; a public *factory*
+API for them is drafted in `#376`_ (from
+`@guilledk <https://github.com/guilledk>`_, on the
+`auto_codecs <https://github.com/goodboy/tractor/tree/auto_codecs>`_
+branch) — the likely long-term home for custom-type
+(de)serialization.
+
+If strongly-typed distributed systems get you going, we'd love
+your input on any of the above.
 
 Where to next?
 --------------
@@ -258,3 +280,5 @@ Where to next?
 .. _(un)protocol: https://zguide.zeromq.org/docs/chapter7/#Unprotocols
 .. _#196: https://github.com/goodboy/tractor/issues/196
 .. _#36: https://github.com/goodboy/tractor/issues/36
+.. _#365: https://github.com/goodboy/tractor/issues/365
+.. _#376: https://github.com/goodboy/tractor/pull/376
