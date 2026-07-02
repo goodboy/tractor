@@ -12,7 +12,7 @@ import tractor
 import trio
 
 
-async def burn_cpu():
+async def burn_cpu() -> int:
 
     pid = os.getpid()
 
@@ -23,7 +23,7 @@ async def burn_cpu():
     return pid
 
 
-async def main():
+async def main() -> None:
 
     async with trio.open_nursery() as tn:
 
@@ -32,7 +32,7 @@ async def main():
 
         # run the same func as the lone task in a subactor,
         # block on and collect its PID as the caller-side result
-        pid = await tractor.to_actor.run(burn_cpu)
+        pid: int = await tractor.to_actor.run(burn_cpu)
 
     print(f"Collected subproc {pid}")
 

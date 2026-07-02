@@ -8,16 +8,17 @@ the_line = 'Hi my name is {}'
 tractor.log.get_console_log("INFO")
 
 
-async def hi():
+async def hi() -> str:
     return the_line.format(tractor.current_actor().name)
 
 
-async def say_hello(other_actor):
+async def say_hello(other_actor: str) -> str:
+    portal: tractor.Portal
     async with tractor.wait_for_actor(other_actor) as portal:
         return await portal.run(hi)
 
 
-async def main():
+async def main() -> None:
     """Main tractor entry point, the "master" process (for now
     acts as the "director").
     """

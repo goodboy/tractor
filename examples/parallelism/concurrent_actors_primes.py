@@ -31,7 +31,7 @@ PRIMES = [
 ]
 
 
-async def is_prime(n):
+async def is_prime(n: int) -> bool:
     if n < 2:
         return False
     if n == 2:
@@ -47,7 +47,7 @@ async def is_prime(n):
 
 
 @acm
-async def worker_pool(workers=4):
+async def worker_pool(workers: int = 4):
     """Though it's a trivial special case for ``tractor``, the well
     known "worker pool" seems to be the defacto "but, I want this
     process pattern!" for most parallelism pilgrims.
@@ -57,7 +57,7 @@ async def worker_pool(workers=4):
     """
     async with tractor.open_nursery() as an:
 
-        portals = []
+        portals: list[tractor.Portal] = []
         snd_chan, recv_chan = trio.open_memory_channel(len(PRIMES))
 
         for i in range(workers):
@@ -77,9 +77,14 @@ async def worker_pool(workers=4):
         ) -> list[bool]:
 
             # define an async (local) task to collect results from workers
-            async def send_result(func, value, portal):
+            async def send_result(
+                func: Callable,
+                value: int,
+                portal: tractor.Portal,
+            ):
                 await snd_chan.send((value, await portal.run(func, n=value)))
 
+            tn: trio.Nursery
             async with trio.open_nursery() as tn:
 
                 for value, portal in zip(sequence, itertools.cycle(portals)):
@@ -101,7 +106,7 @@ async def worker_pool(workers=4):
         await an.cancel()
 
 
-async def main():
+async def main() -> None:
 
     async with worker_pool() as actor_map:
 

@@ -2,19 +2,19 @@ import trio
 import tractor
 
 
-async def movie_theatre_question():
+async def movie_theatre_question() -> str:
     """A question asked in a dark theatre, in a tangent
     (errr, I mean different) process.
     """
     return 'have you ever seen a portal?'
 
 
-async def main():
+async def main() -> None:
     """The main ``tractor`` routine.
     """
     async with tractor.open_nursery() as an:
 
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'frank',
             # enable the actor to run funcs from this current module
             enable_modules=[__name__],

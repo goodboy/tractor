@@ -33,7 +33,7 @@ async def main() -> None:
 
     async with tractor.open_nursery() as an:
 
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'rpc_server',
             enable_modules=[__name__],
         )

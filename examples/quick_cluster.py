@@ -9,12 +9,13 @@ async def sleepy_jane() -> None:
     await trio.sleep_forever()
 
 
-async def main():
+async def main() -> None:
     '''
     Spawn a flat actor cluster, with one process per detected core.
 
     '''
     portal_map: dict[str, tractor.Portal]
+    tn: trio.Nursery
 
     # look at this hip new syntax!
     async with (
