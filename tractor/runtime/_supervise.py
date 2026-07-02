@@ -771,9 +771,6 @@ async def _open_and_supervise_one_cancels_all_nursery(
     # normally don't need to show user by default
     __tracebackhide__: bool = hide_tb
 
-    outer_err: BaseException|None = None
-    inner_err: BaseException|None = None
-
     # the collection of errors retreived from spawned sub-actors
     errors: dict[tuple[str, str], BaseException] = {}
 
@@ -793,156 +790,129 @@ async def _open_and_supervise_one_cancels_all_nursery(
             errors
         )
         try:
-            try:
-                # spawning of actors happens in the caller's scope
-                # after we yield upwards
-                yield an
+            # spawning of actors happens in the caller's scope
+            # after we yield upwards
+            yield an
 
-                # When we didn't error in the caller's scope,
-                # signal all process-monitor-tasks to conduct
-                # the "hard join phase".
-                log.runtime(
-                    'Waiting on subactors to complete:\n'
-                    f'>}} {len(an._children)}\n'
-                )
-                an._request_reap_all()
+            # When we didn't error in the caller's scope,
+            # signal all process-monitor-tasks to conduct
+            # the "hard join phase".
+            log.runtime(
+                'Waiting on subactors to complete:\n'
+                f'>}} {len(an._children)}\n'
+            )
+            an._request_reap_all()
 
-                # collect results (and errors) from all
-                # `.run_in_actor()` children then cancel
-                # each, one reaper task per child.
-                await _reap_ria_portals(an, errors)
+            # collect results (and errors) from all
+            # `.run_in_actor()` children then cancel
+            # each, one reaper task per child.
+            await _reap_ria_portals(an, errors)
 
-            except BaseException as _inner_err:
-                inner_err = _inner_err
-                errors[actor.aid.uid] = inner_err
+        # Single one-cancels-all handler for the (now single)
+        # daemon nursery. Pre-#477 a 2ndary `._ria_nursery`
+        # required a separate *outer* handler to catch errors
+        # bubbling from its task-reaping `__aexit__`; with that
+        # nursery gone this lone handler covers every scope
+        # error. NB: we deliberately do NOT re-raise here — the
+        # `finally` below raises the collected `errors` (as a
+        # single exc or `BaseExceptionGroup`), which already
+        # superseded the old outer handler's `raise` anyway
+        # since `errors` is populated (below) before any await.
+        except BaseException as _scope_err:
+            an._scope_error = _scope_err
+            errors[actor.aid.uid] = _scope_err
 
-                # If we error in the root but the debugger is
-                # engaged we don't want to prematurely kill (and
-                # thus clobber access to) the local tty since it
-                # will make the pdb repl unusable.
-                # Instead try to wait for pdb to be released before
-                # tearing down.
-                await debug.maybe_wait_for_debugger(
-                    child_in_debug=an._at_least_one_child_in_debug
-                )
-
-                # if the caller's scope errored then we activate our
-                # one-cancels-all supervisor strategy (don't
-                # worry more are coming).
-                an._request_reap_all()
-
-                # XXX NOTE XXX: hypothetically an error could
-                # be raised and then a cancel signal shows up
-                # slightly after in which case the `else:`
-                # block here might not complete?  For now,
-                # shield both.
-                with trio.CancelScope(shield=True):
-                    etype: type = type(inner_err)
-                    if etype in (
-                        trio.Cancelled,
-                        KeyboardInterrupt,
-                    ) or (
-                        is_multi_cancelled(inner_err)
-                    ):
-                        log.cancel(
-                            f'Actor-nursery cancelled by {etype}\n\n'
-
-                            f'{current_actor().aid.uid}\n'
-                            f' |_{an}\n\n'
-
-                            # TODO: show tb str?
-                            # f'{tb_str}'
-                        )
-                    elif etype in {
-                        ContextCancelled,
-                    }:
-                        log.cancel(
-                            'Actor-nursery caught remote cancellation\n'
-                            '\n'
-                            f'{inner_err.tb_str}'
-                        )
-                    else:
-                        log.exception(
-                            'Nursery errored with:\n'
-
-                            # TODO: same thing as in
-                            # `._invoke()` to compute how to
-                            # place this div-line in the
-                            # middle of the above msg
-                            # content..
-                            # -[ ] prolly helper-func it too
-                            #   in our `.log` module..
-                            # '------ - ------'
-                        )
-
-                    # snapshot `.run_in_actor()` children
-                    # BEFORE cancelling: each backend
-                    # spawn-task pops its `._children`
-                    # entry as the proc gets reaped.
-                    ria_children: list = [
-                        (portal, subactor)
-                        for subactor, _, portal
-                        in an._children.values()
-                        if portal in
-                        an._cancel_after_result_on_exit
-                    ]
-                    # cancel all subactors
-                    await an.cancel()
-
-                    # then collect any already-relayed
-                    # results/errors from ria children.
-                    # Tightly bounded: anything
-                    # collectable is already queued in
-                    # the local ctx (relayed BEFORE the
-                    # cancel above); a child hard-killed
-                    # without relaying just parks its
-                    # reaper which then self-cleans (a
-                    # `trio.Cancelled` result is never
-                    # stashed), mirroring the old
-                    # backend-side reaper-vs-`soft_kill`
-                    # cancel race.
-                    with trio.move_on_after(0.5):
-                        await _reap_ria_portals(
-                            an,
-                            errors,
-                            ria_children=ria_children,
-                        )
-
-        # Safety-net handler for anything escaping the inner
-        # `except BaseException` above (e.g. a `trio.Cancelled`
-        # during its non-shielded debugger-wait, or a failure
-        # inside the shielded teardown itself). Post-#477 the
-        # 2ndary `._ria_nursery` (and its dedicated handler) is
-        # gone; this now guards the single daemon nursery scope.
-        # TODO: can this be merged into the inner handler now that
-        # there's only one nursery? (higher-risk, own PR)
-        except (
-            Exception,
-            BaseExceptionGroup,
-            trio.Cancelled
-        ) as _outer_err:
-            outer_err = _outer_err
-
-            an._scope_error = outer_err or inner_err
-
-            # XXX: yet another guard before allowing the cancel
-            # sequence in case a (single) child is in debug.
+            # If we error in the root but the debugger is
+            # engaged we don't want to prematurely kill (and
+            # thus clobber access to) the local tty since it
+            # will make the pdb repl unusable.
+            # Instead try to wait for pdb to be released before
+            # tearing down.
             await debug.maybe_wait_for_debugger(
                 child_in_debug=an._at_least_one_child_in_debug
             )
 
-            # If actor-local error was raised while waiting on
-            # ".run_in_actor()" actors then we also want to cancel all
-            # remaining sub-actors (due to our lone strategy:
-            # one-cancels-all).
-            if an._children:
-                log.cancel(
-                    'Actor-nursery cancelling due error type:\n'
-                    f'{outer_err}\n'
-                )
-                with trio.CancelScope(shield=True):
-                    await an.cancel()
-            raise
+            # if the caller's scope errored then we activate our
+            # one-cancels-all supervisor strategy (don't
+            # worry more are coming).
+            an._request_reap_all()
+
+            # XXX NOTE XXX: hypothetically an error could
+            # be raised and then a cancel signal shows up
+            # slightly after in which case the `else:`
+            # block here might not complete?  For now,
+            # shield both.
+            with trio.CancelScope(shield=True):
+                etype: type = type(_scope_err)
+                if etype in (
+                    trio.Cancelled,
+                    KeyboardInterrupt,
+                ) or (
+                    is_multi_cancelled(_scope_err)
+                ):
+                    log.cancel(
+                        f'Actor-nursery cancelled by {etype}\n\n'
+
+                        f'{current_actor().aid.uid}\n'
+                        f' |_{an}\n\n'
+
+                        # TODO: show tb str?
+                        # f'{tb_str}'
+                    )
+                elif etype in {
+                    ContextCancelled,
+                }:
+                    log.cancel(
+                        'Actor-nursery caught remote cancellation\n'
+                        '\n'
+                        f'{_scope_err.tb_str}'
+                    )
+                else:
+                    log.exception(
+                        'Nursery errored with:\n'
+
+                        # TODO: same thing as in
+                        # `._invoke()` to compute how to
+                        # place this div-line in the
+                        # middle of the above msg
+                        # content..
+                        # -[ ] prolly helper-func it too
+                        #   in our `.log` module..
+                        # '------ - ------'
+                    )
+
+                # snapshot `.run_in_actor()` children
+                # BEFORE cancelling: each backend
+                # spawn-task pops its `._children`
+                # entry as the proc gets reaped.
+                ria_children: list = [
+                    (portal, subactor)
+                    for subactor, _, portal
+                    in an._children.values()
+                    if portal in
+                    an._cancel_after_result_on_exit
+                ]
+                # cancel all subactors
+                await an.cancel()
+
+                # then collect any already-relayed
+                # results/errors from ria children.
+                # Tightly bounded: anything
+                # collectable is already queued in
+                # the local ctx (relayed BEFORE the
+                # cancel above); a child hard-killed
+                # without relaying just parks its
+                # reaper which then self-cleans (a
+                # `trio.Cancelled` result is never
+                # stashed), mirroring the old
+                # backend-side reaper-vs-`soft_kill`
+                # cancel race.
+                with trio.move_on_after(0.5):
+                    await _reap_ria_portals(
+                        an,
+                        errors,
+                        ria_children=ria_children,
+                    )
 
         finally:
             # No errors were raised while awaiting ".run_in_actor()"
