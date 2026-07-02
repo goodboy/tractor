@@ -28,7 +28,7 @@ async def aio_echo_server(
 @tractor.context
 async def trio_to_aio_echo_server(
     ctx: tractor.Context,
-):
+) -> None:
     # this will block until the ``asyncio`` task sends a "first"
     # message.
     async with tractor.to_asyncio.open_channel_from(
@@ -48,10 +48,11 @@ async def trio_to_aio_echo_server(
                 await stream.send(out)
 
 
-async def main():
+async def main() -> None:
 
+    n: tractor.ActorNursery
     async with tractor.open_nursery() as n:
-        p = await n.start_actor(
+        p: tractor.Portal = await n.start_actor(
             'aio_server',
             enable_modules=[__name__],
             infect_asyncio=True,

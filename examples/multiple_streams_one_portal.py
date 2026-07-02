@@ -5,7 +5,7 @@ import tractor
 log = tractor.log.get_logger('multiportal')
 
 
-async def stream_data(seed=10):
+async def stream_data(seed: int = 10):
     log.info("Starting stream task")
 
     for i in range(seed):
@@ -13,7 +13,10 @@ async def stream_data(seed=10):
         await trio.sleep(0)  # trigger scheduler
 
 
-async def stream_from_portal(p, consumed):
+async def stream_from_portal(
+    p: tractor.Portal,
+    consumed: list,
+) -> None:
 
     async with p.open_stream_from(stream_data) as stream:
         async for item in stream:
@@ -23,14 +26,19 @@ async def stream_from_portal(p, consumed):
                 consumed.append(item)
 
 
-async def main():
+async def main() -> None:
 
+    an: tractor.ActorNursery
     async with tractor.open_nursery(loglevel='info') as an:
 
-        p = await an.start_actor('stream_boi', enable_modules=[__name__])
+        p: tractor.Portal = await an.start_actor(
+            'stream_boi',
+            enable_modules=[__name__],
+        )
 
-        consumed = []
+        consumed: list = []
 
+        n: trio.Nursery
         async with trio.open_nursery() as n:
             for i in range(2):
                 n.start_soon(stream_from_portal, p, consumed)

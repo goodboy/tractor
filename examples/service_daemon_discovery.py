@@ -49,13 +49,15 @@ async def client_task() -> None:
 
 
 async def main() -> None:
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'quote_svc',
             enable_modules=[__name__],
         )
         # run the client in a separate task which discovers
         # the daemon purely by its registered name.
+        tn: trio.Nursery
         async with trio.open_nursery() as tn:
             tn.start_soon(client_task)
         # explicit graceful teardown of the daemon.

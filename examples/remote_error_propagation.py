@@ -2,13 +2,14 @@ import trio
 import tractor
 
 
-async def assert_err():
+async def assert_err() -> None:
     assert 0
 
 
-async def main():
+async def main() -> None:
+    n: tractor.ActorNursery
     async with tractor.open_nursery() as n:
-        real_actors = []
+        real_actors: list[tractor.Portal] = []
         for i in range(3):
             real_actors.append(await n.start_actor(
                 f'actor_{i}',

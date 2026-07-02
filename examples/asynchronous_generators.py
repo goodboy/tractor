@@ -13,11 +13,12 @@ async def stream_forever() -> AsyncIterator[int]:
         await trio.sleep(0.01)
 
 
-async def main():
+async def main() -> None:
 
+    n: tractor.ActorNursery
     async with tractor.open_nursery() as n:
 
-        portal = await n.start_actor(
+        portal: tractor.Portal = await n.start_actor(
             'donny',
             enable_modules=[__name__],
         )
@@ -25,7 +26,7 @@ async def main():
         # this async for loop streams values from the above
         # async generator running in a separate process
         async with portal.open_stream_from(stream_forever) as stream:
-            count = 0
+            count: int = 0
             async for letter in stream:
                 print(letter)
                 count += 1

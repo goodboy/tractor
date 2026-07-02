@@ -31,9 +31,10 @@ async def simple_rpc(
 
 async def main() -> None:
 
+    n: tractor.ActorNursery
     async with tractor.open_nursery() as n:
 
-        portal = await n.start_actor(
+        portal: tractor.Portal = await n.start_actor(
             'rpc_server',
             enable_modules=[__name__],
         )

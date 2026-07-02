@@ -27,10 +27,11 @@ async def report_addr() -> str:
 
 
 async def main() -> None:
+    an: tractor.ActorNursery
     async with tractor.open_nursery(
         enable_transports=['uds'],
     ) as an:
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'uds_child',
             enable_modules=[__name__],
         )

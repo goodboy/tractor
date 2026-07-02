@@ -9,14 +9,14 @@ from tractor import (
 
 
 # this is the first 2 actors, streamer_1 and streamer_2
-async def stream_data(seed):
+async def stream_data(seed: int):
     for i in range(seed):
         yield i
         await trio.sleep(0.0001)  # trigger scheduler
 
 
 # this is the third actor; the aggregator
-async def aggregate(seed):
+async def aggregate(seed: int):
     '''
     Ensure that the two streams we receive match but only stream
     a single set of values to the parent.
@@ -28,7 +28,7 @@ async def aggregate(seed):
         for i in range(1, 3):
 
             # fork/spawn call
-            portal = await an.start_actor(
+            portal: Portal = await an.start_actor(
                 name=f'streamer_{i}',
                 enable_modules=[__name__],
             )
@@ -37,7 +37,7 @@ async def aggregate(seed):
 
         send_chan, recv_chan = trio.open_memory_channel(500)
 
-        async def push_to_chan(portal, send_chan):
+        async def push_to_chan(portal: Portal, send_chan):
 
             # TODO: https://github.com/goodboy/tractor/issues/207
             async with send_chan:
@@ -49,6 +49,7 @@ async def aggregate(seed):
             print(f"FINISHED ITERATING {portal.channel.uid}")
 
         # spawn 2 trio tasks to collect streams and push to a local queue
+        n: trio.Nursery
         async with trio.open_nursery() as n:
 
             for portal in portals:
