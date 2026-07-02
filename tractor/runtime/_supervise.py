@@ -383,12 +383,13 @@ class ActorNursery:
         )
 
     # TODO: DEPRECATE THIS:
-    # -[ ] impl instead as a hilevel wrapper on
-    #   top of a `@context` style invocation.
-    #  |_ dynamic @context decoration on child side
-    #  |_ implicit `Portal.open_context() as (ctx, first):`
-    #    and `return first` on parent side.
-    #  |_ mention how it's similar to `trio-parallel` API?
+    # -[x] impl instead as a hilevel wrapper on top of
+    #   the lower level daemon-spawn + portal APIs
+    #  |_ see `.to_actor.run()` (issue #477) which does
+    #    `.start_actor()` + `Portal.run()` + a one-shot
+    #    reap via `Portal.cancel_actor()`.
+    # -[ ] emit a `DeprecationWarning` here (requires
+    #   migrating all in-repo usage first!)
     # -[ ] use @api_frame on the wrapper
     async def run_in_actor(
         self,
@@ -415,6 +416,11 @@ class ActorNursery:
         Actors spawned using this method are kept alive at nursery teardown
         until the task spawned by executing ``fn`` completes at which point
         the actor is terminated.
+
+        NOTE: prefer the (eventual) replacement API
+        `tractor.to_actor.run()` which delivers the same
+        one-shot semantics decoupled from this nursery's
+        internal spawn machinery; see issue #477.
 
         '''
         __runtimeframe__: int = 1  # noqa

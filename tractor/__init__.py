@@ -62,6 +62,7 @@ from .devx import (
     post_mortem as post_mortem,
 )
 from . import msg as msg
+from . import to_actor as to_actor
 from ._root import (
     run_daemon as run_daemon,
     open_root_actor as open_root_actor,
