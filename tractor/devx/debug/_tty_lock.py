@@ -20,7 +20,6 @@ Root-actor TTY mutex-locking machinery.
 
 '''
 from __future__ import annotations
-import asyncio
 from contextlib import (
     AbstractContextManager,
     asynccontextmanager as acm,
@@ -52,7 +51,6 @@ from trio import (
     TaskStatus,
 )
 import tractor
-from tractor.to_asyncio import run_trio_task_in_future
 from tractor.log import get_logger
 from tractor._context import Context
 from tractor.runtime import _state
@@ -66,6 +64,10 @@ from tractor.runtime._state import (
 )
 
 if TYPE_CHECKING:
+    # NOTE, `asyncio` (and `.to_asyncio`) are
+    # lazy-imported at their use-sites to keep them off
+    # the eager `import tractor` path (gh #470).
+    import asyncio
     from trio.lowlevel import Task
     from threading import Thread
     from tractor.ipc import (
@@ -910,6 +912,9 @@ class DebugStatus:
                     async def _set_repl_release():
                         repl_release.set()
 
+                    from tractor.to_asyncio import (
+                        run_trio_task_in_future,
+                    )
                     fute: asyncio.Future = run_trio_task_in_future(
                         _set_repl_release
                     )
