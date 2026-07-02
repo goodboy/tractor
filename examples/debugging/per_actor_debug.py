@@ -5,7 +5,7 @@ async def die():
     raise RuntimeError
 
 
-async def main():
+async def main() -> None:
     async with tractor.open_nursery() as an:
 
         debug_actor = await an.start_actor(

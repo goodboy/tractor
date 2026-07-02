@@ -27,7 +27,7 @@ async def spawn_until(depth=0):
             )
 
 
-async def main():
+async def main() -> None:
     '''
     The process tree should look as approximately as follows when the
     debugger first engages:

@@ -63,7 +63,7 @@ async def spawn_until(depth=0):
 
 
 # TODO: notes on the new boxed-relayed errors through proxy actors
-async def main():
+async def main() -> None:
     """The main ``tractor`` routine.
 
     The process tree should look as approximately as follows when the debugger

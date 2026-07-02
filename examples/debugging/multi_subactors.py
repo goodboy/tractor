@@ -25,7 +25,7 @@ async def spawn_error():
         )
 
 
-async def main():
+async def main() -> None:
     """The main ``tractor`` routine.
 
     The process tree should look as approximately as follows:
