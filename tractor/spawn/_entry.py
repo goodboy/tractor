@@ -38,7 +38,11 @@ from ..devx import (
     pformat,
 )
 # from ..msg import pretty_struct
-from ..to_asyncio import run_as_asyncio_guest
+#
+# NOTE, `.to_asyncio` (and thus `asyncio` itself) is
+# lazy-imported at the `infect_asyncio=True` use-sites
+# below to keep it off the eager `import tractor` path
+# (gh #470).
 from ..discovery._addr import UnwrappedAddress
 from ..runtime._runtime import (
     async_main,
@@ -96,6 +100,7 @@ def _mp_main(
     )
     try:
         if infect_asyncio:
+            from ..to_asyncio import run_as_asyncio_guest
             actor._infected_aio = True
             run_as_asyncio_guest(trio_main)
         else:
@@ -156,6 +161,7 @@ def _trio_main(
     )
     try:
         if infect_asyncio:
+            from ..to_asyncio import run_as_asyncio_guest
             actor._infected_aio = True
             run_as_asyncio_guest(trio_main)
         else:

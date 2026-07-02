@@ -26,11 +26,6 @@ built on `tractor`.
 '''
 from collections.abc import Mapping
 from functools import partial
-from inspect import (
-    FrameInfo,
-    getmodule,
-    stack,
-)
 import sys
 import logging
 from logging import (
@@ -38,10 +33,16 @@ from logging import (
     Logger,
     StreamHandler,
 )
-from types import ModuleType
+from types import (
+    FrameType,
+    ModuleType,
+)
 import warnings
 
-import colorlog  # type: ignore
+# NOTE, `colorlog` is lazy-imported in
+# `get_console_log()` to keep it off the eager
+# `import tractor` path (gh #470).
+#
 # ?TODO, some other (modern) alt libs?
 # import coloredlogs
 # import colored_traceback.auto  # ?TODO, need better config?
@@ -438,16 +439,33 @@ def get_logger(
         pkg_name: str =  _root_name
 
     def get_caller_mod(
-        frames_up:int = 2
-    ):
+        frames_up: int = 2,
+    ) -> ModuleType|None:
         '''
-        Attempt to get the module which called `tractor.get_logger()`.
+        Attempt to get the module which called
+        `tractor.get_logger()`.
+
+        Resolve the caller's frame with `sys._getframe()` and
+        map its `__name__` through `sys.modules`; `inspect.stack()`
+        (the previous impl) builds src-file info for EVERY frame
+        on the stack, scanning all of `sys.modules` per frame via
+        `inspect.getmodule()`, which made module-level
+        `get_logger()` calls dominate `import tractor` time
+        (see gh #470).
 
         '''
-        callstack: list[FrameInfo] = stack()
-        caller_fi: FrameInfo = callstack[frames_up]
-        caller_mod: ModuleType = getmodule(caller_fi.frame)
-        return caller_mod
+        try:
+            caller_frame: FrameType = sys._getframe(frames_up)
+        except ValueError:
+            return None
+
+        mod_name: str|None = caller_frame.f_globals.get(
+            '__name__',
+        )
+        if mod_name is None:
+            return None
+
+        return sys.modules.get(mod_name)
 
     # --- Auto--naming-CASE ---
     # -------------------------
@@ -782,6 +800,10 @@ def get_console_log(
             None,
         )
     ):
+        # lazy-imported to keep it off the eager
+        # `import tractor` path (gh #470).
+        import colorlog  # type: ignore
+
         fmt: str = LOG_FORMAT  # always apply our format?
         handler = StreamHandler()
         formatter = colorlog.ColoredFormatter(

@@ -39,14 +39,15 @@ from typing import (
     Type,
 )
 
-import pdbp
+# NOTE, `pdbp` + `wrapt` are lazy-imported at their
+# single use-sites below to keep them off the eager
+# `import tractor` path (gh #470).
 from tractor.log import get_logger
 import trio
 from tractor.msg import (
     pretty_struct,
     NamespacePath,
 )
-import wrapt
 
 
 log = get_logger()
@@ -257,6 +258,7 @@ def api_frame(
     caller_frames_up: int = 1,
 
 ) -> Callable:
+    import wrapt
 
     # handle the decorator called WITHOUT () case,
     # i.e. just @api_frame, NOT @api_frame(extra=<blah>)
@@ -320,6 +322,8 @@ def hide_runtime_frames() -> dict[FunctionType, CodeType]:
     as possible, particularly from inside a `PdbREPL`.
 
     '''
+    import pdbp
+
     # XXX HACKZONE XXX
     #  hide exit stack frames on nurseries and cancel-scopes!
     # |_ so avoid seeing it when the `pdbp` REPL is first engaged from

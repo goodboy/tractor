@@ -30,7 +30,6 @@ from typing import (
     TYPE_CHECKING,
 )
 
-import platformdirs
 from trio.lowlevel import current_task
 
 from msgspec import (
@@ -332,6 +331,10 @@ def get_rt_dir(
     the lovely `platformdirs` lib.
 
     '''
+    # lazy-imported to keep it off the eager
+    # `import tractor` path (gh #470).
+    import platformdirs
+
     rt_dir: Path = Path(
         platformdirs.user_runtime_dir(
             appname=appname,
