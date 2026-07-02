@@ -179,6 +179,56 @@ racing the 0.5s bound could drop an `errors` entry
 `Portal._final_result_msg`/ctx queue state instead of
 time-bounding.
 
+## Step-B outcome (2026-07-02, done in tree)
+
+Step A landed as `5cd190c5` (code) + `99310269` (docs).
+Step B implemented on top (uncommitted):
+
+- `._ria_nursery` is GONE — the inner
+  `async with (collapse_eg(), trio.open_nursery() as
+  ria_nursery)` layer in
+  `_open_and_supervise_one_cancels_all_nursery` is deleted;
+  `da_nursery` is now the single nursery for ALL subactors.
+- `ActorNursery.__init__` drops the `ria_nursery` param +
+  the `self._ria_nursery` attr; `start_actor()` drops its
+  `nursery=` escape-hatch param (uses `self._da_nursery`
+  directly).
+- `._cancel_after_result_on_exit` STAYS — it's the
+  ria-child discriminator for `_reap_ria_portals()`.
+
+Deliberately NOT done (deferred to its own higher-risk PR,
+flagged with a TODO at the outer `except`): merging the two
+error handlers into one. Rationale — collapsing the empty
+nursery is provably behavior-preserving (a zero-task
+`trio.open_nursery()` only adds a checkpoint), whereas the
+inner `except BaseException` (swallow-into-`errors`) and
+outer `except (...)` (re-raise, safety-net for the inner
+handler's own non-shielded awaits) have DIFFERENT
+semantics; merging changes error/cancel propagation and
+wants isolated review + its own gate. Both handlers are
+kept, now nested directly under the single nursery.
+
+Why the collapse is safe: post-step-A NOTHING spawns into
+`ria_nursery` (its only reader, `run_in_actor`'s
+`nursery=self._ria_nursery`, was removed in A; the stored
+attr was never read again). So the layer was pure dead
+weight.
+
+Gate (trio backend, all 0-failure):
+- targeted set (`test_cancellation test_spawning test_local
+  test_rpc test_to_actor`) = 49 passed, 1 xfailed.
+- tail set (`test_reg_err_types remote_exc_relay
+  resource_cache ringbuf root_infect_asyncio root_runtime
+  runtime shm task_broadcasting trioisms trionics/`) = 63
+  passed, 1 skipped, 5 xfailed.
+- full-suite head ~73% (subdirs + `test_2way`..`test_pubsub`)
+  = 303 passed before the known-flaky `test_dynamic_pub_sub`
+  TooSlowError stall (pre-existing; same hang in the step-A
+  full run). Suite ran slow this session (~13min vs 555s
+  cold, likely thermal from back-to-back runs), never
+  completing within an 800s bound — but split across the
+  above three runs EVERY module passed under step B.
+
 ## Verification gate
 
 - `tests/test_cancellation.py test_spawning.py test_local.py
