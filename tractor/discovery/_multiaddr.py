@@ -24,13 +24,16 @@ Multiaddress support using the upstream `py-multiaddr` lib
 - https://github.com/multiformats/multiaddr/blob/master/protocols/unix.md
 
 '''
+from __future__ import annotations
 import ipaddress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from multiaddr import Multiaddr
-
 if TYPE_CHECKING:
+    # NOTE, `multiaddr` is lazy-imported at first use
+    # (in the fns below) to keep it off the eager
+    # `import tractor` path (gh #470).
+    from multiaddr import Multiaddr
     from tractor.discovery._addr import Address
 
 # map from tractor-internal `proto_key` identifiers
@@ -56,6 +59,8 @@ def mk_maddr(
     multiaddr-spec-compliant protocol path.
 
     '''
+    from multiaddr import Multiaddr
+
     proto_key: str = addr.proto_key
     maddr_proto: str|None = _tpt_proto_to_maddr.get(proto_key)
     if maddr_proto is None:
@@ -98,6 +103,7 @@ def parse_maddr(
 
     '''
     # lazy imports to avoid circular deps
+    from multiaddr import Multiaddr
     from tractor.ipc._tcp import TCPAddress
     from tractor.ipc._uds import UDSAddress
 

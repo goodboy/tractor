@@ -22,7 +22,6 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from bidict import bidict
 from trio import (
     SocketListener,
 )
@@ -35,6 +34,9 @@ from ..ipc._tcp import TCPAddress
 from ..ipc._uds import UDSAddress
 
 if TYPE_CHECKING:
+    # ONLY type-annots, the eager import costs ~4.5ms
+    # of `import tractor` wall-time (gh #470).
+    from bidict import bidict
     from ..runtime._runtime import Actor
 
 log = get_logger()

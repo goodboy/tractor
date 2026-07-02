@@ -39,7 +39,10 @@ from types import (
 )
 import warnings
 
-import colorlog  # type: ignore
+# NOTE, `colorlog` is lazy-imported in
+# `get_console_log()` to keep it off the eager
+# `import tractor` path (gh #470).
+#
 # ?TODO, some other (modern) alt libs?
 # import coloredlogs
 # import colored_traceback.auto  # ?TODO, need better config?
@@ -797,6 +800,10 @@ def get_console_log(
             None,
         )
     ):
+        # lazy-imported to keep it off the eager
+        # `import tractor` path (gh #470).
+        import colorlog  # type: ignore
+
         fmt: str = LOG_FORMAT  # always apply our format?
         handler = StreamHandler()
         formatter = colorlog.ColoredFormatter(
