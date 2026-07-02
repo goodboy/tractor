@@ -48,7 +48,6 @@ from ._entry import _mp_main
 # by `try_set_start_method()` after module load time.
 from . import _spawn
 from ._spawn import (
-    cancel_on_completion,
     proc_waiter,
     soft_kill,
 )
@@ -187,30 +186,16 @@ async def mp_proc(
         with trio.CancelScope(shield=True):
             await actor_nursery._join_procs.wait()
 
-        async with trio.open_nursery() as nursery:
-            if portal in actor_nursery._cancel_after_result_on_exit:
-                nursery.start_soon(
-                    cancel_on_completion,
-                    portal,
-                    subactor,
-                    errors
-                )
-
-            # This is a "soft" (cancellable) join/reap which
-            # will remote cancel the actor on a ``trio.Cancelled``
-            # condition.
-            await soft_kill(
-                proc,
-                proc_waiter,
-                portal
-            )
-
-            # cancel result waiter that may have been spawned in
-            # tandem if not done already
-            log.warning(
-                "Cancelling existing result waiter task for "
-                f"{subactor.aid.uid}")
-            nursery.cancel_scope.cancel()
+        # This is a "soft" (cancellable) join/reap which
+        # will remote cancel the actor on a ``trio.Cancelled``
+        # condition. Any `.run_in_actor()` result-reaping
+        # happens up in the `ActorNursery` machinery (see
+        # `_supervise._reap_ria_portals()`), NOT here.
+        await soft_kill(
+            proc,
+            proc_waiter,
+            portal
+        )
 
     finally:
         # hard reap sequence
