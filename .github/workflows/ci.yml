@@ -118,11 +118,6 @@ jobs:
           'tcp',
           'uds',
         ]
-        # https://github.com/orgs/community/discussions/26253#discussioncomment-3250989
-        exclude:
-          # don't do UDS run on macOS (for now)
-          - os: macos-latest
-            tpt_proto: 'uds'
 
     steps:
       - uses: actions/checkout@v4
