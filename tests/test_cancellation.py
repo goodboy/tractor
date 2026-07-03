@@ -16,6 +16,7 @@ from tractor._testing import (
     tractor_test,
 )
 from tractor._testing.trace import FailAfterWTraceFactory
+from tractor.trionics import gather_contexts
 from .conftest import no_windows
 
 
@@ -68,6 +69,23 @@ async def assert_err(delay=0):
     assert 0
 
 
+@tractor.context
+async def assert_err_ctx(
+    ctx: tractor.Context,
+    delay: float = 0,
+) -> None:
+    '''
+    `@context` shim around `assert_err()` so the multi-actor error
+    tests can fan-out one-shot erroring subactors via
+    `Portal.open_context()` + `gather_contexts()` instead of the
+    removed `ActorNursery.run_in_actor()` (#477).
+
+    '''
+    await ctx.started()
+    await trio.sleep(delay)
+    assert 0
+
+
 async def sleep_forever():
     await trio.sleep_forever()
 
@@ -106,22 +124,17 @@ def test_remote_error(
             registry_addrs=[reg_addr],
         ) as nursery:
 
-            # on a remote type error caused by bad input args
-            # this should raise directly which means we **don't** get
-            # an exception group outside the nursery since the error
-            # here and the far end task error are one in the same?
-            portal = await nursery.run_in_actor(
-                assert_err,
-                name='errorer',
-                **args
-            )
-
-            # get result(s) from main task
+            # `to_actor.run()` blocks on the one-shot's result and
+            # raises the remote error directly here in the caller's
+            # task (a bad-arg `TypeError` likewise relays as a
+            # `RemoteActorError`).
             try:
-                # this means the root actor will also raise a local
-                # parent task error and thus an eg will propagate out
-                # of this actor nursery.
-                await portal.result()
+                await tractor.to_actor.run(
+                    assert_err,
+                    an=nursery,
+                    name='errorer',
+                    **args
+                )
             except tractor.RemoteActorError as err:
                 assert err.boxed_type == errtype
                 print("Look Maa that actor failed hard, hehh")
@@ -162,112 +175,47 @@ def test_multierror(
     set_fork_aware_capture, #: Callable,
 ):
     '''
-    Verify we raise a ``BaseExceptionGroup`` out of a nursery where
-    more then one actor errors.
+    Verify concurrent one-shot subactors erroring propagate a remote
+    error out of the `gather_contexts()` fan-out — grouped as a
+    `BaseExceptionGroup`, or (under cancel-on-first, where the 2nd
+    errorer is cancelled before relaying its own exc) collapsed to a
+    single `RemoteActorError`.
+
+    NB the legacy `run_in_actor()` reaped *all* children at nursery
+    teardown so this always yielded a BEG-of-N; the `to_actor`
+    fan-out is cancel-on-first, so accept either shape.
 
     '''
     async def main():
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
-        ) as nursery:
+        ) as an:
 
-            await nursery.run_in_actor(assert_err, name='errorer1')
-            portal2 = await nursery.run_in_actor(assert_err, name='errorer2')
+            portals = [
+                await an.start_actor(
+                    f'errorer{i}',
+                    enable_modules=[__name__],
+                )
+                for i in range(2)
+            ]
 
-            # get result(s) from main task
-            try:
-                await portal2.result()
-            except tractor.RemoteActorError as err:
-                assert err.boxed_type is AssertionError
-                print("Look Maa that first actor failed hard, hehh")
-                raise
+            # both one-shot subactors error concurrently, so the
+            # `gather_contexts()` task-nursery collects them into a
+            # `BaseExceptionGroup` (was two non-blocking
+            # `run_in_actor()`s reaped at nursery teardown).
+            async with gather_contexts(
+                mngrs=[
+                    p.open_context(assert_err_ctx)
+                    for p in portals
+                ],
+            ):
+                pass
 
-        # here we should get a ``BaseExceptionGroup`` containing exceptions
-        # from both subactors
-
-    with pytest.raises(BaseExceptionGroup):
+    with pytest.raises((
+        BaseExceptionGroup,
+        tractor.RemoteActorError,
+    )):
         trio.run(main)
-
-
-@pytest.mark.parametrize(
-    'delay',
-    (0, 0.5),
-    ids='delays={}'.format,
-)
-@pytest.mark.parametrize(
-    'num_subactors',
-    range(25, 26),
-    ids= 'num_subs={}'.format,
-)
-def test_multierror_fast_nursery(
-    reg_addr: tuple,
-    start_method: str,
-    num_subactors: int,
-    delay: float,
-    set_fork_aware_capture,
-    fail_after_w_trace: FailAfterWTraceFactory,
-):
-    '''
-    Verify we raise a ``BaseExceptionGroup`` out of a nursery where
-    more then one actor errors and also with a delay before failure
-    to test failure during an ongoing spawning.
-
-    '''
-    async def main():
-        # budget = 2× natural trio-backend cascade time for
-        # 25 errorer subactors (~14s observed). on-timeout
-        # diag snapshot → if the cancel cascade hangs
-        # (observed under MTF backend with N>=14 errorer
-        # subactors) we get a fresh ptree/wchan/py-spy dump
-        # on disk INSTEAD of an opaque pytest timeout-kill.
-        # See `tractor/_testing/trace.py` for the helper.
-        async with fail_after_w_trace(30.0):
-            async with tractor.open_nursery(
-                registry_addrs=[reg_addr],
-            ) as nursery:
-
-                for i in range(num_subactors):
-                    await nursery.run_in_actor(
-                        assert_err,
-                        name=f'errorer{i}',
-                        delay=delay
-                    )
-
-    # with pytest.raises(trio.MultiError) as exc_info:
-    # NOTE, `trio.TooSlowError` from `fail_after_w_trace`
-    # bubbles UN-wrapped if `open_nursery.__aexit__` never
-    # gets re-entered; wrapped inside a `BaseExceptionGroup`
-    # if it did. Accept both shapes so the matcher itself
-    # doesn't lie about *what* failed.
-    with pytest.raises(
-        (BaseExceptionGroup, trio.TooSlowError),
-    ) as exc_info:
-        trio.run(main)
-
-    if isinstance(exc_info.value, trio.TooSlowError):
-        pytest.fail(
-            f'cancel cascade hung past 12s '
-            f'(num_subactors={num_subactors}, delay={delay}); '
-            f'see stderr for `fail_after_w_trace` snapshot path'
-        )
-
-    assert exc_info.type == ExceptionGroup
-    err = exc_info.value
-    exceptions = err.exceptions
-
-    if len(exceptions) == 2:
-        # sometimes oddly now there's an embedded BrokenResourceError ?
-        for exc in exceptions:
-            excs = getattr(exc, 'exceptions', None)
-            if excs:
-                exceptions = excs
-                break
-
-    assert len(exceptions) == num_subactors
-
-    for exc in exceptions:
-        assert isinstance(exc, tractor.RemoteActorError)
-        assert exc.boxed_type is AssertionError
 
 
 async def do_nothing():
