@@ -48,9 +48,11 @@ async def spawn(
             actor: tractor.Actor = tractor.current_actor()
             assert actor.is_registrar == should_be_root
 
-            # spawns subproc here
-            portal: tractor.Portal = await an.run_in_actor(
-                fn=spawn,
+            # recursively spawn this same `spawn()` fn as the lone
+            # task of a one-shot child subactor and get its result.
+            result = await tractor.to_actor.run(
+                spawn,
+                an=an,
 
                 # spawning args
                 name='sub-actor',
@@ -62,16 +64,6 @@ async def spawn(
                 data=data_to_pass_down,
                 reg_addr=reg_addr,
             )
-
-            assert len(an._children) == 1
-            assert (
-                portal.channel.aid.uid
-                in
-                tractor.current_actor().ipc_server._peers
-            )
-
-            # get result from child subactor
-            result = await portal.result()
             assert result == 10
             return result
     else:
@@ -79,7 +71,7 @@ async def spawn(
         return 10
 
 
-def test_run_in_actor_same_func_in_child(
+def test_to_actor_run_same_func_in_child(
     reg_addr: tuple,
     debug_mode: bool,
 ):
@@ -159,21 +151,16 @@ async def test_most_beautiful_word(
         async with tractor.open_nursery(
             debug_mode=debug_mode,
         ) as an:
-            portal = await an.run_in_actor(
+            res: Any = await tractor.to_actor.run(
                 cellar_door,
+                an=an,
                 return_value=return_value,
                 name='some_linguist',
             )
-
-            res: Any = await portal.wait_for_result()
             assert res == return_value
-    # The ``async with`` will unblock here since the 'some_linguist'
-    # actor has completed its main task ``cellar_door``.
-
-    # this should pull the cached final result already captured during
-    # the nursery block exit.
-    res: Any = await portal.wait_for_result()
-    assert res == return_value
+    # The ``async with`` unblocks here — the 'some_linguist'
+    # one-shot actor completed its lone task ``cellar_door`` and
+    # was reaped by `to_actor.run()`.
     print(res)
 
 
@@ -216,8 +203,9 @@ def test_loglevel_propagated_to_subactor(
             registry_addrs=[reg_addr],
 
         ) as tn:
-            await tn.run_in_actor(
+            await tractor.to_actor.run(
                 check_loglevel,
+                an=tn,
                 loglevel=level,
                 level=level,
             )
@@ -267,11 +255,11 @@ async def check_parent_main_inheritance(
     return has_data
 
 
-def test_run_in_actor_can_skip_parent_main_inheritance(
+def test_to_actor_run_can_skip_parent_main_inheritance(
     start_method: str,  # <- only support on `trio` backend rn.
 ):
     '''
-    Verify ``inherit_parent_main=False`` on ``run_in_actor()``
+    Verify ``inherit_parent_main=False`` on ``to_actor.run()``
     prevents parent ``__main__`` data from reaching the child.
 
     '''
@@ -284,21 +272,21 @@ def test_run_in_actor_can_skip_parent_main_inheritance(
         async with tractor.open_nursery(start_method='trio') as an:
 
             # Default: child receives parent __main__ bootstrap data
-            replaying = await an.run_in_actor(
+            await tractor.to_actor.run(
                 check_parent_main_inheritance,
+                an=an,
                 name='replaying-parent-main',
                 expect_inherited=True,
             )
-            await replaying.result()
 
             # Opt-out: child gets no parent __main__ data
-            isolated = await an.run_in_actor(
+            await tractor.to_actor.run(
                 check_parent_main_inheritance,
+                an=an,
                 name='isolated-parent-main',
                 inherit_parent_main=False,
                 expect_inherited=False,
             )
-            await isolated.result()
 
     trio.run(main)
 
