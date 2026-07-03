@@ -152,23 +152,27 @@ async def test_trynamic_trio(
     for the directed subs.
 
     '''
-    async with tractor.open_nursery() as n:
+    async with (
+        tractor.open_nursery() as n,
+        trio.open_nursery() as tn,
+    ):
         print("Alright... Action!")
 
-        donny = await n.run_in_actor(
-            ria_fn,
-            other_actor='gretchen',
-            reg_addr=reg_addr,
-            name='donny',
-        )
-        gretchen = await n.run_in_actor(
-            ria_fn,
-            other_actor='donny',
-            reg_addr=reg_addr,
-            name='gretchen',
-        )
-        print(await gretchen.result())
-        print(await donny.result())
+        # donny + gretchen each wait on the *other* to register, so
+        # they must run CONCURRENTLY — schedule both one-shots into a
+        # local task-nursery (was two non-blocking `run_in_actor()`s).
+        async def _direct(this_name: str, other_actor: str):
+            res = await tractor.to_actor.run(
+                ria_fn,
+                an=n,
+                other_actor=other_actor,
+                reg_addr=reg_addr,
+                name=this_name,
+            )
+            print(res)
+
+        tn.start_soon(_direct, 'donny', 'gretchen')
+        tn.start_soon(_direct, 'gretchen', 'donny')
         print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")
 
 
@@ -270,13 +274,15 @@ async def spawn_and_check_registry(
                         portals = {}
                         for i in range(3):
                             name = f'a{i}'
-                            if with_streaming:
-                                portals[name] = await an.start_actor(
-                                    name=name, enable_modules=[__name__])
-
-                            else:  # no streaming
-                                portals[name] = await an.run_in_actor(
-                                    trio.sleep_forever, name=name)
+                            # a daemon subactor is alive + registered
+                            # without a "main" task; the streaming
+                            # branch below uses the module funcs, the
+                            # non-streaming case just needs it up (was
+                            # `run_in_actor(trio.sleep_forever)`).
+                            portals[name] = await an.start_actor(
+                                name=name,
+                                enable_modules=[__name__],
+                            )
 
                         # wait on last actor to come up
                         async with tractor.wait_for_actor(name):
