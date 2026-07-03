@@ -238,8 +238,9 @@ def test_rpc_errors(
 
             actor = tractor.current_actor()
             assert actor.is_registrar
-            await n.run_in_actor(
+            await tractor.to_actor.run(
                 sleep_back_actor,
+                an=n,
                 actor_name=subactor_requests_to,
 
                 name='subactor',
