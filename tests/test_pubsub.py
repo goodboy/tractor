@@ -176,10 +176,13 @@ def test_multi_actor_subs_arbiter_pub(
 
     async def main():
 
-        async with tractor.open_nursery(
-            registry_addrs=[reg_addr],
-            enable_modules=[__name__],
-        ) as n:
+        async with (
+            tractor.open_nursery(
+                registry_addrs=[reg_addr],
+                enable_modules=[__name__],
+            ) as n,
+            trio.open_nursery() as tn,
+        ):
 
             name = 'root'
 
@@ -191,18 +194,37 @@ def test_multi_actor_subs_arbiter_pub(
                 )
                 name = 'streamer'
 
-            even_portal = await n.run_in_actor(
-                subs,
-                which=['even'],
-                name='evens',
-                pub_actor_name=name
+            # spawn the two subscriber actors as daemons and run
+            # `subs()` on each as a background task (was the legacy
+            # `run_in_actor()`); keep the portals for the explicit
+            # `cancel_actor()` teardown below. Each runner swallows
+            # the teardown error that `cancel_actor()` relays.
+            async def _run_subs(
+                portal: tractor.Portal,
+                which: list[str],
+            ) -> None:
+                try:
+                    await portal.run(
+                        subs,
+                        which=which,
+                        pub_actor_name=name,
+                    )
+                except (
+                    tractor.RemoteActorError,
+                    tractor.ContextCancelled,
+                ):
+                    pass  # expected once we `cancel_actor()` below
+
+            even_portal = await n.start_actor(
+                'evens',
+                enable_modules=[__name__],
             )
-            odd_portal = await n.run_in_actor(
-                subs,
-                which=['odd'],
-                name='odds',
-                pub_actor_name=name
+            odd_portal = await n.start_actor(
+                'odds',
+                enable_modules=[__name__],
             )
+            tn.start_soon(_run_subs, even_portal, ['even'])
+            tn.start_soon(_run_subs, odd_portal, ['odd'])
 
             async with tractor.wait_for_actor('evens'):
                 # block until 2nd actor is initialized
@@ -256,6 +278,9 @@ def test_multi_actor_subs_arbiter_pub(
                         pytest.fail("odds subscription never dropped?")
             else:
                 await master_portal.cancel_actor()
+
+            # drop the bg `subs()` runners now the subs are cancelled
+            tn.cancel_scope.cancel()
 
     trio.run(main)
 
