@@ -83,13 +83,12 @@ async def test_lifetime_stack_wipes_tmpfile(
             async with tractor.open_nursery(
                 loglevel=loglevel,
             ) as an:
-                await (  # inlined `tractor.Portal`
-                    await an.run_in_actor(
-                        crash_and_clean_tmpdir,
-                        tmp_file_path=path,
-                        error=error_in_child,
-                    )
-                ).result()
+                await tractor.to_actor.run(
+                    crash_and_clean_tmpdir,
+                    an=an,
+                    tmp_file_path=path,
+                    error=error_in_child,
+                )
     except (
         tractor.RemoteActorError,
         BaseExceptionGroup,
