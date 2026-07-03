@@ -36,6 +36,7 @@ from tractor import (
     current_actor,
     Actor,
     to_asyncio,
+    to_actor,
     RemoteActorError,
     ContextCancelled,
 )
@@ -122,8 +123,9 @@ def test_trio_cancels_aio_on_actor_side(
                 registry_addrs=[reg_addr],
                 debug_mode=debug_mode,
             ) as an:
-                await an.run_in_actor(
+                await to_actor.run(
                     trio_cancels_single_aio_task,
+                    an=an,
                     infect_asyncio=True,
                 )
 
@@ -169,6 +171,28 @@ async def asyncio_actor(
         raise
 
 
+@tractor.context
+async def sleep_forever_aio_ctx(
+    ctx: tractor.Context,
+    expect_err: str = 'trio.Cancelled',
+) -> None:
+    '''
+    `@context` shim so a parent can spawn a forever-sleeping
+    infected-`asyncio` task via `Portal.open_context()` and cancel it
+    (via `Portal.cancel_actor()` or an enclosing `trio` cancel scope),
+    asserting the graceful `trio.Cancelled` teardown.
+
+    Replaces the legacy `ActorNursery.run_in_actor()` spawn the
+    aio-cancel tests below used to rely on (removed with #477).
+
+    '''
+    await ctx.started()
+    await asyncio_actor(
+        target='aio_sleep_forever',
+        expect_err=expect_err,
+    )
+
+
 def test_aio_simple_error(
     reg_addr: tuple[str, int],
     debug_mode: bool,
@@ -184,8 +208,9 @@ def test_aio_simple_error(
             registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
-            await an.run_in_actor(
+            await to_actor.run(
                 asyncio_actor,
+                an=an,
                 target='sleep_and_err',
                 expect_err='AssertionError',
                 infect_asyncio=True,
@@ -232,14 +257,21 @@ def test_tractor_cancels_aio(
                 debug_mode=debug_mode,
                 registry_addrs=[reg_addr],
             ) as an:
-                portal = await an.run_in_actor(
-                    asyncio_actor,
-                    target='aio_sleep_forever',
-                    expect_err='trio.Cancelled',
+                p: tractor.Portal = await an.start_actor(
+                    'aio_daemon',
+                    enable_modules=[__name__],
                     infect_asyncio=True,
                 )
-                # cancel the entire remote runtime
-                await portal.cancel_actor()
+                async with (
+                    # `.cancel_actor()` below tears the ctx down
+                    expect_ctxc(yay=True),
+                    p.open_context(
+                        sleep_forever_aio_ctx,
+                    ) as (ctx, first),
+                ):
+                    # cancel the entire remote runtime while its
+                    # infected-`asyncio` task sleeps forever
+                    await p.cancel_actor()
 
     trio.run(main)
 
@@ -257,13 +289,19 @@ def test_trio_cancels_aio(
         with trio.move_on_after(1):
             async with tractor.open_nursery(
                 registry_addrs=[reg_addr],
-            ) as tn:
-                await tn.run_in_actor(
-                    asyncio_actor,
-                    target='aio_sleep_forever',
-                    expect_err='trio.Cancelled',
+            ) as an:
+                p: tractor.Portal = await an.start_actor(
+                    'aio_daemon',
+                    enable_modules=[__name__],
                     infect_asyncio=True,
                 )
+                async with p.open_context(
+                    sleep_forever_aio_ctx,
+                ) as (ctx, first):
+                    # block until the enclosing `move_on_after`
+                    # cancels this `trio` scope, tearing down the
+                    # infected-aio task via ctx cancellation
+                    await trio.sleep_forever()
 
     trio.run(main)
 
@@ -413,17 +451,16 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
         ) as an:
-            p: tractor.Portal = await an.run_in_actor(
-                asyncio_actor,
-                target='aio_cancel',
-                expect_err='tractor.to_asyncio.AsyncioCancelled',
-                infect_asyncio=True,
-            )
-            # NOTE: normally the `an.__aexit__()` waits on the
-            # portal's result but we do it explicitly here
-            # to avoid indent levels.
+            # `to_actor.run()` blocks on the one-shot's result and
+            # relays the remote error here in the caller's task.
             with trio.fail_after(1 + delay):
-                await p.wait_for_result()
+                await to_actor.run(
+                    asyncio_actor,
+                    an=an,
+                    target='aio_cancel',
+                    expect_err='tractor.to_asyncio.AsyncioCancelled',
+                    infect_asyncio=True,
+                )
 
     with pytest.raises(
         expected_exception=(RemoteActorError, ExceptionGroup),
@@ -624,13 +661,13 @@ def test_basic_interloop_channel_stream(
             async with tractor.open_nursery(
                 registry_addrs=[reg_addr],
             ) as an:
-                portal = await an.run_in_actor(
+                # should raise RAE diectly
+                await to_actor.run(
                     stream_from_aio,
+                    an=an,
                     infect_asyncio=True,
                     fan_out=fan_out,
                 )
-                # should raise RAE diectly
-                await portal.result()
 
     trio.run(main)
 
@@ -643,13 +680,13 @@ def test_trio_error_cancels_intertask_chan(
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
         ) as an:
-            portal = await an.run_in_actor(
+            # should trigger remote actor error
+            await to_actor.run(
                 stream_from_aio,
+                an=an,
                 trio_raise_err=True,
                 infect_asyncio=True,
             )
-            # should trigger remote actor error
-            await portal.result()
 
     with pytest.raises(RemoteActorError) as excinfo:
         trio.run(main)
@@ -679,14 +716,14 @@ def test_trio_closes_early_causes_aio_checkpoint_raise(
                 # enable_stack_on_sig=True,
                 registry_addrs=[reg_addr],
             ) as an:
-                portal = await an.run_in_actor(
+                # should raise RAE diectly
+                print('waiting on final infected subactor result..')
+                res: None = await to_actor.run(
                     stream_from_aio,
+                    an=an,
                     trio_exit_early=True,
                     infect_asyncio=True,
                 )
-                # should raise RAE diectly
-                print('waiting on final infected subactor result..')
-                res: None = await portal.wait_for_result()
                 assert res is None
                 print(f'infected subactor returned result: {res!r}\n')
 
@@ -730,15 +767,15 @@ def test_aio_exits_early_relays_AsyncioTaskExited(
                 debug_mode=debug_mode,
                 # enable_stack_on_sig=True,
             ) as an:
-                portal = await an.run_in_actor(
+                # should raise RAE diectly
+                print('waiting on final infected subactor result..')
+                res: None = await to_actor.run(
                     stream_from_aio,
+                    an=an,
                     infect_asyncio=True,
                     trio_exit_early=False,
                     aio_exit_early=True,
                 )
-                # should raise RAE diectly
-                print('waiting on final infected subactor result..')
-                res: None = await portal.wait_for_result()
                 assert res is None
                 print(f'infected subactor returned result: {res!r}\n')
 
@@ -770,17 +807,19 @@ def test_aio_errors_and_channel_propagates_and_closes(
             registry_addrs=[reg_addr],
             debug_mode=debug_mode,
         ) as an:
-            portal = await an.run_in_actor(
+            # should trigger RAE directly, not an eg.
+            await to_actor.run(
                 stream_from_aio,
+                an=an,
                 aio_raise_err=True,
                 infect_asyncio=True,
             )
-            # should trigger RAE directly, not an eg.
-            await portal.result()
 
     with pytest.raises(
-        # NOTE: bc we directly wait on `Portal.result()` instead
-        # of capturing it inside the `ActorNursery` machinery.
+        # NOTE: bc `to_actor.run()` blocks on + relays the result
+        # in the caller's task (not captured inside the
+        # `ActorNursery` teardown machinery) we get a direct RAE,
+        # not an eg.
         expected_exception=RemoteActorError,
     ) as excinfo:
         trio.run(main)
