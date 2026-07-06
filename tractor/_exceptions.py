@@ -1161,10 +1161,6 @@ class TransportClosed(Exception):
         )
 
 
-class NoResult(RuntimeError):
-    "No final result is expected for this actor"
-
-
 class ModuleNotExposed(ModuleNotFoundError):
     "The requested module is not exposed for RPC"
 
