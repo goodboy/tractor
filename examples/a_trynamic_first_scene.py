@@ -17,36 +17,37 @@ async def say_hello(other_actor):
         return await portal.run(hi)
 
 
-async def run_and_print(
-    an: tractor.ActorNursery,
-    name: str,
-    other_actor: str,
-):
-    print(
-        await tractor.to_actor.run(
-            say_hello,
-            an=an,
-            name=name,
-            # arguments are always named
-            other_actor=other_actor,
-        )
-    )
-
-
 async def main():
     """Main tractor entry point, the "master" process (for now
     acts as the "director").
     """
-    async with (
-        tractor.open_nursery() as an,
-        trio.open_nursery() as tn,
-    ):
+    async with tractor.open_nursery() as an:
         print("Alright... Action!")
 
-        # both actors wait on the *other* to register so their
-        # one-shots must run concurrently.
-        tn.start_soon(run_and_print, an, 'donny', 'gretchen')
-        tn.start_soon(run_and_print, an, 'gretchen', 'donny')
+        # both actors wait on (then dial!) the *other*, so each
+        # must outlive both hellos: spawn as daemons, run the
+        # hellos concurrently, reap only once both complete.
+        portals: dict[str, tractor.Portal] = {
+            name: await an.start_actor(
+                name,
+                enable_modules=[__name__],
+            )
+            for name in ('donny', 'gretchen')
+        }
+
+        async def run_and_print(name: str, other_actor: str):
+            print(
+                await portals[name].run(
+                    say_hello,
+                    other_actor=other_actor,
+                )
+            )
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(run_and_print, 'donny', 'gretchen')
+            tn.start_soon(run_and_print, 'gretchen', 'donny')
+
+        await an.cancel()
 
     print("CUTTTT CUUTT CUT!!! Donny!! You're supposed to say...")
 
