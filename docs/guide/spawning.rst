@@ -103,19 +103,22 @@ What's going on here?
   on him **forever**. Daemon lifetimes are *yours* to end; that
   explicitness is the point.
 
-``run_in_actor()``: quick one-shot parallelism
+``to_actor.run()``: quick one-shot parallelism
 ----------------------------------------------
-:meth:`~tractor.ActorNursery.run_in_actor` is the convenience
-wrapper: spawn an actor, run exactly one async function in it,
-then reap the process as soon as the result arrives.
+:func:`tractor.to_actor.run` is the convenience wrapper: spawn
+an actor, run exactly one async function in it, block on the
+result, then reap the process — the distributed sibling of
+``trio.to_thread.run_sync()``.
 
 .. code:: python
 
-    async with tractor.open_nursery() as an:
-        portal = await an.run_in_actor(burn_cpu)
+    async with (
+        tractor.open_nursery() as an,
+        trio.open_nursery() as tn,
+    ):
         # burn rubber in the parent too...
-        await burn_cpu()
-        total = await portal.wait_for_result()
+        tn.start_soon(burn_cpu)
+        total = await tractor.to_actor.run(burn_cpu, an=an)
 
 A few details worth knowing:
 
@@ -124,18 +127,21 @@ A few details worth knowing:
 - the function's module is auto-added to the child's
   ``enable_modules`` allowlist.
 - extra ``**kwargs`` are forwarded to the function itself.
-- the child is *auto-cancelled* once its "main" result lands;
-  at nursery exit these run-once children are always reaped
-  first (causality_ is paramount!).
+- the call blocks until the result (or error) lands and the
+  child is *auto-cancelled* (reaped) right after — so remote
+  errors raise directly in your calling task (causality_ is
+  paramount!).
+- "placement" composes: ``an=`` spawns from a caller-managed
+  actor-nursery, ``portal=`` reuses an already-running actor
+  (no spawn/reap), and passing neither opens a private
+  call-scoped nursery (booting the runtime if needed).
 
 .. note::
 
-   ``run_in_actor()`` is a convenience, **not** the core model.
-   The source literally marks it for an eventual rebuild as
-   a thin "hilevel" wrapper on top of
-   :meth:`~tractor.Portal.open_context` (the modern inter-actor
-   task API). Teach your fingers to use it for quick
-   fire-and-collect parallelism — think a per-function
+   ``to_actor.run()`` is a convenience, **not** the core model —
+   it's built *entirely* on ``start_actor()`` + ``Portal.run()``
+   + ``Portal.cancel_actor()``. Teach your fingers to use it for
+   quick fire-and-collect parallelism — think a per-function
    trio-parallel_ style one-shot — and reach for
    ``start_actor()`` + ``open_context()`` for anything
    long-lived, stateful or streaming
@@ -145,9 +151,9 @@ Actor lifetimes and teardown order
 ----------------------------------
 So we have two lifetime flavors:
 
-- **run-once** (``run_in_actor()``): lives exactly as long as
+- **one-shot** (``to_actor.run()``): lives exactly as long as
   its single task; reaped the moment its result (or error)
-  arrives.
+  arrives back in the (blocking) call.
 - **daemon** (``start_actor()``): lives until *someone* cancels
   it — an explicit ``await portal.cancel_actor()``, a bulk
   ``await an.cancel()``, or the one-cancels-all strategy kicking
@@ -155,11 +161,12 @@ So we have two lifetime flavors:
 
 On a clean exit of the nursery block the teardown order is:
 
-1. the nursery waits on every run-once actor's final result;
-   any errors from these are raised immediately so your code
-   (acting as supervisor) gets first crack at handling them.
-2. then it waits on daemon actors — **indefinitely**. If you
-   spawned a daemon, you own its lifetime.
+1. one-shot actors never make it to nursery exit: each is
+   reaped inside its own ``to_actor.run()`` call, any error
+   raising immediately in the calling task so your code
+   (acting as supervisor) gets first crack at handling it.
+2. the nursery then waits on daemon actors — **indefinitely**.
+   If you spawned a daemon, you own its lifetime.
 
 When a child *is* cancelled, teardown is graceful-first per SC
 discipline: the runtime sends an IPC cancel request and gives

@@ -80,28 +80,30 @@ One special namespace exists: ``'self'`` resolves to the remote
 how internal machinery (cancel requests, registry ops) travels;
 don't build your app on it.
 
-One-shot results: ``wait_for_result()``
----------------------------------------
-A portal returned from
-:meth:`~tractor.ActorNursery.run_in_actor` has exactly one
-"main" task running remotely; that task's ``return`` value is
-delivered as the portal's *final result*:
+One-shot subactors: ``to_actor.run()``
+--------------------------------------
+When a subactor's *entire job* is a single function call, skip
+the portal plumbing with :func:`tractor.to_actor.run`: spawn,
+run the lone task, return its result and reap the process — all
+in one blocking call:
 
 .. code:: python
 
-    portal = await an.run_in_actor(fib, n=10)
-    final = await portal.wait_for_result()
+    final = await tractor.to_actor.run(fib, an=an, n=10)
 
 Semantics worth knowing:
 
 - it blocks until the remote task returns, re-raising any
-  remote error in the usual boxed form.
-- once resolved it's idempotent: later calls return the same
-  cached value.
-- a *daemon* portal (from ``start_actor()``) has no main task,
-  so there's no final result to wait for: you'll get a warning
-  plus a ``NoResult`` sentinel. Results of individual daemon
-  calls come straight back from each ``await portal.run()``.
+  remote error in the usual boxed form right in the calling
+  task.
+- "placement" is composable: ``an=`` spawns from an existing
+  actor-nursery, ``portal=`` reuses an already-running actor
+  (no spawn/reap, just a ``Portal.run()``), and passing
+  neither opens a private call-scoped nursery (booting the
+  runtime if needed).
+- concurrency composes the plain ``trio`` way: schedule
+  multiple ``run()`` calls into a local task nursery (see
+  ``examples/parallelism/to_actor_one_shots.py``).
 
 Pure RPC daemons: ``run_daemon()``
 ----------------------------------
