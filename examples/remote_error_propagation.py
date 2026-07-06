@@ -15,11 +15,12 @@ async def main():
                 enable_modules=[__name__],
             ))
 
-        # start one actor that will fail immediately
-        await n.run_in_actor(assert_err)
+        # run one one-shot task actor that will fail immediately;
+        # its error raises right here in the caller's task..
+        await tractor.to_actor.run(assert_err, an=n)
 
-    # should error here with a ``RemoteActorError`` containing
-    # an ``AssertionError`` and all the other actors have been cancelled
+    # ..as a ``RemoteActorError`` containing an ``AssertionError``
+    # and all the other actors have been cancelled
 
 
 if __name__ == '__main__':

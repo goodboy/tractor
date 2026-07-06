@@ -25,17 +25,15 @@ async def burn_cpu():
 
 async def main():
 
-    async with tractor.open_nursery() as n:
+    async with trio.open_nursery() as tn:
 
-        portal = await n.run_in_actor(burn_cpu)
+        # burn rubber in the parent too
+        tn.start_soon(burn_cpu)
 
-        #  burn rubber in the parent too
-        await burn_cpu()
+        # run the same func as the lone task in a subactor,
+        # block on (and collect) its result
+        pid = await tractor.to_actor.run(burn_cpu)
 
-        # wait on result from target function
-        pid = await portal.wait_for_result()
-
-    # end of nursery block
     print(f"Collected subproc {pid}")
 
 
