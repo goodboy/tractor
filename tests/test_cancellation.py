@@ -2,6 +2,7 @@
 Cancellation and error propagation
 
 """
+from functools import partial
 import os
 import signal
 import platform
@@ -16,7 +17,10 @@ from tractor._testing import (
     tractor_test,
 )
 from tractor._testing.trace import FailAfterWTraceFactory
-from tractor.trionics import gather_contexts
+from tractor.trionics import (
+    collapse_eg,
+    gather_contexts,
+)
 from .conftest import no_windows
 
 
@@ -305,30 +309,30 @@ async def test_cancel_infinite_streamer(
 @pytest.mark.parametrize(
     'num_actors_and_errs',
     [
-        # daemon actors sit idle while single task actors error out
+        # daemon actors sit idle while one-shot task actors error out
         (1, tractor.RemoteActorError, AssertionError, (assert_err, {}), None),
         (2, BaseExceptionGroup, AssertionError, (assert_err, {}), None),
         (3, BaseExceptionGroup, AssertionError, (assert_err, {}), None),
 
-        # 1 daemon actor errors out while single task actors sleep forever
+        # 1 daemon actor errors out while one-shot task actors sleep forever
         (3, tractor.RemoteActorError, AssertionError, (sleep_forever, {}),
          (assert_err, {}, True)),
-        # daemon actors error out after brief delay while single task
+        # daemon actors error out after brief delay while one-shot task
         # actors complete quickly
         (3, tractor.RemoteActorError, AssertionError,
          (do_nuthin, {}), (assert_err, {'delay': 1}, True)),
-        # daemon complete quickly delay while single task
+        # daemon complete quickly delay while one-shot task
         # actors error after brief delay
         (3, BaseExceptionGroup, AssertionError,
          (assert_err, {'delay': 1}), (do_nuthin, {}, False)),
     ],
     ids=[
-        '1_run_in_actor_fails',
-        '2_run_in_actors_fail',
-        '3_run_in_actors_fail',
+        '1_one_shot_fails',
+        '2_one_shots_fail',
+        '3_one_shots_fail',
         '1_daemon_actors_fail',
-        '1_daemon_actors_fail_all_run_in_actors_dun_quick',
-        'no_daemon_actors_fail_all_run_in_actors_sleep_then_fail',
+        '1_daemon_actors_fail_all_one_shots_dun_quick',
+        'no_daemon_actors_fail_all_one_shots_sleep_then_fail',
     ],
 )
 @tractor_test(
@@ -347,12 +351,22 @@ async def test_some_cancels_all(
 
     This is the first and only supervisory strategy at the moment.
 
+    One-shot subactors run as concurrent `to_actor.run()` tasks
+    in a local task-nursery so their errors raise WHILE the
+    actor-nursery block is still open (vs the legacy
+    `run_in_actor()` teardown-reap); the first error cancels the
+    sibling one-shots (whose `trio.Cancelled`s the task-nursery
+    absorbs) so the group shape is 1..num_actors
+    `RemoteActorError`s depending on relay-vs-cancel timing —
+    with `collapse_eg()` unwrapping the deterministic
+    single-error cases to a bare `RemoteActorError`.
+
     '''
     (
         num_actors,
         first_err,
         err_type,
-        ria_func,
+        one_shot_func,
         da_func,
     ) = num_actors_and_errs
     try:
@@ -366,51 +380,64 @@ async def test_some_cancels_all(
                     enable_modules=[__name__],
                 ))
 
-            func, kwargs = ria_func
-            riactor_portals = []
-            for i in range(num_actors):
-                # start actor(s) that will fail immediately
-                riactor_portals.append(
-                    await an.run_in_actor(
-                        func,
-                        name=f'actor_{i}',
-                        **kwargs
+            func, kwargs = one_shot_func
+            async with (
+                collapse_eg(),
+                trio.open_nursery() as tn,
+            ):
+                for i in range(num_actors):
+                    # schedule one-shot task actor(s); errors
+                    # raise into this task-nursery scope.
+                    tn.start_soon(
+                        partial(
+                            tractor.to_actor.run,
+                            func,
+                            an=an,
+                            name=f'actor_{i}',
+                            **kwargs,
+                        )
                     )
-                )
 
-            if da_func:
-                func, kwargs, expect_error = da_func
-                for portal in dactor_portals:
-                    # if this function fails then we should error here
-                    # and the nursery should teardown all other actors
-                    try:
-                        await portal.run(func, **kwargs)
+                if da_func:
+                    func, kwargs, expect_error = da_func
+                    for portal in dactor_portals:
+                        # if this function fails then we should error
+                        # here and the nursery should teardown all
+                        # other actors
+                        try:
+                            await portal.run(func, **kwargs)
 
-                    except tractor.RemoteActorError as err:
-                        assert err.boxed_type == err_type
-                        # we only expect this first error to propogate
-                        # (all other daemons are cancelled before they
-                        # can be scheduled)
-                        num_actors = 1
-                        # reraise so nursery teardown is triggered
-                        raise
-                    else:
-                        if expect_error:
-                            pytest.fail(
-                                "Deamon call should fail at checkpoint?")
+                        except tractor.RemoteActorError as err:
+                            assert err.boxed_type == err_type
+                            # we only expect this first error to propogate
+                            # (all other daemons are cancelled before they
+                            # can be scheduled)
+                            num_actors = 1
+                            # reraise so nursery teardown is triggered
+                            raise
+                        else:
+                            if expect_error:
+                                pytest.fail(
+                                    "Deamon call should fail at checkpoint?")
 
-        # should error here with a ``RemoteActorError`` or ``MultiError``
+        # should error here with a `RemoteActorError` or a beg of them
 
-    except first_err as _err:
+    except (
+        BaseExceptionGroup,
+        tractor.RemoteActorError,
+    ) as _err:
         err = _err
         if isinstance(err, BaseExceptionGroup):
-            assert len(err.exceptions) == num_actors
+            # only the concurrent multi-error cases can group; the
+            # relay-vs-cancel race means anywhere from 1 (all
+            # siblings cancelled before relaying) up to all
+            # `num_actors` errors may populate the group.
+            assert first_err is BaseExceptionGroup
+            assert 1 <= len(err.exceptions) <= num_actors
             for exc in err.exceptions:
-                if isinstance(exc, tractor.RemoteActorError):
-                    assert exc.boxed_type == err_type
-                else:
-                    assert isinstance(exc, trio.Cancelled)
-        elif isinstance(err, tractor.RemoteActorError):
+                assert isinstance(exc, tractor.RemoteActorError)
+                assert exc.boxed_type == err_type
+        else:
             assert err.boxed_type == err_type
 
         assert an.cancel_called is True
