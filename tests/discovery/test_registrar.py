@@ -46,9 +46,9 @@ async def test_reg_then_unreg(
 
     async with tractor.open_nursery(
         registry_addrs=[reg_addr],
-    ) as n:
+    ) as an:
 
-        portal = await n.start_actor('actor', enable_modules=[__name__])
+        portal = await an.start_actor('actor', enable_modules=[__name__])
         uid = portal.channel.aid.uid
 
         async with tractor.get_registry(reg_addr) as aportal:
@@ -62,7 +62,7 @@ async def test_reg_then_unreg(
                 # XXX: can we figure out what the listen addr will be?
                 assert sockaddrs
 
-        await n.cancel()  # tear down nursery
+        await an.cancel()  # tear down nursery
 
         await trio.sleep(0.1)
         assert uid not in aportal.actor._registry
@@ -89,9 +89,9 @@ async def test_reg_then_unreg_maddr(
 
     async with tractor.open_nursery(
         registry_addrs=[maddr_str],
-    ) as n:
+    ) as an:
 
-        portal = await n.start_actor(
+        portal = await an.start_actor(
             'actor_maddr',
             enable_modules=[__name__],
         )
@@ -105,7 +105,7 @@ async def test_reg_then_unreg_maddr(
                 sockaddrs = actor._registry[uid]
                 assert sockaddrs
 
-        await n.cancel()
+        await an.cancel()
 
         await trio.sleep(0.1)
         assert uid not in aportal.actor._registry

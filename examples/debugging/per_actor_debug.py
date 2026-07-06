@@ -6,14 +6,14 @@ async def die():
 
 
 async def main():
-    async with tractor.open_nursery() as tn:
+    async with tractor.open_nursery() as an:
 
-        debug_actor = await tn.start_actor(
+        debug_actor = await an.start_actor(
             'debugged_boi',
             enable_modules=[__name__],
             debug_mode=True,
         )
-        crash_boi = await tn.start_actor(
+        crash_boi = await an.start_actor(
             'crash_boi',
             enable_modules=[__name__],
             # debug_mode=True,

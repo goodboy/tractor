@@ -107,13 +107,13 @@ def test_rpc_errors(
             # do that if actually debugging subactor but keep it
             # disabled for the test.
             # debug_mode=True,
-        ) as n:
+        ) as an:
 
             actor = tractor.current_actor()
             assert actor.is_registrar
             await tractor.to_actor.run(
                 sleep_back_actor,
-                an=n,
+                an=an,
                 actor_name=subactor_requests_to,
 
                 name='subactor',

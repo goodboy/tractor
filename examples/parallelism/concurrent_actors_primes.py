@@ -55,7 +55,7 @@ async def worker_pool(workers=4):
     Yes, the workers stay alive (and ready for work) until you close
     the context.
     """
-    async with tractor.open_nursery() as tn:
+    async with tractor.open_nursery() as an:
 
         portals = []
         snd_chan, recv_chan = trio.open_memory_channel(len(PRIMES))
@@ -65,7 +65,7 @@ async def worker_pool(workers=4):
             # this starts a new sub-actor (process + trio runtime) and
             # stores it's "portal" for later use to "submit jobs" (ugh).
             portals.append(
-                await tn.start_actor(
+                await an.start_actor(
                     f'worker_{i}',
                     enable_modules=[__name__],
                 )
@@ -80,10 +80,10 @@ async def worker_pool(workers=4):
             async def send_result(func, value, portal):
                 await snd_chan.send((value, await portal.run(func, n=value)))
 
-            async with trio.open_nursery() as n:
+            async with trio.open_nursery() as tn:
 
                 for value, portal in zip(sequence, itertools.cycle(portals)):
-                    n.start_soon(
+                    tn.start_soon(
                         send_result,
                         worker_func,
                         value,
@@ -98,7 +98,7 @@ async def worker_pool(workers=4):
         yield _map
 
         # tear down all "workers" on pool close
-        await tn.cancel()
+        await an.cancel()
 
 
 async def main():
