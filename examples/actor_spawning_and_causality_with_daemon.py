@@ -12,9 +12,9 @@ async def movie_theatre_question():
 async def main():
     """The main ``tractor`` routine.
     """
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery() as an:
 
-        portal = await n.start_actor(
+        portal = await an.start_actor(
             'frank',
             # enable the actor to run funcs from this current module
             enable_modules=[__name__],

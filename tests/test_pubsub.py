@@ -139,9 +139,9 @@ async def test_required_args(callwith_expecterror):
         with pytest.raises(err):
             await func(**kwargs)
     else:
-        async with tractor.open_nursery() as n:
+        async with tractor.open_nursery() as an:
 
-            portal = await n.start_actor(
+            portal = await an.start_actor(
                 name='pubber',
                 enable_modules=[__name__],
             )
@@ -180,7 +180,7 @@ def test_multi_actor_subs_arbiter_pub(
             tractor.open_nursery(
                 registry_addrs=[reg_addr],
                 enable_modules=[__name__],
-            ) as n,
+            ) as an,
             trio.open_nursery() as tn,
         ):
 
@@ -188,7 +188,7 @@ def test_multi_actor_subs_arbiter_pub(
 
             if pub_actor == 'streamer':
                 # start the publisher as a daemon
-                master_portal = await n.start_actor(
+                master_portal = await an.start_actor(
                     'streamer',
                     enable_modules=[__name__],
                 )
@@ -215,11 +215,11 @@ def test_multi_actor_subs_arbiter_pub(
                 ):
                     pass  # expected once we `cancel_actor()` below
 
-            even_portal = await n.start_actor(
+            even_portal = await an.start_actor(
                 'evens',
                 enable_modules=[__name__],
             )
-            odd_portal = await n.start_actor(
+            odd_portal = await an.start_actor(
                 'odds',
                 enable_modules=[__name__],
             )
@@ -294,9 +294,9 @@ def test_single_subactor_pub_multitask_subs(
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
             enable_modules=[__name__],
-        ) as n:
+        ) as an:
 
-            portal = await n.start_actor(
+            portal = await an.start_actor(
                 'streamer',
                 enable_modules=[__name__],
             )

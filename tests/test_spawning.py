@@ -202,10 +202,10 @@ def test_loglevel_propagated_to_subactor(
             start_method=start_method,
             registry_addrs=[reg_addr],
 
-        ) as tn:
+        ) as an:
             await tractor.to_actor.run(
                 check_loglevel,
-                an=tn,
+                an=an,
                 loglevel=level,
                 level=level,
             )

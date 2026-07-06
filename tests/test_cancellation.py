@@ -126,7 +126,7 @@ def test_remote_error(
     async def main():
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
-        ) as nursery:
+        ) as an:
 
             # `to_actor.run()` blocks on the one-shot's result and
             # raises the remote error directly here in the caller's
@@ -135,7 +135,7 @@ def test_remote_error(
             try:
                 await tractor.to_actor.run(
                     assert_err,
-                    an=nursery,
+                    an=an,
                     name='errorer',
                     **args
                 )
@@ -248,16 +248,16 @@ def test_cancel_single_subactor(
         '''
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
-        ) as nursery:
+        ) as an:
 
-            portal = await nursery.start_actor(
+            portal = await an.start_actor(
                 'nothin', enable_modules=[__name__],
             )
             assert (await portal.run(do_nothing)) is None
 
             if mechanism == 'nursery_cancel':
                 # would hang otherwise
-                await nursery.cancel()
+                await an.cancel()
             else:
                 raise mechanism
 
@@ -289,8 +289,8 @@ async def test_cancel_infinite_streamer(
         trio.fail_after(4),
         trio.move_on_after(1) as cancel_scope
     ):
-        async with tractor.open_nursery() as n:
-            portal = await n.start_actor(
+        async with tractor.open_nursery() as an:
+            portal = await an.start_actor(
                 'donny',
                 enable_modules=[__name__],
             )
@@ -303,7 +303,7 @@ async def test_cancel_infinite_streamer(
 
     # we support trio's cancellation system
     assert cancel_scope.cancelled_caught
-    assert n.cancel_called
+    assert an.cancel_called
 
 
 @pytest.mark.parametrize(
@@ -698,7 +698,7 @@ async def test_nested_multierrors(
     async with fail_after_w_trace(timeout):
         try:
             async with (
-                tractor.open_nursery() as nursery,
+                tractor.open_nursery() as an,
                 trio.open_nursery() as tn,
             ):
                 for i in range(subactor_breadth):
@@ -706,7 +706,7 @@ async def test_nested_multierrors(
                         partial(
                             tractor.to_actor.run,
                             spawn_and_error,
-                            an=nursery,
+                            an=an,
                             name=f'spawner_{i}',
                             breadth=subactor_breadth,
                             depth=depth,
@@ -792,8 +792,8 @@ def test_cancel_via_SIGINT(
         with trio.fail_after(2):
             async with tractor.open_nursery(
                 registry_addrs=[reg_addr],
-            ) as tn:
-                await tn.start_actor('sucka')
+            ) as an:
+                await an.start_actor('sucka')
                 if 'mp' in start_method:
                     time.sleep(0.1)
                 os.kill(pid, signal.SIGINT)
@@ -1054,8 +1054,8 @@ def test_fast_graceful_cancel_when_spawn_task_in_soft_proc_wait_for_daemon(
         start = time.time()
         try:
             async with trio.open_nursery() as nurse:
-                async with tractor.open_nursery() as tn:
-                    p = await tn.start_actor(
+                async with tractor.open_nursery() as an:
+                    p = await an.start_actor(
                         'fast_boi',
                         enable_modules=[__name__],
                     )

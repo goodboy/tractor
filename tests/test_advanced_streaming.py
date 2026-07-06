@@ -219,7 +219,7 @@ def test_dynamic_pub_sub(
                         tractor.open_nursery(
                             registry_addrs=[reg_addr],
                             debug_mode=debug_mode,
-                        ) as n,
+                        ) as an,
                         # bg-schedules the forever-streaming
                         # one-shots below; the user-cancel raise
                         # cancels them all, each reaping its
@@ -237,7 +237,7 @@ def test_dynamic_pub_sub(
                             partial(
                                 tractor.to_actor.run,
                                 publisher,
-                                an=n,
+                                an=an,
                             )
                         )
 
@@ -249,7 +249,7 @@ def test_dynamic_pub_sub(
                                 partial(
                                     tractor.to_actor.run,
                                     consumer,
-                                    an=n,
+                                    an=an,
                                     name=f'consumer_{sub}',
                                     subs=[sub],
                                 )
@@ -260,7 +260,7 @@ def test_dynamic_pub_sub(
                             partial(
                                 tractor.to_actor.run,
                                 consumer,
-                                an=n,
+                                an=an,
                                 name='consumer_dynamic',
                                 subs=list(_registry.keys()),
                             )
@@ -370,10 +370,10 @@ def test_reqresp_ontopof_streaming():
             timeout = 4
 
         with trio.move_on_after(timeout):
-            async with tractor.open_nursery() as n:
+            async with tractor.open_nursery() as an:
 
                 # name of this actor will be same as target func
-                portal = await n.start_actor(
+                portal = await an.start_actor(
                     'dual_tasks',
                     enable_modules=[__name__]
                 )
@@ -436,9 +436,9 @@ def test_sigint_both_stream_types():
 
     async def main():
         with trio.fail_after(timeout):
-            async with tractor.open_nursery() as n:
+            async with tractor.open_nursery() as an:
                 # name of this actor will be same as target func
-                portal = await n.start_actor(
+                portal = await an.start_actor(
                     '2_way',
                     enable_modules=[__name__]
                 )
@@ -551,8 +551,8 @@ def test_local_task_fanout_from_stream(
 
         async with tractor.open_nursery(
             debug_mode=debug_mode,
-        ) as tn:
-            p: tractor.Portal = await tn.start_actor(
+        ) as an:
+            p: tractor.Portal = await an.start_actor(
                 'inf_streamer',
                 enable_modules=[__name__],
             )

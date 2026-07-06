@@ -163,12 +163,12 @@ def test_do_not_swallow_error_before_started_by_remote_contextcancelled(
     async def main():
         async with tractor.open_nursery(
             debug_mode=debug_mode,
-        ) as n:
-            portal = await n.start_actor(
+        ) as an:
+            portal = await an.start_actor(
                 'errorer',
                 enable_modules=[__name__],
             )
-            await n.start_actor(
+            await an.start_actor(
                 'sleeper',
                 enable_modules=[__name__],
             )
