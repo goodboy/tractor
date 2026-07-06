@@ -450,8 +450,20 @@ async def spawn_and_error(
     breadth: int,
     depth: int,
 ) -> None:
+    '''
+    Recursively spawn a breadth-wide level of erroring one-shot
+    subactors as concurrent `to_actor.run()` tasks; the leaf level
+    errors ~simultaneously and each level's task-nursery groups
+    whatever `RemoteActorError`s relay before the first one's
+    cancel wins, boxing the (`ExceptionGroup`-shaped) group into
+    this actor's own relayed error.
+
+    '''
     name = tractor.current_actor().name
-    async with tractor.open_nursery() as nursery:
+    async with (
+        tractor.open_nursery() as an,
+        trio.open_nursery() as tn,
+    ):
         for i in range(breadth):
 
             if depth > 0:
@@ -471,7 +483,14 @@ async def spawn_and_error(
                 kwargs = {
                     'name': f'{name}_errorer_{i}',
                 }
-            await nursery.run_in_actor(*args, **kwargs)
+            tn.start_soon(
+                partial(
+                    tractor.to_actor.run,
+                    *args,
+                    an=an,
+                    **kwargs,
+                )
+            )
 
 
 # NOTE: `main_thread_forkserver` capture-fd hang class is no
@@ -513,7 +532,11 @@ async def test_nested_multierrors(
     depth: int,
 ):
     '''
-    Test that failed actor sets are wrapped in `BaseExceptionGroup`s.
+    Test that a nested tree of concurrently failing one-shot
+    subactors tears down cleanly, relaying (whatever subset of)
+    the leaf `AssertionError`s (that win the per-level
+    relay-vs-cancel race) re-boxed/grouped at each actor
+    boundary.
 
     Parametrized over recursion `depth ∈ {1, 3}`:
 
@@ -562,6 +585,13 @@ async def test_nested_multierrors(
     # (longer per-tree paths = more skew); under MTF the
     # fork-spawn jitter + UDS-contention widens both `t1` and
     # `t2` further.
+    #
+    # NB post-#477 (`to_actor.run()` fan-out in a local
+    # task-nursery) a race-tripped sibling's `Cancelled` is
+    # ABSORBED by the task-nursery instead of landing in the
+    # group — the raced case now shows as a *smaller* BEG, so
+    # this marker should consistently `xpass`; drop it once CI
+    # confirms.
     #
     # With `strict=False` the clean-cascade cases (most
     # depth=1 runs, rare depth=3 runs) report as `xpassed`
@@ -667,67 +697,82 @@ async def test_nested_multierrors(
 
     async with fail_after_w_trace(timeout):
         try:
-            async with tractor.open_nursery() as nursery:
+            async with (
+                tractor.open_nursery() as nursery,
+                trio.open_nursery() as tn,
+            ):
                 for i in range(subactor_breadth):
-                    await nursery.run_in_actor(
-                        spawn_and_error,
-                        name=f'spawner_{i}',
-                        breadth=subactor_breadth,
-                        depth=depth,
+                    tn.start_soon(
+                        partial(
+                            tractor.to_actor.run,
+                            spawn_and_error,
+                            an=nursery,
+                            name=f'spawner_{i}',
+                            breadth=subactor_breadth,
+                            depth=depth,
+                        )
                     )
-        except BaseExceptionGroup as err:
-            assert len(err.exceptions) == subactor_breadth
-            for subexc in err.exceptions:
-
-                # verify first level actor errors are wrapped as remote
-                if _friggin_windows:
-
+        except (
+            BaseExceptionGroup,
+            tractor.RemoteActorError,
+        ) as err:
+            # group membership is bounded by the relay-vs-cancel
+            # race: the first spawner-tree's error cancels its
+            # siblings, whose own errors only group when relayed
+            # first; a fully-raced tree even collapses (via the
+            # runtime's own `collapse_eg()` unwrapping each level's
+            # single-member group) to a bare `RemoteActorError`
+            # re-boxing the leaf `AssertionError` at every actor
+            # boundary. The deterministic exact-breadth nested-BEG
+            # was the legacy `run_in_actor()` reap-all-at-teardown.
+            subexcs: list[BaseException] = (
+                err.exceptions
+                if isinstance(err, BaseExceptionGroup)
+                else [err]
+            )
+            assert 1 <= len(subexcs) <= subactor_breadth
+            for subexc in subexcs:
+                if (
+                    _friggin_windows
+                    and
+                    isinstance(subexc, trio.Cancelled)
+                ):
                     # windows is often too slow and cancellation seems
                     # to happen before an actor is spawned
-                    if isinstance(subexc, trio.Cancelled):
-                        continue
+                    continue
 
-                    elif isinstance(subexc, tractor.RemoteActorError):
-                        # on windows it seems we can't exactly be sure wtf
-                        # will happen..
-                        assert subexc.boxed_type in (
-                            tractor.RemoteActorError,
-                            trio.Cancelled,
-                            BaseExceptionGroup,
-                        )
+                assert isinstance(subexc, tractor.RemoteActorError)
 
-                    elif isinstance(subexc, BaseExceptionGroup):
-                        for subsub in subexc.exceptions:
-
-                            if subsub in (tractor.RemoteActorError,):
-                                subsub = subsub.boxed_type
-
-                            assert type(subsub) in (
-                                trio.Cancelled,
-                                BaseExceptionGroup,
-                            )
-                else:
-                    assert isinstance(subexc, tractor.RemoteActorError)
-
-                if depth > 0 and subactor_breadth > 1:
-                    # XXX not sure what's up with this..
-                    # on windows sometimes spawning is just too slow and
-                    # we get back the (sent) cancel signal instead
-                    if _friggin_windows:
-                        if isinstance(subexc, tractor.RemoteActorError):
-                            assert subexc.boxed_type in (
-                                BaseExceptionGroup,
-                                tractor.RemoteActorError
-                            )
-                        else:
-                            assert isinstance(subexc, BaseExceptionGroup)
-                    else:
-                        assert subexc.boxed_type is ExceptionGroup
-                else:
-                    assert subexc.boxed_type in (
-                        tractor.RemoteActorError,
-                        trio.Cancelled
+                accepted: tuple[Type[BaseException], ...] = (
+                    # ≥2 sub-tree errors relayed before the
+                    # cancel-cascade won → grouped per-level.
+                    ExceptionGroup,
+                    # every level collapsed down to its lone
+                    # relayed (leaf) error.
+                    AssertionError,
+                    # a mid-level spawner relays an
+                    # already-boxed (collapsed) leaf chain,
+                    # re-boxing the `RemoteActorError` itself.
+                    tractor.RemoteActorError,
+                    # under heavy load a runtime-internal reap
+                    # deadline can inject a `trio.Cancelled`
+                    # into a child's group before relay (the
+                    # same class the depth=3 throttle-xfail
+                    # covers) upgrading it from an
+                    # `ExceptionGroup`.
+                    BaseExceptionGroup,
+                )
+                if _friggin_windows:
+                    # on windows it seems we can't exactly be
+                    # sure wtf will happen..
+                    accepted += (
+                        trio.Cancelled,
                     )
+                assert subexc.boxed_type in accepted
+        else:
+            pytest.fail(
+                'Should have raised a (grouped) `RemoteActorError`?'
+            )
 
 
 @no_windows
