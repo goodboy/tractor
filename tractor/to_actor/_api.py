@@ -31,7 +31,7 @@ the lower level daemon-actor spawn + portal APIs,
 such that error collection and propagation happens in the
 *caller's task* (and thus whatever `trio` nursery/scope
 encloses it) instead of inside the actor-nursery's
-spawn-machinery nurseries as with the (to be deprecated)
+spawn-machinery nurseries as with the (now removed) legacy
 `ActorNursery.run_in_actor()` API.
 
 '''
@@ -282,8 +282,8 @@ async def run(
     module in its `enable_modules` list. Calls that spawn their own
     actor add the trampoline module automatically.
 
-    Unlike `ActorNursery.run_in_actor()` (which returns
-    a `Portal` whose result is only collected at
+    Unlike the removed legacy `ActorNursery.run_in_actor()` (which
+    returned a `Portal` whose result was only collected at
     actor-nursery teardown) this is a plain "call and
     wait" primitive: any remote error is raised HERE, in
     the caller's task. Concurrency is composed the usual

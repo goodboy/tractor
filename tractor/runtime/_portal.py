@@ -50,13 +50,11 @@ from ..ipc import Channel
 from ..log import get_logger
 from ..msg import (
     # Error,
-    PayloadMsg,
     NamespacePath,
     Return,
 )
 from .._exceptions import (
     ActorTooSlowError,
-    NoResult,
     TransportClosed,
 )
 from .._context import (
@@ -102,14 +100,6 @@ class Portal:
     ) -> None:
 
         self._chan: Channel = channel
-        # during the portal's lifetime
-        self._final_result_pld: Any|None = None
-        self._final_result_msg: PayloadMsg|None = None
-
-        # When set to a ``Context`` (when _submit_for_result is called)
-        # it is expected that ``result()`` will be awaited at some
-        # point.
-        self._expect_result_ctx: Context|None = None
         self._streams: set[MsgStream] = set()
 
         # TODO, this should be PRIVATE (and never used publicly)! since it's just
@@ -136,102 +126,6 @@ class Portal:
             'Consider the shorter `Portal.chan` instead of `.channel` ;)'
         )
         return self.chan
-
-    # TODO: factor this out into a `.highlevel` API-wrapper that uses
-    # a single `.open_context()` call underneath.
-    async def _submit_for_result(
-        self,
-        ns: str,
-        func: str,
-        **kwargs
-    ) -> None:
-
-        if self._expect_result_ctx is not None:
-            raise RuntimeError(
-                'A pending main result has already been submitted'
-            )
-
-        self._expect_result_ctx: Context = await self.actor.start_remote_task(
-            self.channel,
-            nsf=NamespacePath(f'{ns}:{func}'),
-            kwargs=kwargs,
-            portal=self,
-        )
-
-    # TODO: we should deprecate this API right? since if we remove
-    # `.run_in_actor()` (and instead move it to a `.highlevel`
-    # wrapper api (around a single `.open_context()` call) we don't
-    # really have any notion of a "main" remote task any more?
-    #
-    # @api_frame
-    async def wait_for_result(
-        self,
-        hide_tb: bool = True,
-    ) -> Any:
-        '''
-        Return the final result delivered by a `Return`-msg from the
-        remote peer actor's "main" task's `return` statement.
-
-        '''
-        __tracebackhide__: bool = hide_tb
-        # Check for non-rpc errors slapped on the
-        # channel for which we always raise
-        exc = self.channel._exc
-        if exc:
-            raise exc
-
-        # not expecting a "main" result
-        if self._expect_result_ctx is None:
-            peer_id: str = f'{self.channel.aid.reprol()!r}'
-            log.warning(
-                f'Portal to peer {peer_id} will not deliver a final result?\n'
-                f'\n'
-                f'Context.result() can only be called by the parent of '
-                f'a sub-actor when it was spawned with '
-                f'`ActorNursery.run_in_actor()`'
-                f'\n'
-                f'Further this `ActorNursery`-method-API will deprecated in the'
-                f'near fututre!\n'
-            )
-            return NoResult
-
-        # expecting a "main" result
-        assert self._expect_result_ctx
-
-        if self._final_result_msg is None:
-            try:
-                (
-                    self._final_result_msg,
-                    self._final_result_pld,
-                ) = await self._expect_result_ctx._pld_rx.recv_msg(
-                    ipc=self._expect_result_ctx,
-                    expect_msg=Return,
-                )
-            except BaseException as err:
-                # TODO: wrap this into `@api_frame` optionally with
-                # some kinda filtering mechanism like log levels?
-                __tracebackhide__: bool = False
-                raise err
-
-        return self._final_result_pld
-
-    # TODO: factor this out into a `.highlevel` API-wrapper that uses
-    # a single `.open_context()` call underneath.
-    async def result(
-        self,
-        *args,
-        **kwargs,
-    ) -> Any|Exception:
-        typname: str = type(self).__name__
-        log.warning(
-            f'`{typname}.result()` is DEPRECATED!\n'
-            f'\n'
-            f'Use `{typname}.wait_for_result()` instead!\n'
-        )
-        return await self.wait_for_result(
-            *args,
-            **kwargs,
-        )
 
     async def _cancel_streams(self):
         # terminate all locally running async generator

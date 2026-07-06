@@ -780,7 +780,7 @@ class Context:
         # `Portal.open_context()` has been opened since it's
         # assumed that other portal APIs like,
         #  - `Portal.run()`,
-        #  - `ActorNursery.run_in_actor()`
+        #  - `to_actor.run()`
         # do their own error checking at their own call points and
         # result processing.
 
