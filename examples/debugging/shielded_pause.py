@@ -75,10 +75,10 @@ async def main():
     async with tractor.open_nursery(
         debug_mode=True,
     ) as n:
-        portal: tractor.Portal = await n.run_in_actor(
+        await tractor.to_actor.run(
             cancelled_before_pause,
+            an=n,
         )
-        await portal.wait_for_result()
 
         # ensure the same works in the root actor!
         await pm_on_cancelled()

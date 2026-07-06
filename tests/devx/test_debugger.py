@@ -849,43 +849,36 @@ def test_multi_nested_subactors_error_through_nurseries(
             break
 
     # boxed source errors
+    #
+    # NB post-#477 (`to_actor.run()` one-shots in local
+    # task-nurseries) the final relay is the LAST-released
+    # (leaf) REPL's error chain: it wins each level's
+    # relay-vs-cancel race so every level's single-member
+    # group gets unwrapped by the runtime's `collapse_eg()`
+    # (annotated at each actor boundary) while the sibling
+    # tree ('spawner1') is cancelled + absorbed. The legacy
+    # `run_in_actor()` teardown-reap instead grouped BOTH the
+    # `name_error` and bp-quit chains into the final dump
+    # (the previously-unexplained "extra" patterns).
     expect_patts: list[str] = [
-        "NameError: name 'doggypants' is not defined",
         "tractor._exceptions.RemoteActorError:",
-        "('name_error'",
 
-        # first level subtrees
-        # "tractor._exceptions.RemoteActorError: ('spawner0'",
-        "src_uid=('spawner0'",
-
-        # "tractor._exceptions.RemoteActorError: ('spawner1'",
-
-        # propagation of errors up through nested subtrees
-        # "tractor._exceptions.RemoteActorError: ('spawn_until_0'",
-        # "tractor._exceptions.RemoteActorError: ('spawn_until_1'",
-        # "tractor._exceptions.RemoteActorError: ('spawn_until_2'",
-        # ^-NOTE-^ old RAE repr, new one is below with a field
-        # showing the src actor's uid.
-        "src_uid=('spawn_until_2'",
+        # each level's unwrapped-single-member-group
+        # annotation + the first-level subtree's boundary
+        # footer.
+        "( ^^^ this exc was collapsed from a group ^^^ )",
+        "------ ('spawner0'",
     ]
-    # XXX, I HAVE NO IDEA why these patts only show on the
-    # `trio`-spawner but it seems to have something to do with
-    # what gets dumped in prior-prompt latches somehow??
-    # TODO for claude, explain and or work through how this is
-    # happening but ONLY WHEN RUN FROM THE TEST, bc when i try to
-    # run the test script manually the correct output ALWAYS seems
-    # to be in the last `str(child.before.decode())` output !?!?
     if (
         not is_forking_spawner
         and
         last_send_char == 'q'
     ):
         expect_patts += [
-            # expect the pdb-quit exc.
+            # expect the pdb-quit exc relayed from the leaf's
+            # bp-loop child.
             "bdb.BdbQuit",
-            # BUT WHY these dude!?
-            "src_uid=('spawn_until_0'",
-            "relay_uid=('spawn_until_1'",
+            "src_uid=('breakpoint_forever'",
         ]
 
     assert_before(

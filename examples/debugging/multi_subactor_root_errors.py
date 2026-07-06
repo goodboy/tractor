@@ -16,11 +16,11 @@ async def spawn_error():
     """"A nested nursery that triggers another ``NameError``.
     """
     async with tractor.open_nursery() as n:
-        portal = await n.run_in_actor(
+        return await tractor.to_actor.run(
             name_error,
+            an=n,
             name='name_error_1',
-            )
-        return await portal.result()
+        )
 
 
 async def main():
@@ -38,28 +38,35 @@ async def main():
         - root actor should then fail on assert
         - program termination
     """
-    async with tractor.open_nursery(
-        debug_mode=True,
-        loglevel='devx',
-    ) as n:
+    async with (
+        tractor.open_nursery(
+            debug_mode=True,
+            loglevel='devx',
+        ) as an,
+        trio.open_nursery() as tn,
+    ):
+        # spawn both actors..
+        portal = await an.start_actor(
+            'name_error',
+            enable_modules=[__name__],
+        )
+        portal1 = await an.start_actor(
+            'spawn_error',
+            enable_modules=[__name__],
+        )
 
-        # spawn both actors
-        portal = await n.run_in_actor(
-            name_error,
-            name='name_error',
-        )
-        portal1 = await n.run_in_actor(
-            spawn_error,
-            name='spawn_error',
-        )
+        # ..and bg-schedule their erroring tasks.
+        tn.start_soon(portal.run, name_error)
+        tn.start_soon(portal1.run, spawn_error)
+
+        # yield to the bg tasks so both RPC requests are
+        # submitted (and start crashing) before the root's own
+        # error below (the legacy `run_in_actor()` submitted
+        # in-line with each spawn).
+        await trio.sleep(0.5)
 
         # trigger a root actor error
         assert 0
-
-        # attempt to collect results (which raises error in parent)
-        # still has some issues where the parent seems to get stuck
-        await portal.result()
-        await portal1.result()
 
 
 if __name__ == '__main__':

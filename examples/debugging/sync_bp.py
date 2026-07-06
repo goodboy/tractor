@@ -90,7 +90,7 @@ async def main() -> None:
 
         # TODO: 3 sub-actor usage cases:
         # -[x] via a `.open_context()`
-        # -[ ] via a `.run_in_actor()` call
+        # -[ ] via a `to_actor.run()` call
         # -[ ] via a `.run()`
         # -[ ] via a `.to_thread.run_sync()` in subactor
         async with p.open_context(
