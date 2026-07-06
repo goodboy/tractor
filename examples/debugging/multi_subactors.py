@@ -17,10 +17,10 @@ async def name_error():
 async def spawn_error():
     """"A nested nursery that triggers another ``NameError``.
     """
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery() as an:
         return await tractor.to_actor.run(
             name_error,
-            an=n,
+            an=an,
             name='name_error_1',
         )
 

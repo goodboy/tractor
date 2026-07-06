@@ -17,11 +17,11 @@ async def main():
         tractor.open_nursery(
             debug_mode=True,
             # loglevel='debug'  # ?XXX required?
-        ) as n,
+        ) as an,
         trio.open_nursery() as tn,
     ):
         # spawn the actor..
-        portal = await n.start_actor(
+        portal = await an.start_actor(
             'key_error',
             enable_modules=[__name__],
         )

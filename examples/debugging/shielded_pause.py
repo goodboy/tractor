@@ -74,10 +74,10 @@ async def cancelled_before_pause(
 async def main():
     async with tractor.open_nursery(
         debug_mode=True,
-    ) as n:
+    ) as an:
         await tractor.to_actor.run(
             cancelled_before_pause,
-            an=n,
+            an=an,
         )
 
         # ensure the same works in the root actor!
