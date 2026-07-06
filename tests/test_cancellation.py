@@ -837,11 +837,13 @@ def test_cancel_via_SIGINT_other_task(
     ):
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
-        ) as tn:
+        ) as an:
+            # just keep a set of (daemon) subactors alive for the
+            # SIGINT to cancel (was 3 `run_in_actor(sleep_forever)`
+            # one-shots — a daemon needs no "main" task to idle).
             for i in range(3):
-                await tn.run_in_actor(
-                    sleep_forever,
-                    name='namesucka',
+                await an.start_actor(
+                    f'namesucka_{i}',
                 )
             task_status.started()
             await trio.sleep_forever()
@@ -882,8 +884,11 @@ async def spin_for(period=3):
 async def spawn_sub_with_sync_blocking_task():
     async with tractor.open_nursery() as an:
         print('starting sync blocking subactor..\n')
-        await an.run_in_actor(
+        # one-shot: parks HERE awaiting the sync-sleeping
+        # grandchild's result until cancelled from above.
+        await tractor.to_actor.run(
             spin_for,
+            an=an,
             name='sleeper',
         )
         print('exiting first subactor layer..\n')
@@ -989,10 +994,18 @@ def test_cancel_while_childs_child_in_sync_sleep(
                     debug_mode=debug_mode,
                     registry_addrs=[reg_addr],
                 ) as an,
+                trio.open_nursery() as tn,
             ):
-                await an.run_in_actor(
-                    spawn_sub_with_sync_blocking_task,
-                    name='sync_blocking_sub',
+                # bg one-shot: parks on the middle actor's result
+                # (itself parked on the sync-sleeping grandchild)
+                # until the `assert 0` below cancels this scope.
+                tn.start_soon(
+                    partial(
+                        tractor.to_actor.run,
+                        spawn_sub_with_sync_blocking_task,
+                        an=an,
+                        name='sync_blocking_sub',
+                    )
                 )
                 await trio.sleep(1)
 
