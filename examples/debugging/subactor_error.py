@@ -12,16 +12,12 @@ async def main():
     ) as an:
 
         # TODO: ideally the REPL arrives at this frame in the parent,
-        # ABOVE the @api_frame of `Portal.run_in_actor()` (which
-        # should eventually not even be a portal method ... XD)
+        # ABOVE the @api_frame of `to_actor.run()` ..
         # await tractor.pause()
-        p: tractor.Portal = await an.run_in_actor(name_error)
 
-        # with this style, should raise on this line
-        await p.wait_for_result()
-
-        # with this alt style should raise at `open_nusery()`
-        # return await p.wait_for_result()
+        # the one-shot blocks on the subactor's result so the
+        # boxed `NameError` raises right here.
+        await tractor.to_actor.run(name_error, an=an)
 
 
 if __name__ == '__main__':

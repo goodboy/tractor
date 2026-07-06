@@ -19,10 +19,12 @@ async def main():
         loglevel='cancel',
     ) as n:
 
-        portal = await n.run_in_actor(
+        # parks awaiting a result which only arrives once the
+        # user quits (`BdbQuit`s) the child's REPL loop.
+        await tractor.to_actor.run(
             breakpoint_forever,
+            an=n,
         )
-        await portal.wait_for_result()
 
 
 if __name__ == '__main__':
