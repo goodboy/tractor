@@ -367,9 +367,94 @@ user's failing-test-first convention). The poll-based reap
 fix in `_supervise.py` is UNCOMMITTED and likely SUPERSEDED
 by the re-scoping — do NOT land it as-is.
 
+## RESOLVED (2026-07-06): migrate everything, remove the API
+
+The PAUSED re-assessment concluded decisively: rather than
+re-scope `_reap_ria_portals` (or bolt any hack onto it), the
+`run_in_actor()` API itself was REMOVED — its non-blocking
+"result at teardown" semantic predates streaming and confused
+more than it served. Every in-repo caller was migrated
+per-file/-group (each its own commit, each gated):
+
+- tests: `test_infected_asyncio` `test_runtime` `test_rpc`
+  `test_spawning` `test_pubsub` `test_registrar`
+  `test_cancellation` (3 groups) `test_advanced_streaming`.
+- examples: 4 non-debugging + all 8 `debugging/` REPL scripts
+  (debugger suite byte-identical green, 28p/6s).
+- docs: 8 rst pages + the `experimental/_pubsub` docstring.
+
+Migration patterns (the `run_in_actor` shape -> successor):
+
+- blocking result        -> `to_actor.run(fn, an=an, ...)`
+- fire-&-forget/forever  -> bg `to_actor.run()` task in a local
+                            `trio` task-nursery (or `start_actor`
+                            + bg `Portal.run()` when a portal
+                            handle is needed)
+- concurrent fan-out     -> N bg `to_actor.run()` tasks / or
+                            `gather_contexts([p.open_context(..)])`
+- reap-all-error-collect -> the "collect don't cancel" pattern:
+                            each one-shot catches + stashes its
+                            `RemoteActorError`, group raised
+                            after the task-nursery joins (see
+                            `examples/debugging/multi_subactors.py`)
+- mutual-rendezvous      -> peers must OUTLIVE both dialogs:
+                            `start_actor()` daemons + concurrent
+                            `Portal.run()`s + explicit
+                            `an.cancel()` (eager one-shot reap
+                            races the slower peer's dial of the
+                            winner's dead sockaddr; found via
+                            `test_trynamic_trio` flake).
+
+Semantic deltas (tests loosened accordingly):
+
+- teardown-reap-all BEG-of-N is GONE: local task-nurseries are
+  cancel-on-first, raced siblings' `Cancelled`s are absorbed,
+  and the runtime's `collapse_eg()` unwraps every single-member
+  group at each actor boundary — a fully-raced nested tree
+  relays a bare (annotated) `RemoteActorError` chain.
+- `test_multierror_fast_nursery` deleted (pure reap-stress);
+  `test_nested_multierrors` re-purposed as deep-tree
+  cancel-cascade stress w/ a race-tolerant shape walk.
+
+Final excision (after zero callers remained): `run_in_actor()`,
+`._cancel_after_result_on_exit`, `_reap_ria_portals()`,
+`Portal._submit_for_result/._expect_result_ctx/
+.wait_for_result()/.result()`, `exhaust_portal()`,
+`cancel_on_completion()`, `NoResult` — net -402 lines. The
+reap-hang class (unbounded `wait_for_result` in machinery
+scope) dissolves structurally: the only result-wait left lives
+in the caller's task inside its own cancel-scope; the
+`d1fb4a1a` anti-hang guard test passes by construction. The
+poll-vs-`proc_waiter` debate is moot as predicted.
+
+## Follow-up sketch: `to_actor.open_one_shot()` (run-async parity)
+
+If deferred-result parity is ever wanted, the design that needs
+NO runtime coupling, NO returned `Portal` and NO cancel-relay
+`trio.Event` machinery:
+
+    async with to_actor.open_one_shot(
+        fn, an=an, **kws,
+    ) as one_shot:
+        ...                       # concurrent caller work
+        val = await one_shot.wait()   # optional; errors always
+                                      # propagate at scope exit
+
+an `@acm` that opens a private task-nursery, `start_soon`s ONE
+task running the existing blocking `run()` and stashes the
+value in a slot + sets a done-`trio.Event` (a memo, not a
+cancel relay). Cancellation = plain scope-cancel of the acm's
+nursery (the parked `Portal.run()` unwinds via `Cancelled`, the
+shielded `cancel_actor()` reap still runs); a child error
+raises into the acm scope so an un-`wait()`ed one-shot can
+never silently drop its error. i.e. the old reaper's job is
+done by scoping, not machinery. ~40 lines, all in
+`to_actor/_api.py`, zero `_supervise` involvement.
+
 ## Verification gate
 
-- `tests/test_cancellation.py test_spawning.py test_local.py
-  test_rpc.py` on `trio` + `mp_spawn` + `mp_forkserver`
-  backends, then full suite; `tests/devx/test_debugger.py`
-  for risk 3.
+- per-migration-commit module gates on `trio` (+ `mp_spawn`
+  spot-gates incl. `test_infected_asyncio` per the B2 lesson);
+  `tests/devx/test_debugger.py` for the REPL flows.
+- full suite on `trio` + `mp_spawn` at branch tip + CI matrix
+  via draft PR #484.
