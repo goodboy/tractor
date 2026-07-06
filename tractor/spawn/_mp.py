@@ -191,9 +191,7 @@ async def mp_proc(
 
         # This is a "soft" (cancellable) join/reap which
         # will remote cancel the actor on a ``trio.Cancelled``
-        # condition. Any `.run_in_actor()` result-reaping
-        # happens up in the `ActorNursery` machinery (see
-        # `_supervise._reap_ria_portals()`), NOT here.
+        # condition.
         await soft_kill(
             proc,
             proc_waiter,

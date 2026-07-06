@@ -306,12 +306,11 @@ class Start(
 
     It is called by all the following public APIs:
 
-    - `ActorNursery.run_in_actor()`
+    - `to_actor.run()`
 
     - `Portal.run()`
           `|_.run_from_ns()`
           `|_.open_stream_from()`
-          `|_._submit_for_result()`
 
     - `Context.open_context()`
 
