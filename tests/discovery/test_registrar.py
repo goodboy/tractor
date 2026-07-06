@@ -152,27 +152,37 @@ async def test_trynamic_trio(
     for the directed subs.
 
     '''
-    async with (
-        tractor.open_nursery() as n,
-        trio.open_nursery() as tn,
-    ):
+    async with tractor.open_nursery() as an:
         print("Alright... Action!")
 
-        # donny + gretchen each wait on the *other* to register, so
-        # they must run CONCURRENTLY — schedule both one-shots into a
-        # local task-nursery (was two non-blocking `run_in_actor()`s).
+        # donny + gretchen each wait on (then dial!) the *other*, so
+        # both actors must OUTLIVE both hellos: spawn as daemons and
+        # only reap after both tasks complete. NB a pair of eagerly
+        # reaped `to_actor.run()` one-shots races: the first to
+        # finish dies while the other may still be dialing its
+        # registry-resolved (now dead) sockaddr -> conn-refused.
+        portals: dict[str, tractor.Portal] = {
+            name: await an.start_actor(
+                name,
+                enable_modules=[__name__],
+            )
+            for name in ('donny', 'gretchen')
+        }
+
         async def _direct(this_name: str, other_actor: str):
-            res = await tractor.to_actor.run(
+            res = await portals[this_name].run(
                 ria_fn,
-                an=n,
                 other_actor=other_actor,
                 reg_addr=reg_addr,
-                name=this_name,
             )
             print(res)
 
-        tn.start_soon(_direct, 'donny', 'gretchen')
-        tn.start_soon(_direct, 'gretchen', 'donny')
+        async with trio.open_nursery() as tn:
+            tn.start_soon(_direct, 'donny', 'gretchen')
+            tn.start_soon(_direct, 'gretchen', 'donny')
+
+        # both hellos have completed; reap the thespians.
+        await an.cancel()
         print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")
 
 
