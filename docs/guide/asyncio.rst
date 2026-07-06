@@ -76,8 +76,8 @@ Just flip the flag on :meth:`tractor.ActorNursery.start_actor`:
             infect_asyncio=True,
         )
 
-The one-shot convenience ``ActorNursery.run_in_actor()`` accepts
-the same flag. The ``to_asyncio`` APIs may **only** be called from
+The one-shot convenience ``tractor.to_actor.run()`` accepts the
+same flag. The ``to_asyncio`` APIs may **only** be called from
 tasks inside an infected actor; calling them anywhere else raises
 a loud ``RuntimeError``. You can introspect at runtime with
 ``tractor.current_actor().is_infected_aio()``.
@@ -229,7 +229,7 @@ dialog, skip the channel ceremony and use
 
 It schedules the fn as an ``asyncio.Task``, waits for completion
 and hands the return value back to ``trio``; think of it as the
-cross-loop sibling of ``ActorNursery.run_in_actor()``. Errors and
+cross-loop sibling of ``tractor.to_actor.run()``. Errors and
 cancellation are translated exactly as for channels.
 
 Cross-loop errors and cancellation
