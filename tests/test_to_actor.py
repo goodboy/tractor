@@ -1,8 +1,8 @@
 '''
 `tractor.to_actor`: one-shot single-remote-task API suite.
 
-Verifies the "spiritual successor" to (and eventual
-replacement of) `ActorNursery.run_in_actor()`; see
+Verifies the "spiritual successor" to (and replacement of)
+the removed legacy `ActorNursery.run_in_actor()`; see
 https://github.com/goodboy/tractor/issues/477
 
 '''
@@ -82,7 +82,7 @@ async def test_remote_error_relayed_to_caller_task(
     A remote task error is raised directly in the
     caller's task as a boxed `RemoteActorError` instead
     of surfacing at actor-nursery teardown as with the
-    legacy `.run_in_actor()` API.
+    removed legacy `.run_in_actor()` API.
 
     '''
     with pytest.raises(RemoteActorError) as excinfo:

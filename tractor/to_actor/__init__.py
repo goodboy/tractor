@@ -23,8 +23,8 @@ Adopts the "run it over there" parlance from analogous
 reuse) a subactor, schedule a single remote task, wait on
 its result and (when the call owns the subactor) reap it.
 
-The "spiritual successor" to (and eventual replacement of)
-the `ActorNursery.run_in_actor()` API; see
+The "spiritual successor" to (and replacement of) the removed
+legacy `ActorNursery.run_in_actor()` API; see
 https://github.com/goodboy/tractor/issues/477
 
 '''

@@ -143,9 +143,12 @@ def test_ringbuf(
                         child_read_shm,
                         **common_kwargs,
                         total_bytes=total_bytes,
-                    ) as (sctx, _sent),
+                    ) as (rctx, _sent),
                 ):
-                    await recv_p.result()
+                    # ctx-acm exits await each child task's
+                    # `Return` (the prior `recv_p.result()` here
+                    # was a daemon-portal no-op).
+                    pass
 
                 await send_p.cancel_actor()
                 await recv_p.cancel_actor()

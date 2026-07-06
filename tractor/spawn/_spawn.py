@@ -126,98 +126,6 @@ def try_set_start_method(
     return _ctx
 
 
-async def exhaust_portal(
-
-    portal: Portal,
-    actor: Actor
-
-) -> Any:
-    '''
-    Pull final result from portal (assuming it has one).
-
-    If the main task is an async generator do our best to consume
-    what's left of it.
-    '''
-    __tracebackhide__ = True
-    try:
-        log.debug(
-            f'Waiting on final result from {actor.aid.uid}'
-        )
-
-        # XXX: streams should never be reaped here since they should
-        # always be established and shutdown using a context manager api
-        final: Any = await portal.wait_for_result()
-
-    except (
-        Exception,
-        BaseExceptionGroup,
-    ) as err:
-        # we reraise in the parent task via a ``BaseExceptionGroup``
-        return err
-
-    except trio.Cancelled as err:
-        # lol, of course we need this too ;P
-        # TODO: merge with above?
-        log.warning(
-            'Cancelled portal result waiter task:\n'
-            f'uid: {portal.channel.aid}\n'
-            f'error: {err}\n'
-        )
-        return err
-
-    else:
-        log.debug(
-            f'Returning final result from portal:\n'
-            f'uid: {portal.channel.aid}\n'
-            f'result: {final}\n'
-        )
-        return final
-
-
-async def cancel_on_completion(
-
-    portal: Portal,
-    actor: Actor,
-    errors: dict[tuple[str, str], Exception],
-
-) -> None:
-    '''
-    Cancel actor gracefully once its "main" portal's
-    result arrives.
-
-    Should only be called for actors spawned via the
-    `Portal.run_in_actor()` API.
-
-    => and really this API will be deprecated and should be
-    re-implemented as a `.hilevel.one_shot_task_nursery()`..)
-
-    '''
-    # if this call errors we store the exception for later
-    # in ``errors`` which will be reraised inside
-    # an exception group and we still send out a cancel request
-    result: Any|Exception = await exhaust_portal(
-        portal,
-        actor,
-    )
-    if isinstance(result, Exception):
-        errors[actor.aid.uid]: Exception = result
-        log.cancel(
-            'Cancelling subactor runtime due to error:\n\n'
-            f'Portal.cancel_actor() => {portal.channel.aid}\n\n'
-            f'error: {result}\n'
-        )
-
-    else:
-        log.runtime(
-            'Cancelling subactor gracefully:\n\n'
-            f'Portal.cancel_actor() => {portal.channel.aid}\n\n'
-            f'result: {result}\n'
-        )
-
-    # cancel the process now that we have a final result
-    await portal.cancel_actor()
-
-
 async def hard_kill(
     proc: trio.Process,
 
@@ -461,8 +369,8 @@ async def new_proc(
 
 
 # NOTE: bottom-of-module to avoid a circular import since the
-# backend submodules pull `cancel_on_completion`/`soft_kill`/
-# `hard_kill`/`proc_waiter` from this module.
+# backend submodules pull `soft_kill`/`hard_kill`/`proc_waiter`
+# from this module.
 from ._trio import trio_proc
 from ._mp import mp_proc
 

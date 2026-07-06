@@ -20,7 +20,6 @@
 """
 from contextlib import asynccontextmanager as acm
 from functools import partial
-import inspect
 from typing import (
     TYPE_CHECKING,
 )
@@ -232,14 +231,6 @@ class ActorNursery:
         # and syncing purposes to any actor opened nurseries.
         self._implicit_runtime_started: bool = False
 
-        # TODO, factor this into a .hilevel api!
-        #
-        # portals spawned with ``run_in_actor()`` are
-        # cancelled when their "main" result arrives. Reaped by
-        # `_reap_ria_portals()` at nursery-block exit now that
-        # the 2ndary `._ria_nursery` is gone (see issue #477).
-        self._cancel_after_result_on_exit: set = set()
-
         # trio.Nursery-like cancel (request) statuses
         self._cancelled_caught: bool = False
         self._cancel_called: bool = False
@@ -372,84 +363,6 @@ class ActorNursery:
             )
         )
 
-    # TODO: DEPRECATE THIS:
-    # -[x] impl instead as a hilevel wrapper on top of
-    #   the lower level daemon-spawn + portal APIs
-    #  |_ see `.to_actor.run()` (issue #477) which does
-    #    `.start_actor()` + `Portal.run()` + a one-shot
-    #    reap via `Portal.cancel_actor()`.
-    # -[ ] emit a `DeprecationWarning` here (requires
-    #   migrating all in-repo usage first!)
-    # -[ ] use @api_frame on the wrapper
-    async def run_in_actor(
-        self,
-
-        fn: typing.Callable,
-        *,
-
-        name: str | None = None,
-        bind_addrs: UnwrappedAddress|None = None,
-        rpc_module_paths: list[str] | None = None,
-        enable_modules: list[str] | None = None,
-        loglevel: str | None = None,  # set log level per subactor
-        infect_asyncio: bool = False,
-        inherit_parent_main: bool = True,
-        proc_kwargs: dict[str, typing.Any] | None = None,
-
-        **kwargs,  # explicit args to ``fn``
-
-    ) -> Portal:
-        '''
-        Spawn a new actor, run a lone task, then terminate the actor and
-        return its result.
-
-        Actors spawned using this method are kept alive at nursery teardown
-        until the task spawned by executing ``fn`` completes at which point
-        the actor is terminated.
-
-        NOTE: prefer the (eventual) replacement API
-        `tractor.to_actor.run()` which delivers the same
-        one-shot semantics decoupled from this nursery's
-        internal spawn machinery; see issue #477.
-
-        '''
-        __runtimeframe__: int = 1  # noqa
-        mod_path: str = fn.__module__
-
-        if name is None:
-            # use the explicit function name if not provided
-            name = fn.__name__
-
-        proc_kwargs = dict(proc_kwargs or {})
-        portal: Portal = await self.start_actor(
-            name,
-            enable_modules=[mod_path] + (
-                enable_modules or rpc_module_paths or []
-            ),
-            bind_addrs=bind_addrs,
-            loglevel=loglevel,
-            infect_asyncio=infect_asyncio,
-            inherit_parent_main=inherit_parent_main,
-            proc_kwargs=proc_kwargs
-        )
-
-        # XXX: don't allow stream funcs
-        if not (
-            inspect.iscoroutinefunction(fn) and
-            not getattr(fn, '_tractor_stream_function', False)
-        ):
-            raise TypeError(f'{fn} must be an async function!')
-
-        # this marks the actor to be cancelled after its portal result
-        # is retreived, see logic in `open_nursery()` below.
-        self._cancel_after_result_on_exit.add(portal)
-        await portal._submit_for_result(
-            mod_path,
-            fn.__name__,
-            **kwargs
-        )
-        return portal
-
     # @api_frame
     async def cancel(
         self,
@@ -568,51 +481,6 @@ class ActorNursery:
         self._join_procs.set()
 
 
-async def _reap_ria_portals(
-    an: ActorNursery,
-    errors: dict[tuple[str, str], BaseException],
-    ria_children: list[tuple[Portal, Actor]]|None = None,
-) -> None:
-    '''
-    Wait on and stash the final result/error from every
-    `.run_in_actor()`-spawned child then cancel its actor
-    runtime, one `_spawn.cancel_on_completion()` task per
-    child.
-
-    Replaces the per-child reaper task formerly spawned by
-    the spawn backends (keyed off
-    `._cancel_after_result_on_exit` membership) which
-    required routing such children into the (now removable)
-    `._ria_nursery`. Only call AFTER `._join_procs` is set
-    so user code inside the nursery block retains exclusive
-    result-await access; see the "manually await results"
-    note in `spawn._mp.mp_proc()`.
-
-    '''
-    if ria_children is None:
-        ria_children: list[tuple[Portal, Actor]] = [
-            (portal, subactor)
-            for subactor, _, portal in an._children.values()
-            if portal in an._cancel_after_result_on_exit
-        ]
-    if not ria_children:
-        return
-
-    async with (
-        collapse_eg(),
-        trio.open_nursery() as tn,
-    ):
-        portal: Portal
-        subactor: Actor
-        for portal, subactor in ria_children:
-            tn.start_soon(
-                _spawn.cancel_on_completion,
-                portal,
-                subactor,
-                errors,
-            )
-
-
 @acm
 async def _open_and_supervise_one_cancels_all_nursery(
     actor: Actor,
@@ -627,11 +495,10 @@ async def _open_and_supervise_one_cancels_all_nursery(
     errors: dict[tuple[str, str], BaseException] = {}
 
     # The single "daemon actor" nursery into which ALL subactors
-    # are spawned — both `.start_actor()` daemons AND
-    # `.run_in_actor()` one-shots. The latter's result-reaping now
-    # runs via `_reap_ria_portals()` at block-exit rather than a
-    # 2ndary `._ria_nursery` (see the #477 removal); errors from
-    # this nursery bubble up to the caller.
+    # are spawned; one-shot (`to_actor.run()`) subactors are
+    # result-waited and reaped in their caller's own task-scope
+    # (see the #477 `.run_in_actor()`/`._ria_nursery` removal);
+    # errors from this nursery bubble up to the caller.
     async with (
         collapse_eg(),
         trio.open_nursery() as da_nursery,
@@ -654,11 +521,6 @@ async def _open_and_supervise_one_cancels_all_nursery(
                 f'>}} {len(an._children)}\n'
             )
             an._join_procs.set()
-
-            # collect results (and errors) from all
-            # `.run_in_actor()` children then cancel
-            # each, one reaper task per child.
-            await _reap_ria_portals(an, errors)
 
         # Single one-cancels-all handler for the (now single)
         # daemon nursery. Pre-#477 a 2ndary `._ria_nursery`
@@ -733,46 +595,14 @@ async def _open_and_supervise_one_cancels_all_nursery(
                         # '------ - ------'
                     )
 
-                # snapshot `.run_in_actor()` children
-                # BEFORE cancelling: each backend
-                # spawn-task pops its `._children`
-                # entry as the proc gets reaped.
-                ria_children: list = [
-                    (portal, subactor)
-                    for subactor, _, portal
-                    in an._children.values()
-                    if portal in
-                    an._cancel_after_result_on_exit
-                ]
                 # cancel all subactors
                 await an.cancel()
 
-                # then collect any already-relayed
-                # results/errors from ria children.
-                # Tightly bounded: anything
-                # collectable is already queued in
-                # the local ctx (relayed BEFORE the
-                # cancel above); a child hard-killed
-                # without relaying just parks its
-                # reaper which then self-cleans (a
-                # `trio.Cancelled` result is never
-                # stashed), mirroring the old
-                # backend-side reaper-vs-`soft_kill`
-                # cancel race.
-                with trio.move_on_after(0.5):
-                    await _reap_ria_portals(
-                        an,
-                        errors,
-                        ria_children=ria_children,
-                    )
-
         finally:
-            # No errors were raised while awaiting ".run_in_actor()"
-            # actors but those actors may have returned remote errors as
-            # results (meaning they errored remotely and have relayed
-            # those errors back to this parent actor). The errors are
-            # collected in ``errors`` so cancel all actors, summarize
-            # all errors and re-raise.
+            # an error was stashed by the handler above (or by
+            # a spawn task via the shared `errors` dict) so
+            # cancel any remaining subactors, summarize and
+            # re-raise.
             if errors:
                 if an._children:
                     with trio.CancelScope(shield=True):
