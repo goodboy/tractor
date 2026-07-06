@@ -276,6 +276,97 @@ Gate (box ran ~2.7x slow this session, load-induced
   completion). RECOMMEND a clean full-suite run on a
   normal-speed box before this merges.
 
+## Regression + fix: ria-reap hang (2026-07-02)
+
+Human hit a full-suite hang on
+`test_infected_asyncio.py::test_tractor_cancels_aio`. Bisected:
+passes at pre-ria `a34aaf98` (0.59s), hangs at B2 `e617b498`
+(90s+). Root-caused to the STEP-A reaper hoist (`5cd190c5`),
+NOT B2 (`_reap_ria_portals` is byte-identical A->B2).
+
+Bug: the test does `run_in_actor(asyncio_actor)` then a USER
+`portal.cancel_actor()` and exits the block cleanly -> the
+happy path's `await _reap_ria_portals()`, which waits UNBOUNDED
+on `cancel_on_completion -> wait_for_result()`. The child was
+cancelled out-of-band so no final result is relayed -> parked
+forever. The OLD spawn-backend reaper was raced against
+`soft_kill()` (per-child nursery `cancel_scope.cancel()` on
+subproc death); the hoist dropped that race.
+
+Fix: `_reap_ria_portals()` runs each `cancel_on_completion()`
+in a local nursery alongside a `proc.poll()` death-watch that
+cancels the parked reaper once the subproc exits — restoring
+the old race, backend-agnostic (guarded by
+`hasattr(proc, 'poll')` for a future `subint` handle).
+
+Why POLL (`proc.poll()`) not the event-driven `wait_func`:
+the mp waiter (`_spawn.proc_waiter`) does
+`wait_readable(proc.sentinel)`, and `soft_kill()` is ALREADY
+awaiting that same fd concurrently in the daemon nursery — a
+2nd `wait_readable` on one fd raises `trio.BusyResourceError`.
+(`trio.Process.wait()` IS multi-waiter-safe, but mp has no
+async equivalent.) `proc.poll()` — the same liveness check
+`soft_kill` itself falls back to — is the conflict-free common
+denominator. Verified: poll-fix passes on BOTH trio and
+mp_spawn.
+
+Also added a per-test anti-hang guard: wrapped
+`test_tractor_cancels_aio`'s `main()` in
+`with trio.fail_after(9 * cpu_perf_headroom())` — the blessed
+pattern (`pytest-timeout`'s global cap is intentionally off;
+breaks trio under fork backends, see `pyproject` NOTE). So a
+future recurrence FAILS FAST instead of hanging the suite.
+(Several other tests in the file are still guardless —
+`test_aio_simple_error`, `test_trio_error_cancels_intertask_chan`,
+`test_aio_errors_and_channel_propagates_and_closes` — candidate
+follow-up sweep.)
+
+Lesson: the B2 focused gate OMITTED `test_infected_asyncio`
+(and the full runs were clipped/slow), so the step-A hang
+slipped through. Any future ria-touching change MUST gate
+`test_infected_asyncio` explicitly.
+
+Gate: `test_tractor_cancels_aio` green (trio 1.53s, mp 3.98s);
+fix gate (`test_infected_asyncio test_cancellation test_to_actor
+test_spawning`) = 74 passed, 3 xfailed, 0 failures.
+
+## PAUSED (2026-07-02): re-assess the reaper's SCOPE
+
+User's insight (compelling — likely the real root cause of
+the hang, not just the missing proc-death race):
+
+> the "hoisting" of 5cd190c5 was just not really done right
+> — the hoist should have been into the `to_actor` scope,
+> not `_supervise`.
+
+The argument: `.run_in_actor()`'s result-waiting/reaping got
+hoisted into `_supervise._reap_ria_portals` (nursery-machinery
+scope), which has NO natural cancel-scope to bound a parked
+`wait_for_result()` — hence the awkward proc-death race +
+the poll-vs-`proc_waiter` dilemma. If the result-wait instead
+lived in the `to_actor` one-shot scope
+(`to_actor._invoke_in_subactor()`), it would sit right next to
+the caller's `an` + a local `trio` task-nursery + cancel-scope
+(the `trio.to_thread`-style model #477 actually wants) — so
+bounding/cancelling the wait is trivial and the hang
+dissolves from correct scoping rather than a bolt-on race.
+
+Follow-on to re-evaluate on resume:
+- should `_reap_ria_portals` exist AT ALL, or should
+  result-waiting move entirely into
+  `to_actor._invoke_in_subactor()`?
+- reimplement legacy `run_in_actor()` on top of
+  `to_actor.run()` so `_reap_ria_portals` +
+  `_cancel_after_result_on_exit` can be DROPPED from
+  `_supervise` entirely (the true #477 simplification)?
+- the poll-vs-event decision is MOOT under this re-scoping.
+
+State at pause: `test_infected_asyncio` anti-hang guard
+COMMITTED (`d1fb4a1a`, intentionally red w/o the fix — the
+user's failing-test-first convention). The poll-based reap
+fix in `_supervise.py` is UNCOMMITTED and likely SUPERSEDED
+by the re-scoping — do NOT land it as-is.
+
 ## Verification gate
 
 - `tests/test_cancellation.py test_spawning.py test_local.py
