@@ -62,8 +62,8 @@ One-shot task actors
    ``portal=`` it owns only the linked task and leaves the existing
    actor's lifetime to the portal owner; that actor must expose both
    the target module and ``tractor.to_actor.MODULE``. It supersedes
-   the legacy, non-blocking ``ActorNursery.run_in_actor()`` retained
-   only for compatibility until its removal in PR #484.
+   the removed (legacy, non-blocking)
+   ``ActorNursery.run_in_actor()``.
 
 .. deprecated:: 0.1.0a6
 
