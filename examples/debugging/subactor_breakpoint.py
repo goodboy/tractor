@@ -17,13 +17,13 @@ async def main():
     async with tractor.open_nursery(
         debug_mode=True,
         loglevel='cancel',
-    ) as n:
+    ) as an:
 
         # parks awaiting a result which only arrives once the
         # user quits (`BdbQuit`s) the child's REPL loop.
         await tractor.to_actor.run(
             breakpoint_forever,
-            an=n,
+            an=an,
         )
 
 

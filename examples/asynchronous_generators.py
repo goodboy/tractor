@@ -15,9 +15,9 @@ async def stream_forever() -> AsyncIterator[int]:
 
 async def main():
 
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery() as an:
 
-        portal = await n.start_actor(
+        portal = await an.start_actor(
             'donny',
             enable_modules=[__name__],
         )

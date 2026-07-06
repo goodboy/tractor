@@ -58,8 +58,8 @@ async def main():
         debug_mode=True,
         enable_transports=[tpt],
         loglevel='devx',
-    ) as n:
-        p = await n.start_actor(
+    ) as an:
+        p = await an.start_actor(
             'bp_boi',
             enable_modules=[__name__],
         )
