@@ -647,6 +647,14 @@ async def test_nested_multierrors(
             timeout = 16
         case ('main_thread_forkserver', 3):
             timeout = 30
+        # any other fork-based backend (`mp_spawn` et al) pays
+        # the same per-spawn round-trip costs as MTF so rides
+        # its budgets; without a default arm `timeout` is left
+        # unbound -> `UnboundLocalError` at the scaling below.
+        case (_, 1):
+            timeout = 16
+        case (_, 3):
+            timeout = 30
 
     # inflate the budget by the throttle headroom probed above so
     # a slow box doesn't masquerade as a deadline regression.
