@@ -27,16 +27,11 @@
       "Bash(mkdir:*)",
       "Bash(gh pr:*)",
       "Bash(gh api:*)",
-      "Bash(gh issue:*)",
-      "Bash(UV_PROJECT_ENVIRONMENT=py* uv sync:*)",
-      "Bash(UV_PROJECT_ENVIRONMENT=py* uv run:*)",
-      "Bash(echo EXIT:$?:*)",
-      "Bash(echo \"EXIT=$?\")",
-      "Read(/tmp/**)"
+      "Bash(gh issue:*)"
     ],
     "deny": [],
     "ask": []
   },
-  "prefersReducedMotion": false,
-  "outputStyle": "default"
+  "outputStyle": "default",
+  "prefersReducedMotion": false
 }
