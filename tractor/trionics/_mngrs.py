@@ -198,6 +198,16 @@ async def gather_contexts(
 # Further potential examples of interest:
 # https://gist.github.com/njsmith/cf6fc0a97f53865f2c671659c88c1798#file-cache-py-L8
 
+class _CtxExit:
+    '''
+    Completion state for a cached context's shared exit.
+
+    '''
+    def __init__(self) -> None:
+        self.done = trio.Event()
+        self.error: Exception|None = None
+
+
 class _Cache:
     '''
     Globally (actor-processs scoped) cached, task access to
@@ -213,7 +223,11 @@ class _Cache:
     values: dict[Any,  Any] = {}
     resources: dict[
         Hashable,
-        tuple[trio.Nursery, trio.Event]
+        tuple[
+            trio.Nursery,
+            trio.Event,
+            _CtxExit,
+        ],
     ] = {}
     # nurseries: dict[int, trio.Nursery] = {}
     no_more_users: trio.Event|None = None
@@ -223,18 +237,38 @@ class _Cache:
         cls,
         mng,
         ctx_key: tuple,
+        ctx_exit: _CtxExit,
         task_status: trio.TaskStatus[T] = trio.TASK_STATUS_IGNORED,
 
     ) -> None:
-        async with mng as value:
-            _, no_more_users = cls.resources[ctx_key]
-            cls.values[ctx_key] = value
-            task_status.started(value)
-            try:
-                await no_more_users.wait()
-            finally:
-                value = cls.values.pop(ctx_key)
-                cls.resources.pop(ctx_key)
+        entered: bool = False
+        try:
+            async with mng as value:
+                entered = True
+                (
+                    _,
+                    no_more_users,
+                    _,
+                ) = cls.resources[ctx_key]
+                cls.values[ctx_key] = value
+                task_status.started(value)
+                try:
+                    await no_more_users.wait()
+                finally:
+                    value = cls.values.pop(ctx_key)
+                    cls.resources.pop(ctx_key)
+
+        except Exception as exc:
+            if not entered:
+                raise
+
+            # Deliver regular `__aexit__()` failures to the final
+            # consumer instead of raising into the service nursery.
+            ctx_exit.error = exc
+
+        finally:
+            if entered:
+                ctx_exit.done.set()
 
 
 class _UnresolvedCtx:
@@ -284,6 +318,8 @@ async def maybe_open_context(
     # sentinel = object()
     yielded: Any = _UnresolvedCtx
     user_registered: bool = False
+    ctx_exit: _CtxExit|None = None
+    exit_error: Exception|None = None
 
     # Lock resource acquisition around task racing  / ``trio``'s
     # scheduler protocol.
@@ -300,7 +336,6 @@ async def maybe_open_context(
         ] = trio.StrictFIFOLock()
         header: str = 'Allocated NEW lock for @acm_func,\n'
     else:
-        await trio.lowlevel.checkpoint()
         header: str = 'Reusing OLD lock for @acm_func,\n'
 
     log.debug(
@@ -368,7 +403,11 @@ async def maybe_open_context(
             resources = _Cache.resources
             entry: tuple|None = resources.get(ctx_key)
             if entry:
-                service_tn, ev = entry
+                (
+                    service_tn,
+                    ev,
+                    ctx_exit,
+                ) = entry
                 raise RuntimeError(
                     f'Caching resources ALREADY exist?!\n'
                     f'ctx_key={ctx_key!r}\n'
@@ -376,12 +415,18 @@ async def maybe_open_context(
                     f'task: {task}\n'
                 )
 
-            resources[ctx_key] = (service_tn, trio.Event())
+            ctx_exit = _CtxExit()
+            resources[ctx_key] = (
+                service_tn,
+                trio.Event(),
+                ctx_exit,
+            )
             try:
                 yielded: Any = await service_tn.start(
                     _Cache.run_ctx,
                     mngr,
                     ctx_key,
+                    ctx_exit,
                 )
             except BaseException:
                 # If `run_ctx` (wrapping the acm's `__aenter__`)
@@ -427,6 +472,11 @@ async def maybe_open_context(
             raise taskc
     else:
         # XXX, cached-entry-path
+        (
+            _,
+            _,
+            ctx_exit,
+        ) = _Cache.resources[ctx_key]
         _Cache.users[ctx_key] += 1
         user_registered = True
         log.debug(
@@ -445,44 +495,55 @@ async def maybe_open_context(
         )
 
     finally:
-        if lock.locked():
-            stats: trio.LockStatistics = lock.statistics()
-            owner: trio.Task|None = stats.owner
-            log.error(
-                f'Lock never released by last owner={owner!r} !?\n'
-                f'{stats}\n'
-                f'\n'
-                f'task={task!r}\n'
-                f'ctx_key={ctx_key!r}\n'
-                f'acm_func={acm_func}\n'
-
-            )
-
         if user_registered:
-            _Cache.users[ctx_key] -= 1
+            # Serialize user registration and teardown under the same
+            # per-key lock so no entrant can acquire a resource after
+            # its final user has committed to exiting it.
+            with trio.CancelScope(shield=True):
+                await lock.acquire()
+                try:
+                    _Cache.users[ctx_key] -= 1
 
-        if yielded is not _UnresolvedCtx:
-            # if no more consumers, teardown the client
-            if _Cache.users[ctx_key] <= 0:
-                log.debug(
-                    f'De-allocating @acm-func entry\n'
-                    f'ctx_key={ctx_key!r}\n'
-                    f'acm_func={acm_func!r}\n'
-                )
+                    # If no consumers remain, keep entrants queued
+                    # until the cached context has completely exited.
+                    if _Cache.users[ctx_key] <= 0:
+                        log.debug(
+                            f'De-allocating @acm-func entry\n'
+                            f'ctx_key={ctx_key!r}\n'
+                            f'acm_func={acm_func!r}\n'
+                        )
 
-                # XXX: if we're cancelled we the entry may have never
-                # been entered since the nursery task was killed.
-                # _, no_more_users = _Cache.resources[ctx_key]
-                entry = _Cache.resources.get(ctx_key)
-                if entry:
-                    _, no_more_users = entry
-                    no_more_users.set()
+                        # XXX: if we're cancelled we the entry may
+                        # have never been entered since the nursery
+                        # task was killed.
+                        entry = _Cache.resources.get(ctx_key)
+                        if entry:
+                            (
+                                _,
+                                no_more_users,
+                                ctx_exit,
+                            ) = entry
+                            no_more_users.set()
 
-                maybe_lock = _Cache.locks.pop(
-                    ctx_key,
-                    None,
-                )
-                if maybe_lock is None:
-                    log.error(
-                        f'Resource lock for {ctx_key} ALREADY POPPED?'
-                    )
+                        assert ctx_exit is not None
+                        await ctx_exit.done.wait()
+                        exit_error = ctx_exit.error
+
+                        # A queued entrant already holds a reference
+                        # to this lock. Keep it registered until that
+                        # task has acquired and released it.
+                        stats = lock.statistics()
+                        if not stats.tasks_waiting:
+                            maybe_lock = _Cache.locks.get(ctx_key)
+                            if maybe_lock is lock:
+                                _Cache.locks.pop(ctx_key)
+                            else:
+                                log.error(
+                                    f'Resource lock for {ctx_key} '
+                                    f'was replaced before teardown?'
+                                )
+                finally:
+                    lock.release()
+
+        if exit_error is not None:
+            raise exit_error
