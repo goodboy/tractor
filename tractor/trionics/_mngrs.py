@@ -255,7 +255,7 @@ class _Cache:
                 try:
                     await no_more_users.wait()
                 finally:
-                    value = cls.values.pop(ctx_key)
+                    cls.values.pop(ctx_key)
                     cls.resources.pop(ctx_key)
 
         except Exception as exc:
@@ -403,11 +403,6 @@ async def maybe_open_context(
             resources = _Cache.resources
             entry: tuple|None = resources.get(ctx_key)
             if entry:
-                (
-                    service_tn,
-                    ev,
-                    ctx_exit,
-                ) = entry
                 raise RuntimeError(
                     f'Caching resources ALREADY exist?!\n'
                     f'ctx_key={ctx_key!r}\n'
