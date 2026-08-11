@@ -307,6 +307,48 @@ def test_subscribe_errors_after_close():
     trio.run(main)
 
 
+@pytest.mark.parametrize(
+    ('size', 'sent', 'dropped'),
+    [
+        (1, 2, 1),
+        (3, 5, 2),
+    ],
+)
+def test_lagged_reports_exact_drop_count(
+    size: int,
+    sent: int,
+    dropped: int,
+) -> None:
+    '''
+    `Lagged` must report every value outside the retained window.
+
+    `BroadcastReceiver.receive_nowait()` previously subtracted the
+    queue length from an already-invalid deque index without counting
+    that first displaced value. A one-slot queue therefore claimed it
+    dropped zero values after two sends. Keep one root receiver idle
+    while a child subscriber drains every produced value, then prove
+    the lag error reports the exact overrun and positions the root at
+    the oldest value still retained by `BroadcastState.queue`.
+
+    '''
+    async def main() -> None:
+        tx, rx = trio.open_memory_channel(size)
+        brx = broadcast_receiver(rx, size)
+
+        async with brx.subscribe() as fast:
+            for value in range(sent):
+                await tx.send(value)
+                assert await fast.receive() == value
+
+            match = rf'dropped `{dropped}` values'
+            with pytest.raises(Lagged, match=match):
+                await brx.receive()
+
+            assert await brx.receive() == sent - size
+
+    trio.run(main)
+
+
 def test_ensure_slow_consumers_lag_out(
     reg_addr,
     start_method,
