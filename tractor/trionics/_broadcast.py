@@ -237,7 +237,10 @@ class BroadcastReceiver(ReceiveChannel):
                 # https://docs.rs/tokio/1.11.0/tokio/sync/broadcast/index.html#lagging
 
                 mxln = state.maxlen
-                lost = seq - mxln
+                # `seq == mxln` is already one past the final
+                # valid deque index, so include that first
+                # displaced value in the loss count.
+                lost = seq - mxln + 1
 
                 # decrement to the last value and expect
                 # consumer to either handle the ``Lagged`` and come back
