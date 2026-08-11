@@ -315,7 +315,6 @@ async def maybe_open_context(
         )
 
     # yielded output
-    # sentinel = object()
     yielded: Any = _UnresolvedCtx
     user_registered: bool = False
     ctx_exit: _CtxExit|None = None
@@ -508,7 +507,7 @@ async def maybe_open_context(
                             f'acm_func={acm_func!r}\n'
                         )
 
-                        # XXX: if we're cancelled we the entry may
+                        # XXX: if we're cancelled, the entry may
                         # have never been entered since the nursery
                         # task was killed.
                         entry = _Cache.resources.get(ctx_key)
@@ -541,4 +540,6 @@ async def maybe_open_context(
                     lock.release()
 
         if exit_error is not None:
+            # Always re-raise a regular `__aexit__()` error at the
+            # final consumer's context boundary.
             raise exit_error
