@@ -349,7 +349,10 @@ async def start_or_cancel(
             # demote it to a `Cancelled`, losing the real error. The
             # `isinstance` guard also avoids a `TypeError` when
             # `rte.args[0]` isn't a `str`.
-            'child exited without calling' in rte.args[0]
+            rte.args[0] == (
+                'child exited without calling '
+                'task_status.started()'
+            )
         ):
             # re-raises the in-flight `trio.Cancelled` IFF we're
             # under effective cancellation; else a cheap no-op and

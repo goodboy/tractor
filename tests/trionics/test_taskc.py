@@ -224,10 +224,10 @@ def test_genuine_startup_rte_still_raised(
 @pytest.mark.parametrize(
     'rte_arg',
     [
-        # a bare `'started' in args[0]` substring match
-        # would (wrongly) demote this one to a `Cancelled`
-        # under ambient cancellation.
+        # Broad substring matches would wrongly demote either
+        # child-owned error to `Cancelled` under cancellation.
         'never got started!',
+        'child exited without calling user hook',
         # non-`str` first-arg edge; must not `TypeError`
         # inside the wrapper's msg-match guard.
         1234,
@@ -242,9 +242,12 @@ def test_childs_own_rte_never_demoted_to_cancel(
     first arg), raised under ambient cancellation must NOT
     be demoted to a `trio.Cancelled` by the exact-msg-match
     guard inside `start_or_cancel()`; the real error must
-    always propagate to the caller unchanged.
+    always propagate to the caller as the sole exception-group
+    leaf, preserving object identity.
 
     '''
+    child_rte = RuntimeError(rte_arg)
+
     async def cancels_cs_then_raises(
         task_status: TaskStatus[None] = (
             trio.TASK_STATUS_IGNORED
@@ -255,7 +258,7 @@ def test_childs_own_rte_never_demoted_to_cancel(
         # deterministically dies with ITS error while the
         # caller is under effective cancellation.
         cs.cancel()
-        raise RuntimeError(rte_arg)
+        raise child_rte
 
     cs = trio.CancelScope()
 
@@ -270,9 +273,7 @@ def test_childs_own_rte_never_demoted_to_cancel(
     with pytest.raises(ExceptionGroup) as excinfo:
         trio.run(main)
 
-    rte = excinfo.value.exceptions[0]
-    assert isinstance(rte, RuntimeError)
-    assert rte.args[0] == rte_arg
+    assert excinfo.value.exceptions == (child_rte,)
 
 
 def test_started_value_and_args_passthru():
