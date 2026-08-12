@@ -111,9 +111,7 @@ def at_least_level(
     if isinstance(level, str):
         level: int = CUSTOM_LEVELS[level.upper()]
 
-    if log.getEffectiveLevel() <= level:
-        return True
-    return False
+    return log.isEnabledFor(level)
 
 
 # TODO, compare with using a "filter" instead?
