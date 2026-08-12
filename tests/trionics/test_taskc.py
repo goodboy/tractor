@@ -46,10 +46,9 @@ async def absorbs_cancel_pre_started(
 
     '''
     try:
-        await trio.sleep(2)
+        await trio.sleep_forever()
     except trio.Cancelled:
         return
-    task_status.started()
 
 
 async def raise_val_err():
@@ -89,15 +88,25 @@ def test_sibling_err_not_masked_by_startup_rte(
       alongside, obscuring that the child was in fact
       cancelled due to the sibling's error.
 
+    `cancelled_at_start` records that the wrapper's own await
+    raises `Cancelled`, rather than merely relying on the
+    nursery's eventual exception-group shape.
+
     '''
+    cancelled_at_start: list[bool] = []
+
     async def main():
         async with trio.open_nursery() as tn:
             tn.start_soon(raise_val_err)
             if use_start_or_cancel:
-                await start_or_cancel(
-                    tn,
-                    absorbs_cancel_pre_started,
-                )
+                try:
+                    await start_or_cancel(
+                        tn,
+                        absorbs_cancel_pre_started,
+                    )
+                except trio.Cancelled:
+                    cancelled_at_start.append(True)
+                    raise
             else:
                 await tn.start(absorbs_cancel_pre_started)
 
@@ -109,6 +118,7 @@ def test_sibling_err_not_masked_by_startup_rte(
     assert len(val_eg.exceptions) == 1
 
     if use_start_or_cancel:
+        assert cancelled_at_start == [True]
         # the re-surfaced `Cancelled` is absorbed by the
         # (sibling-error cancelled) nursery scope leaving
         # NO startup-noise, just the root cause.
@@ -142,7 +152,12 @@ def test_pure_oob_cancel_not_morphed_to_rte(
     - a bare `.start()` (currently) morphs the plain
       cancel into an (eg-wrapped) startup `RuntimeError`.
 
+    `cancelled_at_start` proves cancellation interrupts the
+    wrapper call itself before the cancelled scope exits.
+
     '''
+    cancelled_at_start: list[bool] = []
+
     async def main():
         with trio.CancelScope() as cs:
             async with trio.open_nursery() as tn:
@@ -153,10 +168,14 @@ def test_pure_oob_cancel_not_morphed_to_rte(
 
                 tn.start_soon(canceller)
                 if use_start_or_cancel:
-                    await start_or_cancel(
-                        tn,
-                        absorbs_cancel_pre_started,
-                    )
+                    try:
+                        await start_or_cancel(
+                            tn,
+                            absorbs_cancel_pre_started,
+                        )
+                    except trio.Cancelled:
+                        cancelled_at_start.append(True)
+                        raise
                 else:
                     await tn.start(
                         absorbs_cancel_pre_started,
@@ -166,6 +185,7 @@ def test_pure_oob_cancel_not_morphed_to_rte(
 
     if use_start_or_cancel:
         trio.run(main)
+        assert cancelled_at_start == [True]
     else:
         with pytest.raises(ExceptionGroup) as excinfo:
             trio.run(main)
