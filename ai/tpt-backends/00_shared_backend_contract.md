@@ -70,6 +70,40 @@ Hard constraints learned from the existing two:
   `wrap_address()` (`_addr.py:230`), you have a bug that
   manifests as the wrong transport being loaded — the file's own
   `XXX NOTE` warns about precisely this.
+
+  ⚠️ **and shape-matching does not survive 4 backends.** Adding
+  TIPC and iroh breaks it outright: TIPC's natural form is a
+  `(str, int)` — indistinguishable from `TCPAddress` — and
+  iroh's is a `(str, str)`, which the *existing* UDS case
+  (`case (_, filename) if type(filename) is str`) already
+  swallows. Ordering hacks and prefix-tagging (an earlier
+  revision of plan 01 proposed `('tipc:<stype>:<scope>', inst)`)
+  paper over it at best.
+
+  **The fix, and the recommended prerequisite for all three
+  backends: make the unwrapped form carry an explicit
+  proto-key, using the `multiaddr` protocol name as the
+  canonical spelling** — `('tcp', host, port)`,
+  `('unix', path)`, `('udp', ...)`, `('tipc', stype, inst,
+  scope)`. Then `wrap_address()` collapses from an
+  order-sensitive `match` to `_address_types[addr[0]]`, and the
+  whole collision class stops existing. Note this *also* aligns
+  the on-wire form with `mk_maddr()`/`parse_maddr()`, so the two
+  representations stop being independent inventions.
+
+  Two consequences to plan for:
+  - it's a **wire-format change** (`SpawnSpec`,
+    `_root_mailbox`, `_registry_addrs`) plus every test fixture
+    and downstream config (`piker`'s `[network]` table). It
+    wants its **own migration commit, landed before any new
+    backend**, not smuggled into one.
+  - it's the moment to **stop handing raw unwrapped tuples to
+    users at all.** The long-term shape is: `Address` subtypes
+    are the public currency and `UnwrappedAddress` becomes an
+    internal serialization detail — the same discipline
+    `ipaddress` uses (you pass `IPv4Address`, not a 4-tuple).
+    Public API should accept `Address|maddr-str` and treat bare
+    tuples as legacy-tolerated input, ideally deprecated.
 - **`.get_random()` must be collision-free without a live
   runtime.** See the `UDSAddress.get_random()` uuid-token
   comment (`_uds.py:207-220`): with no `current_actor()` the
@@ -214,8 +248,9 @@ Adding a backend touches these and only these:
    entry lazy — propose that refactor explicitly.
 4. `tractor/discovery/_addr.py:230` `wrap_address()` `match` —
    add a case iff your `unwrapped_type` isn't already uniquely
-   matched. Prefer unwrapped forms that are *self-tagging*
-   (see plan 01 §2.2 and plan 02 §2.2) so this stays cheap.
+   matched. **Preferably do the proto-key migration in §1.1
+   first**, after which this step becomes a one-line
+   `_address_types` entry instead of an order-sensitive `case`.
 5. `tractor/ipc/_types.py` — `Address` union alias,
    `_msg_transports` list, `_key_to_transport[('msgpack', key)]`,
    `_addr_to_transport[<Proto>Address]`.
