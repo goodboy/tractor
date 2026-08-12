@@ -1003,20 +1003,18 @@ async def process_messages(
             task_status.started(loop_cs)
 
             async for msg in chan:
-                log.transport(   # type: ignore
-                    f'IPC msg from peer\n'
-                    f'<= {chan.aid.reprol()}\n\n'
+                if log.at_least_level('transport'):
+                    log.transport(   # type: ignore
+                        f'IPC msg from peer\n'
+                        f'<= {chan.aid.reprol()}\n\n'
 
-                    # TODO: use of the pprinting of structs is
-                    # FRAGILE and should prolly not be
-                    #
-                    # avoid fmting depending on loglevel for perf?
-                    # -[ ] specifically `pretty_struct.pformat()` sub-call..?
-                    #   - how to only log-level-aware actually call this?
-                    # -[ ] use `.msg.pretty_struct` here now instead!
-                    # f'{pretty_struct.pformat(msg)}\n'
-                    f'{msg}\n'
-                )
+                        # TODO: pretty-printing structs is FRAGILE;
+                        # -[ ] add a non-raising log formatter with
+                        #      native-repr fallback before using
+                        #      `.msg.pretty_struct` here.
+                        # f'{pretty_struct.pformat(msg)}\n'
+                        f'{msg}\n'
+                    )
 
                 match msg:
                     # msg for an ongoing IPC ctx session, deliver msg to
@@ -1262,11 +1260,12 @@ async def process_messages(
                         log.exception(message)
                         raise RuntimeError(message)
 
-                log.transport(
-                    'Waiting on next IPC msg from\n'
-                    f'peer: {chan.aid.reprol()}\n'
-                    f'|_{chan}\n'
-                )
+                if log.at_least_level('transport'):
+                    log.transport(
+                        'Waiting on next IPC msg from\n'
+                        f'peer: {chan.aid.reprol()}\n'
+                        f'|_{chan}\n'
+                    )
 
             # END-OF `async for`:
             # IPC disconnected via `trio.EndOfChannel`, likely

@@ -309,7 +309,10 @@ class MsgpackTransport(MsgTransport):
             log.transport(f'received header {size}')  # type: ignore
             msg_bytes: bytes = await self.recv_stream.receive_exactly(size)
 
-            log.transport(f"received {msg_bytes}")  # type: ignore
+            if log.at_least_level('transport'):
+                log.transport(  # type: ignore
+                    f'received {msg_bytes}'
+                )
             try:
                 # NOTE: lookup the `trio.Task.context`'s var for
                 # the current `MsgCodec`.
