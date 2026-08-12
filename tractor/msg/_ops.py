@@ -306,15 +306,15 @@ class PldRx(Struct):
             ):
                 try:
                     pld: PayloadT = self._pld_dec.decode(pld)
-                    log.runtime(
-                        f'Decoded payload for\n'
-                        # f'\n'
-                        f'{msg}\n'
-                        # ^TODO?, ideally just render with `,
-                        # pld={decode}` in the `msg.pformat()`??
-                        f'where, '
-                        f'{type(msg).__name__}.pld={pld!r}\n'
-                    )
+                    if log.at_least_level('runtime'):
+                        # don't materialize the payload repr if not necessary
+                        log.runtime(
+                            f'Decoded payload for\n'
+                            f'\n'
+                            f'{msg}\n'
+                            f'where, '
+                            f'{type(msg).__name__}.pld={pld!r}\n'
+                        )
                     return pld
                 except TypeError as typerr:
                     __tracebackhide__: bool = False

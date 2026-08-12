@@ -198,9 +198,6 @@ class Channel:
         # assert transport.raddr == addr
         chan = Channel(transport=transport)
 
-        # ?TODO, compact this into adapter level-methods?
-        # -[ ] would avoid extra repr-calcs if level not active?
-        #   |_ how would the `calc_if_level` look though? func?
         if log.at_least_level('runtime'):
             from tractor.devx import (
                 pformat as _pformat,
@@ -325,10 +322,12 @@ class Channel:
         '''
         __tracebackhide__: bool = hide_tb
         try:
-            log.transport(
-                '=> send IPC msg:\n\n'
-                f'{pformat(payload)}\n'
-            )
+            if log.at_least_level('transport'):
+                # don't materialize the payload repr if not necessary
+                log.transport(
+                    '=> send IPC msg:\n\n'
+                    f'{pformat(payload)}\n'
+                )
             # assert self._transport  # but why typing?
             await self._transport.send(
                 payload,

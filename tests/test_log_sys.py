@@ -2,16 +2,19 @@
 `tractor.log`-wrapping unit tests.
 
 '''
+import logging
 from pathlib import Path
 import shutil
 from types import ModuleType
 
 import pytest
 import tractor
+import trio
 from tractor import (
     _code_load,
     log,
 )
+from tractor.ipc import _chan
 
 
 def test_root_pkg_not_duplicated_in_logger_name():
@@ -220,6 +223,88 @@ def test_add_log_level_pluggable():
         log.BOLD_PALETTE['bold'].pop(name, None)
         if hasattr(log.StackLevelAdapter, name.lower()):
             delattr(log.StackLevelAdapter, name.lower())
+
+
+@pytest.mark.parametrize(
+    'suppression',
+    [
+        'level',
+        'logger',
+        'global',
+    ],
+)
+def test_log_guard_skips_payload_formatting(
+    monkeypatch: pytest.MonkeyPatch,
+    suppression: str,
+):
+    '''
+    Suppressed transport logs must not render payloads.
+
+    The original hot-path guard compared only the effective logger
+    level. A logger disabled through its `Logger.disabled` flag or
+    the global `logging.disable()` threshold could therefore still
+    call `pformat()` before `Logger.isEnabledFor()` discarded the
+    record.
+
+    Exercise effective-level, per-logger, and global suppression
+    independently. A poisoned `_chan.pformat()` proves rendering is
+    skipped, while the fake transport proves `Channel.send()` still
+    transmits the original payload and traceback-hiding flag.
+
+    '''
+    sent: list[tuple[object, bool]] = []
+
+    class FakeTransport:
+        async def send(
+            self,
+            payload: object,
+            hide_tb: bool = False,
+        ) -> None:
+            sent.append((payload, hide_tb))
+
+    def fail_pformat(payload: object) -> str:
+        raise AssertionError(
+            f'suppressed log rendered payload: {payload!r}'
+        )
+
+    chan_log = log.get_logger(
+        name=f'guard_test.{suppression}',
+    )
+    std_log = chan_log.logger
+    orig_level: int = std_log.level
+    orig_disable: int = logging.root.manager.disable
+    transport_level: int = log.CUSTOM_LEVELS['TRANSPORT']
+
+    monkeypatch.setattr(_chan, 'log', chan_log)
+    monkeypatch.setattr(_chan, 'pformat', fail_pformat)
+    try:
+        logging.disable(logging.NOTSET)
+        std_log.setLevel(transport_level)
+
+        if suppression == 'level':
+            std_log.setLevel(logging.INFO)
+        elif suppression == 'logger':
+            monkeypatch.setattr(std_log, 'disabled', True)
+        else:
+            logging.disable(logging.CRITICAL)
+
+        assert not chan_log.isEnabledFor(transport_level)
+
+        transport = FakeTransport()
+        chan = _chan.Channel(transport=transport)
+        payload = object()
+
+        async def send_payload() -> None:
+            await chan.send(
+                payload,
+                hide_tb=True,
+            )
+
+        trio.run(send_payload)
+        assert sent == [(payload, True)]
+    finally:
+        std_log.setLevel(orig_level)
+        logging.disable(orig_disable)
 
 
 # TODO, moar tests against existing feats:
