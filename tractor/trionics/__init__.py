@@ -26,6 +26,7 @@ from ._mngrs import (
 from ._broadcast import (
     AsyncReceiver as AsyncReceiver,
     broadcast_receiver as broadcast_receiver,
+    BroadcastReceiveError as BroadcastReceiveError,
     BroadcastReceiver as BroadcastReceiver,
     Lagged as Lagged,
 )
