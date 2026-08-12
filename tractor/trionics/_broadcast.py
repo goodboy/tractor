@@ -142,13 +142,20 @@ class BroadcastState(Struct):
 
         qlens: dict[int, int] = {}
         for tid, sz in subs.items():
-            qlens[tid] = sz if sz != -1 else 0
+            qlens[tid] = min(
+                sz + 1,
+                len(self.queue),
+            )
 
         return {
             'open_consumers': len(subs),
             'queued_len_by_task': qlens,
             'max_buffer_size': self.maxlen,
-            'tasks_waiting': ev.statistics().tasks_waiting if ev else 0,
+            'tasks_waiting': (
+                ev.statistics().tasks_waiting
+                if ev is not None
+                else 0
+            ),
             'tasks_cancelled': self.cancelled,
             'next_value_receiver_id': key,
         }
