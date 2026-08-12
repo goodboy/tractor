@@ -17,6 +17,7 @@ from trio.lowlevel import current_task
 import tractor
 from tractor.trionics import (
     broadcast_receiver,
+    BroadcastReceiveError,
     Lagged,
     collapse_eg,
 )
@@ -401,6 +402,188 @@ def test_broadcast_statistics_report_queued_counts() -> None:
                 child.key: 0,
             }
             assert stats['tasks_waiting'] == 0
+
+    trio.run(main)
+
+
+def test_underlying_receive_failure_wakes_all_subscribers() -> None:
+    '''
+    A shared receive failure must terminate every broadcast receiver.
+
+    Previously, only `EndOfChannel` and receiver cancellation woke
+    peer tasks waiting on `BroadcastState.recv_ready`. If the shared
+    underlying receiver raised another error, its owner propagated
+    the failure and cleared the event while every peer remained
+    blocked forever.
+
+    Script one successful receive followed by a controlled
+    `RuntimeError`. Let a fast child own both underlying receives
+    while the root first drains its retained value and then waits on
+    the child's second receive. Release the failure only after both
+    tasks have reached those positions. Both exact errors prove the
+    peer was awakened without losing buffered data. A later
+    subscriber proves the terminal failure remains published for new
+    receivers instead of retrying the failed underlying channel.
+
+    '''
+    class FailingReceiver:
+        '''
+        Return one value, then fail after deterministic release.
+
+        '''
+        def __init__(self) -> None:
+            self.calls: int = 0
+            self.failure_started = trio.Event()
+            self.release_failure = trio.Event()
+
+        async def receive(self) -> int:
+            '''
+            Drive the scripted success-then-failure sequence.
+
+            '''
+            self.calls += 1
+            if self.calls == 1:
+                return 1
+
+            self.failure_started.set()
+            await self.release_failure.wait()
+            raise RuntimeError('underlying receive failed')
+
+    async def main() -> None:
+        source = FailingReceiver()
+        brx = broadcast_receiver(source, 3)
+        child_error: list[RuntimeError] = []
+        root_error: list[BroadcastReceiveError] = []
+        late_error: list[BroadcastReceiveError] = []
+        root_drained = trio.Event()
+
+        async def receive_child() -> None:
+            async with brx.subscribe() as child:
+                assert await child.receive() == 1
+                try:
+                    await child.receive()
+                except RuntimeError as exc:
+                    child_error.append(exc)
+
+        async def receive_root() -> None:
+            assert await brx.receive() == 1
+            root_drained.set()
+            try:
+                await brx.receive()
+            except BroadcastReceiveError as exc:
+                root_error.append(exc)
+
+        with trio.fail_after(1):
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(receive_child)
+                await source.failure_started.wait()
+
+                nursery.start_soon(receive_root)
+                await root_drained.wait()
+
+                source.release_failure.set()
+
+        assert source.calls == 2
+        assert [str(exc) for exc in child_error] == [
+            'underlying receive failed',
+        ]
+        assert [str(exc) for exc in root_error] == [
+            'Shared broadcast receiver failed',
+        ]
+        assert child_error[0] is not root_error[0]
+        assert root_error[0].__cause__ is child_error[0]
+
+        async with brx.subscribe() as late:
+            with pytest.raises(
+                BroadcastReceiveError,
+                match='Shared broadcast receiver failed',
+            ) as exc_info:
+                await late.receive()
+            late_error.append(exc_info.value)
+        assert late_error[0] is not child_error[0]
+        assert late_error[0] is not root_error[0]
+        assert late_error[0].__cause__ is child_error[0]
+        assert source.calls == 2
+
+    trio.run(main)
+
+
+def test_control_flow_exit_wakes_broadcast_peer() -> None:
+    '''
+    Non-terminal control flow must wake peers without being retained.
+
+    Process-control and cancellation-like `BaseException` values
+    should remain local to the task which receives them, but the old
+    owner still has to wake subscribers blocked on its shared event.
+    Make one child own a controlled `BaseException` receive while the
+    root waits behind it. After release, prove the child gets that
+    exact exit and the root takes ownership of the next underlying
+    receive instead of hanging or replaying the control-flow event.
+
+    '''
+    class ReceiveExit(BaseException):
+        '''
+        Model a non-terminal process-control receive exit.
+
+        '''
+
+    class ControlFlowReceiver:
+        '''
+        Raise one controlled exit, then return a value.
+
+        '''
+        def __init__(self) -> None:
+            self.calls: int = 0
+            self.exit_started = trio.Event()
+            self.release_exit = trio.Event()
+
+        async def receive(self) -> int:
+            '''
+            Drive the scripted control-flow-then-value sequence.
+
+            '''
+            self.calls += 1
+            if self.calls == 1:
+                self.exit_started.set()
+                await self.release_exit.wait()
+                raise ReceiveExit
+
+            return 2
+
+    async def main() -> None:
+        source = ControlFlowReceiver()
+        brx = broadcast_receiver(source, 3)
+        child_exit: list[ReceiveExit] = []
+        root_value: list[int] = []
+
+        async def receive_child() -> None:
+            async with brx.subscribe() as child:
+                try:
+                    await child.receive()
+                except ReceiveExit as exc:
+                    child_exit.append(exc)
+
+        async def receive_root() -> None:
+            root_value.append(await brx.receive())
+
+        with trio.fail_after(1):
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(receive_child)
+                await source.exit_started.wait()
+                nursery.start_soon(receive_root)
+
+                while True:
+                    _, event = brx._state.recv_ready
+                    if event.statistics().tasks_waiting:
+                        break
+                    await trio.lowlevel.checkpoint()
+
+                source.release_exit.set()
+
+        assert len(child_exit) == 1
+        assert root_value == [2]
+        assert source.calls == 2
+        assert brx._state.receive_exc is None
 
     trio.run(main)
 

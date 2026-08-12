@@ -100,6 +100,13 @@ class Lagged(trio.TooSlowError):
     '''
 
 
+class BroadcastReceiveError(Exception):
+    '''
+    A shared underlying receiver failed in another subscriber task.
+
+    '''
+
+
 class BroadcastState(Struct):
     '''
     Common state to all receivers of a broadcast.
@@ -121,6 +128,11 @@ class BroadcastState(Struct):
     # such that the group is notified of the end-of-broadcast.
     # For now, this is solely for testing/debugging purposes.
     eoc: bool = False
+
+    # Any non-EOC failure from the shared underlying receiver is
+    # terminal for every subscriber. Retained values remain readable
+    # before this failure is replayed at each receiver's boundary.
+    receive_exc: Exception | None = None
 
     # If the broadcaster was cancelled, we might as well track it
     cancelled: dict[int, Task] = {}
@@ -267,6 +279,15 @@ class BroadcastReceiver(ReceiveChannel):
             state.subs[key] -= 1
             return value
 
+        receive_exc = state.receive_exc
+        if receive_exc is not None:
+            # Re-raising one shared exception mutates its traceback on
+            # every delivery. Give each receiver a stable wrapper while
+            # retaining the original failure as its cause.
+            raise BroadcastReceiveError(
+                'Shared broadcast receiver failed'
+            ) from receive_exc
+
         raise trio.WouldBlock
 
     async def _receive_from_underlying(
@@ -335,6 +356,24 @@ class BroadcastReceiver(ReceiveChannel):
             # and will potentially try to rewait the underlying
             # receiver instead of just cancelling immediately.
             self._state.cancelled[key] = current_task()
+            if event.statistics().tasks_waiting:
+                event.set()
+            raise
+
+        except Exception as receive_exc:
+            # The underlying receiver is shared by every subscriber,
+            # so any non-EOC failure terminates the entire broadcast.
+            # Publish it before waking peers so they can drain their
+            # retained values and then observe the same failure.
+            state.receive_exc = receive_exc
+            if event.statistics().tasks_waiting:
+                event.set()
+            raise
+
+        except BaseException:
+            # Process-control and cancellation-like exceptions must
+            # not become durable broadcast state, but peers still
+            # need waking before `recv_ready` is cleared.
             if event.statistics().tasks_waiting:
                 event.set()
             raise
