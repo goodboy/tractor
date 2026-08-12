@@ -9,6 +9,7 @@ from functools import partial
 from itertools import cycle
 import time
 from typing import Optional
+import warnings
 
 import pytest
 import trio
@@ -345,6 +346,61 @@ def test_lagged_reports_exact_drop_count(
                 await brx.receive()
 
             assert await brx.receive() == sent - size
+
+    trio.run(main)
+
+
+def test_broadcast_statistics_report_queued_counts() -> None:
+    '''
+    `BroadcastState.statistics()` must report counts, not indexes.
+
+    Each `BroadcastState.subs` value is the deque index of a
+    receiver's next unread value, with `-1` meaning caught up. The
+    statistics API returned these indexes directly, so one queued
+    value appeared as zero and every positive count was one short.
+    Keep one root receiver idle while a child synchronously receives
+    four produced values. Prove the root count advances through one
+    and three retained values, then remains clamped to the three-slot
+    retention window after lagging.
+
+    Finally install an actual unwaited `trio.Event` in
+    `BroadcastState.recv_ready` while treating deprecations as errors.
+    This proves statistics checks `None` explicitly instead of using
+    deprecated `trio.Event` truthiness.
+
+    '''
+    async def main() -> None:
+        tx, rx = trio.open_memory_channel(3)
+        brx = broadcast_receiver(rx, 3)
+
+        async with brx.subscribe() as child:
+            state = brx._state
+            assert state.statistics()['queued_len_by_task'] == {
+                brx.key: 0,
+                child.key: 0,
+            }
+
+            await tx.send(0)
+            assert await child.receive() == 0
+            assert state.statistics()['queued_len_by_task'] == {
+                brx.key: 1,
+                child.key: 0,
+            }
+
+            for value in range(1, 4):
+                await tx.send(value)
+                assert await child.receive() == value
+
+            state.recv_ready = (child.key, trio.Event())
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', DeprecationWarning)
+                stats = state.statistics()
+
+            assert stats['queued_len_by_task'] == {
+                brx.key: 3,
+                child.key: 0,
+            }
+            assert stats['tasks_waiting'] == 0
 
     trio.run(main)
 
