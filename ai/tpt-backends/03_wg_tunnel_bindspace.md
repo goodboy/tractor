@@ -112,25 +112,61 @@ class WGTunnelSpec(
 
 ### 3.2 `parse_maddr()`/`mk_maddr()`
 
-Grammar (matches py-multiaddr#108): the `wg` segment is a
-*suffix* whose value is the multibase `u<base64url>` pubkey.
+Grammar — **verified** against py-multiaddr#108
+(`baudco/py-multiaddr@wg_support`, installed in a throwaway venv;
+all three forms below parse *and* round-trip):
 
 ```
-/ip4/10.0.11.1/tcp/1616/wg/u<A_pub-b64url>
+/ip4/192.168.1.50/udp/51820/wg/u<A_pub>/ip4/10.0.11.1/tcp/1616
+\_______ bearer __________/\__ key __/\______ overlay ______/
+ underlay, wg `ListenPort`             the ONLY part we bind
 ```
 
-- `parse_maddr()` gains
-  `case [('ip4'|'ip6'), 'tcp', 'wg']:` → build the inner
-  `TCPAddress`, decode the multibase key to std-base64, return
-  `TunnelledAddress(inner=..., tunnel=WGTunnelSpec(...))`.
+The `/wg/` segment is **infix, not suffix** — the segments
+*before* it are the wg **bearer** (the underlay `(ip, udp-port)`
+that `wg(8)` itself listens on, per the codec docstring's own
+`/ip4/1.2.3.4/udp/51820/wg/{key}` example), and the segments
+*after* are the **overlay** endpoint that `tractor` binds.
+
+⚠️ **CORRECTION** — an earlier revision of this plan (and the
+examples in gh #482) used a *suffix* form
+`/ip4/10.0.11.1/tcp/1616/wg/u<key>`. That parses, but it is
+semantically inverted: it puts the overlay addr where the bearer
+belongs, `tcp` where wg's `udp` `ListenPort` goes, and declares
+no overlay endpoint at all. `parse_wg_maddr()` in
+`examples/wg_lan/` now rejects it with an actionable error.
+Observed protocol-name lists, for writing the `match`:
+
+| maddr | `[p.name for p in m.protocols()]` |
+| --- | --- |
+| `/ip4/1.2.3.4/udp/51820/wg/u<k>` | `['ip4','udp','wg']` |
+| `/ip4/../udp/../wg/u<k>/ip4/../tcp/..` | `['ip4','udp','wg','ip4','tcp']` |
+
+- so the three parts have **three different owners**, and only the
+  third is an `Endpoint`:
+
+  | part | bound by | in the runtime? |
+  | --- | --- | --- |
+  | bearer | kernel, via `wg-quick`/`pyroute2` | no |
+  | `/wg/u<key>` | nothing — it's an identity | no, verified out-of-band |
+  | overlay | `tractor`'s `IPCServer` | **yes**, as `.inner` |
+
+  This owner-split is the real axis of the design, *not* whether
+  the maddr stack is "composed" (it is).
+- `parse_maddr()` gains a case on
+  `[('ip4'|'ip6'), 'udp', 'wg', ('ip4'|'ip6'), <inner-l4>]` →
+  build the inner `Address` from the trailing segments, decode
+  the multibase key to std-base64, and return
+  `TunnelledAddress(inner=..., tunnel=WGTunnelSpec(...))` with
+  the bearer recorded in the spec.
 - keep the existing 2-proto cases byte-identical; add the new
   case *after* them.
-- generalize the match so the *inner* stack is parsed by the
-  existing logic and `wg` is peeled off first — this is what
-  makes `/…/udp/…/quic-v1/wg/u<key>` work later without another
-  case (plan 02 §3.4). Write it as a small pure function:
-  `_peel_tunnel_segs(proto_names) -> (inner_names,
-  tunnel_specs)`.
+- generalize by **peeling at the tunnel segment**: split
+  `proto_names` at `'wg'`, hand the trailing list to the existing
+  inner-stack logic, and recurse for nested tunnels. Write it as
+  a small pure fn `_peel_tunnel_segs(proto_names) ->
+  (bearer_names, tunnel_specs, inner_names)`. This is also what
+  makes a wg-inside-wg stack fall out for free.
 - `mk_maddr()` inverse for `TunnelledAddress`.
 - **blocked on upstream**: `Multiaddr('/…/wg/u…')` only parses
   once py-multiaddr#108 lands. Until then: pin the branch in the
@@ -296,6 +332,18 @@ entries. Extend it to carry the tunnel stack, not to *enter* it.
   the cheapest possible proof the layer is wired.
 
 ### 5.3 the netns/process reality — read this before designing
+
+**The headline consequence, stated up front**: netns is a
+**runtime-level config API, not an actor-app-code API.** It is
+declared as part of how an actor process is *brought up* — a
+spawn-time/boot-time input alongside `enable_transports` and
+`tpt_bind_addrs` — and it is **not** dynamically re-enterable by
+app code once the actor is live. There is deliberately no
+`await actor.enter_netns(...)`. Two hard reasons, both below:
+`setns(2)` doesn't retroactively move existing sockets, and it's
+per-thread rather than per-process. Anything that *looks* like a
+mid-life API here would be a footgun that silently leaves the IPC
+server bound in the old namespace.
 
 - `setns(2)` with `CLONE_NEWNET` affects **the calling thread
   only**, and sockets already created keep their original netns.
