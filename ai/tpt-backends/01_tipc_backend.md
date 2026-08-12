@@ -98,34 +98,34 @@ class TIPCAddress(
     def_bindspace: ClassVar[int] = TIPC_CLUSTER_SCOPE
 ```
 
-**Unwrapped form** (the wire/`SpawnSpec` shape) — must be
-uniquely matchable in `wrap_address()`:
+**Unwrapped form** (the wire/`SpawnSpec` shape).
+
+TIPC's natural form is `(stype, instance, scope)` — but a
+2-tuple squeeze of it is a `(str, int)`, i.e. *the same coarse
+shape as `TCPAddress`*, so `wrap_address()`'s
+`case (str(), int())` steals it. This backend is therefore the
+forcing function for the contract-doc's conclusion (§1.1):
+
+> **make the unwrapped form carry an explicit proto-key, spelled
+> with the `multiaddr` protocol name.**
 
 ```python
-def unwrap(self) -> tuple[str, int]:
-    # ('tipc:<stype>:<scope>', instance)
-    return (f'tipc:{self._stype}:{self._scope}', self._instance)
+def unwrap(self) -> tuple[str, int, int, int]:
+    return ('tipc', self._stype, self._instance, self._scope)
 ```
 
-i.e. `(str, int)` — *the same coarse shape as `TCPAddress`*, so
-`wrap_address()`'s `case (str(), int())` would steal it. Two
-options; **pick (a)**:
+`wrap_address()` then dispatches `_address_types[addr[0]]` and
+the collision class disappears. **This is a prerequisite
+migration commit, not part of this backend** — see contract §1.1
+for its blast radius (wire format + every fixture + `piker`
+config) and for the follow-on "stop handing raw tuples to users
+at all, à la `ipaddress`" direction.
 
-- **(a) self-tagging prefix + a `case` ordered before the TCP
-  one**, guarded on `addr[0].startswith('tipc:')`:
-  ```python
-  case (str() as h, int()) if h.startswith('tipc:'):
-      cls = TIPCAddress
-  ```
-  Cheap, string-y, but honest about the fact that
-  `UnwrappedAddress` is a deliberately-degenerate
-  `tuple[str, int|str]` (see the `_addr.py:43-65` TODO block).
-  It also keeps `TCPAddress.__post_init__`'s
-  `ipaddress.ip_address()` validation from being reached with a
-  non-IP host.
-- (b) widen `UnwrappedAddress` to a 3-tuple for tipc. Rejected:
-  ripples into every `reg_addr` fixture, `_root_mailbox`, and
-  downstream (`piker`) config.
+⚠️ an earlier revision of this plan proposed a self-tagging
+`('tipc:<stype>:<scope>', instance)` string-prefix hack with an
+ordered `case` guard. **Dropped** — it papers over the problem,
+keeps `wrap_address()` order-sensitive, and doesn't help iroh's
+`(str, str)`-vs-UDS collision at all. Do not resurrect it.
 
 Note `TIPCAddress` is the first backend where `.unwrap()` is
 **not** a lossless view of the live socket — `maybe_node`/
@@ -689,6 +689,12 @@ single best demo this backend has; lead with it.
 
 ## 10. Follow-up issue seeds
 
+- **register `/tipc` in the multiaddr spec**, mirroring the `wg`
+  track (multiformats/py-multiaddr#107/#108 + gh #483). Same
+  shape of work: propose the proto + code, land a codec in
+  `py-multiaddr`, then drop our `str`-maddr fallback (§4). Worth
+  filing *alongside* the `wg` spec-submission issue so both
+  proposals go up together rather than as one-offs.
 - registrar-less discovery fast path via name derivation (§5.1)
 - `TIPC_TOP_SRV`-driven push registry in
   `discovery/_registry.py` (§5.2)
