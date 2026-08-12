@@ -198,9 +198,6 @@ class Channel:
         # assert transport.raddr == addr
         chan = Channel(transport=transport)
 
-        # ?TODO, compact this into adapter level-methods?
-        # -[ ] would avoid extra repr-calcs if level not active?
-        #   |_ how would the `calc_if_level` look though? func?
         if log.at_least_level('runtime'):
             from tractor.devx import (
                 pformat as _pformat,
