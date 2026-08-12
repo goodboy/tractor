@@ -402,6 +402,7 @@ def test_broadcast_statistics_report_queued_counts() -> None:
                 child.key: 0,
             }
             assert stats['tasks_waiting'] == 0
+            state.recv_ready = None
 
     trio.run(main)
 
@@ -588,6 +589,156 @@ def test_control_flow_exit_wakes_broadcast_peer() -> None:
     trio.run(main)
 
 
+def test_closing_non_owner_preserves_source_wait() -> None:
+    '''
+    Closing one subscriber must not wake another receiver's peers.
+
+    `BroadcastReceiver.aclose()` previously set the one shared
+    `BroadcastState.recv_ready` event even when a different receiver
+    owned the source read. Waiting peers then repeatedly awaited an
+    already-set event until the source produced another value,
+    creating a runnable hot loop on idle streams.
+
+    Block one child in the source receive, then place both the root
+    and a closing child behind its event. Close only that waiting
+    child and prove it gets `ClosedResourceError` without setting the
+    shared event. Both remaining receivers must still get the same
+    value after the source is released.
+
+    '''
+    async def main() -> None:
+        tx, rx = trio.open_memory_channel(1)
+        brx = broadcast_receiver(rx, 3)
+        owner_value: list[int] = []
+        root_value: list[int] = []
+        closing_closed = trio.Event()
+
+        async with (
+            brx.subscribe() as owner,
+            brx.subscribe() as closing,
+        ):
+            async def receive_owner() -> None:
+                owner_value.append(await owner.receive())
+
+            async def receive_root() -> None:
+                root_value.append(await brx.receive())
+
+            async def receive_closing() -> None:
+                with pytest.raises(trio.ClosedResourceError):
+                    await closing.receive()
+                closing_closed.set()
+
+            with trio.fail_after(1):
+                async with trio.open_nursery() as nursery:
+                    nursery.start_soon(receive_owner)
+                    while brx._state.recv_ready is None:
+                        await trio.lowlevel.checkpoint()
+
+                    nursery.start_soon(receive_root)
+                    nursery.start_soon(receive_closing)
+                    _, event = brx._state.recv_ready
+                    while event.statistics().tasks_waiting < 2:
+                        await trio.lowlevel.checkpoint()
+
+                    await closing.aclose()
+                    await closing_closed.wait()
+                    assert not event.is_set()
+                    await tx.send(1)
+
+        assert owner_value == [1]
+        assert root_value == [1]
+
+    trio.run(main)
+
+
+@pytest.mark.parametrize(
+    'first_outcome',
+    [
+        1,
+        RuntimeError('discarded source error'),
+        trio.EndOfChannel(),
+    ],
+)
+def test_closing_source_owner_hands_read_to_peer(
+    first_outcome: int|Exception,
+) -> None:
+    '''
+    Closing the source-read owner must transfer ownership to a peer.
+
+    Merely suppressing the old shared-event wake would leave peers
+    blocked behind an externally closed receiver that still owned an
+    idle source read. Script a first receive which blocks until its
+    private scope is cancelled and a second which returns immediately.
+    Close that owner only after the root is waiting behind it. Cover
+    a shielded value, ordinary error and EOC from the cancelled source
+    read. The owner must always get `ClosedResourceError`, while the
+    awakened root takes the second source read without publishing the
+    discarded source outcome.
+
+    '''
+    class HandoffReceiver:
+        '''
+        Block the first source read and satisfy the second.
+
+        '''
+        def __init__(self) -> None:
+            self.calls: int = 0
+            self.first_started = trio.Event()
+            self.release_first = trio.Event()
+
+        async def receive(self) -> int:
+            '''
+            Drive one cancelled read followed by one value.
+
+            '''
+            self.calls += 1
+            if self.calls == 1:
+                self.first_started.set()
+                with trio.CancelScope(shield=True):
+                    await self.release_first.wait()
+                if isinstance(first_outcome, BaseException):
+                    raise first_outcome
+                return first_outcome
+
+            return 2
+
+    async def main() -> None:
+        source = HandoffReceiver()
+        brx = broadcast_receiver(source, 3)
+        owner_closed = trio.Event()
+        root_value: list[int] = []
+
+        async with brx.subscribe() as owner:
+            async def receive_owner() -> None:
+                with pytest.raises(trio.ClosedResourceError):
+                    await owner.receive()
+                owner_closed.set()
+
+            async def receive_root() -> None:
+                root_value.append(await brx.receive())
+
+            with trio.fail_after(1):
+                async with trio.open_nursery() as nursery:
+                    nursery.start_soon(receive_owner)
+                    await source.first_started.wait()
+                    nursery.start_soon(receive_root)
+
+                    _, event = brx._state.recv_ready
+                    while not event.statistics().tasks_waiting:
+                        await trio.lowlevel.checkpoint()
+
+                    await owner.aclose()
+                    source.release_first.set()
+                    await owner_closed.wait()
+
+        assert source.calls == 2
+        assert root_value == [2]
+        assert brx._state.receive_exc is None
+        assert not brx._state.eoc
+
+    trio.run(main)
+
+
 def test_ensure_slow_consumers_lag_out(
     reg_addr,
     start_method,
@@ -729,6 +880,7 @@ def test_first_recver_is_cancelled():
                     async with brx.subscribe() as bc:
                         async for value in bc:
                             print(value)
+                assert cs.cancelled_caught
 
             async def cancel_and_send():
                 await trio.sleep(0.2)
