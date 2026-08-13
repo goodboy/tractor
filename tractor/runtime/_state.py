@@ -22,7 +22,10 @@ from __future__ import annotations
 from contextvars import (
     ContextVar,
 )
+import os
 from pathlib import Path
+import stat
+import sys
 from typing import (
     Any,
     Callable,
@@ -40,6 +43,9 @@ from msgspec import (
 if TYPE_CHECKING:
     from ._runtime import Actor
     from .._context import Context
+
+
+_DARWIN_TMPDIR: Path = Path('/tmp')
 
 
 # default IPC transport protocol settings
@@ -335,11 +341,44 @@ def get_rt_dir(
     # `import tractor` path (gh #470).
     import platformdirs
 
-    rt_dir: Path = Path(
-        platformdirs.user_runtime_dir(
-            appname=appname,
-        ),
-    )
+    rt_root: Path|None = None
+    if sys.platform == 'darwin':
+        # Darwin's AF_UNIX path limit is 104 bytes. The standard
+        # platformdirs path can consume that before the sock name.
+        rt_root = (
+            _DARWIN_TMPDIR
+            / f'{appname}-{os.getuid()}'
+        )
+        try:
+            rt_stat: os.stat_result = rt_root.lstat()
+        except FileNotFoundError:
+            try:
+                rt_root.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+            rt_stat = rt_root.lstat()
+
+        if (
+            not stat.S_ISDIR(rt_stat.st_mode)
+            or
+            rt_stat.st_uid != os.getuid()
+        ):
+            raise PermissionError(
+                f'Unsafe Darwin runtime directory!\n'
+                f'path: {rt_root}\n'
+                f'owner uid: {rt_stat.st_uid}\n'
+                f'mode: {stat.filemode(rt_stat.st_mode)}\n'
+            )
+        if stat.S_IMODE(rt_stat.st_mode) != 0o700:
+            rt_root.chmod(0o700)
+
+        rt_dir: Path = rt_root
+    else:
+        rt_dir = Path(
+            platformdirs.user_runtime_dir(
+                appname=appname,
+            ),
+        )
 
     # Normalize and validate that `subdir` is a relative path
     # without any parent-directory ("..") components, to prevent
@@ -363,11 +402,30 @@ def get_rt_dir(
 
         rt_dir: Path = rt_dir / subdir_path
 
-    if not rt_dir.is_dir():
+    try:
+        dir_stat: os.stat_result = rt_dir.lstat()
+    except FileNotFoundError:
         rt_dir.mkdir(
+            mode=0o700,
             parents=True,
             exist_ok=True,  # avoid `FileExistsError` from conc calls
         )
+        dir_stat = rt_dir.lstat()
+
+    if rt_root is not None:
+        if (
+            not stat.S_ISDIR(dir_stat.st_mode)
+            or
+            dir_stat.st_uid != os.getuid()
+        ):
+            raise PermissionError(
+                f'Unsafe Darwin runtime directory!\n'
+                f'path: {rt_dir}\n'
+                f'owner uid: {dir_stat.st_uid}\n'
+                f'mode: {stat.filemode(dir_stat.st_mode)}\n'
+            )
+        if rt_dir != rt_root:
+            rt_dir.relative_to(rt_root)
 
     return rt_dir
 

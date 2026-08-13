@@ -3,14 +3,17 @@ Unit-ish tests for specific IPC transport protocol backends.
 
 '''
 from __future__ import annotations
+import os
 from pathlib import Path
+import stat
+import sys
 
 import pytest
 import trio
 import tractor
 from tractor import Actor
-from tractor.runtime import _state
 from tractor.discovery import _addr
+from tractor.runtime import _state
 
 
 @pytest.fixture
@@ -29,6 +32,69 @@ def bindspace_dir_str() -> str:
     # or is leaking it ok?
     if bs_dir.is_dir():
         bs_dir.rmdir()
+
+
+def test_macos_rt_dir_fits_uds_path_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    '''
+    Keep the default Darwin UDS bindpath below its 104-byte limit.
+
+    `platformdirs` normally places the runtime directory below the
+    long `~/Library/Caches/TemporaryItems` path. Pytest also assigns
+    a deeply nested temporary home, so appending a registry socket
+    name made every macOS UDS listener fail with `AF_UNIX path too
+    long`. This test simulates Darwin and an intentionally long
+    platformdirs result, then proves `get_rt_dir()` uses the short
+    system temporary directory and leaves room for the socket name.
+
+    '''
+    long_rt_dir: Path = tmp_path / ('long' * 30)
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setattr(
+        'platformdirs.user_runtime_dir',
+        lambda appname: str(long_rt_dir / appname),
+    )
+    monkeypatch.setattr(_state, '_DARWIN_TMPDIR', tmp_path)
+    rt_dir: Path = _state.get_rt_dir()
+    sockpath: Path = (
+        Path('/tmp')
+        / f'tractor-{os.getuid()}'
+        / 'registry@1616.sock'
+    )
+
+    assert rt_dir == tmp_path / f'tractor-{os.getuid()}'
+    assert len(os.fsencode(sockpath)) < 104
+    assert stat.S_IMODE(rt_dir.stat().st_mode) == 0o700
+
+
+def test_macos_rt_dir_rejects_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    '''
+    Reject a pre-created symlink at the Darwin runtime path.
+
+    Darwin uses the predictable `/tmp/tractor-<uid>` path to stay
+    below its `AF_UNIX` limit. A hostile local user could otherwise
+    point that path at a victim-owned directory and make
+    `get_rt_dir()` chmod or place sockets in the symlink target. The
+    test replaces `/tmp` with a controlled directory, installs the
+    malicious link, and proves non-following validation rejects it.
+
+    '''
+    runtime_link: Path = tmp_path / f'tractor-{os.getuid()}'
+    target_dir: Path = tmp_path / 'target'
+    target_dir.mkdir(mode=0o755)
+    runtime_link.symlink_to(target_dir, target_is_directory=True)
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setattr(_state, '_DARWIN_TMPDIR', tmp_path)
+
+    with pytest.raises(PermissionError, match='Unsafe Darwin'):
+        _state.get_rt_dir()
+
+    assert stat.S_IMODE(target_dir.stat().st_mode) == 0o755
 
 
 def test_uds_bindspace_created_implicitly(
