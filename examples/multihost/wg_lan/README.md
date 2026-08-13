@@ -8,6 +8,13 @@ Supersedes the example set in gh
 [#482](https://github.com/goodboy/tractor/issues/482) — see
 [what changed](#what-changed-vs-482).
 
+> **Why `examples/multihost/`?** `tests/test_docs_examples.py`
+> walks `examples/` recursively and runs everything it collects
+> as a subproc, asserting `rc == 0`. These need a real second
+> host and a live `wg` tunnel, so they can't satisfy that;
+> `'multihost' not in p[0]` is already in the test's exclusion
+> list, which is what keeps them out of CI.
+
 ## the maddr form
 
 ```

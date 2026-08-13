@@ -134,7 +134,8 @@ examples in gh #482) used a *suffix* form
 semantically inverted: it puts the overlay addr where the bearer
 belongs, `tcp` where wg's `udp` `ListenPort` goes, and declares
 no overlay endpoint at all. `parse_wg_maddr()` in
-`examples/wg_lan/` now rejects it with an actionable error.
+`examples/multihost/wg_lan/` now rejects it with an actionable
+error.
 Observed protocol-name lists, for writing the `match`:
 
 | maddr | `[p.name for p in m.protocols()]` |
@@ -197,7 +198,14 @@ side-effect-free; verification is the *caller's* explicit step
 ### 3.4 deliverables
 
 - `examples/` scripts distilled from #482 §§3-5 (this is the
-  unchecked "commit examples from ^" bullet in #443).
+  unchecked "commit examples from ^" bullet in #443). They live
+  under `examples/multihost/` — `test_docs_examples.py` walks
+  `examples/` recursively and runs every collected file as a
+  subproc asserting `rc == 0` (it doesn't even filter by
+  extension, so a stray `README.md` would be `python`-run too),
+  and `'multihost' not in p[0]` is already in its exclusion
+  list. Anything needing a real second host or a live tunnel
+  belongs there.
 - a `docs/` page: tunnel setup, the maddr form, the two-host
   run. Keep prose in the docs; keep the examples runnable and
   minimal.
