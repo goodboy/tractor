@@ -27,7 +27,10 @@ Multiaddress support using the upstream `py-multiaddr` lib
 from __future__ import annotations
 import ipaddress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import (
+    Any,
+    TYPE_CHECKING,
+)
 
 if TYPE_CHECKING:
     # NOTE, `multiaddr` is lazy-imported at first use
@@ -35,6 +38,9 @@ if TYPE_CHECKING:
     # `import tractor` path (gh #470).
     from multiaddr import Multiaddr
     from tractor.discovery._addr import Address
+else:
+    Multiaddr = Any
+    Address = Any
 
 # map from tractor-internal `proto_key` identifiers
 # to the standard multiaddr protocol name strings.

@@ -32,6 +32,7 @@ from socket import (
 )
 import struct
 from typing import (
+    Any,
     Type,
     TYPE_CHECKING,
     ClassVar,
@@ -66,6 +67,9 @@ if TYPE_CHECKING:
     # `import tractor` wall-time (gh #470).
     from multiaddr import Multiaddr
     from tractor.runtime._runtime import Actor
+else:
+    Multiaddr = Any
+    Actor = Any
 
 
 # Platform-specific credential passing constants

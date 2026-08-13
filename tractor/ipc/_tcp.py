@@ -20,6 +20,7 @@ TCP implementation of tractor.ipc._transport.MsgTransport protocol
 from __future__ import annotations
 import ipaddress
 from typing import (
+    Any,
     ClassVar,
     TYPE_CHECKING,
 )
@@ -46,6 +47,8 @@ if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs
     # `import tractor` wall-time (gh #470).
     from multiaddr import Multiaddr
+else:
+    Multiaddr = Any
 
 
 log = get_logger()

@@ -16,6 +16,7 @@
 from __future__ import annotations
 from uuid import uuid4
 from typing import (
+    Any,
     Protocol,
     ClassVar,
     Type,
@@ -36,8 +37,9 @@ from ..ipc._uds import UDSAddress
 if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs ~4.5ms
     # of `import tractor` wall-time (gh #470).
-    from bidict import bidict
     from ..runtime._runtime import Actor
+else:
+    Actor = Any
 
 log = get_logger()
 
@@ -172,7 +174,7 @@ class Address(Protocol):
         ...
 
 
-_address_types: bidict[str, Type[Address]] = {
+_address_types: dict[str, Type[Address]] = {
     'tcp': TCPAddress,
     'uds': UDSAddress
 }
