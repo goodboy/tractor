@@ -48,6 +48,8 @@ def _reap_killed_proc(
         return proc.communicate()
 
     proc.wait(timeout=5)
+    if proc.stdin:
+        proc.stdin.close()
     if proc.stdout:
         proc.stdout.close()
     if proc.stderr:
@@ -257,7 +259,15 @@ def run_example_in_subproc(
         assert not proc.returncode
         try:
             yield proc
-        finally:
+        except BaseException:
+            if proc.poll() is None:
+                try:
+                    _kill_proc_tree(proc)
+                    _reap_killed_proc(proc)
+                except Exception:
+                    pass
+            raise
+        else:
             if proc.poll() is None:
                 _kill_proc_tree(proc)
                 _reap_killed_proc(proc)
