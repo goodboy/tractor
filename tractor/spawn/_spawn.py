@@ -22,6 +22,7 @@ over multiple backends.
 from __future__ import annotations
 import multiprocessing as mp
 import platform
+import sys
 from typing import (
     Any,
     Awaitable,
@@ -42,6 +43,7 @@ from tractor.log import get_logger
 from tractor.discovery._addr import (
     UnwrappedAddress,
 )
+from .._exceptions import ActorFailure
 from ._reap import unlink_uds_bind_addrs
 from tractor.runtime._portal import Portal
 from tractor.runtime._runtime import Actor
@@ -64,6 +66,34 @@ SpawnMethodKey = Literal[
     'trio',  # supported on all platforms
     'mp_spawn',
     'mp_forkserver',  # posix only
+    'subint',  # py3.14+ via `concurrent.interpreters` (PEP 734)
+    # EXPERIMENTAL — blocked at the CPython level. The
+    # design goal was a `trio+fork`-safe subproc spawn via
+    # `os.fork()` from a trio-free launchpad sub-interpreter,
+    # but CPython's `PyOS_AfterFork_Child` → `_PyInterpreterState_DeleteExceptMain`
+    # requires fork come from the main interp. See
+    # `tractor.spawn._subint_fork` +
+    # `ai/conc-anal/subint_fork_blocked_by_cpython_post_fork_issue.md`
+    # + issue #379 for the full analysis.
+    'subint_fork',
+    # EXPERIMENTAL — the `subint_fork` workaround. `os.fork()`
+    # from a non-trio worker thread (never entered a subint)
+    # is CPython-legal and works cleanly; forked child runs
+    # `tractor._child._actor_child_main()` against a trio
+    # runtime, exactly like `trio_proc` but via fork instead
+    # of subproc-exec. See `tractor.spawn._main_thread_forkserver`.
+    'main_thread_forkserver',
+    # Variant-2: same fork machinery as `main_thread_forkserver`
+    # but the child enters a sub-interpreter to host its
+    # `trio.run()`. Gated on jcrist/msgspec#1026 unblocking
+    # PEP 684 isolated-mode subints upstream — until then
+    # `subint_forkserver_proc` is a clean `NotImplementedError`
+    # stub pointing at variant-1 (`main_thread_forkserver`) +
+    # the upstream blocker. The key is reserved here (not just
+    # aliased to variant-1) so once upstream lands the impl can
+    # flip in-place without API churn. See
+    # `tractor.spawn._subint_forkserver`.
+    'subint_forkserver',
 ]
 _spawn_method: SpawnMethodKey = 'trio'
 
@@ -79,6 +109,71 @@ else:
 
     async def proc_waiter(proc: mp.Process) -> None:
         await trio.lowlevel.wait_readable(proc.sentinel)
+
+
+async def wait_for_peer_or_proc_death(
+    ipc_server,
+    uid: tuple[str, str],
+    # TODO? not not types?
+    proc_wait: 'Callable[[], Awaitable]',
+    proc_repr: str = '',
+
+) -> 'tuple[trio.Event, Channel]':
+    '''
+    Race `IPCServer.wait_for_peer(uid)` against the sub-proc's
+    own `.wait()` coroutine. Whichever completes first cancels
+    the other.
+
+    Used by every spawn-backend to detect a sub-actor that
+    *dies during boot* before completing the parent-handshake-
+    callback (e.g. crashed on import, exec'd-out, kernel-killed
+    pre-`_actor_child_main`). Without this race, the
+    handshake-wait — backed by an unsignalled `trio.Event` —
+    parks the spawning task forever and leaves the dead child
+    as a zombie since nobody calls `proc.wait()` to reap.
+
+    On normal handshake-complete: returns `(event, chan)`
+    identical to a bare `wait_for_peer`.
+
+    On proc-death-first: raises `ActorFailure` carrying the
+    proc's exit code, allowing the supervisor to surface a
+    clean error rather than hanging indefinitely.
+
+    `proc_wait` is a 0-arg async callable returning the proc's
+    exit-status — kept generic so each backend can pass its
+    own (`trio.Process.wait`, `_ForkedProc.wait`,
+    `proc_waiter(mp.Process)`, etc.).
+
+    `proc_repr` is an optional string used in the
+    `ActorFailure` message for diag.
+
+    '''
+    result: dict = {}
+
+    async def _await_handshake():
+        event, chan = await ipc_server.wait_for_peer(uid)
+        result['handshake'] = (event, chan)
+        boot_n.cancel_scope.cancel()
+
+    async def _await_death():
+        rc = await proc_wait()
+        result['died'] = rc
+        boot_n.cancel_scope.cancel()
+
+    async with trio.open_nursery() as boot_n:
+        boot_n.start_soon(_await_handshake)
+        boot_n.start_soon(_await_death)
+
+    if 'handshake' in result:
+        return result['handshake']
+
+    # only reached if proc-death won the race
+    raise ActorFailure(
+        f'Sub-actor {uid!r} died during boot '
+        f'(rc={result.get("died")!r}) before completing '
+        f'parent-handshake.\n'
+        f'  proc: {proc_repr}'
+    )
 
 
 def try_set_start_method(
@@ -113,7 +208,38 @@ def try_set_start_method(
         case 'mp_spawn':
             _ctx = mp.get_context('spawn')
 
-        case 'trio':
+        case (
+            'trio'
+            | 'main_thread_forkserver'
+        ):
+            _ctx = None
+
+        case (
+            'subint'
+            | 'subint_fork'
+            | 'subint_forkserver'
+        ):
+            # All subint-family backends need no `mp.context`;
+            # all four feature-gate on the py3.14 public
+            # `concurrent.interpreters` wrapper (PEP 734). See
+            # `tractor.spawn._subint` for the detailed
+            # reasoning. `subint_fork` is blocked at the
+            # CPython level (raises `NotImplementedError`);
+            # `main_thread_forkserver` is the working
+            # variant-1 backend; `subint_forkserver` aliases
+            # to it today, reserved for the future variant-2
+            # subint-isolated-child runtime once upstream
+            # msgspec#1026 unblocks.
+            from ._subint import _has_subints
+            if not _has_subints:
+                raise RuntimeError(
+                    f'Spawn method {key!r} requires Python 3.14+.\n'
+                    f'(On py3.13 the private `_interpreters` C '
+                    f'module exists but tractor\'s spawn flow '
+                    f'wedges — see `tractor.spawn._subint` '
+                    f'docstring for details.)\n'
+                    f'Current runtime: {sys.version}'
+                )
             _ctx = None
 
         case _:
@@ -465,6 +591,10 @@ async def new_proc(
 # `hard_kill`/`proc_waiter` from this module.
 from ._trio import trio_proc
 from ._mp import mp_proc
+from ._subint import subint_proc
+from ._subint_fork import subint_fork_proc
+from ._main_thread_forkserver import main_thread_forkserver_proc
+from ._subint_forkserver import subint_forkserver_proc
 
 
 # proc spawning backend target map
@@ -472,4 +602,25 @@ _methods: dict[SpawnMethodKey, Callable] = {
     'trio': trio_proc,
     'mp_spawn': mp_proc,
     'mp_forkserver': mp_proc,
+    'subint': subint_proc,
+    # blocked at CPython level — see `_subint_fork.py` +
+    # `ai/conc-anal/subint_fork_blocked_by_cpython_post_fork_issue.md`.
+    # Kept here so `--spawn-backend=subint_fork` routes to a
+    # clean `NotImplementedError` with pointer to the analysis,
+    # rather than an "invalid backend" error.
+    'subint_fork': subint_fork_proc,
+    # Variant-1 (working today): fork from a regular main-interp
+    # worker thread, child runs trio on its own main interp.
+    # Validated by
+    # `ai/conc-anal/subint_fork_from_main_thread_smoketest.py`.
+    # See `tractor.spawn._main_thread_forkserver`.
+    'main_thread_forkserver': main_thread_forkserver_proc,
+    # Variant-2 (future, reserved): same fork machinery but
+    # child enters a sub-interpreter to host its `trio.run()`
+    # — gated on jcrist/msgspec#1026 unblocking PEP 684
+    # isolated-mode subints. Today the stub raises
+    # `NotImplementedError` pointing at the variant-1 backend
+    # + upstream blocker. See
+    # `tractor.spawn._subint_forkserver`.
+    'subint_forkserver': subint_forkserver_proc,
 }
