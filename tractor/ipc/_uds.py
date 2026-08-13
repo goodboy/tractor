@@ -21,6 +21,7 @@ from __future__ import annotations
 from contextlib import (
     contextmanager as cm,
 )
+import hashlib
 from pathlib import Path
 import os
 import sys
@@ -95,6 +96,12 @@ else:
 
 
 log = get_logger()
+
+_SUN_PATH_LIMIT: int = (
+    108
+    if sys.platform == 'linux'
+    else 104
+)
 
 
 def unwrap_sockpath(
@@ -196,7 +203,7 @@ class UDSAddress(
             err_on_no_runtime=False,
         )
         if actor:
-            sockname: str = f'{actor.aid.name}@{pid}'
+            sockname: str = actor.aid.name
             # XXX, orig version which broke both macOS (file-name
             # length) and `multiaddrs` ('::' invalid separator).
             # sockname: str = '::'.join(actor.uid) + f'@{pid}'
@@ -222,14 +229,71 @@ class UDSAddress(
             # `(?P<name>.+)@(?P<pid>\d+)\.sock` regex, and the
             # `spawn._reap` `{name}@{pid}.sock` reconstruction.
             token: str = uuid4().hex[:8]
-            sockname: str = f'{prefix}.{token}@{pid}'
+            sockname = f'{prefix}.{token}'
 
-        sockpath: Path = Path(f'{sockname}.sock')
+        sockpath: Path = cls.get_sockname(
+            name=sockname,
+            pid=pid,
+            bindspace=filedir,
+        )
         return UDSAddress(
             filedir=filedir,
             filename=sockpath,
             maybe_pid=pid,
         )
+
+    @classmethod
+    def get_sockname(
+        cls,
+        name: str,
+        pid: int,
+        bindspace: Path,
+    ) -> Path:
+        '''
+        Build a safe, deterministic UDS socket filename.
+
+        '''
+        suffix: str = f'@{pid}.sock'
+        filename: str = f'{name}{suffix}'
+        unsafe: bool = (
+            '\0' in name
+            or
+            '/' in name
+            or
+            bool(os.altsep and os.altsep in name)
+            or
+            Path(filename).is_absolute()
+        )
+        too_long: bool = (
+            len(os.fsencode(bindspace / filename))
+            >= _SUN_PATH_LIMIT
+        )
+        if (
+            unsafe
+            or
+            too_long
+        ):
+            digest: str = hashlib.blake2s(
+                os.fsencode(name),
+                digest_size=16,
+            ).hexdigest()
+            filename = f'actor.{digest}{suffix}'
+
+        sockpath: Path = bindspace / filename
+        path_nbytes: int = len(os.fsencode(sockpath))
+        if path_nbytes >= _SUN_PATH_LIMIT:
+            raise ValueError(
+                f'UDS bindspace leaves no room for an AF_UNIX '
+                f'socket filename!\n'
+                f'bindspace: {bindspace}\n'
+                f'name was unsafe: {unsafe}\n'
+                f'name was over budget: {too_long}\n'
+                f'compacted filename: {filename}\n'
+                f'encoded path bytes: {path_nbytes}\n'
+                f'AF_UNIX path limit: {_SUN_PATH_LIMIT}\n'
+            )
+
+        return Path(filename)
 
     @classmethod
     def get_root(cls) -> UDSAddress:

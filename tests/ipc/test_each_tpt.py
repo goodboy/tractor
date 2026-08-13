@@ -97,6 +97,143 @@ def test_macos_rt_dir_rejects_symlink(
     assert stat.S_IMODE(target_dir.stat().st_mode) == 0o755
 
 
+def test_rt_dir_rejects_non_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    '''
+    Preserve the non-Darwin runtime-directory type contract.
+
+    Replacing `Path.is_dir()` with unguarded `lstat()` briefly made
+    existing files look like valid runtime directories on Linux.
+    This test points `platformdirs` at a regular file and proves
+    `get_rt_dir()` rejects it during initialization.
+
+    '''
+    rt_file: Path = tmp_path / 'runtime-file'
+    rt_file.touch()
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    monkeypatch.setattr(
+        'platformdirs.user_runtime_dir',
+        lambda appname: str(rt_file),
+    )
+
+    with pytest.raises(FileExistsError):
+        _state.get_rt_dir()
+
+    new_rt_dir: Path = tmp_path / 'new-runtime-dir'
+    monkeypatch.setattr(
+        'platformdirs.user_runtime_dir',
+        lambda appname: str(new_rt_dir),
+    )
+    assert _state.get_rt_dir() == new_rt_dir
+    assert stat.S_IMODE(new_rt_dir.stat().st_mode) == 0o700
+
+
+def test_macos_rt_dir_rejects_intermediate_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    '''
+    Reject symlinks in nested Darwin runtime subdirectories.
+
+    The earlier final-component check allowed `link/child` to follow
+    an intermediate symlink and create `child` outside the secured
+    runtime root. This test installs that link and proves traversal
+    stops before anything is created in its target.
+
+    '''
+    rt_root: Path = tmp_path / f'tractor-{os.getuid()}'
+    target_dir: Path = tmp_path / 'target'
+    rt_root.mkdir(mode=0o700)
+    target_dir.mkdir()
+    (rt_root / 'link').symlink_to(
+        target_dir,
+        target_is_directory=True,
+    )
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setattr(_state, '_DARWIN_TMPDIR', tmp_path)
+
+    with pytest.raises(PermissionError, match='Unsafe Darwin'):
+        _state.get_rt_dir(subdir='link/child')
+
+    assert not (target_dir / 'child').exists()
+
+
+@pytest.mark.parametrize(
+    ('platform_name', 'path_limit'),
+    [
+        ('darwin', 104),
+        ('linux', 108),
+    ],
+)
+def test_uds_sockname_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+    platform_name: str,
+    path_limit: int,
+):
+    '''
+    Keep generated actor sockets safe and below Darwin's byte limit.
+
+    Actor names are unrestricted identity strings. A long, multibyte,
+    or path-like name previously produced overlong or escaping socket
+    paths. These cases prove `UDSAddress.get_sockname()` preserves a
+    short legacy name, deterministically compacts unsafe names, keeps
+    the reaper's `@pid.sock` suffix, and stays within Darwin's byte
+    limit.
+
+    '''
+    from tractor.ipc._uds import UDSAddress
+
+    bindspace: Path = Path('/tmp/tractor-501')
+    pid: int = 12345
+    from tractor.ipc import _uds
+
+    monkeypatch.setattr(sys, 'platform', platform_name)
+    monkeypatch.setattr(_uds, '_SUN_PATH_LIMIT', path_limit)
+
+    short: Path = UDSAddress.get_sockname(
+        name='worker',
+        pid=pid,
+        bindspace=bindspace,
+    )
+    long_name: str = 'actor-' + ('\u00e9' * 100)
+    compact: Path = UDSAddress.get_sockname(
+        name=long_name,
+        pid=pid,
+        bindspace=bindspace,
+    )
+    unsafe: Path = UDSAddress.get_sockname(
+        name='../worker',
+        pid=pid,
+        bindspace=bindspace,
+    )
+
+    assert short == Path(f'worker@{pid}.sock')
+    assert compact == UDSAddress.get_sockname(
+        name=long_name,
+        pid=pid,
+        bindspace=bindspace,
+    )
+    assert compact.name.endswith(f'@{pid}.sock')
+    assert unsafe.parent == Path('.')
+    assert '..' not in unsafe.name
+    assert len(os.fsencode(bindspace / compact)) < path_limit
+
+    with pytest.raises(ValueError) as exc_info:
+        UDSAddress.get_sockname(
+            name=long_name,
+            pid=pid,
+            bindspace=Path('/tmp') / ('x' * 90),
+        )
+
+    errmsg: str = str(exc_info.value)
+    assert 'leaves no room' in errmsg
+    assert 'name was unsafe: False' in errmsg
+    assert 'name was over budget: True' in errmsg
+    assert f'AF_UNIX path limit: {path_limit}' in errmsg
+
+
 def test_uds_bindspace_created_implicitly(
     debug_mode: bool,
     bindspace_dir_str: str,

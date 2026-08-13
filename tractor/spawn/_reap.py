@@ -71,6 +71,7 @@ fd leak. Different bug class but same broader theme of
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import trio
@@ -154,7 +155,11 @@ def unlink_uds_bind_addrs(
         and subactor is not None
         and proc.pid is not None
     ):
-        sockname: str = f'{subactor.aid.name}@{proc.pid}.sock'
+        sockname: Path = UDSAddress.get_sockname(
+            name=subactor.aid.name,
+            pid=proc.pid,
+            bindspace=UDSAddress.def_bindspace,
+        )
         sockpath: str = str(
             UDSAddress.def_bindspace / sockname
         )

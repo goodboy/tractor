@@ -383,6 +383,7 @@ def get_rt_dir(
     # Normalize and validate that `subdir` is a relative path
     # without any parent-directory ("..") components, to prevent
     # escaping the runtime directory.
+    subdir_path: Path|None = None
     if subdir:
         subdir_path = (
             subdir
@@ -400,32 +401,46 @@ def get_rt_dir(
                 f'{subdir!r}\n'
             )
 
-        rt_dir: Path = rt_dir / subdir_path
-
-    try:
-        dir_stat: os.stat_result = rt_dir.lstat()
-    except FileNotFoundError:
-        rt_dir.mkdir(
-            mode=0o700,
-            parents=True,
-            exist_ok=True,  # avoid `FileExistsError` from conc calls
-        )
-        dir_stat = rt_dir.lstat()
-
-    if rt_root is not None:
-        if (
-            not stat.S_ISDIR(dir_stat.st_mode)
-            or
-            dir_stat.st_uid != os.getuid()
-        ):
-            raise PermissionError(
-                f'Unsafe Darwin runtime directory!\n'
-                f'path: {rt_dir}\n'
-                f'owner uid: {dir_stat.st_uid}\n'
-                f'mode: {stat.filemode(dir_stat.st_mode)}\n'
+    if rt_root is None:
+        if subdir_path is not None:
+            rt_dir = rt_dir / subdir_path
+        if not rt_dir.is_dir():
+            rt_dir.mkdir(
+                # Runtime dirs hold IPC sockets; owner-only access
+                # prevents other users from traversing the bindspace.
+                mode=0o700,
+                parents=True,
+                exist_ok=True,
             )
-        if rt_dir != rt_root:
-            rt_dir.relative_to(rt_root)
+        return rt_dir
+
+    if subdir_path is not None:
+        for part in subdir_path.parts:
+            rt_dir = rt_dir / part
+            try:
+                dir_stat: os.stat_result = rt_dir.lstat()
+            except FileNotFoundError:
+                try:
+                    # Every Darwin component is private so no other
+                    # user can replace descendants below `rt_root`.
+                    rt_dir.mkdir(mode=0o700)
+                except FileExistsError:
+                    pass
+                dir_stat = rt_dir.lstat()
+
+            if (
+                not stat.S_ISDIR(dir_stat.st_mode)
+                or
+                dir_stat.st_uid != os.getuid()
+            ):
+                raise PermissionError(
+                    f'Unsafe Darwin runtime directory!\n'
+                    f'path: {rt_dir}\n'
+                    f'owner uid: {dir_stat.st_uid}\n'
+                    f'mode: {stat.filemode(dir_stat.st_mode)}\n'
+                )
+            if stat.S_IMODE(dir_stat.st_mode) != 0o700:
+                rt_dir.chmod(0o700)
 
     return rt_dir
 
