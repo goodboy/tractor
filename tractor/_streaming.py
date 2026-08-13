@@ -512,6 +512,7 @@ class MsgStream(trio.abc.Channel):
     @acm
     async def subscribe(
         self,
+        raise_on_lag: bool = True,
 
     ) -> AsyncIterator[BroadcastReceiver]:
         '''
@@ -525,6 +526,11 @@ class MsgStream(trio.abc.Channel):
         receive machinery to copy and window-length-store each received
         value from the far end via the internally created broudcast
         receiver wrapper.
+
+        ``raise_on_lag=False`` makes this subscription warn and resume
+        at the oldest retained value after an overrun. The first call
+        also sets that policy for this stream's root receive handle;
+        later child subscriptions choose their policy independently.
 
         '''
         # NOTE: This operation is indempotent and non-reversible, so be
@@ -541,6 +547,7 @@ class MsgStream(trio.abc.Channel):
                 # TODO: can remove this kwarg right since
                 # by default behaviour is to do this anyway?
                 receive_afunc=self.receive,
+                raise_on_lag=raise_on_lag,
             )
 
             # NOTE: we override the original stream instance's receive
@@ -552,7 +559,9 @@ class MsgStream(trio.abc.Channel):
             # seems there's no graceful way to type this with ``mypy``?
             # https://github.com/python/mypy/issues/708
 
-        async with self._broadcaster.subscribe() as bstream:
+        async with self._broadcaster.subscribe(
+            raise_on_lag=raise_on_lag,
+        ) as bstream:
             assert bstream.key != self._broadcaster.key
             assert bstream._recv == self._broadcaster._recv
 
