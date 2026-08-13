@@ -155,11 +155,21 @@ def unlink_uds_bind_addrs(
         and subactor is not None
         and proc.pid is not None
     ):
-        sockname: Path = UDSAddress.get_sockname(
-            name=subactor.aid.name,
-            pid=proc.pid,
-            bindspace=UDSAddress.def_bindspace,
-        )
+        try:
+            sockname: Path = UDSAddress.get_sockname(
+                name=subactor.aid.name,
+                pid=proc.pid,
+                bindspace=UDSAddress.def_bindspace,
+            )
+        except Exception:
+            log.exception(
+                f'Failed to reconstruct UDS sock-file for '
+                f'post-kill cleanup — skipping\n'
+                f' |_{proc}\n'
+                f' |_{subactor.aid}\n'
+            )
+            return
+
         sockpath: str = str(
             UDSAddress.def_bindspace / sockname
         )

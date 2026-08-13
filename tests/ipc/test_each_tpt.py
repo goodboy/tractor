@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import stat
 import sys
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import trio
@@ -232,6 +234,44 @@ def test_uds_sockname_compaction(
     assert 'name was unsafe: False' in errmsg
     assert 'name was over budget: True' in errmsg
     assert f'AF_UNIX path limit: {path_limit}' in errmsg
+
+
+def test_uds_reaper_ignores_unreconstructable_path(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Keep post-kill UDS cleanup best-effort on path overflow.
+
+    `unlink_uds_bind_addrs()` reconstructs a self-assigned socket from
+    the dead actor's name and PID. An over-budget bindspace makes that
+    naming helper raise before `os.unlink()`; propagating the error
+    would replace the original supervision outcome after the child was
+    already killed. This test forces overflow and proves cleanup skips
+    reconstruction without attempting an unlink or raising.
+
+    '''
+    from tractor.ipc import _uds
+    from tractor.spawn import _reap
+
+    long_bindspace: Path = Path('/tmp') / ('x' * 120)
+    proc = SimpleNamespace(pid=12345)
+    subactor = SimpleNamespace(
+        aid=SimpleNamespace(name='worker'),
+    )
+    unlink = Mock()
+    monkeypatch.setattr(
+        _uds.UDSAddress,
+        'def_bindspace',
+        long_bindspace,
+    )
+    monkeypatch.setattr(_reap.os, 'unlink', unlink)
+
+    _reap.unlink_uds_bind_addrs(
+        proc=proc,
+        subactor=subactor,
+    )
+
+    unlink.assert_not_called()
 
 
 def test_uds_bindspace_created_implicitly(
