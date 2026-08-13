@@ -76,6 +76,19 @@ from .discovery._registry import (
 # from . import hilevel as hilevel
 
 
+__all__: tuple[str, ...] = tuple(
+    name
+    for name in globals()
+    if not name.startswith('_')
+) + (
+    'to_asyncio',
+)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
+
+
 def __getattr__(name: str):
     '''
     PEP 562 lazy sub-module loading, presently only for
