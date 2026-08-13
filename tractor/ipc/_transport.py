@@ -33,6 +33,7 @@ from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
 )
+import errno
 import struct
 
 import trio
@@ -59,6 +60,33 @@ if TYPE_CHECKING:
     from tractor.discovery._addr import Address
 
 log = get_logger()
+
+
+def _peer_closed_errno(exc: BaseException) -> int|None:
+    '''
+    Find a peer-close errno in a transport exception chain.
+
+    '''
+    seen: set[int] = set()
+    while (
+        exc
+        and
+        id(exc) not in seen
+    ):
+        seen.add(id(exc))
+        if (
+            isinstance(exc, OSError)
+            and
+            exc.errno in {
+                errno.ECONNRESET,
+                errno.EPIPE,
+            }
+        ):
+            return exc.errno
+
+        exc = exc.__cause__ or exc.__context__
+
+    return None
 
 
 # (codec, transport)
@@ -443,23 +471,23 @@ class MsgpackTransport(MsgTransport):
                 trans_err = _re
                 tpt_name: str = f'{type(self).__name__!r}'
 
-                trans_err_msg: str = trans_err.args[0]
+                trans_err_msg: str = (
+                    str(trans_err.args[0])
+                    if trans_err.args
+                    else ''
+                )
                 by_whom: str = {
                     'another task closed this fd': 'locally',
                     'this socket was already closed': 'by peer',
                 }.get(trans_err_msg)
                 match trans_err:
 
-                    # XXX, specifc to UDS transport and its,
-                    # well, "speediness".. XD
-                    # |_ likely todo with races related to how fast
-                    #    the socket is setup/torn-down on linux
-                    #    as it pertains to rando pings from the
-                    #    `.discovery` subsys and protos.
+                    # UDS peers can disconnect before handshake.
+                    # Linux normally reports `EPIPE`; Darwin reports
+                    # `ECONNRESET` for the same expected closure.
                     case trio.BrokenResourceError() if (
-                        '[Errno 32] Broken pipe'
-                        in
-                        trans_err_msg
+                        _peer_closed_errno(trans_err)
+                        is not None
                     ):
                         tpt_closed = TransportClosed.from_src_exc(
                             message=(

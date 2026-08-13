@@ -3,6 +3,7 @@ High-level `.ipc._server` unit tests.
 
 '''
 from __future__ import annotations
+import errno
 
 import pytest
 import trio
@@ -14,6 +15,8 @@ from tractor import (
 from tractor._testing.addr import (
     get_rando_addr,
 )
+from tractor._exceptions import TransportClosed
+from tractor.ipc._transport import MsgpackTransport
 # TODO, use/check-roundtripping with some of these wrapper types?
 #
 # from .._addr import Address
@@ -21,6 +24,49 @@ from tractor._testing.addr import (
 # from ._transport import MsgTransport
 # from ._uds import UDSAddress
 # from ._tcp import TCPAddress
+
+
+def test_send_normalizes_peer_reset():
+    '''
+    Normalize Darwin's pre-handshake peer reset as transport closure.
+
+    A raw UDS readiness client connects and immediately disconnects.
+    Darwin reports the server's first handshake write as
+    `ECONNRESET`, wrapped by `trio.BrokenResourceError`; allowing
+    that raw error to escape cancels the daemon's shared IPC nursery.
+    This fake stream reproduces the exact exception chain and proves
+    `.send()` raises the expected `TransportClosed` boundary instead.
+
+    '''
+    class ResetStream:
+        async def send_all(self, data: bytes) -> None:
+            try:
+                raise OSError(
+                    errno.ECONNRESET,
+                    'Connection reset by peer',
+                )
+            except OSError as reset_err:
+                raise trio.BrokenResourceError from reset_err
+
+    async def main():
+        transport = object.__new__(MsgpackTransport)
+        transport.stream = ResetStream()
+        transport._send_lock = trio.StrictFIFOLock()
+        transport._laddr = 'local'
+        transport._raddr = 'remote'
+        transport._task = trio.lowlevel.current_task()
+
+        with pytest.raises(TransportClosed) as exc_info:
+            await transport.send(
+                {'probe': True},
+                strict_types=False,
+            )
+
+        assert exc_info.value.src_exc.__cause__.errno == (
+            errno.ECONNRESET
+        )
+
+    trio.run(main)
 
 
 @pytest.mark.parametrize(
