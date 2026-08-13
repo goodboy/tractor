@@ -8,6 +8,7 @@ from contextlib import (
 from functools import partial
 from itertools import cycle
 import time
+from types import SimpleNamespace
 from typing import Optional
 import warnings
 
@@ -15,6 +16,7 @@ import pytest
 import trio
 from trio.lowlevel import current_task
 import tractor
+from tractor.to_asyncio import LinkedTaskChannel
 from tractor.trionics import (
     broadcast_receiver,
     BroadcastReceiveError,
@@ -952,3 +954,74 @@ def test_no_raise_on_lag():
 
     with pytest.raises(KeyboardInterrupt):
         trio.run(main)
+
+
+@pytest.mark.parametrize(
+    ('subscribe', 'chan_attr'),
+    [
+        (tractor.MsgStream.subscribe, '_rx_chan'),
+        (LinkedTaskChannel.subscribe, '_from_aio'),
+    ],
+    ids=['msg-stream', 'linked-task-channel'],
+)
+def test_stream_subscribe_forwards_lag_policy(
+    subscribe,
+    chan_attr: str,
+) -> None:
+    '''
+    Stream wrappers must expose per-subscriber lag policy.
+
+    `MsgStream.subscribe()` and `LinkedTaskChannel.subscribe()`
+    previously omitted `BroadcastReceiver.raise_on_lag`, forcing
+    downstream users to mutate a private receiver attribute. Invoke
+    each public wrapper against a minimal receive-compatible handle.
+    Prove the first non-raising subscription configures both the
+    irreversible root broadcaster and its child, while a later strict
+    child selects its own policy without changing that root.
+
+    '''
+    class StreamHandle:
+        '''
+        Provide the wrapper fields needed for local fan-out.
+
+        '''
+        def __init__(self) -> None:
+            self._broadcaster = None
+            setattr(
+                self,
+                chan_attr,
+                SimpleNamespace(
+                    _state=SimpleNamespace(max_buffer_size=1),
+                ),
+            )
+
+        async def receive(self):
+            '''
+            Block if a regression unexpectedly enters source receive.
+
+            '''
+            await trio.sleep_forever()
+
+        async def send(self, value) -> None:
+            '''
+            Satisfy `MsgStream` duplex-handle patching.
+
+            '''
+
+    async def main() -> None:
+        stream = StreamHandle()
+        async with subscribe(
+            stream,
+            raise_on_lag=False,
+        ) as first:
+            assert not stream._broadcaster._raise_on_lag
+            assert not first._raise_on_lag
+
+        async with subscribe(
+            stream,
+            raise_on_lag=True,
+        ) as second:
+            assert not stream._broadcaster._raise_on_lag
+            assert second._raise_on_lag
+
+    trio.run(main)

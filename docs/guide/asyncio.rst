@@ -209,6 +209,11 @@ The underlying broadcast machinery is lazily allocated on first
 use and is *not* reversible for the channel's remaining lifetime,
 so only reach for it when you actually want the fan-out.
 
+As with ``MsgStream``, pass ``raise_on_lag=False`` for a consumer
+which may warn, drop old values and resume from the retained window.
+Each child chooses independently; the first subscription also fixes
+the linked channel's root receive policy.
+
 One-shot calls with ``run_task()``
 ----------------------------------
 When you just want a single ``asyncio`` result and no streaming
