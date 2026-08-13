@@ -103,6 +103,12 @@ class MsgStream(trio.abc.Channel):
         self._eoc: bool|trio.EndOfChannel = False
         self._closed: bool|trio.ClosedResourceError = False
 
+        # `MsgStream.receive()` sets this while it calls
+        # `MsgStream.aclose()` after source EOC. That close is
+        # re-entrant from the root `BroadcastReceiver._recv`, so it
+        # must not cancel the same receiver before EOC propagates.
+        self._eoc_close_task: trio.lowlevel.Task|None = None
+
     @property
     def ctx(self) -> Context:
         '''
@@ -256,7 +262,16 @@ class MsgStream(trio.abc.Channel):
 
         # when the send is closed we assume the stream has
         # terminated and signal this local iterator to stop
-        drained: list[Exception|dict] = await self.aclose()
+        #
+        # Preserve virtual dispatch through the public zero-argument
+        # `MsgStream.aclose()` API. The task marker lets the base
+        # implementation distinguish this receive-internal close from
+        # an explicit caller or `MsgStream.__aexit__()` close.
+        self._eoc_close_task = trio.lowlevel.current_task()
+        try:
+            drained: list[Exception|dict] = await self.aclose()
+        finally:
+            self._eoc_close_task = None
         if drained:
         #  ^^^^^^^^TODO? pass these to the `._ctx._drained_msgs:
         #  deque` and then iterate them as part of any
@@ -335,6 +350,20 @@ class MsgStream(trio.abc.Channel):
         # `.__aexit__()` as well!!!
         # => SO ENSURE WE CATCH ALL TERMINATION STATES in this
         # block including the EoC..
+
+        # `MsgStream.subscribe()` stores its hidden root broadcaster
+        # on `self._broadcaster`. Explicit teardown owns that root and
+        # must close it to release its subscriber and cancelled-task
+        # diagnostic. Skip only the receive-internal EOC close above:
+        # cancelling the active root's source-read scope there would
+        # turn graceful EOC into `trio.ClosedResourceError`.
+        if (
+            trio.lowlevel.current_task() is not self._eoc_close_task
+            and
+            (broadcaster := self._broadcaster) is not None
+        ):
+            await broadcaster.aclose()
+
         if self.closed:
             # this stream has already been closed so silently succeed as
             # per ``trio.AsyncResource`` semantics.

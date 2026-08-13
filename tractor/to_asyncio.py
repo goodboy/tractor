@@ -213,6 +213,14 @@ class LinkedTaskChannel(
     _broadcaster: BroadcastReceiver|None = None
 
     async def aclose(self) -> None:
+        # `LinkedTaskChannel.subscribe()` lazily allocates and retains
+        # this root receiver. Close it first so its receiver-local
+        # source-read scope and cancellation diagnostics are released
+        # before `self._from_aio` becomes inaccessible; child
+        # subscriptions retain their own independent close lifetimes.
+        if (broadcaster := self._broadcaster) is not None:
+            await broadcaster.aclose()
+
         await self._from_aio.aclose()
 
     # ?TODO? async version of this?

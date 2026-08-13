@@ -409,6 +409,371 @@ def test_broadcast_statistics_report_queued_counts() -> None:
     trio.run(main)
 
 
+def test_cancelled_reader_diagnostics_are_transient() -> None:
+    '''
+    Cancelled-reader diagnostics must not retain stale `Task`s.
+
+    `BroadcastState.cancelled` previously accumulated every source
+    owner cancelled during `BroadcastReceiver.receive()`. Even after
+    that receiver successfully read again or its subscription closed,
+    `BroadcastState.statistics()` retained the old `Task`, reporting
+    stale state and keeping the completed task alive.
+
+    Cancel one child's source read under a receiver-local scope and
+    verify its task is reported. Reuse that same receiver for one
+    successful read to prove progress clears the entry. Cancel it once
+    more, then leave the subscription and prove close also removes the
+    diagnostic while the root receiver remains registered.
+
+    '''
+    async def main() -> None:
+        tx, rx = trio.open_memory_channel(1)
+        brx = broadcast_receiver(rx, 1)
+        cancel_scope = trio.CancelScope()
+        child_key: int
+        child_task = None
+
+        async with brx.subscribe() as child:
+            child_key = child.key
+
+            async def cancel_source_read() -> None:
+                nonlocal child_task
+                child_task = current_task()
+                with cancel_scope:
+                    await child.receive()
+                assert cancel_scope.cancelled_caught
+
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(cancel_source_read)
+                while brx._state.recv_ready is None:
+                    await trio.lowlevel.checkpoint()
+                cancel_scope.cancel()
+
+            stats = brx._state.statistics()
+            assert child_task is not None
+            assert stats['tasks_cancelled'] == {
+                child_key: child_task,
+            }
+
+            await tx.send(1)
+            assert await child.receive() == 1
+            assert not brx._state.cancelled
+
+            cancel_scope = trio.CancelScope()
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(cancel_source_read)
+                while brx._state.recv_ready is None:
+                    await trio.lowlevel.checkpoint()
+                cancel_scope.cancel()
+
+            assert child_key in brx._state.cancelled
+
+        assert child_key not in brx._state.cancelled
+        assert brx.key in brx._state.subs
+
+    trio.run(main)
+
+
+@pytest.mark.parametrize(
+    'terminal_exc',
+    [
+        trio.EndOfChannel(),
+        RuntimeError('terminal source failure'),
+    ],
+    ids=['end-of-channel', 'receive-error'],
+)
+def test_terminal_broadcast_clears_cancelled_tasks(
+    terminal_exc: Exception,
+) -> None:
+    '''
+    Terminal broadcast state must release every cancelled `Task`.
+
+    A receiver which owned and cancelled a source read can leave its
+    task in `BroadcastState.cancelled`. If another receiver later gets
+    EOC or a terminal source failure, no subscriber can make source
+    progress to clear that stale diagnostic. Clearing only the terminal
+    owner's key therefore retained the first receiver's completed task.
+
+    Cancel a child during the first controlled source read, then let
+    the root own a second read which raises EOC or `RuntimeError`.
+    Prove each terminal path clears the other receiver's diagnostic
+    before propagating its exact source outcome.
+
+    '''
+    class TerminalReceiver:
+        '''
+        Block one cancellable read, then raise a terminal outcome.
+
+        '''
+        def __init__(self) -> None:
+            self.calls = 0
+            self.first_started = trio.Event()
+
+        async def receive(self) -> None:
+            '''
+            Drive cancellation followed by terminal source state.
+
+            '''
+            self.calls += 1
+            if self.calls == 1:
+                self.first_started.set()
+                await trio.sleep_forever()
+
+            raise terminal_exc
+
+    async def main() -> None:
+        source = TerminalReceiver()
+        brx = broadcast_receiver(source, 1)
+        cancel_scope = trio.CancelScope()
+
+        async with brx.subscribe() as child:
+            async def cancel_child_read() -> None:
+                with cancel_scope:
+                    await child.receive()
+                assert cancel_scope.cancelled_caught
+
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(cancel_child_read)
+                await source.first_started.wait()
+                cancel_scope.cancel()
+
+            assert child.key in brx._state.cancelled
+            with pytest.raises(type(terminal_exc)) as exc_info:
+                await brx.receive()
+            assert exc_info.value is terminal_exc
+            assert not brx._state.cancelled
+
+    trio.run(main)
+
+
+def test_end_of_channel_is_terminal_for_waiting_peer() -> None:
+    '''
+    EOC must not let an awakened peer re-enter the closed source.
+
+    `BroadcastState.eoc` was set when one source owner received EOC,
+    but neither receive path consulted it. A peer waiting behind that
+    owner therefore woke, saw no queued value, and started a second
+    source read. Cancellation at that checkpoint could repopulate
+    `BroadcastState.cancelled` after the broadcast became terminal.
+
+    Block one child in the sole source read while the root waits on its
+    event, then release EOC. Both receivers must terminate from that
+    one source call, and the root's later receive must replay EOC
+    immediately without retaining cancellation diagnostics.
+
+    '''
+    class EOCReceiver:
+        '''
+        Publish one controlled EOC and reject any second source read.
+
+        '''
+        def __init__(self) -> None:
+            self.calls = 0
+            self.started = trio.Event()
+            self.release = trio.Event()
+
+        async def receive(self) -> None:
+            '''
+            Block the only valid source read until EOC release.
+
+            '''
+            self.calls += 1
+            assert self.calls == 1
+            self.started.set()
+            await self.release.wait()
+            raise trio.EndOfChannel
+
+    async def main() -> None:
+        source = EOCReceiver()
+        brx = broadcast_receiver(source, 1)
+        outcomes: list[str] = []
+
+        async with brx.subscribe() as child:
+            async def receive_eoc(
+                receiver,
+                name: str,
+            ) -> None:
+                with pytest.raises(trio.EndOfChannel):
+                    await receiver.receive()
+                outcomes.append(name)
+
+            async with trio.open_nursery() as nursery:
+                nursery.start_soon(receive_eoc, child, 'child')
+                await source.started.wait()
+                nursery.start_soon(receive_eoc, brx, 'root')
+
+                _, event = brx._state.recv_ready
+                while not event.statistics().tasks_waiting:
+                    await trio.lowlevel.checkpoint()
+                source.release.set()
+
+            with pytest.raises(trio.EndOfChannel):
+                await brx.receive()
+
+        assert sorted(outcomes) == ['child', 'root']
+        assert source.calls == 1
+        assert not brx._state.cancelled
+
+    trio.run(main)
+
+
+def test_msgstream_eoc_close_preserves_aclose_override() -> None:
+    '''
+    Internal EOC cleanup must preserve the public `aclose()` contract.
+
+    Passing a new private keyword from `MsgStream.receive()` to
+    `self.aclose()` broke subclasses whose compatible override kept
+    the original zero-argument signature. Use a minimal subclass which
+    records virtual dispatch and delegates to the base implementation.
+    Drive graceful EOC through the real root broadcaster and prove the
+    override runs without closing that active root re-entrantly.
+
+    '''
+    class Stream(tractor.MsgStream):
+        '''
+        Record public close dispatch with the established signature.
+
+        '''
+        close_calls = 0
+
+        async def aclose(self):
+            '''
+            Delegate closure without accepting private arguments.
+
+            '''
+            self.close_calls += 1
+            return await super().aclose()
+
+    class PldRx:
+        '''
+        Delegate source receive and terminate the close drain.
+
+        '''
+        def __init__(self, rx) -> None:
+            self._rx = rx
+
+        async def recv_pld(self, **kwargs):
+            '''
+            Receive directly from the test source channel.
+
+            '''
+            return await self._rx.receive()
+
+        def recv_msg_nowait(self, **kwargs):
+            '''
+            Report EOC to finish `MsgStream.aclose()` draining.
+
+            '''
+            raise trio.EndOfChannel
+
+    async def main() -> None:
+        tx, rx = trio.open_memory_channel(1)
+        ctx = SimpleNamespace(
+            cid='test-context',
+            _pld_rx=PldRx(rx),
+            send_stop=lambda: trio.lowlevel.checkpoint(),
+            side='caller',
+            peer_side='callee',
+            maybe_raise=lambda **kwargs: None,
+        )
+        stream = Stream(ctx, rx)
+
+        async with stream.subscribe():
+            await tx.aclose()
+            with pytest.raises(trio.EndOfChannel):
+                await stream.receive()
+            assert stream.close_calls == 1
+            assert not stream._broadcaster._closed
+
+    trio.run(main)
+
+
+@pytest.mark.parametrize(
+    'close_wrapper',
+    [
+        tractor.MsgStream.aclose,
+        LinkedTaskChannel.aclose,
+    ],
+    ids=['msg-stream', 'linked-task-channel'],
+)
+def test_wrapper_close_clears_root_cancelled_task(
+    close_wrapper,
+) -> None:
+    '''
+    Public stream close must release root cancellation diagnostics.
+
+    Root broadcasters allocated by `MsgStream.subscribe()` and
+    `LinkedTaskChannel.subscribe()` are private implementation state.
+    If their source receive was cancelled, callers had no public way
+    to close the root, so wrapper teardown retained the completed
+    `Task` in `BroadcastState.cancelled` indefinitely.
+
+    Cancel a root source read, attach that broadcaster to a minimal
+    public wrapper, and close it through each real `aclose()` method.
+    The root receiver and its task diagnostic must both be removed;
+    for `MsgStream`, pre-close the source to cover its idempotent early
+    return path.
+
+    '''
+    async def main() -> None:
+        _, rx = trio.open_memory_channel(1)
+        brx = broadcast_receiver(rx, 1)
+        cancel_scope = trio.CancelScope()
+
+        async def cancel_source_read() -> None:
+            with cancel_scope:
+                await brx.receive()
+            assert cancel_scope.cancelled_caught
+
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(cancel_source_read)
+            while brx._state.recv_ready is None:
+                await trio.lowlevel.checkpoint()
+            cancel_scope.cancel()
+
+        assert brx.key in brx._state.cancelled
+
+        if close_wrapper is tractor.MsgStream.aclose:
+            ctx = SimpleNamespace(cid='test-context')
+            wrapper = tractor.MsgStream(ctx, rx)
+            wrapper._broadcaster = brx
+            await rx.aclose()
+        else:
+            wrapper = SimpleNamespace(
+                _broadcaster=brx,
+                _from_aio=rx,
+            )
+
+        await close_wrapper(wrapper)
+        assert brx.key not in brx._state.subs
+        assert brx.key not in brx._state.cancelled
+
+    trio.run(main)
+
+
+def test_broadcast_rejects_zero_buffer_size() -> None:
+    '''
+    A broadcaster must retain at least one value for peer fan-out.
+
+    `collections.deque(maxlen=0)` silently discards every appended
+    value, so `broadcast_receiver(..., 0)` allowed the source owner to
+    receive while peer cursors advanced into an always-empty queue.
+    Their lag recovery then reset to index `-1` and recursively retried
+    without any retained value to consume.
+
+    Construct a rendezvous memory channel and prove broadcaster setup
+    rejects its zero capacity synchronously with a clear public error,
+    before any receiver is registered or source receive can begin.
+
+    '''
+    _, rx = trio.open_memory_channel(0)
+    with pytest.raises(
+        ValueError,
+        match='`max_buffer_size` must be greater than zero',
+    ):
+        broadcast_receiver(rx, 0)
+
+
 def test_underlying_receive_failure_wakes_all_subscribers() -> None:
     '''
     A shared receive failure must terminate every broadcast receiver.
