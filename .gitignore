@@ -121,6 +121,14 @@ snippets/
 .claude/skills/resolve-conflicts
 .claude/skills/inter-skill-review
 
+# /taken-export specifics
+.claude/skills/taken-export
+.opencode/skills/taken-export
+.ai/taken/exports/
+
+# opencode local command deployment
+.opencode/commands/
+
 # /open-wkt specifics
 .claude/skills/open-wkt
 .claude/wkts/
@@ -168,3 +176,15 @@ gh/
 
 # LLM conversations that should remain private
 docs/conversations/
+
+# BEGIN ai.skillz: direct:symlink:claude:run-tests
+/.claude/skills/run-tests/SKILL.md
+# END ai.skillz: direct:symlink:claude:run-tests
+
+# BEGIN ai.skillz: direct:symlink:opencode:run-tests
+/.opencode/skills/run-tests/SKILL.md
+# END ai.skillz: direct:symlink:opencode:run-tests
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:run-tests
+/.opencode/commands/run-tests.md
+# END ai.skillz: direct:symlink:opencode:command:run-tests
