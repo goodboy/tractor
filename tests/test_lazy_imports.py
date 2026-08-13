@@ -3,6 +3,8 @@ Regression tests for the cold package import surface.
 
 '''
 import json
+import os
+from statistics import median
 import subprocess
 import sys
 from typing import (
@@ -66,6 +68,72 @@ def test_lazy_to_asyncio_package_api():
     assert wildcard == {
         'module': 'tractor.to_asyncio',
     }
+
+
+def test_cold_import_budget():
+    '''
+    Keep cold package import below the pre-optimization regression.
+
+    The original `inspect.stack()` caller lookup made a fresh
+    `import tractor` take about 0.42s and dominate actor startup.
+    Run seven independent interpreters and gate their median at a
+    deliberately broad 0.35s: over twice the measured ~0.145s
+    baseline, but low enough to catch restoration of that hot path.
+
+    Taking the median absorbs process-start and shared-runner noise.
+    The child measures only its import, rather than parent-side
+    process creation. `TRACTOR_IMPORT_BUDGET_S` provides an explicit,
+    reviewable override for platforms that establish a different
+    baseline instead of silently weakening the project default.
+
+    Each child also reports the modules whose eager loading this PR
+    intentionally removes, proving a timing pass cannot hide a
+    dependency-import regression.
+
+    '''
+    budget_s = float(
+        os.environ.get(
+            'TRACTOR_IMPORT_BUDGET_S',
+            '0.35',
+        )
+    )
+    optional_mods = (
+        'asyncio',
+        'bidict',
+        'colorlog',
+        'multiaddr',
+        'wrapt',
+    )
+    code = (
+        'import json, sys, time; '
+        'started = time.perf_counter(); '
+        'import tractor; '
+        'elapsed = time.perf_counter() - started; '
+        f'optional = {optional_mods!r}; '
+        'print(json.dumps({'
+        '"elapsed": elapsed, '
+        '"loaded": [name for name in optional '
+        'if name in sys.modules]}))'
+    )
+    samples = [
+        run_cold_import(code)
+        for _ in range(7)
+    ]
+    elapsed = [
+        float(sample['elapsed'])
+        for sample in samples
+    ]
+    loaded = {
+        name
+        for sample in samples
+        for name in sample['loaded']
+    }
+
+    assert not loaded
+    assert median(elapsed) < budget_s, (
+        f'cold import median exceeded {budget_s:.3f}s budget: '
+        f'{elapsed!r}'
+    )
 
 
 def test_lazy_annotation_names_resolve():
