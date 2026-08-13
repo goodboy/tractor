@@ -142,7 +142,8 @@ class BroadcastState(Struct):
     # before this failure is replayed at each receiver's boundary.
     receive_exc: Exception | None = None
 
-    # If the broadcaster was cancelled, we might as well track it
+    # Retain the latest interrupted source-reader task until its
+    # receiver next makes progress or closes.
     cancelled: dict[int, Task] = {}
 
     def statistics(self) -> dict[str, Any]:
@@ -286,6 +287,7 @@ class BroadcastReceiver(ReceiveChannel):
                     return self.receive_nowait(_key, _state)
 
             state.subs[key] -= 1
+            state.cancelled.pop(key, None)
             return value
 
         receive_exc = state.receive_exc
@@ -296,6 +298,9 @@ class BroadcastReceiver(ReceiveChannel):
             raise BroadcastReceiveError(
                 'Shared broadcast receiver failed'
             ) from receive_exc
+
+        if state.eoc:
+            raise trio.EndOfChannel
 
         raise trio.WouldBlock
 
@@ -363,6 +368,8 @@ class BroadcastReceiver(ReceiveChannel):
             ):
                 state.subs[sub_key] += 1
 
+            state.cancelled.pop(key, None)
+
             # NOTE: this should ONLY be set if the above task was *NOT*
             # cancelled on the `._recv()` call.
             event.set()
@@ -372,6 +379,7 @@ class BroadcastReceiver(ReceiveChannel):
             # if any one consumer gets an EOC from the underlying
             # receiver we need to unblock and send that signal to
             # all other consumers.
+            state.cancelled.clear()
             self._state.eoc = True
             if event.statistics().tasks_waiting:
                 event.set()
@@ -402,6 +410,7 @@ class BroadcastReceiver(ReceiveChannel):
             # so any non-EOC failure terminates the entire broadcast.
             # Publish it before waking peers so they can drain their
             # retained values and then observe the same failure.
+            state.cancelled.clear()
             state.receive_exc = receive_exc
             if event.statistics().tasks_waiting:
                 event.set()
@@ -411,6 +420,7 @@ class BroadcastReceiver(ReceiveChannel):
             # Process-control and cancellation-like exceptions must
             # not become durable broadcast state, but peers still
             # need waking before `recv_ready` is cleared.
+            state.cancelled.pop(key, None)
             if event.statistics().tasks_waiting:
                 event.set()
             raise
@@ -547,6 +557,7 @@ class BroadcastReceiver(ReceiveChannel):
         # up to the last received that still reside in the queue.
         state = self._state
         state.subs.pop(self.key)
+        state.cancelled.pop(self.key, None)
         self._closed = True
 
         # A non-owner close must not wake peers waiting behind some
@@ -580,6 +591,11 @@ def broadcast_receiver(
     raise_on_lag: bool = True,
 
 ) -> BroadcastReceiver:
+
+    if max_buffer_size < 1:
+        raise ValueError(
+            '`max_buffer_size` must be greater than zero'
+        )
 
     return BroadcastReceiver(
         recv_chan,
