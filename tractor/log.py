@@ -463,7 +463,14 @@ def get_logger(
         if mod_name is None:
             return None
 
-        return sys.modules.get(mod_name)
+        if caller_mod := sys.modules.get(mod_name):
+            return caller_mod
+
+        # Preserve caller discovery for `runpy`, plugin loaders,
+        # and `exec()` namespaces not registered in `sys.modules`.
+        # Import `inspect` only on this rare fallback path.
+        from inspect import getmodule
+        return getmodule(caller_frame)
 
     # --- Auto--naming-CASE ---
     # -------------------------

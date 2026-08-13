@@ -2,9 +2,11 @@
 `tractor.log`-wrapping unit tests.
 
 '''
+import importlib
 import logging
 from pathlib import Path
 import shutil
+import sys
 from types import ModuleType
 
 import pytest
@@ -163,6 +165,53 @@ def test_implicit_mod_name_applied_for_child(
     sub_logs = pkg_root_log.logger.getChildren()
     assert len(sub_logs) == 1  # only one nested sub-pkg module
     assert submod.log.logger in sub_logs
+
+
+def test_implicit_mod_name_from_unregistered_namespace(
+    tmp_path: Path,
+):
+    '''
+    Preserve implicit logger naming for dynamic module namespaces.
+
+    The fast `sys.modules` caller lookup cannot resolve `runpy`,
+    plugin-loader, or `exec()` namespaces that are not registered.
+    Compile a real package file under an unregistered module name so
+    the rare filename fallback must recover its imported package and
+    retain the same package-level logger name.
+
+    '''
+    pkg_name = 'dynamic_logger_pkg'
+    pkg_dir = tmp_path / pkg_name
+    pkg_dir.mkdir()
+    init_path = pkg_dir / '__init__.py'
+    init_path.write_text('')
+    mod_path = pkg_dir / 'plugin.py'
+    mod_path.write_text('')
+
+    sys.path.insert(0, str(tmp_path))
+    try:
+        importlib.import_module(pkg_name)
+        namespace = {
+            '__name__': f'{pkg_name}.unregistered',
+            '__package__': pkg_name,
+            'tractor': tractor,
+        }
+        exec(
+            compile(
+                'log = tractor.log.get_logger('
+                f'pkg_name={pkg_name!r})',
+                str(mod_path),
+                'exec',
+            ),
+            namespace,
+        )
+        dynamic_log = namespace.get('log')
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop(pkg_name, None)
+
+    assert dynamic_log is not None
+    assert dynamic_log.name == pkg_name
 
 
 def test_io_custom_level_registered():
