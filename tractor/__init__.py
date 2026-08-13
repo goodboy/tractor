@@ -74,3 +74,39 @@ from .discovery._registry import (
     Arbiter as Arbiter,
 )
 # from . import hilevel as hilevel
+
+
+__all__: tuple[str, ...] = tuple(
+    name
+    for name in globals()
+    if not name.startswith('_')
+) + (
+    'to_asyncio',
+)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
+
+
+def __getattr__(name: str):
+    '''
+    PEP 562 lazy sub-module loading, presently only for
+    `.to_asyncio` which (transitively) imports `asyncio`
+    itself: a non-trivial multi-ms chunk of the eager
+    `import tractor` cost (gh #470) unneeded by
+    `trio`-only apps.
+
+    Any `tractor.to_asyncio.<attr>` access (or a
+    `from tractor import to_asyncio`) still works, the
+    sub-mod is simply imported on first-access instead
+    of at pkg-import time.
+
+    '''
+    if name == 'to_asyncio':
+        from importlib import import_module
+        return import_module('.to_asyncio', __name__)
+
+    raise AttributeError(
+        f'module {__name__!r} has no attribute {name!r}'
+    )

@@ -23,18 +23,10 @@ async def endpoint(
     await trio.sleep_forever()
 
 
-async def spawn_and_open_ep(
-    an: tractor.ActorNursery,
+async def open_ep(
+    ptl: tractor.Portal,
     i: int,
 ) -> None:
-    '''
-    Spawn a subactor, start a remote `endpoint()`-task in it.
-
-    '''
-    ptl: tractor.Portal = await an.start_actor(
-        name=f'worker_{i}',
-        enable_modules=[__name__],
-    )
     ctx: tractor.Context
     async with ptl.open_context(endpoint) as (
         ctx,
@@ -47,7 +39,33 @@ async def spawn_and_open_ep(
         await ctx.wait_for_result()
 
 
-async def main():
+async def spawn_and_open_ep(
+    an: tractor.ActorNursery,
+    i: int,
+    maybe_ptl: tractor.Portal|None = None,
+) -> None:
+    '''
+    Spawn a subactor, start a remote `endpoint()`-task in it.
+
+    '''
+    if maybe_ptl is None:
+        maybe_ptl: tractor.Portal = await an.start_actor(
+            name=f'worker_{i}',
+            enable_modules=[__name__],
+        )
+    await open_ep(
+        ptl=maybe_ptl,
+        i=i,
+    )
+
+
+async def main(
+    # spawn subs concurrently (in bg `trio.Task`s) so each
+    # actor's cold `import tractor` (~0.4s, see #470) overlaps
+    # instead of stacking; once forkserver (#463) lands, spawn
+    # is cheap enough to just loop sequentially.
+    spawn_subs_in_bg_tasks: bool = True,
+):
     '''
     Spawn a subactor-per-CPU then self-destruct the cluster.
 
@@ -60,17 +78,21 @@ async def main():
             # https://github.com/goodboy/tractor/pull/463
             # start_method='main_thread_forkserver',
         ) as an,
-        # spawn subs concurrently (in bg `trio.Task`s) so each
-        # actor's cold `import tractor` (~0.4s, see #470) overlaps
-        # instead of stacking; once forkserver (#463) lands, spawn
-        # is cheap enough to just loop sequentially.
         trio.open_nursery() as tn,
     ):
         for i in range(cpu_count()):
+
+            maybe_ptl: tractor.Portal|None = None
+            if not spawn_subs_in_bg_tasks:
+                maybe_ptl: tractor.Portal = await an.start_actor(
+                    name=f'worker_{i}',
+                    enable_modules=[__name__],
+                )
             tn.start_soon(
                 spawn_and_open_ep,
                 an,
                 i,
+                maybe_ptl,
             )
         destruct_in: int = 2
         print(

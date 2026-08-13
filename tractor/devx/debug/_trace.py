@@ -24,7 +24,6 @@ mult-process support within a single actor tree.
 
 '''
 from __future__ import annotations
-import asyncio
 import bdb
 from contextlib import (
     AbstractContextManager,
@@ -53,7 +52,6 @@ from trio import (
 )
 import tractor
 from tractor.log import get_logger
-from tractor.to_asyncio import run_trio_task_in_future
 from tractor._context import Context
 from tractor.runtime import _state
 from tractor._exceptions import (
@@ -85,6 +83,10 @@ from ..pformat import (
 )
 
 if TYPE_CHECKING:
+    # NOTE, `asyncio` (and `.to_asyncio`) are
+    # lazy-imported at their use-sites to keep them off
+    # the eager `import tractor` path (gh #470).
+    import asyncio
     from trio.lowlevel import Task
     from threading import Thread
     from tractor.runtime._runtime import (
@@ -164,6 +166,7 @@ async def _pause(
                 'An `asyncio` task should not be calling this!?'
             ) from rte
         else:
+            import asyncio
             task = asyncio.current_task()
 
     if debug_func is not None:
@@ -946,6 +949,7 @@ def pause_from_sync(
 
         asyncio_task: asyncio.Task|None = None
         if is_infected_aio:
+            import asyncio
             asyncio_task = asyncio.current_task()
 
         # TODO: we could also check for a non-`.to_thread` context
@@ -1059,6 +1063,9 @@ def pause_from_sync(
             greenback: ModuleType = maybe_import_greenback()
 
             if greenback.has_portal():
+                from tractor.to_asyncio import (
+                    run_trio_task_in_future,
+                )
                 DebugStatus.shield_sigint()
                 fute: asyncio.Future = run_trio_task_in_future(
                     partial(

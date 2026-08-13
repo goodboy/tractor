@@ -20,7 +20,9 @@ TCP implementation of tractor.ipc._transport.MsgTransport protocol
 from __future__ import annotations
 import ipaddress
 from typing import (
+    Any,
     ClassVar,
+    TYPE_CHECKING,
 )
 # from contextlib import (
 #     asynccontextmanager as acm,
@@ -33,7 +35,6 @@ from trio import (
     open_tcp_listeners,
 )
 
-from multiaddr import Multiaddr
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
 from tractor.discovery._multiaddr import mk_maddr
@@ -41,6 +42,13 @@ from tractor.ipc._transport import (
     MsgTransport,
     MsgpackTransport,
 )
+
+if TYPE_CHECKING:
+    # ONLY type-annots, the eager import costs
+    # `import tractor` wall-time (gh #470).
+    from multiaddr import Multiaddr
+else:
+    Multiaddr = Any
 
 
 log = get_logger()
