@@ -34,31 +34,49 @@ from tractor.msg.types import Aid
 # from ._tcp import TCPAddress
 
 
-def test_send_normalizes_peer_reset():
+def test_send_normalizes_only_grouped_peer_resets():
     '''
-    Normalize Darwin's pre-handshake peer reset as transport closure.
+    Normalize only all-peer-close grouped transport failures.
 
     A UDS peer may disconnect before completing the actor handshake.
     Darwin can report the server's first handshake write as
-    `ECONNRESET`, wrapped by `trio.BrokenResourceError`; allowing
-    that raw error to escape cancels the daemon's shared IPC nursery.
-    This fake stream reproduces the exact exception chain and proves
-    `.send()` raises the expected `TransportClosed` boundary instead.
+    `ECONNRESET`, wrapped by `trio.BrokenResourceError` and potentially
+    nested in an `ExceptionGroup`. This fake stream first groups reset
+    and broken-pipe branches, proving `.send()` normalizes a complete
+    peer-close tree to `TransportClosed`. It then groups a reset with
+    an unrelated `ValueError`, proving the mixed failure remains a
+    `trio.BrokenResourceError` instead of hiding the application error.
 
     '''
-    class ResetStream:
-        async def send_all(self, data: bytes) -> None:
+    def broken_resource(err_no: int) -> trio.BrokenResourceError:
+        try:
+            raise OSError(
+                err_no,
+                'Peer closed',
+            )
+        except OSError as peer_err:
             try:
-                raise OSError(
-                    errno.ECONNRESET,
-                    'Connection reset by peer',
-                )
-            except OSError as reset_err:
-                raise trio.BrokenResourceError from reset_err
+                raise trio.BrokenResourceError from peer_err
+            except trio.BrokenResourceError as broken_err:
+                return broken_err
+
+    class GroupedFailureStream:
+        def __init__(self, exceptions: list[Exception]) -> None:
+            self.exceptions = exceptions
+
+        async def send_all(self, data: bytes) -> None:
+            grouped_err = ExceptionGroup(
+                'concurrent send failures',
+                self.exceptions,
+            )
+            raise trio.BrokenResourceError from grouped_err
 
     async def main():
         transport = object.__new__(MsgpackTransport)
-        transport.stream = ResetStream()
+        transport.stream = GroupedFailureStream([
+            broken_resource(errno.ECONNRESET),
+            broken_resource(errno.EPIPE),
+        ])
         transport._send_lock = trio.StrictFIFOLock()
         transport._laddr = 'local'
         transport._raddr = 'remote'
@@ -70,9 +88,23 @@ def test_send_normalizes_peer_reset():
                 strict_types=False,
             )
 
-        assert exc_info.value.src_exc.__cause__.errno == (
-            errno.ECONNRESET
-        )
+        grouped_err = exc_info.value.src_exc.__cause__
+        assert isinstance(grouped_err, ExceptionGroup)
+        assert len(grouped_err.exceptions) == 2
+
+        transport.stream = GroupedFailureStream([
+            ValueError('unrelated failure'),
+            broken_resource(errno.ECONNRESET),
+        ])
+        with pytest.raises(trio.BrokenResourceError) as exc_info:
+            await transport.send(
+                {'probe': True},
+                strict_types=False,
+            )
+
+        grouped_err = exc_info.value.__cause__
+        assert isinstance(grouped_err, ExceptionGroup)
+        assert isinstance(grouped_err.exceptions[0], ValueError)
 
     trio.run(main)
 

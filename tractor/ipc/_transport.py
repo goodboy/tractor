@@ -64,29 +64,64 @@ log = get_logger()
 
 def _peer_closed_errno(exc: BaseException) -> int|None:
     '''
-    Find a peer-close errno in a transport exception chain.
+    Classify a complete transport exception tree as peer closure.
+
+    Follow explicit cause/context links. For a `BaseExceptionGroup`,
+    require every child branch to resolve to a peer-close errno so an
+    unrelated concurrent failure is never hidden as `TransportClosed`.
 
     '''
-    seen: set[int] = set()
-    while (
-        exc
-        and
-        id(exc) not in seen
-    ):
-        seen.add(id(exc))
+    def find_peer_errno(
+        current_exc: BaseException,
+        ancestors: set[int],
+    ) -> int|None:
+        exc_id: int = id(current_exc)
+        if exc_id in ancestors:
+            return None
+
+        ancestors = ancestors | {exc_id}
         if (
-            isinstance(exc, OSError)
+            isinstance(current_exc, OSError)
             and
-            exc.errno in {
+            current_exc.errno in {
                 errno.ECONNRESET,
                 errno.EPIPE,
             }
         ):
-            return exc.errno
+            return current_exc.errno
 
-        exc = exc.__cause__ or exc.__context__
+        if isinstance(current_exc, BaseExceptionGroup):
+            child_errnos: list[int|None] = [
+                find_peer_errno(
+                    child_exc,
+                    ancestors,
+                )
+                for child_exc in current_exc.exceptions
+            ]
+            if all(
+                child_errno is not None
+                for child_errno in child_errnos
+            ):
+                return child_errnos[0]
+            return None
 
-    return None
+        chained_exc: BaseException|None = (
+            current_exc.__cause__
+            or
+            current_exc.__context__
+        )
+        if chained_exc is not None:
+            return find_peer_errno(
+                chained_exc,
+                ancestors,
+            )
+
+        return None
+
+    return find_peer_errno(
+        exc,
+        set(),
+    )
 
 
 # (codec, transport)
