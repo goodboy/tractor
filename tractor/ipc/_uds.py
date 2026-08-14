@@ -21,6 +21,7 @@ from __future__ import annotations
 from contextlib import (
     contextmanager as cm,
 )
+import hashlib
 from pathlib import Path
 import os
 import sys
@@ -95,6 +96,12 @@ else:
 
 
 log = get_logger()
+
+_SUN_PATH_LIMIT: int = (
+    108
+    if sys.platform == 'linux'
+    else 104
+)
 
 
 def unwrap_sockpath(
@@ -196,7 +203,7 @@ class UDSAddress(
             err_on_no_runtime=False,
         )
         if actor:
-            sockname: str = f'{actor.aid.name}@{pid}'
+            sockname: str = actor.aid.name
             # XXX, orig version which broke both macOS (file-name
             # length) and `multiaddrs` ('::' invalid separator).
             # sockname: str = '::'.join(actor.uid) + f'@{pid}'
@@ -222,14 +229,71 @@ class UDSAddress(
             # `(?P<name>.+)@(?P<pid>\d+)\.sock` regex, and the
             # `spawn._reap` `{name}@{pid}.sock` reconstruction.
             token: str = uuid4().hex[:8]
-            sockname: str = f'{prefix}.{token}@{pid}'
+            sockname = f'{prefix}.{token}'
 
-        sockpath: Path = Path(f'{sockname}.sock')
+        sockpath: Path = cls.get_sockname(
+            name=sockname,
+            pid=pid,
+            bindspace=filedir,
+        )
         return UDSAddress(
             filedir=filedir,
             filename=sockpath,
             maybe_pid=pid,
         )
+
+    @classmethod
+    def get_sockname(
+        cls,
+        name: str,
+        pid: int,
+        bindspace: Path,
+    ) -> Path:
+        '''
+        Build a safe, deterministic UDS socket filename.
+
+        '''
+        suffix: str = f'@{pid}.sock'
+        filename: str = f'{name}{suffix}'
+        unsafe: bool = (
+            '\0' in name
+            or
+            '/' in name
+            or
+            bool(os.altsep and os.altsep in name)
+            or
+            Path(filename).is_absolute()
+        )
+        too_long: bool = (
+            len(os.fsencode(bindspace / filename))
+            >= _SUN_PATH_LIMIT
+        )
+        if (
+            unsafe
+            or
+            too_long
+        ):
+            digest: str = hashlib.blake2s(
+                os.fsencode(name),
+                digest_size=16,
+            ).hexdigest()
+            filename = f'actor.{digest}{suffix}'
+
+        sockpath: Path = bindspace / filename
+        path_nbytes: int = len(os.fsencode(sockpath))
+        if path_nbytes >= _SUN_PATH_LIMIT:
+            raise ValueError(
+                f'UDS bindspace leaves no room for an AF_UNIX '
+                f'socket filename!\n'
+                f'bindspace: {bindspace}\n'
+                f'name was unsafe: {unsafe}\n'
+                f'name was over budget: {too_long}\n'
+                f'compacted filename: {filename}\n'
+                f'encoded path bytes: {path_nbytes}\n'
+                f'AF_UNIX path limit: {_SUN_PATH_LIMIT}\n'
+            )
+
+        return Path(filename)
 
     @classmethod
     def get_root(cls) -> UDSAddress:
@@ -307,7 +371,16 @@ async def start_listener(
             f'>{{\n'
             f'|_{bs!r}\n'
         )
-        bs.mkdir()
+        bs.mkdir(
+            # ensure the full ancestor tree for any nested
+            # (custom `filedir`) bindspace; the default
+            # `get_rt_dir()` space is pre-created but a custom
+            # one may have missing parents.
+            parents=True,
+            # avoid `FileExistsError` from racing actors, same
+            # guard as in `get_rt_dir()`.
+            exist_ok=True,
+        )
 
     with _reraise_as_connerr(
         src_excs=(
@@ -560,11 +633,18 @@ class MsgpackUDSStream(MsgpackTransport):
     ]:
         sock: trio.socket.socket = stream.socket
 
-        # NOTE XXX, it's unclear why one or the other ends up being
-        # `bytes` versus the socket-file-path, i presume it's
-        # something to do with who is the server (called `.listen()`)?
-        # maybe could be better implemented using another info-query
-        # on the socket like,
+        # NOTE, the `bytes` case is a linux-only artifact: setting
+        # `SO_PASSCRED` (see `open_unix_socket_w_passcred()`)
+        # causes the kernel to *autobind* the un-named client
+        # sock to an abstract-namespace addr which python
+        # delivers as `bytes`; the listener-bound end is always
+        # the fs-path `str`. On platforms WITHOUT autobind
+        # (macOS et al) the un-bound end instead reports as an
+        # empty `str` so BOTH names arrive as `str`s and the
+        # real fs-path is whichever is non-empty: `peername` on
+        # the connect side, `sockname` on the accept side.
+        #
+        # for socket-api deats see,
         # https://beej.us/guide/bgnet/html/split-wide/system-calls-or-bust.html#gethostnamewho-am-i
         sockname: str|bytes = sock.getsockname()
         # https://beej.us/guide/bgnet/html/split-wide/system-calls-or-bust.html#getpeernamewho-are-you
@@ -576,8 +656,24 @@ class MsgpackUDSStream(MsgpackTransport):
             case (bytes(), str()):
                 sock_path: Path = Path(sockname)
 
-            case (str(), str()):  # XXX, likely macOS
-                sock_path: Path = Path(peername)
+            # NOTE, no-autobind case (macOS): the un-bound end
+            # is `''`, NOT a `bytes` abstract-ns addr; taking
+            # `peername` unconditionally (as prior impl did)
+            # delivers garbage `Path('')` addrs on the accept
+            # side!
+            case (str(), str()):
+                bound_name: str = (
+                    peername
+                    or
+                    sockname
+                )
+                if not bound_name:
+                    raise ValueError(
+                        f'Empty UDS (peername, sockname) pair ??\n'
+                        f'peername: {peername!r}\n'
+                        f'sockname: {sockname!r}\n'
+                    )
+                sock_path: Path = Path(bound_name)
 
             case _:
                 raise TypeError(

@@ -2,21 +2,209 @@
 `open_root_actor(tpt_bind_addrs=...)` test suite.
 
 Verify all three runtime code paths for explicit IPC-server
-bind-address selection in `_root.py`:
+bind-address selection in `_root.py` and registry probing in
+`discovery._api`:
 
 1. Non-registrar, no explicit bind -> random addrs from registry proto
 2. Registrar, no explicit bind -> binds to registry_addrs
 3. Explicit bind given -> wraps via `wrap_address()` and uses them
 
 '''
+from contextlib import asynccontextmanager as acm
+from unittest.mock import (
+    AsyncMock,
+    call,
+    Mock,
+)
+
 import pytest
 import trio
 import tractor
+from tractor.discovery import _api
 from tractor.discovery._addr import (
     wrap_address,
 )
 from tractor.discovery._multiaddr import mk_maddr
+from tractor.ipc import _connect_chan
 from tractor._testing.addr import get_rando_addr
+
+
+def test_registry_probe_retries_transient_handshake(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Retry a connected registrar after transient handshake timeout.
+
+    Loaded macOS runners can accept the transport while delaying the
+    actor handshake beyond one second. Treating that first timeout as
+    final makes a healthy remote daemon look occupied and cascades into
+    discovery failures. This deterministic fake fails once, succeeds
+    on the second complete handshake, and proves one bounded backoff.
+
+    '''
+    async def stall_handshake(**kwargs):
+        await trio.sleep_forever()
+
+    first_handshake = AsyncMock(side_effect=stall_handshake)
+    second_handshake = AsyncMock(
+        return_value=tractor.msg.Aid(
+            name='registrar',
+            uuid='registrar-uuid',
+            pid=1234,
+            is_registrar=True,
+        ),
+    )
+    chans = [
+        Mock(_do_handshake=first_handshake),
+        Mock(_do_handshake=second_handshake),
+    ]
+    closed: list[object] = []
+
+    @acm
+    async def connect_chan(addr, close_timeout):
+        assert close_timeout == .2
+        chan = chans[len(closed)]
+        try:
+            yield chan
+        finally:
+            closed.append(chan)
+
+    sleep = AsyncMock()
+    monkeypatch.setattr(_api, '_connect_chan', connect_chan)
+    monkeypatch.setattr(_api.trio, 'sleep', sleep)
+
+    async def main():
+        status = await _api._probe_registry(
+            addr=wrap_address(('127.0.0.1', 1616)),
+            timeout=.3,
+            attempt_timeout=.1,
+            max_attempts=3,
+            retry_delay=.01,
+        )
+        assert status == 'registrar'
+
+    trio.run(main)
+
+    first_handshake.assert_awaited_once()
+    second_handshake.assert_awaited_once()
+    assert first_handshake.await_args.kwargs['timeout'] == .1
+    assert second_handshake.await_args.kwargs['timeout'] == .1
+    assert closed == chans
+    sleep.assert_has_awaits([call(.01)])
+
+
+def test_probe_channel_close_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Bound shielded channel cleanup after a registry probe.
+
+    `_connect_chan()` shields `.aclose()` so cancellation cannot leak
+    ordinary channels. A stalled close previously let registry probing
+    exceed every connect and handshake deadline. This fake close never
+    completes; the explicit cleanup allowance must still return control
+    to the caller without cancelling its surrounding task.
+
+    '''
+    chan = Mock()
+    chan.aclose = AsyncMock(side_effect=trio.sleep_forever)
+    monkeypatch.setattr(
+        tractor.Channel,
+        'from_addr',
+        AsyncMock(return_value=chan),
+    )
+
+    async def main():
+        with trio.fail_after(.5):
+            async with _connect_chan(
+                ('127.0.0.1', 1616),
+                close_timeout=.01,
+            ):
+                pass
+
+    trio.run(main)
+    chan.aclose.assert_awaited_once()
+
+
+def test_transport_only_listener_is_not_registrar():
+    '''
+    Require a Tractor handshake before accepting a registry address.
+
+    The old election probe marked an address live after transport
+    connect alone. A non-Tractor listener, or a registrar still
+    failing its initial handshake, was therefore selected as the
+    remote registry. This test accepts the probe and closes it without
+    replying, then proves `open_root_actor()` rejects that occupied
+    endpoint instead of selecting it or binding over it.
+
+    '''
+    async def transport_only_handler(
+        stream: trio.SocketStream,
+    ) -> None:
+        await stream.aclose()
+
+    async def main():
+        listeners = await trio.open_tcp_listeners(0)
+        listener = listeners[0]
+        sockname = listener.socket.getsockname()
+        reg_addr: tuple[str, int] = (
+            sockname[0],
+            sockname[1],
+        )
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(
+                trio.serve_listeners,
+                transport_only_handler,
+                listeners,
+            )
+            with pytest.raises(
+                RuntimeError,
+                match='occupied but did not answer',
+            ):
+                async with tractor.open_root_actor(
+                    registry_addrs=[reg_addr],
+                    enable_transports=['tcp'],
+                ):
+                    pytest.fail('foreign listener selected as registrar')
+
+            tn.cancel_scope.cancel()
+
+    trio.run(main)
+
+
+def test_registry_probe_preserves_no_peers_state(
+    reg_addr: tuple,
+    tpt_proto: str,
+):
+    '''
+    Keep an idle registrar peer-free after an election probe.
+
+    Probe handshakes exchange registrar capability but must not enter
+    `IPCServer._peers`. Resetting `_no_more_peers` before identifying a
+    probe left an idle registrar reporting phantom peers and delayed
+    shutdown. This test probes the live local registrar and proves its
+    peer map and no-peers event remain unchanged afterward.
+
+    '''
+    async def main():
+        async with tractor.open_root_actor(
+            registry_addrs=[reg_addr],
+            enable_transports=[tpt_proto],
+        ):
+            actor = tractor.current_actor()
+            server = actor.ipc_server
+
+            probe_status = await _api._probe_registry(
+                addr=wrap_address(reg_addr),
+            )
+            assert probe_status == 'registrar'
+
+            await trio.sleep(0)
+            assert not server._peers
+            assert server._no_more_peers.is_set()
+
+    trio.run(main)
 
 
 # ------------------------------------------------------------------

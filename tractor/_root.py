@@ -47,9 +47,7 @@ from .devx import (
 from .spawn import _spawn
 from .runtime import _state
 from . import log
-from .ipc import (
-    _connect_chan,
-)
+from .discovery._api import _probe_registry_addrs
 from .discovery._addr import (
     Address,
     UnwrappedAddress,
@@ -451,50 +449,23 @@ async def open_root_actor(
             from .devx._stackscope import enable_stack_on_sig
             enable_stack_on_sig()
 
-        # closed into below ping task-func
-        ponged_addrs: list[Address] = []
+        ponged_addrs: list[Address]
+        occupied_addrs: list[Address]
+        (
+            ponged_addrs,
+            occupied_addrs,
+        ) = await _probe_registry_addrs(uw_reg_addrs)
 
-        async def ping_tpt_socket(
-            addr: Address,
-            timeout: float = 1,
-        ) -> None:
-            '''
-            Attempt temporary connection to see if a registry is
-            listening at the requested address by a tranport layer
-            ping.
-
-            If a connection can't be made quickly we assume none no
-            server is listening at that addr.
-
-            '''
-            try:
-                # TODO: this connect-and-bail forces us to have to
-                # carefully rewrap TCP 104-connection-reset errors as
-                # EOF so as to avoid propagating cancel-causing errors
-                # to the channel-msg loop machinery. Likely it would
-                # be better to eventually have a "discovery" protocol
-                # with basic handshake instead?
-                with trio.move_on_after(timeout):
-                    async with _connect_chan(addr.unwrap()):
-                        ponged_addrs.append(addr)
-
-            except OSError:
-                # ?TODO, make this a "discovery" log level?
-                logger.info(
-                    f'No root-actor registry found @ {addr!r}\n'
-                )
-
-        # !TODO, this is basically just another (abstract)
-        # happy-eyeballs, so we should try for formalize it somewhere
-        # in a `.[_]discovery` ya?
-        #
-        async with trio.open_nursery() as tn:
-            for uw_addr in uw_reg_addrs:
-                addr: Address = wrap_address(uw_addr)
-                tn.start_soon(
-                    ping_tpt_socket,
-                    addr,
-                )
+        if (
+            not ponged_addrs
+            and
+            occupied_addrs
+        ):
+            raise RuntimeError(
+                f'Registry address(es) are occupied but did not '
+                f'answer as Tractor registrars!\n'
+                f'occupied_addrs: {occupied_addrs!r}\n'
+            )
 
         if tpt_bind_addrs is None:
             tpt_bind_addrs: list[Address] = []

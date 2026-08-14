@@ -21,13 +21,17 @@ management of (service) actors.
 """
 from __future__ import annotations
 import ipaddress
+import os
 import socket
 from typing import (
     AsyncGenerator,
     AsyncContextManager,
+    Literal,
     TYPE_CHECKING,
 )
 from contextlib import asynccontextmanager as acm
+
+import trio
 
 from tractor.log import get_logger
 from ..trionics import (
@@ -40,6 +44,7 @@ from ..ipc._uds import UDSAddress
 from ._addr import (
     UnwrappedAddress,
     Address,
+    mk_uuid,
     wrap_address,
 )
 from ..runtime._portal import (
@@ -52,12 +57,122 @@ from ..runtime._state import (
     _runtime_vars,
     _def_tpt_proto,
 )
+from ..msg.types import Aid
 
 if TYPE_CHECKING:
     from ..runtime._runtime import Actor
 
 
 log = get_logger()
+
+
+async def _probe_registry(
+    addr: Address,
+    timeout: float = 3,
+    attempt_timeout: float = 1,
+    max_attempts: int = 3,
+    retry_delay: float = .05,
+    close_timeout: float = .2,
+) -> Literal[
+    'absent',
+    'occupied',
+    'registrar',
+]:
+    '''
+    Confirm an address serves the Tractor actor handshake.
+
+    Connection and handshake work share `timeout`; each attempt gets
+    `attempt_timeout`. Shielded cleanup may add up to `close_timeout`
+    per attempted channel.
+
+    '''
+    from .._exceptions import TransportClosed
+
+    connected_once: bool = False
+    with trio.move_on_after(timeout):
+        for attempt in range(max_attempts):
+            try:
+                with trio.move_on_after(attempt_timeout) as attempt_cs:
+                    async with _connect_chan(
+                        addr.unwrap(),
+                        close_timeout=close_timeout,
+                    ) as chan:
+                        connected_once = True
+                        peer_aid: Aid = await chan._do_handshake(
+                            aid=Aid(
+                                name='registry-probe',
+                                uuid=mk_uuid(),
+                                pid=os.getpid(),
+                                is_probe=True,
+                            ),
+                            timeout=attempt_timeout,
+                        )
+                        if peer_aid.is_registrar is not False:
+                            return 'registrar'
+                        return 'occupied'
+
+                if attempt_cs.cancelled_caught:
+                    if not connected_once:
+                        return 'absent'
+
+            except OSError:
+                return (
+                    'occupied'
+                    if connected_once
+                    else 'absent'
+                )
+            except TransportClosed:
+                pass
+
+            if attempt + 1 < max_attempts:
+                await trio.sleep(retry_delay * (attempt + 1))
+
+    return 'occupied'
+
+
+async def _probe_registry_addrs(
+    addrs: list[UnwrappedAddress],
+    timeout: float = 3,
+) -> tuple[
+    list[Address],
+    list[Address],
+]:
+    '''
+    Concurrently classify candidate registrar addresses.
+
+    Return confirmed registrar addresses followed by addresses occupied
+    by non-registrar or unresponsive Tractor peers.
+
+    '''
+    registrar_addrs: list[Address] = []
+    occupied_addrs: list[Address] = []
+
+    async def probe_addr(addr: Address) -> None:
+        probe_status = await _probe_registry(
+            addr=addr,
+            timeout=timeout,
+        )
+        if probe_status == 'registrar':
+            registrar_addrs.append(addr)
+        elif probe_status == 'occupied':
+            occupied_addrs.append(addr)
+        else:
+            # ?TODO, make this a "discovery" log level?
+            log.info(
+                f'No root-actor registry found @ {addr!r}\n'
+            )
+
+    async with trio.open_nursery() as nursery:
+        for unwrapped_addr in addrs:
+            nursery.start_soon(
+                probe_addr,
+                wrap_address(unwrapped_addr),
+            )
+
+    return (
+        registrar_addrs,
+        occupied_addrs,
+    )
 
 
 def _is_local_addr(addr: Address) -> bool:

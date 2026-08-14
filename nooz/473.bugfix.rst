@@ -1,0 +1,4 @@
+Fix Unix-domain-socket actor trees and registrar discovery on macOS.
+Runtime sockets now use a short, owner-only runtime directory,
+generated socket names remain within platform limits, and transient
+or reset pre-handshake connections no longer destabilize discovery.

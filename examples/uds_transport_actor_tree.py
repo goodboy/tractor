@@ -6,7 +6,8 @@ subactor inherits the preference.
 
 Every channel address is a filesystem socket path (no TCP port
 in sight!) and, as a kernel-provided bonus, the peer's pid is
-exchanged for free via `SO_PEERCRED`.
+exchanged for free via `SO_PEERCRED` on linux,
+`LOCAL_PEERPID` on macOS.
 
 '''
 import os
@@ -42,7 +43,7 @@ async def main() -> None:
         # (named for the root registrar) this channel rode in
         # on, NOT a per-child path; the child-specific identity
         # we get for free is the kernel-reported peer pid (via
-        # `SO_PEERCRED`).
+        # `SO_PEERCRED` on linux, `LOCAL_PEERPID` on macOS).
         print(
             f'portal chan tpt proto: {raddr.proto_key!r}\n'
             f'listener sock file: {raddr.sockpath}\n'

@@ -5,11 +5,13 @@ Let's make sure them docs work yah?
 from contextlib import contextmanager
 import itertools
 import os
+import signal
 import sys
 import subprocess
 import platform
 import shutil
 from typing import Callable
+from unittest.mock import Mock
 
 import pytest
 import tractor
@@ -19,6 +21,184 @@ from tractor._testing import (
 
 _non_linux: bool = platform.system() != 'Linux'
 _friggin_macos: bool = platform.system() == 'Darwin'
+
+
+def _kill_proc_tree(proc: subprocess.Popen) -> None:
+    '''
+    Terminate an example process and its POSIX descendants.
+
+    '''
+    try:
+        if platform.system() == 'Windows':
+            proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _reap_killed_proc(
+    proc: subprocess.Popen,
+) -> tuple[bytes, bytes]:
+    '''
+    Reap a killed process without waiting on Windows descendants.
+
+    '''
+    if platform.system() != 'Windows':
+        return proc.communicate()
+
+    proc.wait(timeout=5)
+    if proc.stdin:
+        proc.stdin.close()
+    if proc.stdout:
+        proc.stdout.close()
+    if proc.stderr:
+        proc.stderr.close()
+    return b'', b''
+
+
+def _wait_for_proc(
+    proc: subprocess.Popen,
+    timeout: float,
+    test_log: tractor.log.StackLevelAdapter,
+) -> None:
+    '''
+    Wait for an example process and surface its captured output.
+
+    '''
+    try:
+        out, err = proc.communicate(timeout=timeout)
+
+    except subprocess.TimeoutExpired as timeout_exc:
+        test_log.exception(
+            f'Example failed to finish within {timeout}s ??\n'
+        )
+        _kill_proc_tree(proc)
+        out, err = _reap_killed_proc(proc)
+        if platform.system() == 'Windows':
+            out = timeout_exc.output or b''
+            err = timeout_exc.stderr or b''
+
+    errmsg: str = err.decode(errors='replace')
+
+    # NOTE: always include captured stdout and stderr for a non-zero
+    # exit. Depending on the final stderr line previously hid grouped
+    # exception diagnostics; see GH #473.
+    #
+    # The prior impl only raised when the LAST stderr
+    # line contained 'Error', swallowing any crash whose
+    # traceback ends in a non-`XxxError:` line; in
+    # particular EVERY `tractor` root-actor crash ends
+    # with the strict-EG collapse note,
+    # '( ^^^ this exc was collapsed from a group ^^^ )',
+    # so ALL such failures were reduced to a bare
+    # `assert 1 == 0` in CI logs.. see GH #473.
+    rc: int|None = proc.returncode
+    if rc:
+        outmsg: str = out.decode(errors='replace')
+        raise Exception(
+            f'Example script exited with rc={rc} !?\n'
+            f'\n'
+            f'stdout:\n'
+            f'{outmsg}\n'
+            f'\n'
+            f'stderr:\n'
+            f'{errmsg}\n'
+        )
+
+    # if we get some gnarly output let's aggregate and raise
+    if errmsg:
+        errlines = errmsg.splitlines()
+        last_error = errlines[-1]
+        if (
+            'Error' in last_error
+
+            # XXX: currently we print this to console, but maybe
+            # shouldn't eventually once we figure out what's
+            # a better way to be explicit about aio side
+            # cancels?
+            and
+            'asyncio.exceptions.CancelledError' not in last_error
+        ):
+            raise Exception(errmsg)
+
+    assert proc.returncode == 0
+
+
+def test_wait_for_failed_example_captures_output():
+    '''
+    Preserve diagnostics from a subprocess which already exited.
+
+    The previous `poll()` guard skipped `communicate()` when a fast
+    failure returned a non-zero status before the parent checked it.
+    Its stdout and stderr were therefore reported as empty. This
+    fake process begins with `returncode=1` and returns non-UTF-8
+    output, proving the helper always drains both pipes and replaces
+    undecodable bytes without hiding the original process failure.
+
+    '''
+    proc = Mock()
+    proc.returncode = 1
+    proc.communicate.return_value = (
+        b'stdout\xff',
+        b'stderr\xff',
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        _wait_for_proc(
+            proc=proc,
+            timeout=1,
+            test_log=Mock(),
+        )
+
+    proc.communicate.assert_called_once_with(timeout=1)
+    errmsg: str = str(exc_info.value)
+    assert 'stdout\ufffd' in errmsg
+    assert 'stderr\ufffd' in errmsg
+
+
+@pytest.mark.skipif(
+    platform.system() == 'Windows',
+    reason='POSIX process groups are unavailable on Windows',
+)
+def test_wait_for_timed_out_example_reaps_group(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Kill the example process group and reap its leader on timeout.
+
+    The old timeout branch killed only the immediate process and
+    never drained it. Actor descendants could retain the capture
+    pipes while the leader remained unreaped, hanging CI until its
+    job timeout. This fake process raises `TimeoutExpired` on the
+    timed wait and completes on the second `communicate()` call;
+    the assertions prove group-directed `SIGKILL` precedes that
+    final drain and leaves a concrete non-zero return code.
+
+    '''
+    proc = Mock()
+    proc.pid = 1234
+
+    def communicate(timeout=None):
+        if timeout is not None:
+            raise subprocess.TimeoutExpired('example', timeout)
+        proc.returncode = -signal.SIGKILL
+        return b'', b'timed out'
+
+    proc.communicate.side_effect = communicate
+    killpg = Mock()
+    monkeypatch.setattr(os, 'killpg', killpg)
+
+    with pytest.raises(Exception, match='timed out'):
+        _wait_for_proc(
+            proc=proc,
+            timeout=.01,
+            test_log=Mock(),
+        )
+
+    killpg.assert_called_once_with(1234, signal.SIGKILL)
+    assert proc.communicate.call_count == 2
+    assert proc.returncode == -signal.SIGKILL
 
 
 @pytest.fixture
@@ -61,14 +241,14 @@ def run_example_in_subproc(
             ]
         else:
             script_file = testdir.makefile('.py', script_code)
+            kwargs['start_new_session'] = True
             cmdargs = [
                 sys.executable,
                 str(script_file),
             ]
 
-        # XXX: BE FOREVER WARNED: if you enable lots of tractor logging
-        # in the subprocess it may cause infinite blocking on the pipes
-        # due to backpressure!!!
+        # Captured pipes are drained by `_wait_for_proc()` while the
+        # example runs.
         proc = testdir.popen(
             cmdargs,
             stdin=subprocess.PIPE,
@@ -77,9 +257,20 @@ def run_example_in_subproc(
             **kwargs,
         )
         assert not proc.returncode
-        yield proc
-        proc.wait()
-        assert proc.returncode == 0
+        try:
+            yield proc
+        except BaseException:
+            if proc.poll() is None:
+                try:
+                    _kill_proc_tree(proc)
+                    _reap_killed_proc(proc)
+                except Exception:
+                    pass
+            raise
+        else:
+            if proc.poll() is None:
+                _kill_proc_tree(proc)
+                _reap_killed_proc(proc)
 
     yield run
 
@@ -145,21 +336,6 @@ def test_example(
             'This test does run just fine "in person" however..'
         )
 
-    if (
-        'uds_transport_actor_tree' in ex_file
-        and
-        _friggin_macos
-        and
-        ci_env
-    ):
-        pytest.skip(
-            'UDS-transport example reliably fails on macOS CI.\n'
-            'UDS-on-macOS is otherwise un-exercised by the matrix\n'
-            '(no `tpt_proto=uds` macOS job), so this new example is\n'
-            'the first to surface it; the macOS UDS path needs\n'
-            'root-causing. Passes on Linux.'
-        )
-
     from .conftest import cpu_perf_headroom
 
     timeout: float = (
@@ -178,33 +354,8 @@ def test_example(
         code = ex.read()
 
         with run_example_in_subproc(code) as proc:
-            err = None
-            try:
-                if not proc.poll():
-                    _, err = proc.communicate(timeout=timeout)
-
-            except subprocess.TimeoutExpired as e:
-                test_log.exception(
-                    f'Example failed to finish within {timeout}s ??\n'
-                )
-                proc.kill()
-                err = e.stderr
-
-            # if we get some gnarly output let's aggregate and raise
-            if err:
-                errmsg = err.decode()
-                errlines = errmsg.splitlines()
-                last_error = errlines[-1]
-                if (
-                    'Error' in last_error
-
-                    # XXX: currently we print this to console, but maybe
-                    # shouldn't eventually once we figure out what's
-                    # a better way to be explicit about aio side
-                    # cancels?
-                    and
-                    'asyncio.exceptions.CancelledError' not in last_error
-                ):
-                    raise Exception(errmsg)
-
-            assert proc.returncode == 0
+            _wait_for_proc(
+                proc=proc,
+                timeout=timeout,
+                test_log=test_log,
+            )

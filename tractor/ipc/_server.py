@@ -72,6 +72,8 @@ if TYPE_CHECKING:
 
 log = log.get_logger()
 
+_PRE_REG_HANDSHAKE_TIMEOUT: float = 10
+
 
 async def maybe_wait_on_canced_subs(
     uid: tuple[str, str],
@@ -316,8 +318,6 @@ async def handle_stream_from_peer(
       )
 
     '''
-    server._no_more_peers = trio.Event()  # unset by making new
-
     # TODO, debug_mode tooling for when hackin this lower layer?
     # with debug.maybe_open_crash_handler(
     #     pdb=True,
@@ -335,6 +335,7 @@ async def handle_stream_from_peer(
         if actor := _state.current_actor():
             peer_aid: msgtypes.Aid = await chan._do_handshake(
                 aid=actor.aid,
+                timeout=_PRE_REG_HANDSHAKE_TIMEOUT,
             )
     except (
         TransportClosed,
@@ -351,18 +352,22 @@ async def handle_stream_from_peer(
         # "kinda-error" that we expect to tolerate during
         # discovery-sys related pings, queires, DoS etc.
     ):
-        # XXX: This may propagate up from `Channel._aiter_recv()`
-        # and `MsgpackStream._inter_packets()` on a read from the
-        # stream particularly when the runtime is first starting up
-        # inside `open_root_actor()` where there is a check for
-        # a bound listener on the registrar addr.  the reset will be
-        # because the handshake was never meant took place.
+        # `TransportClosed` is expected when a peer disconnects or
+        # fails the initial typed handshake, including foreign clients
+        # and probes racing shutdown.
         log.runtime(
             con_status
             +
             ' -> But failed to handshake? Ignoring..\n'
         )
         return
+
+    # Registry election probes need only the server's `Aid` capability
+    # response; never register them as ordinary RPC peers.
+    if peer_aid.is_probe:
+        return
+
+    server._no_more_peers = trio.Event()  # unset by making new
 
     uid: tuple[str, str] = (
         peer_aid.name,

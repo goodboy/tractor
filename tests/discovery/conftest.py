@@ -1,21 +1,18 @@
 '''
-Discovery-suite fixtures, including the `daemon`
-remote-registrar subprocess used by the multi-program
-discovery tests.
+Discovery-suite fixtures, including the `daemon` remote-registrar
+subprocess used by the multi-program discovery tests.
 
 Lives here (vs. the parent `tests/conftest.py`)
-because `daemon` is a discovery-protocol primitive —
-boots a separate `tractor.run_daemon()` process whose
-sole purpose is to serve as a registrar peer for
+because `daemon` is a discovery-protocol primitive: it boots a child
+that enters `open_root_actor()` and waits as a registrar peer for
 discovery-roundtrip tests. Pytest fixtures inherit
 DOWNWARD through conftest hierarchy, so anything
 under `tests/discovery/` automatically picks this up.
 
 '''
 from __future__ import annotations
-import os
+from pathlib import Path
 import platform
-import socket
 import subprocess
 import sys
 import time
@@ -31,33 +28,27 @@ from ..conftest import (
 
 
 def _wait_for_daemon_ready(
-    reg_addr: tuple,
-    tpt_proto: str,
+    ready_path: Path,
     *,
     deadline: float = 10.0,
     poll_interval: float = 0.05,
     proc: subprocess.Popen|None = None,
 ) -> None:
     '''
-    Active-poll the daemon's bind address until it
-    accepts a connection (proving it has called
-    `bind() + listen()` and is ready to handle IPC).
+    Poll until the daemon reports completed actor startup.
 
     Replaces the historical blind `time.sleep()` in the
     `daemon` fixture which was racy under load — see
     `ai/conc-anal/test_register_duplicate_name_daemon_connect_race_issue.md`.
 
-    Uses stdlib `socket` directly (no trio runtime
-    bootstrap cost) — sufficient because
-    `tractor.run_daemon()` doesn't return from
-    bootstrap until the runtime is fully ready to
-    accept IPC.
+    The child writes `ready_path` only after entering
+    `open_root_actor()`, which guarantees all transport listeners are
+    serving without requiring a raw connection probe.
 
     Raises `TimeoutError` on `deadline` exceeded. If
     `proc` is given, ALSO raises early if the daemon
-    process exits non-zero before the deadline (catches
-    daemon-startup-crash that the blind sleep used to
-    silently mask).
+    process exits before the deadline (catches a daemon startup crash
+    that the blind sleep used to silently mask).
 
     '''
     end: float = time.monotonic() + deadline
@@ -70,43 +61,25 @@ def _wait_for_daemon_ready(
         if proc is not None and proc.poll() is not None:
             raise RuntimeError(
                 f'Daemon proc exited (rc={proc.returncode}) '
-                f'before becoming ready to accept on '
-                f'{reg_addr!r}'
+                f'before reporting ready at {ready_path!r}'
             )
         try:
-            if tpt_proto == 'tcp':
-                # `socket.create_connection` does the
-                # `socket() + connect()` dance with a
-                # builtin timeout — perfect primitive
-                # for a one-shot probe.
-                with socket.create_connection(
-                    reg_addr,
-                    timeout=poll_interval,
-                ):
-                    return
-            else:
-                # UDS — `reg_addr` is a `(filedir, sockname)`
-                # tuple per `tractor.ipc._uds.UDSAddress.unwrap`.
-                sockpath: str = os.path.join(*reg_addr)
-                sock = socket.socket(socket.AF_UNIX)
-                try:
-                    sock.settimeout(poll_interval)
-                    sock.connect(sockpath)
-                    return
-                finally:
-                    sock.close()
+            if ready_path.is_file():
+                if proc is not None and proc.poll() is not None:
+                    raise RuntimeError(
+                        f'Daemon proc exited (rc={proc.returncode}) '
+                        f'after reporting ready at {ready_path!r}'
+                    )
+                return
         except (
-            ConnectionRefusedError,
             FileNotFoundError,
             OSError,
-            socket.timeout,
         ) as exc:
             last_exc = exc
-            time.sleep(poll_interval)
+        time.sleep(poll_interval)
     raise TimeoutError(
-        f'Daemon never accepted on {reg_addr!r} within '
-        f'{deadline}s (last connect-attempt exc: '
-        f'{last_exc!r})'
+        f'Daemon never reported ready at {ready_path!r} within '
+        f'{deadline}s (last sentinel-state exc: {last_exc!r})'
     )
 
 
@@ -136,18 +109,27 @@ def daemon(
         )
         loglevel: str = 'info'
 
+    ready_path: Path = (
+        Path(str(testdir.tmpdir))
+        / 'daemon-ready'
+    )
+    ready_path.unlink(missing_ok=True)
     code: str = (
-        "import tractor; "
-        "tractor.run_daemon([], "
-        "registry_addrs={reg_addrs}, "
-        "enable_transports={enable_tpts}, "
-        "debug_mode={debug_mode}, "
-        "loglevel={ll})"
-    ).format(
-        reg_addrs=str([reg_addr]),
-        enable_tpts=str([tpt_proto]),
-        ll="'{}'".format(loglevel) if loglevel else None,
-        debug_mode=debug_mode,
+        f'from pathlib import Path\n'
+        f'import tractor\n'
+        f'import trio\n'
+        f'\n'
+        f'async def main():\n'
+        f'    async with tractor.open_root_actor(\n'
+        f'        registry_addrs={[reg_addr]!r},\n'
+        f'        enable_transports={[tpt_proto]!r},\n'
+        f'        debug_mode={debug_mode!r},\n'
+        f'        loglevel={loglevel!r},\n'
+        f'    ):\n'
+        f'        Path({str(ready_path)!r}).touch()\n'
+        f'        await trio.sleep_forever()\n'
+        f'\n'
+        f'trio.run(main)\n'
     )
     cmd: list[str] = [
         sys.executable,
@@ -163,9 +145,9 @@ def daemon(
         **kwargs,
     )
 
-    # Active-poll the daemon's bind address until it's
-    # ready to accept connections — replaces the legacy
-    # blind `time.sleep(2.2)` which was racy under load
+    # Poll the child's ready sentinel, published after actor startup,
+    # instead of connecting to its transport socket. This replaces
+    # the legacy blind `time.sleep(2.2)` which was racy under load
     # (see
     # `ai/conc-anal/test_register_duplicate_name_daemon_connect_race_issue.md`).
     #
@@ -176,48 +158,49 @@ def daemon(
         15.0 if (_non_linux and ci_env)
         else 10.0
     )
-    _wait_for_daemon_ready(
-        reg_addr=reg_addr,
-        tpt_proto=tpt_proto,
-        deadline=deadline,
-        proc=proc,
-    )
-
-    assert not proc.returncode
-    yield proc
-    sig_prog(proc, _INT_SIGNAL)
-
-    # XXX! yeah.. just be reaaal careful with this bc
-    # sometimes it can lock up on the `_io.BufferedReader`
-    # and hang..
-    #
-    # NB, drain happens at TEARDOWN (post-yield), so the
-    # test body has its chance to read `proc.stderr`
-    # FIRST. Reading here AFTER would silently swallow
-    # the daemon's stderr output and break tests that
-    # assert on it (e.g. `test_abort_on_sigint`).
-    stderr: str = proc.stderr.read().decode()
-    stdout: str = proc.stdout.read().decode()
-    if (
-        stderr
-        or
-        stdout
-    ):
-        print(
-            f'Daemon actor tree produced output:\n'
-            f'{proc.args}\n'
-            f'\n'
-            f'stderr: {stderr!r}\n'
-            f'stdout: {stdout!r}\n'
+    try:
+        _wait_for_daemon_ready(
+            ready_path=ready_path,
+            deadline=deadline,
+            proc=proc,
         )
 
-    if (rc := proc.returncode) != -2:
-        msg: str = (
-            f'Daemon actor tree was not cancelled !?\n'
-            f'proc.args: {proc.args!r}\n'
-            f'proc.returncode: {rc!r}\n'
-        )
-        if rc < 0:
-            raise RuntimeError(msg)
+        assert not proc.returncode
+        yield proc
+    finally:
+        if proc.poll() is None:
+            sig_prog(proc, _INT_SIGNAL)
 
-        test_log.error(msg)
+        # NOTE: these blocking reads can hang when descendants retain
+        # inherited pipe descriptors. Keep teardown signaling above
+        # them and avoid adding subprocesses outside the actor tree.
+        #
+        # NB, drain happens at TEARDOWN (post-yield), so the
+        # test body has its chance to read `proc.stderr`
+        # FIRST. Reading here AFTER would silently swallow
+        # the daemon's stderr output and break tests that
+        # assert on it (e.g. `test_abort_on_sigint`).
+        stderr: str = proc.stderr.read().decode()
+        stdout: str = proc.stdout.read().decode()
+        if (
+            stderr
+            or
+            stdout
+        ):
+            print(
+                f'Daemon actor tree produced output:\n'
+                f'{proc.args}\n'
+                f'\n'
+                f'stderr: {stderr!r}\n'
+                f'stdout: {stdout!r}\n'
+            )
+
+        if (rc := proc.returncode) != -2:
+            msg: str = (
+                f'Daemon actor tree was not cancelled !?\n'
+                f'proc.args: {proc.args!r}\n'
+                f'proc.returncode: {rc!r}\n'
+            )
+            if rc < 0:
+                raise RuntimeError(msg)
+            test_log.error(msg)

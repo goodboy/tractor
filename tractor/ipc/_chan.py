@@ -33,6 +33,7 @@ from typing import (
 )
 import warnings
 
+import msgspec
 import trio
 
 from ._types import (
@@ -495,6 +496,7 @@ class Channel:
     async def _do_handshake(
         self,
         aid: Aid,
+        timeout: float|None = None,
 
     ) -> Aid:
         '''
@@ -505,8 +507,28 @@ class Channel:
         "actor model" parlance.
 
         '''
-        await self.send(aid)
-        peer_aid: Aid = await self.recv()
+        try:
+            with trio.fail_after(
+                timeout if timeout is not None else float('inf')
+            ):
+                await self.send(aid)
+                peer_aid: Aid = await self.recv()
+            if not isinstance(peer_aid, Aid):
+                raise TypeError(
+                    f'Expected {Aid!r}, received {peer_aid!r}'
+                )
+        except (
+            MsgTypeError,
+            msgspec.DecodeError,
+            TypeError,
+            UnicodeDecodeError,
+            trio.TooSlowError,
+        ) as handshake_err:
+            raise TransportClosed(
+                message='Peer sent an invalid actor handshake!\n',
+                src_exc=handshake_err,
+                loglevel='warning',
+            ) from handshake_err
         log.runtime(
             f'Received hanshake with peer\n'
             f'<= {peer_aid.reprol(sin_uuid=False)}\n'
@@ -518,7 +540,8 @@ class Channel:
 
 @acm
 async def _connect_chan(
-    addr: UnwrappedAddress
+    addr: UnwrappedAddress,
+    close_timeout: float|None = None,
 ) -> typing.AsyncGenerator[Channel, None]:
     '''
     Create and connect a `Channel` to the provided `addr`, disconnect
@@ -529,6 +552,18 @@ async def _connect_chan(
 
     '''
     chan = await Channel.from_addr(addr)
-    yield chan
-    with trio.CancelScope(shield=True):
-        await chan.aclose()
+    try:
+        yield chan
+    finally:
+        with trio.CancelScope(shield=True):
+            if close_timeout is None:
+                await chan.aclose()
+            else:
+                with trio.move_on_after(close_timeout) as close_cs:
+                    await chan.aclose()
+                if close_cs.cancelled_caught:
+                    log.warning(
+                        f'Timed out closing channel after '
+                        f'{close_timeout}s\n'
+                        f'|_{chan}\n'
+                    )

@@ -22,7 +22,10 @@ from __future__ import annotations
 from contextvars import (
     ContextVar,
 )
+import os
 from pathlib import Path
+import stat
+import sys
 from typing import (
     Any,
     Callable,
@@ -40,6 +43,9 @@ from msgspec import (
 if TYPE_CHECKING:
     from ._runtime import Actor
     from .._context import Context
+
+
+_DARWIN_TMPDIR: Path = Path('/tmp')
 
 
 # default IPC transport protocol settings
@@ -317,6 +323,60 @@ def current_ipc_ctx(
 
 
 
+def _ensure_owner_only_posix_dir(
+    path: Path,
+    *,
+    parents: bool = False,
+) -> None:
+    '''
+    Create or validate a UID-owned POSIX runtime directory.
+
+    Pre-existing directories are accepted only when owned by the
+    current user. Their mode is normalized to `0o700` because runtime
+    directories hold IPC sockets and are private bindspaces.
+
+    '''
+    # TODO: https://github.com/goodboy/tractor/issues/494
+    # Research having the actor-tree root process choose and create
+    # this bindspace, then propagate it to every subactor. On
+    # Linux, a private mount namespace could isolate it while letting
+    # spawned subactors inherit access; independently launched
+    # discovery clients would need an explicit join or fallback path.
+    # POSIX metadata alone records UID/GID ownership, so other systems
+    # still need explicit runtime metadata and lifecycle management.
+    try:
+        dir_stat: os.stat_result = path.lstat()
+    except FileNotFoundError:
+        try:
+            path.mkdir(
+                mode=0o700,
+                parents=parents,
+            )
+        except FileExistsError:
+            pass
+        dir_stat = path.lstat()
+
+    if (
+        not stat.S_ISDIR(dir_stat.st_mode)
+        or
+        dir_stat.st_uid != os.getuid()
+    ):
+        platform_name: str = (
+            'Darwin'
+            if sys.platform == 'darwin'
+            else 'POSIX'
+        )
+        raise PermissionError(
+            f'Unsafe {platform_name} runtime directory!\n'
+            f'path: {path}\n'
+            f'owner uid: {dir_stat.st_uid}\n'
+            f'mode: {stat.filemode(dir_stat.st_mode)}\n'
+        )
+
+    if stat.S_IMODE(dir_stat.st_mode) != 0o700:
+        path.chmod(0o700)
+
+
 def get_rt_dir(
     subdir: str|Path|None = None,
     appname: str = 'tractor',
@@ -326,24 +386,35 @@ def get_rt_dir(
     userspace apps stick their IPC and cache related system
     util-files.
 
-    On linux we use a `${XDG_RUNTIME_DIR}/tractor/` subdir by
-    default, but equivalents are mapped for each platform using
-    the lovely `platformdirs` lib.
+    Linux uses an owner-only `${XDG_RUNTIME_DIR}/tractor/`; Darwin
+    uses a short, owner-only `/tmp/tractor-<uid>` path; other
+    platforms use the lovely `platformdirs` lib.
 
     '''
     # lazy-imported to keep it off the eager
     # `import tractor` path (gh #470).
     import platformdirs
 
-    rt_dir: Path = Path(
-        platformdirs.user_runtime_dir(
-            appname=appname,
-        ),
-    )
+    rt_root: Path|None = None
+    if sys.platform == 'darwin':
+        # Darwin's AF_UNIX path limit is 104 bytes. The standard
+        # platformdirs path can consume that before the sock name.
+        rt_root = (
+            _DARWIN_TMPDIR
+            / f'{appname}-{os.getuid()}'
+        )
+        rt_dir: Path = rt_root
+    else:
+        rt_dir = Path(
+            platformdirs.user_runtime_dir(
+                appname=appname,
+            ),
+        )
 
     # Normalize and validate that `subdir` is a relative path
     # without any parent-directory ("..") components, to prevent
     # escaping the runtime directory.
+    subdir_path: Path|None = None
     if subdir:
         subdir_path = (
             subdir
@@ -361,13 +432,28 @@ def get_rt_dir(
                 f'{subdir!r}\n'
             )
 
-        rt_dir: Path = rt_dir / subdir_path
+    if os.name != 'posix':
+        if subdir_path is not None:
+            rt_dir = rt_dir / subdir_path
+        if not rt_dir.is_dir():
+            rt_dir.mkdir(
+                # Runtime dirs hold IPC sockets; owner-only access
+                # prevents other users from traversing the bindspace.
+                mode=0o700,
+                parents=True,
+                exist_ok=True,
+            )
+        return rt_dir
 
-    if not rt_dir.is_dir():
-        rt_dir.mkdir(
-            parents=True,
-            exist_ok=True,  # avoid `FileExistsError` from conc calls
-        )
+    _ensure_owner_only_posix_dir(
+        rt_dir,
+        parents=(rt_root is None),
+    )
+
+    if subdir_path is not None:
+        for part in subdir_path.parts:
+            rt_dir = rt_dir / part
+            _ensure_owner_only_posix_dir(rt_dir)
 
     return rt_dir
 

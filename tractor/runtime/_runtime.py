@@ -259,6 +259,7 @@ class Actor:
             name=name,
             uuid=uuid,
             pid=os.getpid(),
+            is_registrar=self.is_registrar,
         )
         self._task: trio.Task|None = None
 

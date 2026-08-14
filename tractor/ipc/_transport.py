@@ -33,6 +33,7 @@ from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
 )
+import errno
 import struct
 
 import trio
@@ -59,6 +60,68 @@ if TYPE_CHECKING:
     from tractor.discovery._addr import Address
 
 log = get_logger()
+
+
+def _peer_closed_errno(exc: BaseException) -> int|None:
+    '''
+    Classify a complete transport exception tree as peer closure.
+
+    Follow explicit cause/context links. For a `BaseExceptionGroup`,
+    require every child branch to resolve to a peer-close errno so an
+    unrelated concurrent failure is never hidden as `TransportClosed`.
+
+    '''
+    def find_peer_errno(
+        current_exc: BaseException,
+        ancestors: set[int],
+    ) -> int|None:
+        exc_id: int = id(current_exc)
+        if exc_id in ancestors:
+            return None
+
+        ancestors = ancestors | {exc_id}
+        if (
+            isinstance(current_exc, OSError)
+            and
+            current_exc.errno in {
+                errno.ECONNRESET,
+                errno.EPIPE,
+            }
+        ):
+            return current_exc.errno
+
+        if isinstance(current_exc, BaseExceptionGroup):
+            child_errnos: list[int|None] = [
+                find_peer_errno(
+                    child_exc,
+                    ancestors,
+                )
+                for child_exc in current_exc.exceptions
+            ]
+            if all(
+                child_errno is not None
+                for child_errno in child_errnos
+            ):
+                return child_errnos[0]
+            return None
+
+        chained_exc: BaseException|None = (
+            current_exc.__cause__
+            or
+            current_exc.__context__
+        )
+        if chained_exc is not None:
+            return find_peer_errno(
+                chained_exc,
+                ancestors,
+            )
+
+        return None
+
+    return find_peer_errno(
+        exc,
+        set(),
+    )
 
 
 # (codec, transport)
@@ -443,23 +506,23 @@ class MsgpackTransport(MsgTransport):
                 trans_err = _re
                 tpt_name: str = f'{type(self).__name__!r}'
 
-                trans_err_msg: str = trans_err.args[0]
+                trans_err_msg: str = (
+                    str(trans_err.args[0])
+                    if trans_err.args
+                    else ''
+                )
                 by_whom: str = {
                     'another task closed this fd': 'locally',
                     'this socket was already closed': 'by peer',
                 }.get(trans_err_msg)
                 match trans_err:
 
-                    # XXX, specifc to UDS transport and its,
-                    # well, "speediness".. XD
-                    # |_ likely todo with races related to how fast
-                    #    the socket is setup/torn-down on linux
-                    #    as it pertains to rando pings from the
-                    #    `.discovery` subsys and protos.
+                    # UDS peers can disconnect before handshake.
+                    # Linux normally reports `EPIPE`; Darwin reports
+                    # `ECONNRESET` for the same expected closure.
                     case trio.BrokenResourceError() if (
-                        '[Errno 32] Broken pipe'
-                        in
-                        trans_err_msg
+                        _peer_closed_errno(trans_err)
+                        is not None
                     ):
                         tpt_closed = TransportClosed.from_src_exc(
                             message=(
