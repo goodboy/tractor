@@ -1307,18 +1307,30 @@ def test_ctxep_pauses_n_maybe_ipc_breaks(
             if _non_linux:
                 tpt: str = 'TCP'
 
-            assert_before(
+            before: str = assert_before(
                 child,
                 ['peer IPC channel closed abruptly?',
                  'another task closed this fd',
                  'Debug lock request was CANCELLED?',
-                 f"'Msgpack{tpt}Stream' was already closed locally?",
-                 f"TransportClosed: 'Msgpack{tpt}Stream' was already closed 'by peer'?",
-                ]
+                 ]
 
-                # XXX races on whether these show/hit?
-                 # 'Failed to REPl via `_pause()` You called `tractor.pause()` from an already cancelled scope!',
-                 # 'AssertionError',
+                 # XXX races on whether these show/hit?
+                  # 'Failed to REPl via `_pause()` You called `tractor.pause()` from an already cancelled scope!',
+                  # 'AssertionError',
+            )
+
+            # Error shipment and peer receive race after local close.
+            # Either diagnostic proves the transport was torn down.
+            closed_locally: str = (
+                f"'Msgpack{tpt}Stream' was already closed locally?"
+            )
+            closed_by_peer: str = (
+                f"TransportClosed: 'Msgpack{tpt}Stream' was "
+                f"already closed 'by peer'?"
+            )
+            assert (
+                closed_locally in before
+                or closed_by_peer in before
             )
             # OSc(ancel) the hanging tree
             do_ctlc(
