@@ -111,14 +111,13 @@ SHM_DIR: str = '/dev/shm'
 
 # UDS-socket leak sweep — see `find_orphaned_uds()` /
 # `reap_uds()` below. Tractor's UDS transport
-# (`tractor.ipc._uds`) creates sock files under
-# `${XDG_RUNTIME_DIR}/tractor/<name>@<pid>.sock`; a
+# (`tractor.ipc._uds`) creates sock files in its platform-specific
+# default bindspace; a
 # crash / SIGKILL / mid-cancel teardown can leave the
 # file behind because `os.unlink()` lives in the
 # `_serve_ipc_eps` `finally:` block which doesn't always
 # get to run on hard exits. The reaper here is best-effort
 # cleanup for the test harness + the `tractor-reap` CLI.
-_UDS_SUBDIR: str = 'tractor'
 # `<actor-name>@<pid>.sock` — pid is the binder's pid at
 # creation time. Special sentinel: `registry@1616.sock`
 # uses the magic `1616` not a real pid (the root
@@ -738,19 +737,16 @@ def reap_shm(
 
 def get_uds_dir() -> str|None:
     '''
-    Path of tractor's per-user UDS sock-file dir
-    (`${XDG_RUNTIME_DIR}/tractor/`).
+    Path of Tractor's platform-specific default UDS bindspace.
 
-    Returns `None` when `XDG_RUNTIME_DIR` is unset (e.g.
-    non-systemd hosts, or inside a container without the
-    var plumbed through). Caller should treat that as
-    "no UDS leaks possible to detect — skip".
+    Returns `None` only when the bindspace cannot be resolved.
 
     '''
-    xdg: str|None = os.environ.get('XDG_RUNTIME_DIR')
-    if not xdg:
+    try:
+        from tractor.ipc._uds import UDSAddress
+        return str(UDSAddress.def_bindspace)
+    except Exception:
         return None
-    return os.path.join(xdg, _UDS_SUBDIR)
 
 
 def _parse_uds_name(filename: str) -> tuple[str, int]|None:
@@ -768,16 +764,16 @@ def _parse_uds_name(filename: str) -> tuple[str, int]|None:
 def find_orphaned_uds(
     *,
     uds_dir: str|None = None,
+    include_registry_sentinel: bool = False,
 ) -> list[str]:
     '''
     `<uds_dir>/*.sock` paths whose binder pid is no
-    longer alive (orphaned). Includes the
-    `registry@1616.sock` sentinel — `1616` is a magic
-    sentinel pid (not a real one) so the file's
-    presence alone signals a leak from a dead session.
+    longer alive (orphaned). Explicit callers may include the
+    `registry@1616.sock` sentinel; automatic pytest cleanup excludes
+    it because binder liveness cannot be inferred from magic `1616`.
 
-    Returns `[]` on platforms without `XDG_RUNTIME_DIR`
-    or when the dir doesn't exist. Files whose name
+    Returns `[]` when the platform bindspace cannot be resolved or the
+    dir doesn't exist. Files whose name
     doesn't match the `<name>@<pid>.sock` pattern are
     skipped (we don't unlink things we don't recognize).
 
@@ -811,10 +807,8 @@ def find_orphaned_uds(
             continue
         _name, pid = parsed
         if pid == _UDS_REGISTRY_SENTINEL_PID:
-            # sentinel — never a real pid; if the file
-            # exists nobody live is "owning" it via
-            # /proc lookup, so always orphaned
-            leaked.append(path)
+            if include_registry_sentinel:
+                leaked.append(path)
             continue
         if not _is_alive(pid):
             leaked.append(path)
@@ -933,8 +927,8 @@ def track_orphaned_uds_per_test():
     teardown that flakifies sibling tests via
     sock-file rebind races).
 
-    Snapshots `${XDG_RUNTIME_DIR}/tractor/` before and
-    after each test; any `<name>@<pid>.sock` files
+    Snapshots Tractor's platform-specific default UDS bindspace before
+    and after each test; any `<name>@<pid>.sock` files
     created during the test that survive teardown AND
     whose creator pid is dead are surfaced as a loud
     warning AND reaped, so the next test starts with a
@@ -950,8 +944,8 @@ def track_orphaned_uds_per_test():
     it (vs. blanket session-end sweep) makes blame
     obvious + prevents cascade flakiness.
 
-    Cheap: 2x `os.listdir` + a few `os.stat`s per test.
-    Skips silently when `XDG_RUNTIME_DIR` isn't set.
+    Cheap: 2x `os.listdir` + a few `os.stat`s per test. Skips silently
+    when the platform bindspace cannot be resolved.
 
     '''
     uds_dir: str|None = get_uds_dir()

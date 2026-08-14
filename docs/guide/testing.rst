@@ -185,8 +185,10 @@ first with a bounded grace window — so actor runtimes can run
 their ``trio`` teardown paths — escalating to ``SIGKILL`` only as
 a last resort. The ``--shm`` sweep unlinks ``/dev/shm/`` segments
 that no live process has open (it leans on psutil_, already in
-your dev venv, to check live mappings and fds) and ``--uds``
-clears socket files whose binder pid is dead.
+your dev venv, to check live mappings and fds) and ``--uds`` clears
+dead-binder sockets from Tractor's platform-specific runtime dir. It
+also unconditionally removes ``registry@1616.sock``; do not run the UDS
+sweep while a live registrar is serving from that default address.
 
 Testing your own ``tractor`` app
 --------------------------------

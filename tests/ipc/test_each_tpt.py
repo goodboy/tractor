@@ -5,6 +5,7 @@ Unit-ish tests for specific IPC transport protocol backends.
 from __future__ import annotations
 import os
 from pathlib import Path
+import socket
 import stat
 import sys
 from types import SimpleNamespace
@@ -97,6 +98,74 @@ def test_macos_rt_dir_rejects_symlink(
         _state.get_rt_dir()
 
     assert stat.S_IMODE(target_dir.stat().st_mode) == 0o755
+
+
+def test_reaper_uses_default_uds_bindspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    '''
+    Sweep the same platform-specific bindspace used by UDS actors.
+
+    The reaper previously consulted only `XDG_RUNTIME_DIR`, missing
+    Darwin sockets after the runtime moved to `/tmp/tractor-<uid>`.
+    This test replaces `UDSAddress.def_bindspace` and proves the test
+    harness resolves that shared transport default directly.
+
+    '''
+    from tractor._testing import _reap
+    from tractor.ipc._uds import UDSAddress
+
+    monkeypatch.setattr(
+        UDSAddress,
+        'def_bindspace',
+        tmp_path,
+    )
+
+    assert _reap.get_uds_dir() == str(tmp_path)
+
+
+def test_automatic_reaper_preserves_registry_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    '''
+    Reserve unconditional registry cleanup for the explicit CLI.
+
+    The `registry@1616.sock` suffix does not encode its binder PID, so
+    automatic pytest cleanup cannot distinguish a leak from another
+    live registrar. This test creates registry and actor sockets,
+    proves the default sweep selects only the dead actor, then proves
+    explicit sentinel inclusion retains the CLI's documented behavior.
+
+    '''
+    from tractor._testing import _reap
+
+    registry_path: Path = tmp_path / 'registry@1616.sock'
+    actor_path: Path = tmp_path / 'worker@1234.sock'
+    socks: list[socket.socket] = []
+    for path in (registry_path, actor_path):
+        sock = socket.socket(socket.AF_UNIX)
+        sock.bind(str(path))
+        socks.append(sock)
+
+    monkeypatch.setattr(_reap, '_is_alive', lambda pid: False)
+    try:
+        assert _reap.find_orphaned_uds(
+            uds_dir=str(tmp_path),
+        ) == [str(actor_path)]
+        assert set(
+            _reap.find_orphaned_uds(
+                uds_dir=str(tmp_path),
+                include_registry_sentinel=True,
+            )
+        ) == {
+            str(registry_path),
+            str(actor_path),
+        }
+    finally:
+        for sock in socks:
+            sock.close()
 
 
 def test_rt_dir_rejects_non_directory(

@@ -23,10 +23,10 @@ Two cleanup phases (run in order when both are enabled):
    hard-crashing actor leaves leaked segments that
    nothing else GCs.
 
-3. **UDS sweep** (`--uds` / `--uds-only`) — unlinks
-   `${XDG_RUNTIME_DIR}/tractor/<name>@<pid>.sock` files
-   whose binder pid is dead (or the `1616` registry
-   sentinel). Needed because the IPC server's
+3. **UDS sweep** (`--uds` / `--uds-only`) — unlinks socket
+   files from Tractor's platform-specific default bindspace whose
+   binder pid is dead (or the `1616` registry sentinel). Needed
+   because the IPC server's
    `os.unlink()` cleanup lives in a `finally:` block
    that doesn't always run on hard exits (SIGKILL,
    escaped `KeyboardInterrupt`, etc.) — see issue #452.
@@ -137,8 +137,8 @@ def main() -> int:
         action='store_true',
         help=(
             'after process reap, also unlink orphaned '
-            '${XDG_RUNTIME_DIR}/tractor/*.sock files '
-            'whose binder pid is dead (or the 1616 '
+            'sockets from Tractor\'s platform default '
+            'bindspace whose binder pid is dead (or the 1616 '
             'registry sentinel). See issue #452.'
         ),
     )
@@ -212,7 +212,9 @@ def main() -> int:
 
     # --- phase 3: UDS sweep (opt-in) ---
     if args.uds or args.uds_only:
-        leaked_uds: list[str] = find_orphaned_uds()
+        leaked_uds: list[str] = find_orphaned_uds(
+            include_registry_sentinel=True,
+        )
         if not leaked_uds:
             print(
                 '[tractor-reap] no orphaned UDS sock-files '
