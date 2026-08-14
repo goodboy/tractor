@@ -39,16 +39,27 @@ this composed form parses and round-trips
 
 ## requirements
 
-The `wg` proto isn't in released `py-multiaddr` yet (`0.2.0` has
-no `wg` codec), so until #108 lands:
+py-multiaddr #108 is **merged** (2026-07-28) but ships in no
+release yet — the latest `0.2.0` (2026-03-17) predates it and has
+no `wg` codec. So `pyproject.toml` carries a temporary
+`[tool.uv.sources]` `rev` pin at the merge commit, and a plain
 
 ```bash
-uv pip install 'git+https://github.com/baudco/py-multiaddr.git@wg_support' multibase
+uv sync
 ```
 
-`wg_maddr.py` degrades to a plain segment split when the codec is
-absent, so the examples still run — but you lose per-segment
-validation. It deliberately does **not** hand-roll a `wg` codec
+gets you a `wg`-aware `multiaddr`. That pin goes away once a
+release carries the codec. You also need `multibase`:
+
+```bash
+uv pip install multibase
+```
+
+Without the codec `wg_maddr.py` degrades to a plain segment split
+— the examples still run, but you lose per-segment validation
+(incl. the 32-byte key-length check), so a malformed key reaches
+the returned struct instead of raising. `_have_wg_maddr_proto()`
+is the gate. It deliberately does **not** hand-roll a `wg` codec
 (gh #429 was about *dropping* our NIH parser).
 
 ## 0. tunnel setup (out-of-band, both hosts)
