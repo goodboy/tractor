@@ -47,7 +47,22 @@ else:
 _tpt_proto_to_maddr: dict[str, str] = {
     'tcp': 'tcp',
     'uds': 'unix',
+    'tipc': 'tipc',
 }
+
+# XXX, there is NO `/tipc` in the multiaddr protocol table yet
+# (upstream track: gh #483 + multiformats/py-multiaddr#107), and
+# `Multiaddr()` rejects an unregistered proto name outright.
+#
+# So until that lands `tipc` maddrs stay **`str`**-only — which
+# `MsgTransport.maddr`s `Multiaddr|str` return type already
+# allows and `MsgpackUDSStream.maddr` already exercises — and
+# `parse_maddr()` special-cases the prefix BEFORE handing
+# anything to `Multiaddr()`.
+#
+# This is also why gh #443's "always return `Multiaddr`" item
+# stays blocked.
+_tipc_maddr_prefix: str = '/tipc/'
 
 # reverse mapping: multiaddr protocol name -> tractor proto_key
 _maddr_to_tpt_proto: dict[str, str] = {
@@ -58,7 +73,7 @@ _maddr_to_tpt_proto: dict[str, str] = {
 
 def mk_maddr(
     addr: 'Address',
-) -> Multiaddr:
+) -> Multiaddr|str:
     '''
     Construct a `Multiaddr` from a tractor `Address` instance,
     dispatching on the `.proto_key` to build the correct
@@ -84,6 +99,18 @@ def mk_maddr(
             )
             return Multiaddr(
                 f'/{net_proto}/{host}/{maddr_proto}/{port}'
+            )
+
+        # NOTE, interim `str`-only grammar (see the
+        # `_tipc_maddr_prefix` note above),
+        #
+        #   /tipc/<stype>/<instance>/<scope>
+        #
+        # mirroring how `uds` maps onto the spec-legal `/unix`.
+        case 'tipc':
+            _, stype, instance, scope = addr.unwrap()
+            return (
+                f'/{maddr_proto}/{stype}/{instance}/{scope}'
             )
 
         case 'uds':
@@ -112,6 +139,17 @@ def parse_maddr(
     from multiaddr import Multiaddr
     from tractor.ipc._tcp import TCPAddress
     from tractor.ipc._uds import UDSAddress
+    from tractor.ipc._tipc import TIPCAddress
+
+    # XXX MUST come before `Multiaddr()` which rejects the
+    # not-yet-registered `/tipc` proto name outright.
+    if maddr_str.startswith(_tipc_maddr_prefix):
+        _, _, stype, instance, scope = maddr_str.split('/')
+        return TIPCAddress(
+            _stype=int(stype),
+            _instance=int(instance),
+            _scope=int(scope),
+        )
 
     maddr = Multiaddr(maddr_str)
     proto_names: list[str] = [
