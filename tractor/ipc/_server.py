@@ -684,7 +684,16 @@ class Endpoint(Struct):
 
         # NOTE, for handling the resolved non-0 port for
         # TCP/UDP network sockets.
+        #
+        # XXX, gated on the addr-type's opt-in since for some
+        # backends `getsockname()` does NOT answer "the addr you
+        # bound"; `tipc` reports a `TIPC_ADDR_ID` port-id instead
+        # of the published name-seq, so rebinding from it would
+        # replace a dialable service-name with an un-dialable
+        # (and un-reconstructable) port-id.
         if (
+            self.addr.rebind_from_sockname
+            and
             (unwrapped := lstnr.socket.getsockname())
             !=
             self.addr.unwrap()

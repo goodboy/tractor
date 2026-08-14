@@ -113,6 +113,16 @@ UnwrappedAddress = TaggedAddress
 class Address(Protocol):
     proto_key: ClassVar[str]
     unwrapped_type: ClassVar[type]
+    # whether `.ipc._server.Endpoint.start_listener()` should
+    # reconcile a bound `.addr` against its listener's
+    # `socket.getsockname()`.
+    #
+    # XXX NOTE, that reconciliation exists ONLY to learn the
+    # kernel-*assigned* port from a `port=0` tcp bind; a backend
+    # whose `getsockname()` reports a categorically different thing
+    # than what was `.bind()`ed must opt out with `False`, else the
+    # ep's addr gets clobbered by an un-dialable one.
+    rebind_from_sockname: ClassVar[bool]
 
     # TODO, i feel like an `.is_bound()` is a better thing to
     # support?

@@ -295,7 +295,10 @@ def test_ep_addr_reconciled_from_sockname(
                     assert accept_addr[1] == 0
                     # ..and the ep learned the real one.
                     assert ep.addr._port != 0
-                    assert ep.addr.unwrap() == tuple(sockname[:2])
+                    assert ep.addr.unwrap() == (
+                        'tcp',
+                        *sockname[:2],
+                    )
 
                 case 'uds':
                     # sock-file path is stable across the
