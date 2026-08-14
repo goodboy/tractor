@@ -117,6 +117,12 @@ class UDSAddress(
     unwrapped_type: ClassVar[type] = tuple[str, int]
     def_bindspace: ClassVar[Path] = get_rt_dir()
 
+    # NOTE, `getsockname()` answers the sock-file path as a `str`
+    # which never `==` our 2-tuple `.unwrap()`, so the round-trip
+    # always fires; it's a no-op modulo `.maybe_pid` and is kept
+    # `True` to preserve pre-existing behaviour exactly.
+    rebind_from_sockname: ClassVar[bool] = True
+
     @property
     def bindspace(self) -> Path:
         '''

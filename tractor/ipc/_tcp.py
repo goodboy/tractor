@@ -65,6 +65,10 @@ class TCPAddress(
     unwrapped_type: ClassVar[type] = tuple[str, int]
     def_bindspace: ClassVar[str] = '127.0.0.1'
 
+    # XXX, REQUIRED here since a `port=0` bind means the kernel
+    # picks and `getsockname()` is the only way we learn it.
+    rebind_from_sockname: ClassVar[bool] = True
+
     # ?TODO, actually validate ipv4/6 with stdlib's `ipaddress`
     @property
     def is_valid(self) -> bool:
