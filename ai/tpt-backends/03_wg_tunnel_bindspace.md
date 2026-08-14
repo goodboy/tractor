@@ -26,10 +26,11 @@ onto `trio` as the library's sans-io layer allows.
   `/ip4|ip6/<h>/tcp/<p>` and `/unix/<p>`; a `.../wg/u<key>`
   maddr raises `ValueError('Unsupported multiaddr protocol
   combo')`.
-- there is no `wg` proto in the multiaddr spec; the first-draft
-  upstream PR is multiformats/py-multiaddr#108 with key form
-  `u<base64url>` (commit `8be3a8b`), tracked by
-  multiformats/py-multiaddr#107 and gh #483.
+- there is no `wg` proto in the multiaddr *spec* yet, but
+  multiformats/py-multiaddr#108 (key form `u<base64url>`) is
+  **merged** as of 2026-07-28 (`f86519da`) — and unreleased, the
+  latest `0.2.0` predating it. Spec registration is still tracked
+  by multiformats/py-multiaddr#107 and gh #483.
 - so **today's deployable story is declarative**: run `wg-quick`
   out-of-band, parse the maddr, strip to the inner
   `(host, port)`, verify the pubkey against the live tunnel,
@@ -112,9 +113,12 @@ class WGTunnelSpec(
 
 ### 3.2 `parse_maddr()`/`mk_maddr()`
 
-Grammar — **verified** against py-multiaddr#108
-(`baudco/py-multiaddr@wg_support`, installed in a throwaway venv;
-all three forms below parse *and* round-trip):
+Grammar — **verified** against py-multiaddr#108, first on the
+`baudco/py-multiaddr@wg_support` branch and re-verified after it
+merged upstream (`multiformats/py-multiaddr@f86519da`); all three
+forms below parse *and* round-trip. Note the codec also validates
+that the key decodes to exactly 32 bytes, so a truncated key is a
+`StringParseError`, not a silently-mangled parse:
 
 ```
 /ip4/192.168.1.50/udp/51820/wg/u<A_pub>/ip4/10.0.11.1/tcp/1616
@@ -169,13 +173,16 @@ Observed protocol-name lists, for writing the `match`:
   (bearer_names, tunnel_specs, inner_names)`. This is also what
   makes a wg-inside-wg stack fall out for free.
 - `mk_maddr()` inverse for `TunnelledAddress`.
-- **blocked on upstream**: `Multiaddr('/…/wg/u…')` only parses
-  once py-multiaddr#108 lands. Until then: pin the branch in the
-  `wg` extra / dev-group and gate the tests on
-  `_have_wg_maddr_proto()` (a cheap try/except around
-  `Multiaddr('/wg/uAAAA')`). Do **not** hand-roll a `wg` parser
-  in `tractor` — the whole point of #429 was dropping the NIH
-  parser.
+- **pending an upstream release**: py-multiaddr#108 is merged, so
+  `Multiaddr('/…/wg/u…')` parses — but off a `[tool.uv.sources]`
+  `rev` pin, since no release carries the codec. Gate the tests
+  on `_have_wg_maddr_proto()`, implemented as
+  `protocols.protocol_with_name('wg')` under
+  `except ProtocolNotFoundError`. Do **not** probe by parsing a
+  dummy like `Multiaddr('/wg/uAAAA')` — the codec enforces a
+  32-byte key, so that raises even when the proto *is* known. Do
+  **not** hand-roll a `wg` parser in `tractor` — the whole point
+  of #429 was dropping the NIH parser.
 
 ### 3.3 verification helper (pure, composable)
 
@@ -437,7 +444,7 @@ consider doing it *first* for exactly that reason.
 | risk | mitigation |
 | --- | --- |
 | `to_thread` worker runs in the wrong netns | §5.3; pass `netns=` to pyroute2 or pin a worker; test-first |
-| py-multiaddr#108 not merged | branch pin + `_have_wg_maddr_proto()` gate; layer A's inner-addr path works regardless |
+| py-multiaddr#108 merged but unreleased | `[tool.uv.sources]` `rev` pin + `_have_wg_maddr_proto()` gate; layer A's inner-addr path works regardless |
 | `TunnelledAddress` leaks into `Endpoint` and breaks `inspect.getmodule()` | unwrap at parse/bindspace boundary; assert `not isinstance(ep.addr, TunnelledAddress)` in `Endpoint.__post_init__` |
 | privileged ops in a library | never `sudo`; explicit cap probe + actionable error; pre-provisioned is the default |
 | pyroute2 0.9 asyncio core drags a loop into the actor | option (1) is a *thread*, not a loop; forbid `trio-asyncio` here (§4.1) |
