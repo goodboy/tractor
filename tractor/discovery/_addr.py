@@ -33,6 +33,7 @@ from ..runtime._state import (
 )
 from ..ipc._tcp import TCPAddress
 from ..ipc._uds import UDSAddress
+from ..ipc._tipc import TIPCAddress
 
 if TYPE_CHECKING:
     from ..runtime._runtime import Actor
@@ -197,6 +198,7 @@ class Address(Protocol):
 _address_types: bidict[str, Type[Address]] = {
     'tcp': TCPAddress,
     'uds': UDSAddress,
+    'tipc': TIPCAddress,
 }
 
 
@@ -208,6 +210,9 @@ _default_lo_addrs: dict[
 ] = {
     'tcp': TCPAddress.get_root().unwrap(),
     'uds': UDSAddress.get_root().unwrap(),
+    # NOTE, pure/cheap: a service-name pair, no kernel module
+    # nor I/O required at import time.
+    'tipc': TIPCAddress.get_root().unwrap(),
 }
 
 
@@ -252,6 +257,16 @@ def wrap_address(
     # if 'sock' in addr[0]:
     #     import pdbp; pdbp.set_trace()
     match addr:
+
+        # XXX, the explicitly proto-keyed form (spelled with the
+        # `multiaddr` proto name) which is where ALL backends
+        # should eventually land per the `UnwrappedAddress`
+        # migration note above.
+        #
+        # NOTE, a bare seq-pattern matches `list` too, which is
+        # what `msgpack` decodes our tuples back to.
+        case ('tipc', *_):
+            cls = TIPCAddress
 
         # classic network socket-address as tuple/list
         case (

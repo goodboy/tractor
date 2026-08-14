@@ -84,6 +84,35 @@ def _wait_for_daemon_ready(
                     timeout=poll_interval,
                 ):
                     return
+
+            elif tpt_proto == 'tipc':
+                # TIPC — `reg_addr` is the proto-keyed
+                # `('tipc', stype, instance, scope)` per
+                # `tractor.ipc._tipc.TIPCAddress.unwrap()`.
+                #
+                # NOTE, connecting *by name* IS the readiness
+                # probe: until the daemon `.bind()`s (i.e.
+                # publishes) the name, the kernel answers
+                # `EHOSTUNREACH` immediately — no timeout wait.
+                from tractor.ipc._tipc import (
+                    AF_TIPC,
+                    TIPC_ADDR_NAME,
+                )
+                _, stype, instance, scope = reg_addr
+                sock = socket.socket(AF_TIPC, socket.SOCK_STREAM)
+                try:
+                    sock.settimeout(poll_interval)
+                    sock.connect((
+                        TIPC_ADDR_NAME,
+                        stype,
+                        instance,
+                        0,  # domain: 0 == "anywhere in scope"
+                        scope,
+                    ))
+                    return
+                finally:
+                    sock.close()
+
             else:
                 # UDS — `reg_addr` is a `(filedir, sockname)`
                 # tuple per `tractor.ipc._uds.UDSAddress.unwrap`.
