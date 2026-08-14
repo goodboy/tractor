@@ -498,6 +498,12 @@ def pytest_configure(
     )
     config.addinivalue_line(
         'markers',
+        'tipc: test targets the `AF_TIPC` tpt backend; the kernel- '
+        'touching cases self-skip unless the `tipc` module is loaded '
+        '(`sudo modprobe tipc`).'
+    )
+    config.addinivalue_line(
+        'markers',
         'trio: legacy mark for tests meant to run under the `trio` '
         'spawn backend (e.g. `test_local.py`).'
     )
