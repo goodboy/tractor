@@ -94,6 +94,33 @@ if TYPE_CHECKING:
 log = get_logger('tractor')
 
 
+def _register_rpc_task(
+    actor: Actor,
+    chan: Channel,
+    func: Callable,
+    is_rpc: bool,
+    task_status: TaskStatus[
+        Context | BaseException
+    ],
+    ctx: Context,
+) -> None:
+    '''
+    Register an RPC task before publishing it to `Nursery.start()`.
+
+    '''
+    if is_rpc:
+        if not actor._rpc_tasks:
+            actor._ongoing_rpc_tasks = trio.Event()
+
+        actor._rpc_tasks[(chan, ctx.cid)] = (
+            ctx,
+            func,
+            trio.Event(),
+        )
+
+    task_status.started(ctx)
+
+
 # ?TODO? move to a `tractor.lowlevel._rpc` with the below
 # func-type-cases implemented "on top of" `@context` defs:
 # -[ ] std async func helper decorated with `@rpc_func`?
@@ -142,7 +169,14 @@ async def _invoke_non_context(
         # is propagated!
         with cancel_scope as cs:
             ctx._scope = cs
-            task_status.started(ctx)
+            _register_rpc_task(
+                actor,
+                chan,
+                func,
+                is_rpc,
+                task_status,
+                ctx,
+            )
             async with aclosing(coro) as agen:
                 async for item in agen:
                     # TODO: can we send values back in here?
@@ -178,7 +212,14 @@ async def _invoke_non_context(
         )
         with cancel_scope as cs:
             ctx._scope = cs
-            task_status.started(ctx)
+            _register_rpc_task(
+                actor,
+                chan,
+                func,
+                is_rpc,
+                task_status,
+                ctx,
+            )
             await coro
 
         if not cs.cancelled_caught:
@@ -202,23 +243,29 @@ async def _invoke_non_context(
             )
             await chan.send(ack)
         except (
+            TransportClosed,
             trio.ClosedResourceError,
             trio.BrokenResourceError,
             BrokenPipeError,
         ) as ipc_err:
             failed_resp = True
-            if is_rpc:
-                raise ipc_err
-            else:
-                log.exception(
-                    f'Failed to ack runtime RPC request\n\n'
-                    f'{func} x=> {ctx.chan}\n\n'
-                    f'{ack}\n'
-                )
+            log.warning(
+                f'Failed to ack runtime RPC request\n\n'
+                f'{func} x=> {ctx.chan}\n\n'
+                f'{ack}\n'
+                f' |_{ipc_err!r}\n'
+            )
 
         with cancel_scope as cs:
             ctx._scope: CancelScope = cs
-            task_status.started(ctx)
+            _register_rpc_task(
+                actor,
+                chan,
+                func,
+                is_rpc,
+                task_status,
+                ctx,
+            )
             result = await coro
             fname: str = func.__name__
 
@@ -247,6 +294,7 @@ async def _invoke_non_context(
                     )
                     await chan.send(ret_msg)
                 except (
+                    TransportClosed,
                     BrokenPipeError,
                     trio.BrokenResourceError,
                 ):
@@ -673,7 +721,14 @@ async def _invoke(
             ):
                 ctx._scope_nursery = tn
                 rpc_ctx_cs = ctx._scope = tn.cancel_scope
-                task_status.started(ctx)
+                _register_rpc_task(
+                    actor,
+                    chan,
+                    func,
+                    is_rpc,
+                    task_status,
+                    ctx,
+                )
 
                 # invoke user endpoint fn.
                 res: Any|PayloadT = await coro
@@ -920,6 +975,7 @@ async def try_ship_error_to_remote(
         # downward should be mostly wrapping such cases in a
         # tpt-closed; the `.critical()` usage is warranted.
         except (
+            TransportClosed,
             trio.ClosedResourceError,
             trio.BrokenResourceError,
             BrokenPipeError,
@@ -1220,18 +1276,6 @@ async def process_messages(
                                 f'{err}'
                             )
                             continue
-
-                        else:
-                            # mark our global state with ongoing rpc tasks
-                            actor._ongoing_rpc_tasks = trio.Event()
-
-                            # store cancel scope such that the rpc task can be
-                            # cancelled gracefully if requested
-                            actor._rpc_tasks[(chan, cid)] = (
-                                ctx,
-                                func,
-                                trio.Event(),
-                            )
 
                     # XXX RUNTIME-SCOPED! remote (likely internal) error
                     # (^- bc no `Error.cid` -^)

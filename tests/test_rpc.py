@@ -4,10 +4,17 @@ related API and error checks.
 
 '''
 import itertools
+from unittest.mock import (
+    AsyncMock,
+    Mock,
+)
 
 import pytest
 import tractor
 import trio
+
+from tractor._exceptions import TransportClosed
+from tractor.runtime import _rpc
 
 
 async def sleep_back_actor(
@@ -44,6 +51,126 @@ async def sleep_back_actor(
 
 async def short_sleep():
     await trio.sleep(0)
+
+
+def test_rpc_runs_after_startack_disconnect():
+    '''
+    Complete an accepted RPC when its caller closes before `StartAck`.
+
+    Registrar teardown opens short-lived `unregister_actor` RPCs. A
+    loaded caller can close its channel while the registrar sends the
+    acknowledgement; normalized `TransportClosed` previously escaped
+    into the shared service nursery before the already-created
+    coroutine was awaited. This fake fails the first response send and
+    proves the RPC side effect still runs with no later send attempt.
+
+    '''
+    async def main():
+        rpc_ran = trio.Event()
+
+        chan = Mock()
+        chan.send = AsyncMock(
+            side_effect=TransportClosed(
+                message='caller closed before StartAck',
+            ),
+        )
+        chan.connected.return_value = False
+        ctx = Mock(
+            chan=chan,
+            cid='rpc-cid',
+            _scope=None,
+            _task='rpc-task',
+        )
+        actor = Mock()
+        actor.get_context.return_value = ctx
+        actor._rpc_tasks = {}
+        actor._ongoing_rpc_tasks = trio.Event()
+        actor._ongoing_rpc_tasks.set()
+
+        async def rpc_func():
+            assert (chan, ctx.cid) in actor._rpc_tasks
+            rpc_ran.set()
+
+        async def invoke(task_status):
+            await _rpc._invoke(
+                actor=actor,
+                cid=ctx.cid,
+                chan=chan,
+                func=rpc_func,
+                kwargs={},
+                task_status=task_status,
+            )
+
+        async with trio.open_nursery() as nursery:
+            started_ctx = await nursery.start(invoke)
+            assert started_ctx is ctx
+            await rpc_ran.wait()
+
+        assert rpc_ran.is_set()
+        assert not actor._rpc_tasks
+        assert actor._ongoing_rpc_tasks.is_set()
+        chan.send.assert_awaited_once()
+
+    trio.run(main)
+
+
+def test_error_shipment_ignores_closed_response_channel(monkeypatch):
+    '''
+    Preserve an application error when its response channel is closed.
+
+    A caller can disconnect after submitting an RPC but before its
+    error response. Normalized `TransportClosed` from that final send
+    is terminal response failure, not a new actor-wide service error.
+    This test proves error shipment logs and returns without replacing
+    the original application exception.
+
+    '''
+    chan = Mock()
+    chan.send = AsyncMock(
+        side_effect=[
+            None,
+            TransportClosed(
+                message='caller closed before Error response',
+            ),
+        ],
+    )
+    error_msg = Mock(boxed_type_str='ValueError')
+    monkeypatch.setattr(
+        _rpc,
+        'pack_error',
+        Mock(return_value=error_msg),
+    )
+    ctx = Mock(
+        chan=chan,
+        cid='rpc-cid',
+        _scope=None,
+        _task='rpc-task',
+    )
+    actor = Mock()
+    actor.get_context.return_value = ctx
+    actor._rpc_tasks = {}
+    actor._ongoing_rpc_tasks = trio.Event()
+    actor._ongoing_rpc_tasks.set()
+
+    async def failing_rpc():
+        raise ValueError('application failure')
+
+    async def main():
+        async with trio.open_nursery() as nursery:
+            started_ctx = await nursery.start(
+                _rpc._invoke,
+                actor,
+                ctx.cid,
+                chan,
+                failing_rpc,
+                {},
+            )
+            assert started_ctx is ctx
+
+    trio.run(main)
+    assert chan.send.await_count == 2
+    assert not actor._rpc_tasks
+    assert actor._ongoing_rpc_tasks.is_set()
 
 
 @pytest.mark.parametrize(
