@@ -144,6 +144,8 @@ class Aid(
     name: str
     uuid: str
     pid: int|None = None
+    is_registrar: bool|None = None
+    is_probe: bool = False
 
     # TODO? can/should we extend this field set?
     # -[ ] use built-in support for UUIDs? `uuid.UUID` which has

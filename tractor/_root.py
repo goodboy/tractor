@@ -31,6 +31,7 @@ import sys
 from typing import (
     Any,
     Callable,
+    Literal,
 )
 import warnings
 
@@ -63,7 +64,9 @@ from .trionics import (
 )
 from ._exceptions import (
     RuntimeFailure,
+    TransportClosed,
 )
+from .msg.types import Aid
 
 
 logger = log.get_logger('tractor')
@@ -81,6 +84,45 @@ _DEBUG_COMPATIBLE_BACKENDS: tuple[str, ...] = (
     # process — same child-side runtime shape as `trio_proc`.
     'main_thread_forkserver',
 )
+
+
+async def _probe_registry(
+    addr: Address,
+    timeout: float = 1,
+) -> Literal[
+    'absent',
+    'occupied',
+    'registrar',
+]:
+    '''
+    Confirm an address serves the Tractor actor handshake.
+
+    '''
+    try:
+        with trio.move_on_after(timeout) as cs:
+            async with _connect_chan(addr.unwrap()) as chan:
+                peer_aid: Aid = await chan._do_handshake(
+                    aid=Aid(
+                        name='registry-probe',
+                        uuid=mk_uuid(),
+                        pid=os.getpid(),
+                        is_probe=True,
+                    ),
+                    timeout=timeout,
+                )
+                if peer_aid.is_registrar is not False:
+                    return 'registrar'
+                return 'occupied'
+
+        if cs.cancelled_caught:
+            return 'occupied'
+
+    except OSError:
+        return 'absent'
+    except TransportClosed:
+        return 'occupied'
+
+    return 'occupied'
 
 
 # TODO: stick this in a `@acm` defined in `devx.debug`?
@@ -453,6 +495,7 @@ async def open_root_actor(
 
         # closed into below ping task-func
         ponged_addrs: list[Address] = []
+        occupied_addrs: list[Address] = []
 
         async def ping_tpt_socket(
             addr: Address,
@@ -467,18 +510,15 @@ async def open_root_actor(
             server is listening at that addr.
 
             '''
-            try:
-                # TODO: this connect-and-bail forces us to have to
-                # carefully rewrap TCP 104-connection-reset errors as
-                # EOF so as to avoid propagating cancel-causing errors
-                # to the channel-msg loop machinery. Likely it would
-                # be better to eventually have a "discovery" protocol
-                # with basic handshake instead?
-                with trio.move_on_after(timeout):
-                    async with _connect_chan(addr.unwrap()):
-                        ponged_addrs.append(addr)
-
-            except OSError:
+            probe_status = await _probe_registry(
+                addr=addr,
+                timeout=timeout,
+            )
+            if probe_status == 'registrar':
+                ponged_addrs.append(addr)
+            elif probe_status == 'occupied':
+                occupied_addrs.append(addr)
+            else:
                 # ?TODO, make this a "discovery" log level?
                 logger.info(
                     f'No root-actor registry found @ {addr!r}\n'
@@ -495,6 +535,17 @@ async def open_root_actor(
                     ping_tpt_socket,
                     addr,
                 )
+
+        if (
+            not ponged_addrs
+            and
+            occupied_addrs
+        ):
+            raise RuntimeError(
+                f'Registry address(es) are occupied but did not '
+                f'answer as Tractor registrars!\n'
+                f'occupied_addrs: {occupied_addrs!r}\n'
+            )
 
         if tpt_bind_addrs is None:
             tpt_bind_addrs: list[Address] = []

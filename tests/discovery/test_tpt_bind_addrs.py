@@ -12,11 +12,93 @@ bind-address selection in `_root.py`:
 import pytest
 import trio
 import tractor
+from tractor import _root
 from tractor.discovery._addr import (
     wrap_address,
 )
 from tractor.discovery._multiaddr import mk_maddr
 from tractor._testing.addr import get_rando_addr
+
+
+def test_transport_only_listener_is_not_registrar():
+    '''
+    Require a Tractor handshake before accepting a registry address.
+
+    The old election probe marked an address live after transport
+    connect alone. A non-Tractor listener, or a registrar still
+    failing its initial handshake, was therefore selected as the
+    remote registry. This test accepts the probe and closes it without
+    replying, then proves `open_root_actor()` ignores that endpoint and
+    elects the local actor registrar instead.
+
+    '''
+    async def transport_only_handler(
+        stream: trio.SocketStream,
+    ) -> None:
+        await stream.aclose()
+
+    async def main():
+        listeners = await trio.open_tcp_listeners(0)
+        listener = listeners[0]
+        sockname = listener.socket.getsockname()
+        reg_addr: tuple[str, int] = (
+            sockname[0],
+            sockname[1],
+        )
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(
+                trio.serve_listeners,
+                transport_only_handler,
+                listeners,
+            )
+            with pytest.raises(
+                RuntimeError,
+                match='occupied but did not answer',
+            ):
+                async with tractor.open_root_actor(
+                    registry_addrs=[reg_addr],
+                    enable_transports=['tcp'],
+                ):
+                    pytest.fail('foreign listener selected as registrar')
+
+            tn.cancel_scope.cancel()
+
+    trio.run(main)
+
+
+def test_registry_probe_preserves_no_peers_state(
+    reg_addr: tuple,
+    tpt_proto: str,
+):
+    '''
+    Keep an idle registrar peer-free after an election probe.
+
+    Probe handshakes exchange registrar capability but must not enter
+    `IPCServer._peers`. Resetting `_no_more_peers` before identifying a
+    probe left an idle registrar reporting phantom peers and delayed
+    shutdown. This test probes the live local registrar and proves its
+    peer map and no-peers event remain unchanged afterward.
+
+    '''
+    async def main():
+        async with tractor.open_root_actor(
+            registry_addrs=[reg_addr],
+            enable_transports=[tpt_proto],
+        ):
+            actor = tractor.current_actor()
+            server = actor.ipc_server
+
+            probe_status = await _root._probe_registry(
+                addr=wrap_address(reg_addr),
+            )
+            assert probe_status == 'registrar'
+
+            await trio.sleep(0)
+            assert not server._peers
+            assert server._no_more_peers.is_set()
+
+    trio.run(main)
 
 
 # ------------------------------------------------------------------
