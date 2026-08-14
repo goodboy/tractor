@@ -71,9 +71,22 @@ log = get_logger()
 #
 UnwrappedAddress = (
     # tcp/udp/uds
+    #   ('127.0.0.1', 1616)
+    #   ('/run/user/1000/tractor', 'registry@1616.sock')
+    #
+    # ..and the explicitly proto-keyed (`multiaddr`-spelled)
+    # form, which is where ALL backends should eventually land
+    # per the note below,
+    #   ('tipc', 1953628160, 1616, 2)
+    #
+    # XXX VARIADIC bc `msgspec` refuses a union of >1 array-like
+    # type, so the two shapes can't be spelled as a union. Keep
+    # in sync with `.msg.types.UnwrappedAddress` which
+    # re-declares this to dodge a circular import AND is what
+    # actually validates the `SpawnSpec` wire msg!
     tuple[
-        str,  # host/domain(tcp), filesys-dir(uds)
-        int|str,  # port/path(uds)
+        str|int,
+        ...,
     ]
     # ?TODO? should we also include another 2 fields from
     # our `Aid` msg such that we include the runtime `Actor.uid`
@@ -88,6 +101,7 @@ UnwrappedAddress = (
 class Address(Protocol):
     proto_key: ClassVar[str]
     unwrapped_type: ClassVar[UnwrappedAddress]
+
     # whether `.ipc._server.Endpoint.start_listener()` should
     # reconcile a bound `.addr` against its listener's
     # `socket.getsockname()`.

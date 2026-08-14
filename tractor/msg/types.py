@@ -190,6 +190,31 @@ class Aid(
     __repr__ = pretty_struct.Struct.__repr__
 
 
+# NOTE, mirrors `.discovery._addr.UnwrappedAddress` but is
+# re-declared here to dodge the circular import
+# (`._addr` -> `.ipc._tcp` -> `.msg`).
+#
+# XXX this is the **wire** shape, so widening it is a wire-format
+# change; keep the two decls in sync.
+# XXX VARIADIC on purpose! `msgspec` rejects a union holding
+# more than one array-like type ("Type unions may not contain
+# more than one array-like (list, set, tuple) type"), so the two
+# concrete shapes,
+#
+#   ('127.0.0.1', 1616)                 # tcp
+#   ('/run/user/1000/tractor', 'x.sock')  # uds
+#   ('tipc', 1953628160, 1616, 2)       # proto-keyed (tipc)
+#
+# can't be spelled as `tuple[str, str|int]|tuple[str, int, int,
+# int]`. Widen to one homogeneous variadic tuple instead.
+#
+# ?TODO, the real fix is the `UnwrappedAddress` proto-key
+# migration (see `.discovery._addr`) after which this becomes a
+# tagged union keyed off elem 0 and full per-proto validation
+# comes back.
+UnwrappedAddress = tuple[str|int, ...]
+
+
 class SpawnSpec(
     pretty_struct.Struct,
     tag=True,
@@ -215,8 +240,8 @@ class SpawnSpec(
 
     # TODO: not just sockaddr pairs?
     # -[ ] abstract into a `TransportAddr` type?
-    reg_addrs: list[tuple[str, str|int]]
-    bind_addrs: list[tuple[str, str|int]]|None
+    reg_addrs: list[UnwrappedAddress]
+    bind_addrs: list[UnwrappedAddress]|None
 
 
 # TODO: caps based RPC support in the payload?
