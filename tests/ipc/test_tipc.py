@@ -19,6 +19,12 @@ import pytest
 import trio
 
 from tractor.msg.types import Aid
+from tractor.discovery import _addr
+from tractor.discovery._addr import wrap_address
+from tractor.discovery._multiaddr import (
+    mk_maddr,
+    parse_maddr,
+)
 from tractor.ipc import _tipc
 from tractor.ipc._tipc import (
     AF_TIPC,
@@ -204,6 +210,48 @@ def test_get_random_honors_bindspace():
         bindspace=TIPC_NODE_SCOPE,
     )
     assert addr.bindspace == TIPC_NODE_SCOPE == addr._scope
+
+
+def test_wrap_address_dispatches_on_the_proto_key():
+    '''
+    The proto-keyed unwrapped form must round-trip through the
+    *global* `wrap_address()` — and NOT get stolen by `tcp`s
+    `(str(), int())` case nor `uds`s `(_, str())` one.
+
+    '''
+    addr: TIPCAddress = TIPCAddress.get_random()
+    assert wrap_address(addr.unwrap()) == addr
+    # ..and via the `list` form `msgpack` decodes to
+    assert wrap_address(list(addr.unwrap())) == addr
+
+    assert _addr._address_types['tipc'] is TIPCAddress
+    assert _addr.get_address_cls('tipc') is TIPCAddress
+
+    # the host-singleton registrar default is import-time cheap
+    # (no kernel module, no I/O) and mirrors the `1616` idiom
+    assert _addr._default_lo_addrs['tipc'] == (
+        'tipc', TRACTOR_STYPE, 1616, TIPC_CLUSTER_SCOPE,
+    )
+
+
+def test_maddr_roundtrip():
+    '''
+    Interim `str`-only `/tipc/` maddr grammar (there's no
+    registered `/tipc` multiaddr proto yet, gh #483), which
+    `parse_maddr()` special-cases before `Multiaddr()` ever sees
+    the string.
+
+    '''
+    addr: TIPCAddress = TIPCAddress.get_random()
+    maddr: str = mk_maddr(addr)
+
+    assert isinstance(maddr, str)
+    assert maddr == (
+        f'/tipc/{addr._stype}/{addr._instance}/{addr._scope}'
+    )
+    assert parse_maddr(maddr) == addr
+    # ..and through the generic entrypoint
+    assert wrap_address(maddr) == addr
 
 
 def test_eafnosupport_is_actionable_connerr(
