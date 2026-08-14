@@ -194,7 +194,10 @@ def test_rt_dir_rejects_non_directory(
         lambda appname: str(rt_file),
     )
 
-    with pytest.raises(FileExistsError):
+    with pytest.raises(
+        PermissionError,
+        match='Unsafe POSIX',
+    ):
         _state.get_rt_dir()
 
     new_rt_dir: Path = tmp_path / 'new-runtime-dir'
@@ -204,6 +207,68 @@ def test_rt_dir_rejects_non_directory(
     )
     assert _state.get_rt_dir() == new_rt_dir
     assert stat.S_IMODE(new_rt_dir.stat().st_mode) == 0o700
+
+
+def test_linux_rt_dir_secures_existing_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    '''
+    Enforce owner-only access on an existing Linux runtime directory.
+
+    Linux previously accepted any existing directory returned by
+    `platformdirs`, without checking ownership or correcting a
+    traversable mode. This test creates an owner-controlled `0o755`
+    directory and proves `get_rt_dir()` normalizes the managed
+    bindspace to `0o700` before returning it.
+
+    '''
+    rt_dir: Path = tmp_path / 'tractor'
+    rt_dir.mkdir(mode=0o755)
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    monkeypatch.setattr(
+        'platformdirs.user_runtime_dir',
+        lambda appname: str(rt_dir),
+    )
+
+    assert _state.get_rt_dir() == rt_dir
+    assert stat.S_IMODE(rt_dir.stat().st_mode) == 0o700
+
+
+def test_linux_rt_dir_rejects_foreign_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    '''
+    Reject an existing Linux runtime directory owned by another UID.
+
+    A pre-created bindspace must never be made private with `chmod`
+    until ownership is verified. This test makes the current process
+    appear to have a different UID and proves `get_rt_dir()` rejects
+    the directory without changing its original mode.
+
+    '''
+    rt_dir: Path = tmp_path / 'tractor'
+    rt_dir.mkdir(mode=0o755)
+    original_mode: int = stat.S_IMODE(rt_dir.stat().st_mode)
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    monkeypatch.setattr(
+        'platformdirs.user_runtime_dir',
+        lambda appname: str(rt_dir),
+    )
+    monkeypatch.setattr(
+        os,
+        'getuid',
+        lambda: rt_dir.stat().st_uid + 1,
+    )
+
+    with pytest.raises(
+        PermissionError,
+        match='Unsafe POSIX',
+    ):
+        _state.get_rt_dir()
+
+    assert stat.S_IMODE(rt_dir.stat().st_mode) == original_mode
 
 
 def test_macos_rt_dir_rejects_intermediate_symlink(
