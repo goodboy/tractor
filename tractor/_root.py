@@ -31,7 +31,6 @@ import sys
 from typing import (
     Any,
     Callable,
-    Literal,
 )
 import warnings
 
@@ -48,9 +47,7 @@ from .devx import (
 from .spawn import _spawn
 from .runtime import _state
 from . import log
-from .ipc import (
-    _connect_chan,
-)
+from .discovery._api import _probe_registry_addrs
 from .discovery._addr import (
     Address,
     UnwrappedAddress,
@@ -64,9 +61,7 @@ from .trionics import (
 )
 from ._exceptions import (
     RuntimeFailure,
-    TransportClosed,
 )
-from .msg.types import Aid
 
 
 logger = log.get_logger('tractor')
@@ -84,68 +79,6 @@ _DEBUG_COMPATIBLE_BACKENDS: tuple[str, ...] = (
     # process — same child-side runtime shape as `trio_proc`.
     'main_thread_forkserver',
 )
-
-
-async def _probe_registry(
-    addr: Address,
-    timeout: float = 3,
-    attempt_timeout: float = 1,
-    max_attempts: int = 3,
-    retry_delay: float = .05,
-    close_timeout: float = .2,
-) -> Literal[
-    'absent',
-    'occupied',
-    'registrar',
-]:
-    '''
-    Confirm an address serves the Tractor actor handshake.
-
-    Connection and handshake work share `timeout`; each attempt gets
-    `attempt_timeout`. Shielded cleanup may add up to `close_timeout`
-    per attempted channel.
-
-    '''
-    connected_once: bool = False
-    with trio.move_on_after(timeout):
-        for attempt in range(max_attempts):
-            try:
-                with trio.move_on_after(attempt_timeout) as attempt_cs:
-                    async with _connect_chan(
-                        addr.unwrap(),
-                        close_timeout=close_timeout,
-                    ) as chan:
-                        connected_once = True
-                        peer_aid: Aid = await chan._do_handshake(
-                            aid=Aid(
-                                name='registry-probe',
-                                uuid=mk_uuid(),
-                                pid=os.getpid(),
-                                is_probe=True,
-                            ),
-                            timeout=attempt_timeout,
-                        )
-                        if peer_aid.is_registrar is not False:
-                            return 'registrar'
-                        return 'occupied'
-
-                if attempt_cs.cancelled_caught:
-                    if not connected_once:
-                        return 'absent'
-
-            except OSError:
-                return (
-                    'occupied'
-                    if connected_once
-                    else 'absent'
-                )
-            except TransportClosed:
-                pass
-
-            if attempt + 1 < max_attempts:
-                await trio.sleep(retry_delay * (attempt + 1))
-
-    return 'occupied'
 
 
 # TODO: stick this in a `@acm` defined in `devx.debug`?
@@ -516,46 +449,12 @@ async def open_root_actor(
             from .devx._stackscope import enable_stack_on_sig
             enable_stack_on_sig()
 
-        # closed into below ping task-func
-        ponged_addrs: list[Address] = []
-        occupied_addrs: list[Address] = []
-
-        async def ping_tpt_socket(
-            addr: Address,
-            timeout: float = 3,
-        ) -> None:
-            '''
-            Probe with a bounded Tractor actor handshake.
-
-            Classify the address as a registrar, occupied by a
-            non-registrar, or absent.
-
-            '''
-            probe_status = await _probe_registry(
-                addr=addr,
-                timeout=timeout,
-            )
-            if probe_status == 'registrar':
-                ponged_addrs.append(addr)
-            elif probe_status == 'occupied':
-                occupied_addrs.append(addr)
-            else:
-                # ?TODO, make this a "discovery" log level?
-                logger.info(
-                    f'No root-actor registry found @ {addr!r}\n'
-                )
-
-        # !TODO, this is basically just another (abstract)
-        # happy-eyeballs, so we should try for formalize it somewhere
-        # in a `.[_]discovery` ya?
-        #
-        async with trio.open_nursery() as tn:
-            for uw_addr in uw_reg_addrs:
-                addr: Address = wrap_address(uw_addr)
-                tn.start_soon(
-                    ping_tpt_socket,
-                    addr,
-                )
+        ponged_addrs: list[Address]
+        occupied_addrs: list[Address]
+        (
+            ponged_addrs,
+            occupied_addrs,
+        ) = await _probe_registry_addrs(uw_reg_addrs)
 
         if (
             not ponged_addrs

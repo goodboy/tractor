@@ -2,7 +2,8 @@
 `open_root_actor(tpt_bind_addrs=...)` test suite.
 
 Verify all three runtime code paths for explicit IPC-server
-bind-address selection in `_root.py`:
+bind-address selection in `_root.py` and registry probing in
+`discovery._api`:
 
 1. Non-registrar, no explicit bind -> random addrs from registry proto
 2. Registrar, no explicit bind -> binds to registry_addrs
@@ -19,11 +20,12 @@ from unittest.mock import (
 import pytest
 import trio
 import tractor
-from tractor import _root
+from tractor.discovery import _api
 from tractor.discovery._addr import (
     wrap_address,
 )
 from tractor.discovery._multiaddr import mk_maddr
+from tractor.ipc import _connect_chan
 from tractor._testing.addr import get_rando_addr
 
 
@@ -68,11 +70,11 @@ def test_registry_probe_retries_transient_handshake(
             closed.append(chan)
 
     sleep = AsyncMock()
-    monkeypatch.setattr(_root, '_connect_chan', connect_chan)
-    monkeypatch.setattr(_root.trio, 'sleep', sleep)
+    monkeypatch.setattr(_api, '_connect_chan', connect_chan)
+    monkeypatch.setattr(_api.trio, 'sleep', sleep)
 
     async def main():
-        status = await _root._probe_registry(
+        status = await _api._probe_registry(
             addr=wrap_address(('127.0.0.1', 1616)),
             timeout=.3,
             attempt_timeout=.1,
@@ -114,7 +116,7 @@ def test_probe_channel_close_is_bounded(
 
     async def main():
         with trio.fail_after(.5):
-            async with _root._connect_chan(
+            async with _connect_chan(
                 ('127.0.0.1', 1616),
                 close_timeout=.01,
             ):
@@ -193,7 +195,7 @@ def test_registry_probe_preserves_no_peers_state(
             actor = tractor.current_actor()
             server = actor.ipc_server
 
-            probe_status = await _root._probe_registry(
+            probe_status = await _api._probe_registry(
                 addr=wrap_address(reg_addr),
             )
             assert probe_status == 'registrar'

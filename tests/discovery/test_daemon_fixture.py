@@ -1,6 +1,10 @@
 '''
 Discovery daemon fixture regressions.
 
+This module imports private helpers from the sibling
+`tests.discovery.conftest` plugin to exercise that fixture machinery
+directly, rather than testing a production `tractor` API.
+
 '''
 from unittest.mock import (
     call,
