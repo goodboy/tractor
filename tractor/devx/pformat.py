@@ -215,7 +215,6 @@ def pformat_caller_frame(
         tb_str: str = pformat_boxed_tb(
             tb_str=tb_str,
             field_prefix='  ',
-            indent='',
         )
     return tb_str
 
