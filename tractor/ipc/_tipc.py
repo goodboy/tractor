@@ -53,6 +53,7 @@ import os
 import socket
 from socket import SOCK_STREAM
 from typing import (
+    Callable,
     ClassVar,
     Type,
     TYPE_CHECKING,
@@ -60,12 +61,19 @@ from typing import (
 from uuid import uuid4
 
 import msgspec
+import trio
 from trio import (
     socket as trio_socket,
     SocketListener,
 )
 
+from multiaddr import Multiaddr
+from tractor.msg import MsgCodec
 from tractor.log import get_logger
+from tractor.discovery._multiaddr import mk_maddr
+from tractor.ipc._transport import (
+    MsgpackTransport,
+)
 from tractor.runtime._state import (
     current_actor,
     is_root_process,
@@ -94,6 +102,10 @@ try:
         TIPC_ADDR_NAME,
         TIPC_ADDR_NAMESEQ,
         TIPC_CLUSTER_SCOPE,
+        TIPC_DEST_DROPPABLE,
+        TIPC_HIGH_IMPORTANCE,
+        TIPC_IMPORTANCE,
+        TIPC_LOW_IMPORTANCE,
         TIPC_NODE_SCOPE,
         TIPC_ZONE_SCOPE,
     )
@@ -106,6 +118,10 @@ except ImportError:
     TIPC_ZONE_SCOPE: int = 1
     TIPC_CLUSTER_SCOPE: int = 2
     TIPC_NODE_SCOPE: int = 3
+    TIPC_LOW_IMPORTANCE: int = 0
+    TIPC_HIGH_IMPORTANCE: int = 2
+    TIPC_IMPORTANCE: int = 127
+    TIPC_DEST_DROPPABLE: int = 129
 
 
 # `tractor`'s reserved TIPC service-class ("type"), spelling out
@@ -124,8 +140,18 @@ _tipc_reserved_stypes: range = range(0, 64)
 
 # sentinel for "this addr was *observed* off a `TIPC_ADDR_ID`, so
 # the peer's service-name is unknowable from the socket alone".
-# See plan 01 §3.4.
+# See `MsgpackTIPCStream.get_stream_addrs()` and plan 01 §3.4.
 TIPC_NAME_UNKNOWN: int = -1
+
+# XXX, the kernel default (`TIPC_LOW_IMPORTANCE`), i.e. today this
+# is a no-op knob preserving stock behaviour.
+#
+# ?TODO, TIPC can rank a connection's traffic under congestion —
+# something no other backend can do — so the parent<->child
+# *supervision* chan deserves `TIPC_HIGH_IMPORTANCE` while bulk app
+# streams stay low. Wiring `_runtime.py`'s parent-chan path to pass
+# it is deliberately a follow-up; see plan 01 §3.3 + §10.
+TRACTOR_DEF_IMPORTANCE: int = TIPC_LOW_IMPORTANCE
 
 _scope_names: dict[int, str] = {
     TIPC_ZONE_SCOPE: 'zone',
@@ -548,3 +574,204 @@ async def start_listener(
 # entry to unlink and the kernel withdraws the published name on
 # socket close. Per contract §1.2 absence means "closing is
 # implicit".
+
+
+@cm
+def _close_on_error(sock):
+    '''
+    Close `sock` if the wrapped block raises.
+
+    Equivalent to `trio._highlevel_open_unix_stream.close_on_error`
+    but inlined so this (linux-cluster) backend doesn't import a
+    *unix-domain* private module.
+
+    '''
+    try:
+        yield sock
+    except BaseException:
+        sock.close()
+        raise
+
+
+class MsgpackTIPCStream(MsgpackTransport):
+    '''
+    A `trio.SocketStream` around an `AF_TIPC` service-name
+    connection delivering `msgpack` encoded msgs via the `msgspec`
+    codec lib.
+
+    '''
+    address_type = TIPCAddress
+    layer_key: int = 4
+
+    @property
+    def maddr(self) -> Multiaddr|str:
+        if not self.raddr:
+            return '<unknown-peer>'
+
+        return mk_maddr(self.raddr)
+
+    def connected(self) -> bool:
+        return self.stream.socket.fileno() != -1
+
+    @classmethod
+    async def connect_to(
+        cls,
+        destaddr: TIPCAddress,
+        prefix_size: int = 4,
+        codec: MsgCodec|None = None,
+        importance: int = TRACTOR_DEF_IMPORTANCE,
+        **kwargs,
+    ) -> MsgpackTIPCStream:
+        '''
+        Dial `destaddr` **by service name**.
+
+        NOTE, the `.connect()` here *is* the discovery lookup — the
+        kernel resolves the published name-table entry for us, so
+        there's no registrar hop on this path.
+
+        '''
+        sock = trio_socket.socket(
+            AF_TIPC,
+            SOCK_STREAM,
+        )
+        with _close_on_error(sock):
+            sock.setsockopt(
+                SOL_TIPC,
+                TIPC_IMPORTANCE,
+                importance,
+            )
+            # NOTE, surface undeliverable msgs as errors rather
+            # than let the kernel silently drop them.
+            sock.setsockopt(
+                SOL_TIPC,
+                TIPC_DEST_DROPPABLE,
+                0,
+            )
+            with _reraise_as_connerr(
+                src_excs=(OSError,),
+                addr=destaddr,
+            ):
+                await sock.connect((
+                    TIPC_ADDR_NAME,
+                    destaddr._stype,
+                    destaddr._instance,
+                    0,  # domain: 0 == "anywhere in scope"
+                    destaddr._scope,
+                ))
+
+        tpt_stream = MsgpackTIPCStream(
+            trio.SocketStream(sock),
+            prefix_size=prefix_size,
+            codec=codec,
+        )
+        # XXX, the dialling side is the ONLY side that knows the
+        # peer's *service name* (a port-id can't be reversed into
+        # one), so re-assert it over the observed-only `._raddr`
+        # that `.get_stream_addrs()` just derived.
+        #
+        # Same move as `MsgpackUDSStream.connect_to()`s peer-pid
+        # re-assign.
+        tpt_stream._raddr = destaddr.with_port_id(
+            *_port_id(sock.getpeername()),
+        )
+        return tpt_stream
+
+    @classmethod
+    def get_stream_addrs(
+        cls,
+        stream: trio.SocketStream,
+    ) -> tuple[
+        TIPCAddress,
+        TIPCAddress,
+    ]:
+        '''
+        Derive `(laddr, raddr)` from a connected TIPC socket.
+
+        XXX, BOTH ends answer `TIPC_ADDR_ID` port-ids and a port-id
+        carries NO service-name, so neither addr is dialable here;
+        they're name-`TIPC_NAME_UNKNOWN` and carry only the
+        observed `(node, ref)`.
+
+        That's fine and deliberate (plan 01 §3.4a):
+
+        - the *dialling* side overrides `._raddr` with the name it
+          actually dialled (see `.connect_to()`),
+        - the *accepting* side genuinely cannot know the peer's
+          name from the socket — but it doesn't need to, since the
+          `Aid` from `Channel._do_handshake()` already carries the
+          peer's logical identity.
+
+        '''
+        sock = stream.socket
+        return (
+            _observed_addr(_maybe_sockaddr(sock.getsockname)),
+            _observed_addr(_maybe_sockaddr(sock.getpeername)),
+        )
+
+
+def _maybe_sockaddr(
+    getter: Callable[[], tuple],
+) -> tuple|None:
+    '''
+    Call a `sock.getsockname`/`.getpeername` tolerantly.
+
+    XXX REQUIRED for TIPC: unlike tcp/uds — where the kernel keeps
+    answering the peer addr until *we* close — a TIPC socket whose
+    peer has already gone answers `ENOTCONN`. That happens for any
+    connect-then-immediately-drop peer: a port scan, a liveness
+    probe, a cancelled dial.
+
+    Since `MsgpackTransport.__init__()` calls `.get_stream_addrs()`
+    (via `Channel.from_stream()`) BEFORE the handshake, letting the
+    `OSError` fly would escape `handle_stream_from_peer()`s
+    handshake tolerance (contract §4) and tear down the whole
+    actor. A dead peer must cost us an addr, not the runtime.
+
+    '''
+    try:
+        return getter()
+    except OSError as oserr:
+        log.transport(
+            f'TIPC peer already gone, no port-id available\n'
+            f'from src: {oserr!r}\n'
+        )
+        return None
+
+
+def _port_id(
+    sockaddr: tuple[int, int, int, int, int],
+) -> tuple[int, int]:
+    '''
+    Unpack the `(node, ref)` of a `TIPC_ADDR_ID` 5-tuple as
+    delivered by `getsockname()`/`getpeername()`.
+
+    Layout is `(addrtype, node, ref, 0, scope)`; see
+    `makesockaddr()`s `AF_TIPC` case in CPython's `socketmodule.c`.
+
+    '''
+    _, node, ref, *_ = sockaddr
+    return (node, ref)
+
+
+def _observed_addr(
+    sockaddr: tuple[int, int, int, int, int]|None,
+) -> TIPCAddress:
+    '''
+    Wrap a `TIPC_ADDR_ID` port-id as a name-less `TIPCAddress`
+    usable for logging/`repr` only.
+
+    A `None` `sockaddr` (peer already gone, see
+    `_maybe_sockaddr()`) yields the same addr sans port-id.
+
+    '''
+    node: int|None = None
+    ref: int|None = None
+    if sockaddr is not None:
+        node, ref = _port_id(sockaddr)
+
+    return TIPCAddress(
+        _stype=TIPC_NAME_UNKNOWN,
+        _instance=TIPC_NAME_UNKNOWN,
+        maybe_node=node,
+        maybe_ref=ref,
+    )
