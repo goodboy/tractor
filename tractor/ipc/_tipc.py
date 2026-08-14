@@ -80,6 +80,7 @@ from tractor.runtime._state import (
 )
 
 if TYPE_CHECKING:
+    from tractor.discovery._addr import TaggedTIPCAddress
     from tractor.runtime._runtime import Actor
 
 
@@ -209,7 +210,7 @@ class TIPCAddress(
     maybe_ref: int|None = None
 
     proto_key: ClassVar[str] = 'tipc'
-    unwrapped_type: ClassVar[type] = tuple[str, int, int, int]
+    unwrapped_type: ClassVar[type] = tuple
     def_bindspace: ClassVar[int] = TIPC_CLUSTER_SCOPE
 
     # XXX, TIPC's `getsockname()` answers a `TIPC_ADDR_ID` port-id
@@ -256,7 +257,7 @@ class TIPCAddress(
     @classmethod
     def from_addr(
         cls,
-        addr: tuple[str, int, int, int],
+        addr: tuple|list,
     ) -> TIPCAddress:
         match addr:
             # our proto-keyed unwrapped form, w/ scope optional
@@ -304,7 +305,7 @@ class TIPCAddress(
                     f'{addr!r}\n'
                 )
 
-    def unwrap(self) -> tuple[str, int, int, int]:
+    def unwrap(self) -> TaggedTIPCAddress:
         # NOTE, proto-keyed (w/ the `multiaddr` proto spelling) so
         # `wrap_address()` can dispatch unambiguously against the
         # other backends' 2-tuple forms; see contract §1.1.

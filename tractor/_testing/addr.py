@@ -99,6 +99,20 @@ def get_rando_addr(
             assert addr.sockpath.resolve()
             testrun_reg_addr = addr.unwrap()
 
+        # NOTE, `.get_random()` already derives the service
+        # *instance* from a `uuid4`+pid-salted seed, so both the
+        # within- and cross-proc isolation the other 2 protos
+        # hand-roll above comes for free.
+        #
+        # XXX matters MORE here than for tcp/uds: a TIPC name
+        # clash doesn't raise `EADDRINUSE`, it silently
+        # round-robins connects between both publishers.
+        case 'tipc':
+            from tractor.ipc._tipc import TIPCAddress
+            addr: TIPCAddress = addr_type.get_random()
+            assert addr.is_valid
+            testrun_reg_addr = addr.unwrap()
+
     # XXX, as sanity it should never the same as the default for the
     # host-singleton registry actor.
     assert def_reg_addr != testrun_reg_addr

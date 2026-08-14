@@ -498,14 +498,14 @@ def pytest_configure(
     )
     config.addinivalue_line(
         'markers',
-        'tipc: test targets the `AF_TIPC` tpt backend; the kernel- '
-        'touching cases self-skip unless the `tipc` module is loaded '
-        '(`sudo modprobe tipc`).'
+        'trio: legacy mark for tests meant to run under the `trio` '
+        'spawn backend (e.g. `test_local.py`).'
     )
     config.addinivalue_line(
         'markers',
-        'trio: legacy mark for tests meant to run under the `trio` '
-        'spawn backend (e.g. `test_local.py`).'
+        'tipc: test targets the `AF_TIPC` tpt backend; the kernel- '
+        'touching cases self-skip unless the `tipc` module is loaded '
+        '(`sudo modprobe tipc`).'
     )
 
     # `--enable-stackscope`: install SIGUSR1 → trio task-tree
@@ -802,6 +802,27 @@ def tpt_protos(
         from tractor.discovery import _addr
         addr_type = _addr._address_types[proto_key]
         assert addr_type.proto_key == proto_key
+
+        # XXX, generic capability gate: an env-dependent tpt
+        # whose backing kernel-mod/lib/netns isn't present here
+        # must fail LOUDLY and EARLY rather than as a few hundred
+        # confusing connect-timeouts downstream.
+        #
+        # Any `Address` type MAY expose `.is_available()`
+        # returning `(ok, why_not)`; absence means "always
+        # available" (i.e. tcp/uds).
+        is_avail = getattr(
+            addr_type,
+            'is_available',
+            None,
+        )
+        if is_avail:
+            avail, why_not = is_avail()
+            if not avail:
+                pytest.fail(
+                    f'--tpt-proto={proto_key!r} is NOT usable here!\n'
+                    f'{why_not}\n'
+                )
 
     yield proto_keys
 
