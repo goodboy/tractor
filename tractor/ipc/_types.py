@@ -35,20 +35,25 @@ from tractor.ipc._uds import (
     MsgpackUDSStream,
     HAS_UDS,
 )
+from tractor.ipc._tipc import (
+    AF_TIPC,
+    TIPCAddress,
+    MsgpackTIPCStream,
+)
 
-# the UDS backend is importable everywhere but only *usable* when
-# `HAS_UDS` is `True`; otherwise the runtime registers TCP only.
-Address = TCPAddress|UDSAddress
+Address = TCPAddress|UDSAddress|TIPCAddress
 
-# the available msg-transport backends on this host: TCP always,
-# UDS only where usable (`HAS_UDS`). The lookup maps below derive
-# from this single list via each backend's `codec_key` and
-# `address_type`: register a backend here and every map picks it up.
+# the msg-transport backends supported by this build: TCP and TIPC
+# are importable everywhere, while UDS is registered only where
+# usable (`HAS_UDS`). Runtime TIPC availability is checked separately.
+# The lookup maps derive from this list via each backend's `codec_key`
+# and `address_type`.
 _msg_transports: list[Type[MsgTransport]] = [
     MsgpackTCPStream,
 ]
 if HAS_UDS:
     _msg_transports.append(MsgpackUDSStream)
+_msg_transports.append(MsgpackTIPCStream)
 
 # map a `MsgTransportKey` -> `MsgTransport` type
 _key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
@@ -108,6 +113,12 @@ def transport_from_stream(
                 fam == socket.AF_UNIX
             ):
                 transport = 'uds'
+
+            # NOTE, `AF_TIPC` is linux-only in CPython so we
+            # match the `._tipc` constant (which carries a uapi
+            # fallback) rather than `socket.AF_TIPC`.
+            case fam if fam == AF_TIPC:
+                transport = 'tipc'
 
             case fam:
                 raise NotImplementedError(

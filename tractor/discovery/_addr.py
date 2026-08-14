@@ -36,6 +36,7 @@ from ..ipc._uds import (
     UDSAddress,
     HAS_UDS,
 )
+from ..ipc._tipc import TIPCAddress
 
 if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs ~4.5ms
@@ -200,12 +201,14 @@ class Address(Protocol):
         ...
 
 
-# the address types available on this host: TCP always, UDS only
-# where usable (`HAS_UDS`). Both registries derive from this single
-# list via each type's `proto_key`.
+# the address types supported by this build: TCP and TIPC are
+# importable everywhere, while UDS is registered only where usable
+# (`HAS_UDS`). Runtime TIPC availability is checked separately.
+# Both registries derive from this list via each type's `proto_key`.
 _address_protos: list[Type[Address]] = [TCPAddress]
 if HAS_UDS:
     _address_protos.append(UDSAddress)
+_address_protos.append(TIPCAddress)
 
 _address_types: dict[str, Type[Address]] = {
     cls.proto_key: cls
@@ -269,6 +272,16 @@ def wrap_address(
     # if 'sock' in addr[0]:
     #     import pdbp; pdbp.set_trace()
     match addr:
+
+        # XXX, the explicitly proto-keyed form (spelled with the
+        # `multiaddr` proto name) which is where ALL backends
+        # should eventually land per the `UnwrappedAddress`
+        # migration note above.
+        #
+        # NOTE, a bare seq-pattern matches `list` too, which is
+        # what `msgpack` decodes our tuples back to.
+        case ('tipc', *_):
+            cls = TIPCAddress
 
         # classic network socket-address as tuple/list
         case (

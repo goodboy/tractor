@@ -52,6 +52,7 @@ _DARWIN_TMPDIR: Path = Path('/tmp')
 TransportProtocolKey = Literal[
     'tcp',
     'uds',
+    'tipc',
 ]
 _def_tpt_proto: TransportProtocolKey = 'tcp'
 
