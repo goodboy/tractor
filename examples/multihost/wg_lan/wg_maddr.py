@@ -2,9 +2,9 @@
 r'''
 Parse `wg`-tunnelled multiaddrs into `tractor`-ready addrs.
 
-The canonical form (per py-multiaddr PR #108, verified to parse +
-round-trip on that branch) nests the *overlay* endpoint **after**
-the `/wg/` segment:
+The canonical form (per py-multiaddr #108, verified to parse +
+round-trip against its upstream merge) nests the *overlay*
+endpoint **after** the `/wg/` segment:
 
     /ip4/10.0.0.1/udp/51820/wg/u<key>/ip4/10.0.11.1/tcp/1616
     \_______ wg bearer ______/\_ key _/\____ tractor ep _____/
@@ -111,8 +111,10 @@ def parse_wg_maddr(
     Split a `wg`-tunnelled maddr into its bearer/key/overlay
     parts. Pure — no I/O.
 
-    Uses `py-multiaddr` when it knows the `wg` proto (PR #108),
-    else falls back to a minimal segment split.
+    Total-or-raises: with a `wg`-aware `py-multiaddr` (#108) an
+    unparseable maddr raises instead of yielding a struct built
+    from garbage segments. See `_segments()` for the degraded
+    pre-#108 path.
 
     '''
     segs: list[str] = _segments(maddr)
@@ -164,22 +166,53 @@ def parse_wg_maddr(
     )
 
 
-def _segments(maddr: str) -> list[str]:
+_wg_proto_known: bool|None = None
+
+
+def _have_wg_maddr_proto() -> bool:
     '''
-    Deliver a maddr's `/`-split segments, preferring the real
-    parser when it supports `wg`.
+    True iff the installed `py-multiaddr` knows the `/wg/` proto,
+    i.e. carries py-multiaddr#108.
+
+    Merged upstream 2026-07-28 but in no release as of `0.2.0`,
+    hence the `[tool.uv.sources]` `rev` pin.
+
+    Pure predicate; result cached since it can't change without a
+    reinstall.
 
     '''
-    from multiaddr import Multiaddr
-    try:
-        # the real thing: validates every proto + value
+    global _wg_proto_known
+    if _wg_proto_known is None:
+        from multiaddr.protocols import protocol_with_name
+        from multiaddr.exceptions import ProtocolNotFoundError
+        try:
+            protocol_with_name('wg')
+            _wg_proto_known = True
+        except ProtocolNotFoundError:
+            _wg_proto_known = False
+
+    return _wg_proto_known
+
+
+def _segments(maddr: str) -> list[str]:
+    '''
+    Deliver a maddr's `/`-split segments, validating via the real
+    parser whenever it knows `wg`.
+
+    '''
+    if _have_wg_maddr_proto():
+        from multiaddr import Multiaddr
+        # the real thing: validates every proto + value, incl.
+        # that the `wg` key decodes to exactly 32 bytes. Let it
+        # raise — a maddr that doesn't parse must NOT reach
+        # `wg8_pubkey()`, which would happily emit a corrupt key.
         Multiaddr(maddr)
-    except Exception:
-        # XXX STOPGAP, only until py-multiaddr#108 lands; then
-        # this branch is dead and `Multiaddr` is authoritative.
-        # We deliberately DON'T hand-roll a `wg` codec (the whole
-        # point of gh #429 was dropping the NIH parser).
-        pass
+
+    # XXX, degraded path for a pre-#108 `py-multiaddr` ONLY: no
+    # per-segment validation, so a malformed key survives to the
+    # returned struct. We deliberately DON'T hand-roll a `wg`
+    # codec (the whole point of gh #429 was dropping the NIH
+    # parser) — install the pinned rev to get validation back.
     return [s for s in maddr.split('/') if s]
 
 
