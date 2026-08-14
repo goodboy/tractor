@@ -130,9 +130,10 @@ UDS: same-host, creds included
 
 Pass ``enable_transports=['uds']`` and actors instead talk over
 unix-domain sockets, with socket files placed in the per-user
-runtime dir (``$XDG_RUNTIME_DIR/tractor/`` on linux, the
-``platformdirs`` equivalent elsewhere). Two perks over tcp on a
-single host:
+runtime dir: ``$XDG_RUNTIME_DIR/tractor/`` on linux, a short
+owner-only ``/tmp/tractor-<uid>`` dir on Darwin, and the
+``platformdirs`` equivalent elsewhere. Two perks over tcp on a single
+host:
 
 - no ports to fight over; addrs are just file paths,
 - the kernel snitches on your peer for free: the listening side

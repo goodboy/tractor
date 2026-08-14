@@ -1,12 +1,10 @@
 '''
-Discovery-suite fixtures, including the `daemon`
-remote-registrar subprocess used by the multi-program
-discovery tests.
+Discovery-suite fixtures, including the `daemon` remote-registrar
+subprocess used by the multi-program discovery tests.
 
 Lives here (vs. the parent `tests/conftest.py`)
-because `daemon` is a discovery-protocol primitive —
-boots a separate `tractor.run_daemon()` process whose
-sole purpose is to serve as a registrar peer for
+because `daemon` is a discovery-protocol primitive: it boots a child
+that enters `open_root_actor()` and waits as a registrar peer for
 discovery-roundtrip tests. Pytest fixtures inherit
 DOWNWARD through conftest hierarchy, so anything
 under `tests/discovery/` automatically picks this up.
@@ -49,9 +47,8 @@ def _wait_for_daemon_ready(
 
     Raises `TimeoutError` on `deadline` exceeded. If
     `proc` is given, ALSO raises early if the daemon
-    process exits non-zero before the deadline (catches
-    daemon-startup-crash that the blind sleep used to
-    silently mask).
+    process exits before the deadline (catches a daemon startup crash
+    that the blind sleep used to silently mask).
 
     '''
     end: float = time.monotonic() + deadline
@@ -148,9 +145,9 @@ def daemon(
         **kwargs,
     )
 
-    # Active-poll the daemon's bind address until it's
-    # ready to accept connections — replaces the legacy
-    # blind `time.sleep(2.2)` which was racy under load
+    # Poll the child's ready sentinel, published after actor startup,
+    # instead of connecting to its transport socket. This replaces
+    # the legacy blind `time.sleep(2.2)` which was racy under load
     # (see
     # `ai/conc-anal/test_register_duplicate_name_daemon_connect_race_issue.md`).
     #
@@ -174,9 +171,9 @@ def daemon(
         if proc.poll() is None:
             sig_prog(proc, _INT_SIGNAL)
 
-        # XXX! yeah.. just be reaaal careful with this bc
-        # sometimes it can lock up on the `_io.BufferedReader`
-        # and hang..
+        # NOTE: these blocking reads can hang when descendants retain
+        # inherited pipe descriptors. Keep teardown signaling above
+        # them and avoid adding subprocesses outside the actor tree.
         #
         # NB, drain happens at TEARDOWN (post-yield), so the
         # test body has its chance to read `proc.stderr`

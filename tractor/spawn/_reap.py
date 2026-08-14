@@ -35,14 +35,14 @@ Future-work TODO — authoritative UDS bind-addr tracking
 `unlink_uds_bind_addrs()` currently has two cleanup paths:
 
 1. Explicit `bind_addrs` (when parent set them at spawn time)
-2. **Convention-based reconstruction** —
-   `<XDG_RUNTIME_DIR>/tractor/<name>@<pid>.sock` — for the
+2. **Convention-based reconstruction** in the platform default UDS
+   bindspace — for the
    common case where the subactor self-assigned a random sock
    via `UDSAddress.get_random()`.
 
-Path (2) hardcodes the `<name>@<pid>.sock` convention from
-`tractor.ipc._uds.UDSAddress`. If that convention ever
-changes — or the subactor binds to a non-default
+Path (2) delegates filename reconstruction to
+`tractor.ipc._uds.UDSAddress.get_sockname()`. If the subactor binds to
+a non-default
 `bindspace`/`filedir` — we'll silently fail to unlink.
 
 A more authoritative approach would be:
@@ -105,7 +105,7 @@ def unlink_uds_bind_addrs(
     `_serve_ipc_eps` `finally:` block (which normally calls
     `os.unlink(addr.sockpath)`) never runs. Without this
     parent-side cleanup, the dead subactor's
-    `${XDG_RUNTIME_DIR}/tractor/<name>@<pid>.sock` file
+    platform-default UDS socket file
     accumulates on the filesystem (see issue #454 + the
     autouse `_track_orphaned_uds_per_test` fixture).
 
@@ -119,7 +119,7 @@ def unlink_uds_bind_addrs(
        picked its own random sock via
        `UDSAddress.get_random()`), reconstruct the path
        from `(subactor.aid.name, proc.pid)` using the
-       same `<name>@<pid>.sock` convention. We can do this
+       same `UDSAddress.get_sockname()` helper. We can do this
        because the subactor uses its OWN `os.getpid()` at
        bind time, which equals `proc.pid` from the
        parent's view.

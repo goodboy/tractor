@@ -132,8 +132,8 @@ def test_transport_only_listener_is_not_registrar():
     connect alone. A non-Tractor listener, or a registrar still
     failing its initial handshake, was therefore selected as the
     remote registry. This test accepts the probe and closes it without
-    replying, then proves `open_root_actor()` ignores that endpoint and
-    elects the local actor registrar instead.
+    replying, then proves `open_root_actor()` rejects that occupied
+    endpoint instead of selecting it or binding over it.
 
     '''
     async def transport_only_handler(

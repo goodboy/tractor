@@ -81,8 +81,9 @@ def _wait_for_proc(
 
     errmsg: str = err.decode(errors='replace')
 
-    # XXX, ALWAYS surface the subproc's full stderr
-    # whenever it exits non-zero!
+    # NOTE: always include captured stdout and stderr for a non-zero
+    # exit. Depending on the final stderr line previously hid grouped
+    # exception diagnostics; see GH #473.
     #
     # The prior impl only raised when the LAST stderr
     # line contained 'Error', swallowing any crash whose
@@ -246,9 +247,8 @@ def run_example_in_subproc(
                 str(script_file),
             ]
 
-        # XXX: BE FOREVER WARNED: if you enable lots of tractor logging
-        # in the subprocess it may cause infinite blocking on the pipes
-        # due to backpressure!!!
+        # Captured pipes are drained by `_wait_for_proc()` while the
+        # example runs.
         proc = testdir.popen(
             cmdargs,
             stdin=subprocess.PIPE,

@@ -102,8 +102,8 @@ async def _probe_registry(
     Confirm an address serves the Tractor actor handshake.
 
     Connection and handshake work share `timeout`; each attempt gets
-    `attempt_timeout`. Shielded channel cleanup may consume at most one
-    additional `close_timeout` after either deadline fires.
+    `attempt_timeout`. Shielded cleanup may add up to `close_timeout`
+    per attempted channel.
 
     '''
     connected_once: bool = False
@@ -525,12 +525,10 @@ async def open_root_actor(
             timeout: float = 3,
         ) -> None:
             '''
-            Attempt temporary connection to see if a registry is
-            listening at the requested address by a tranport layer
-            ping.
+            Probe with a bounded Tractor actor handshake.
 
-            If a connection can't be made quickly we assume none no
-            server is listening at that addr.
+            Classify the address as a registrar, occupied by a
+            non-registrar, or absent.
 
             '''
             probe_status = await _probe_registry(

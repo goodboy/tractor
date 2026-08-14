@@ -15,7 +15,7 @@ def test_daemon_ready_check_does_not_connect(
     tmp_path,
 ):
     '''
-    Detect a listening UDS daemon without creating a raw connection.
+    Observe completed daemon startup without a raw connection.
 
     The old UDS readiness helper connected and immediately closed. That
     entered Tractor's actor-handshake handler with no `Aid` payload and

@@ -332,9 +332,9 @@ def get_rt_dir(
     userspace apps stick their IPC and cache related system
     util-files.
 
-    On linux we use a `${XDG_RUNTIME_DIR}/tractor/` subdir by
-    default, but equivalents are mapped for each platform using
-    the lovely `platformdirs` lib.
+    Linux uses `${XDG_RUNTIME_DIR}/tractor/`; Darwin uses a short,
+    owner-only `/tmp/tractor-<uid>` path; other platforms use the
+    lovely `platformdirs` lib.
 
     '''
     # lazy-imported to keep it off the eager

@@ -44,8 +44,9 @@ clan shares one registry with zero config on your part.
 The bootstrap rule inside ``open_root_actor()`` is delightfully
 simple:
 
-- on boot, ping every socket addr in ``registry_addrs``; when none
-  are passed the per-transport defaults are used: for TCP the
+- on boot, probe every addr in ``registry_addrs`` with a bounded
+  Tractor ``Aid`` handshake; when none are passed the per-transport
+  defaults are used: for TCP the
   loopback ``('127.0.0.1', 1616)``, for UDS a
   ``registry@1616.sock`` file,
 
@@ -53,9 +54,11 @@ simple:
   actor and register with the *existing* registry; your own IPC
   server binds random same-transport addrs instead,
 
-- if **nothing answers, congratulations: you just became the
-  registrar**. Your transport server binds the registry addrs
-  themselves and you start serving lookups for everyone else.
+- if every address is absent, congratulations: you just became the
+  registrar. Your transport server binds the registry addrs
+  themselves and you start serving lookups for everyone else,
+- if no registrar answers but an address is occupied by a foreign or
+  non-responsive endpoint, startup fails instead of binding over it.
 
 Pass ``ensure_registry=True`` when your program *requires* being
 the one-and-only registrar; boot then fails loudly with a
@@ -196,9 +199,10 @@ the existing registrar:
 
     trio.run(main)
 
-Per the bootstrap rules above, if the registrar at those addrs is
-*not* reachable this process simply becomes its own (registrar)
-root — so the same code works standalone and as a tree-joiner.
+Per the bootstrap rules above, if those addrs are absent this process
+becomes its own registrar root, so the same code works standalone and
+as a tree-joiner. An occupied address that does not complete a Tractor
+registrar handshake fails startup instead of being rebound.
 
 "Arbiter"? A legacy naming note
 -------------------------------

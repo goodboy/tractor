@@ -656,7 +656,7 @@ class MsgpackUDSStream(MsgpackTransport):
             case (bytes(), str()):
                 sock_path: Path = Path(sockname)
 
-            # XXX, no-autobind case (macOS): the un-bound end
+            # NOTE, no-autobind case (macOS): the un-bound end
             # is `''`, NOT a `bytes` abstract-ns addr; taking
             # `peername` unconditionally (as prior impl did)
             # delivers garbage `Path('')` addrs on the accept
