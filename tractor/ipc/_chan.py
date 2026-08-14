@@ -33,6 +33,7 @@ from typing import (
 )
 import warnings
 
+import msgspec
 import trio
 
 from ._types import (
@@ -518,6 +519,7 @@ class Channel:
                 )
         except (
             MsgTypeError,
+            msgspec.DecodeError,
             TypeError,
             UnicodeDecodeError,
             trio.TooSlowError,

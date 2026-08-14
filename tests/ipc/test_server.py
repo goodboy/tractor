@@ -4,7 +4,12 @@ High-level `.ipc._server` unit tests.
 '''
 from __future__ import annotations
 import errno
+from unittest.mock import (
+    AsyncMock,
+    Mock,
+)
 
+import msgspec
 import pytest
 import trio
 from tractor import (
@@ -16,7 +21,10 @@ from tractor._testing.addr import (
     get_rando_addr,
 )
 from tractor._exceptions import TransportClosed
+from tractor.ipc._chan import Channel
+from tractor.ipc import _server
 from tractor.ipc._transport import MsgpackTransport
+from tractor.msg.types import Aid
 # TODO, use/check-roundtripping with some of these wrapper types?
 #
 # from .._addr import Address
@@ -30,8 +38,8 @@ def test_send_normalizes_peer_reset():
     '''
     Normalize Darwin's pre-handshake peer reset as transport closure.
 
-    A raw UDS readiness client connects and immediately disconnects.
-    Darwin reports the server's first handshake write as
+    A UDS peer may disconnect before completing the actor handshake.
+    Darwin can report the server's first handshake write as
     `ECONNRESET`, wrapped by `trio.BrokenResourceError`; allowing
     that raw error to escape cancels the daemon's shared IPC nursery.
     This fake stream reproduces the exact exception chain and proves
@@ -67,6 +75,90 @@ def test_send_normalizes_peer_reset():
         )
 
     trio.run(main)
+
+
+def test_handshake_normalizes_decode_error():
+    '''
+    Keep malformed pre-handshake frames out of the service nursery.
+
+    A non-msgpack peer can trigger `msgspec.DecodeError` before a
+    remote `Aid` exists. Letting that decoder error escape the inbound
+    handler cancels the actor's shared IPC nursery. This fake channel
+    proves `_do_handshake()` presents only `TransportClosed` upward.
+
+    '''
+    chan = object.__new__(Channel)
+    chan.send = AsyncMock()
+    chan.recv = AsyncMock(
+        side_effect=msgspec.DecodeError('malformed handshake'),
+    )
+
+    async def main():
+        with pytest.raises(TransportClosed) as exc_info:
+            await chan._do_handshake(
+                aid=Aid(
+                    name='local',
+                    uuid='local-uuid',
+                    pid=1234,
+                ),
+                timeout=.1,
+            )
+
+        assert isinstance(
+            exc_info.value.src_exc,
+            msgspec.DecodeError,
+        )
+
+    trio.run(main)
+
+
+def test_server_uses_independent_handshake_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Give ordinary actor handshakes a distinct, generous deadline.
+
+    Registry probes use short retries, but ordinary portal and child
+    connections do not retry. Applying the probe's one-second timeout
+    in the server can terminate a valid delayed child and leave its
+    parent blocked in `IPCServer.wait_for_peer()`. This handler fake
+    proves the server uses its separate pre-registration budget.
+
+    '''
+    handshake = AsyncMock(
+        side_effect=TransportClosed(message='stop after assertion'),
+    )
+    chan = Mock(_do_handshake=handshake)
+    actor = Mock(
+        aid=Aid(
+            name='local',
+            uuid='local-uuid',
+            pid=1234,
+        ),
+    )
+    monkeypatch.setattr(
+        Channel,
+        'from_stream',
+        Mock(return_value=chan),
+    )
+    monkeypatch.setattr(
+        _server._state,
+        'current_actor',
+        Mock(return_value=actor),
+    )
+
+    async def main():
+        await _server.handle_stream_from_peer(
+            stream=Mock(),
+            server=Mock(),
+        )
+
+    trio.run(main)
+    handshake.assert_awaited_once_with(
+        aid=actor.aid,
+        timeout=_server._PRE_REG_HANDSHAKE_TIMEOUT,
+    )
+    assert _server._PRE_REG_HANDSHAKE_TIMEOUT == 10
 
 
 @pytest.mark.parametrize(

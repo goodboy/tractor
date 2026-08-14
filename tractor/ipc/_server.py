@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
 log = log.get_logger()
 
-_PRE_REG_HANDSHAKE_TIMEOUT: float = 1
+_PRE_REG_HANDSHAKE_TIMEOUT: float = 10
 
 
 async def maybe_wait_on_canced_subs(
@@ -352,12 +352,9 @@ async def handle_stream_from_peer(
         # "kinda-error" that we expect to tolerate during
         # discovery-sys related pings, queires, DoS etc.
     ):
-        # XXX: This may propagate up from `Channel._aiter_recv()`
-        # and `MsgpackStream._inter_packets()` on a read from the
-        # stream particularly when the runtime is first starting up
-        # inside `open_root_actor()` where there is a check for
-        # a bound listener on the registrar addr.  the reset will be
-        # because the handshake was never meant took place.
+        # `TransportClosed` is expected when a peer disconnects or
+        # fails the initial typed handshake, including foreign clients
+        # and probes racing shutdown.
         log.runtime(
             con_status
             +
