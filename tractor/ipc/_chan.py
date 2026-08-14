@@ -538,7 +538,8 @@ class Channel:
 
 @acm
 async def _connect_chan(
-    addr: UnwrappedAddress
+    addr: UnwrappedAddress,
+    close_timeout: float|None = None,
 ) -> typing.AsyncGenerator[Channel, None]:
     '''
     Create and connect a `Channel` to the provided `addr`, disconnect
@@ -553,4 +554,14 @@ async def _connect_chan(
         yield chan
     finally:
         with trio.CancelScope(shield=True):
-            await chan.aclose()
+            if close_timeout is None:
+                await chan.aclose()
+            else:
+                with trio.move_on_after(close_timeout) as close_cs:
+                    await chan.aclose()
+                if close_cs.cancelled_caught:
+                    log.warning(
+                        f'Timed out closing channel after '
+                        f'{close_timeout}s\n'
+                        f'|_{chan}\n'
+                    )

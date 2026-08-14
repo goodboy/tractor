@@ -88,7 +88,11 @@ _DEBUG_COMPATIBLE_BACKENDS: tuple[str, ...] = (
 
 async def _probe_registry(
     addr: Address,
-    timeout: float = 1,
+    timeout: float = 3,
+    attempt_timeout: float = 1,
+    max_attempts: int = 3,
+    retry_delay: float = .05,
+    close_timeout: float = .2,
 ) -> Literal[
     'absent',
     'occupied',
@@ -97,30 +101,49 @@ async def _probe_registry(
     '''
     Confirm an address serves the Tractor actor handshake.
 
+    Connection and handshake work share `timeout`; each attempt gets
+    `attempt_timeout`. Shielded channel cleanup may consume at most one
+    additional `close_timeout` after either deadline fires.
+
     '''
-    try:
-        with trio.move_on_after(timeout) as cs:
-            async with _connect_chan(addr.unwrap()) as chan:
-                peer_aid: Aid = await chan._do_handshake(
-                    aid=Aid(
-                        name='registry-probe',
-                        uuid=mk_uuid(),
-                        pid=os.getpid(),
-                        is_probe=True,
-                    ),
-                    timeout=timeout,
+    connected_once: bool = False
+    with trio.move_on_after(timeout):
+        for attempt in range(max_attempts):
+            try:
+                with trio.move_on_after(attempt_timeout) as attempt_cs:
+                    async with _connect_chan(
+                        addr.unwrap(),
+                        close_timeout=close_timeout,
+                    ) as chan:
+                        connected_once = True
+                        peer_aid: Aid = await chan._do_handshake(
+                            aid=Aid(
+                                name='registry-probe',
+                                uuid=mk_uuid(),
+                                pid=os.getpid(),
+                                is_probe=True,
+                            ),
+                            timeout=attempt_timeout,
+                        )
+                        if peer_aid.is_registrar is not False:
+                            return 'registrar'
+                        return 'occupied'
+
+                if attempt_cs.cancelled_caught:
+                    if not connected_once:
+                        return 'absent'
+
+            except OSError:
+                return (
+                    'occupied'
+                    if connected_once
+                    else 'absent'
                 )
-                if peer_aid.is_registrar is not False:
-                    return 'registrar'
-                return 'occupied'
+            except TransportClosed:
+                pass
 
-        if cs.cancelled_caught:
-            return 'occupied'
-
-    except OSError:
-        return 'absent'
-    except TransportClosed:
-        return 'occupied'
+            if attempt + 1 < max_attempts:
+                await trio.sleep(retry_delay * (attempt + 1))
 
     return 'occupied'
 
@@ -499,7 +522,7 @@ async def open_root_actor(
 
         async def ping_tpt_socket(
             addr: Address,
-            timeout: float = 1,
+            timeout: float = 3,
         ) -> None:
             '''
             Attempt temporary connection to see if a registry is

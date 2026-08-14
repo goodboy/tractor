@@ -9,6 +9,13 @@ bind-address selection in `_root.py`:
 3. Explicit bind given -> wraps via `wrap_address()` and uses them
 
 '''
+from contextlib import asynccontextmanager as acm
+from unittest.mock import (
+    AsyncMock,
+    call,
+    Mock,
+)
+
 import pytest
 import trio
 import tractor
@@ -18,6 +25,103 @@ from tractor.discovery._addr import (
 )
 from tractor.discovery._multiaddr import mk_maddr
 from tractor._testing.addr import get_rando_addr
+
+
+def test_registry_probe_retries_transient_handshake(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Retry a connected registrar after transient handshake timeout.
+
+    Loaded macOS runners can accept the transport while delaying the
+    actor handshake beyond one second. Treating that first timeout as
+    final makes a healthy remote daemon look occupied and cascades into
+    discovery failures. This deterministic fake fails once, succeeds
+    on the second complete handshake, and proves one bounded backoff.
+
+    '''
+    async def stall_handshake(**kwargs):
+        await trio.sleep_forever()
+
+    first_handshake = AsyncMock(side_effect=stall_handshake)
+    second_handshake = AsyncMock(
+        return_value=tractor.msg.Aid(
+            name='registrar',
+            uuid='registrar-uuid',
+            pid=1234,
+            is_registrar=True,
+        ),
+    )
+    chans = [
+        Mock(_do_handshake=first_handshake),
+        Mock(_do_handshake=second_handshake),
+    ]
+    closed: list[object] = []
+
+    @acm
+    async def connect_chan(addr, close_timeout):
+        assert close_timeout == .2
+        chan = chans[len(closed)]
+        try:
+            yield chan
+        finally:
+            closed.append(chan)
+
+    sleep = AsyncMock()
+    monkeypatch.setattr(_root, '_connect_chan', connect_chan)
+    monkeypatch.setattr(_root.trio, 'sleep', sleep)
+
+    async def main():
+        status = await _root._probe_registry(
+            addr=wrap_address(('127.0.0.1', 1616)),
+            timeout=.3,
+            attempt_timeout=.1,
+            max_attempts=3,
+            retry_delay=.01,
+        )
+        assert status == 'registrar'
+
+    trio.run(main)
+
+    first_handshake.assert_awaited_once()
+    second_handshake.assert_awaited_once()
+    assert first_handshake.await_args.kwargs['timeout'] == .1
+    assert second_handshake.await_args.kwargs['timeout'] == .1
+    assert closed == chans
+    sleep.assert_has_awaits([call(.01)])
+
+
+def test_probe_channel_close_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Bound shielded channel cleanup after a registry probe.
+
+    `_connect_chan()` shields `.aclose()` so cancellation cannot leak
+    ordinary channels. A stalled close previously let registry probing
+    exceed every connect and handshake deadline. This fake close never
+    completes; the explicit cleanup allowance must still return control
+    to the caller without cancelling its surrounding task.
+
+    '''
+    chan = Mock()
+    chan.aclose = AsyncMock(side_effect=trio.sleep_forever)
+    monkeypatch.setattr(
+        tractor.Channel,
+        'from_addr',
+        AsyncMock(return_value=chan),
+    )
+
+    async def main():
+        with trio.fail_after(.5):
+            async with _root._connect_chan(
+                ('127.0.0.1', 1616),
+                close_timeout=.01,
+            ):
+                pass
+
+    trio.run(main)
+    chan.aclose.assert_awaited_once()
 
 
 def test_transport_only_listener_is_not_registrar():

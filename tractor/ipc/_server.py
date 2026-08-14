@@ -72,6 +72,8 @@ if TYPE_CHECKING:
 
 log = log.get_logger()
 
+_PRE_REG_HANDSHAKE_TIMEOUT: float = 1
+
 
 async def maybe_wait_on_canced_subs(
     uid: tuple[str, str],
@@ -333,7 +335,7 @@ async def handle_stream_from_peer(
         if actor := _state.current_actor():
             peer_aid: msgtypes.Aid = await chan._do_handshake(
                 aid=actor.aid,
-                timeout=1,
+                timeout=_PRE_REG_HANDSHAKE_TIMEOUT,
             )
     except (
         TransportClosed,
