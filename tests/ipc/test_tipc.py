@@ -8,6 +8,7 @@ the pure address-algebra cases run everywhere.
 '''
 from __future__ import annotations
 import errno
+import struct
 from socket import (
     SOCK_STREAM,
     SOL_SOCKET,
@@ -627,3 +628,78 @@ def test_duplicate_name_bind_does_not_raise():
             second.socket.close()
 
     trio.run(main)
+
+
+# ------------------------------------------------------------------
+# layer B — the topology service (`TIPC_TOP_SRV`)
+# ------------------------------------------------------------------
+
+def test_topology_struct_layouts():
+    '''
+    Pin the `include/uapi/linux/tipc.h` struct sizes.
+
+    XXX the event is **48** bytes (`4+4+4+8+28`), NOT the 40 an
+    earlier revision of plan 01 §5.2 claimed.
+
+    '''
+    assert struct.calcsize(_tipc._SUBSCR_FMT) == 28
+    assert struct.calcsize(_tipc._EVENT_FMT) == 48
+    assert _tipc._EVENT_SIZE == 48
+
+    # ..and the subscription we actually emit is exactly that
+    sub: bytes = _tipc._mk_subscr(
+        stype=TRACTOR_STYPE,
+        lower=0,
+        upper=0xFFFF_FFFF,
+        filt=_tipc.TIPC_SUB_SERVICE,
+        timeout=_tipc.TIPC_WAIT_FOREVER,
+    )
+    assert len(sub) == 28
+
+
+def test_wait_forever_is_masked_for_packing():
+    '''
+    Python exposes `TIPC_WAIT_FOREVER` as `-1`, which `struct`
+    refuses to pack into an unsigned `'I'`; it MUST be masked.
+
+    '''
+    assert _tipc.TIPC_WAIT_FOREVER == -1
+
+    with pytest.raises(struct.error):
+        struct.pack('=I', _tipc.TIPC_WAIT_FOREVER)
+
+    sub: bytes = _tipc._mk_subscr(
+        stype=TRACTOR_STYPE,
+        lower=0,
+        upper=0,
+        filt=_tipc.TIPC_SUB_SERVICE,
+        timeout=_tipc.TIPC_WAIT_FOREVER,
+    )
+    _, _, _, timeout, _, _ = struct.unpack(_tipc._SUBSCR_FMT, sub)
+    assert timeout == 0xFFFF_FFFF
+
+
+def test_decode_name_event_rejects_junk():
+    '''
+    Runt frames and unknown event codes are dropped, never raised
+    — a confused kernel must not kill the reader task.
+
+    '''
+    assert _tipc._decode_name_event(
+        b'\x00' * 12,
+        stype=TRACTOR_STYPE,
+        scope=TIPC_CLUSTER_SCOPE,
+    ) is None
+
+    bogus: bytes = struct.pack(
+        _tipc._EVENT_FMT,
+        99,  # not a known event code
+        1, 1, 0, 0,
+        0, 0, 0, 0, 0,
+        b'\0' * 8,
+    )
+    assert _tipc._decode_name_event(
+        bogus,
+        stype=TRACTOR_STYPE,
+        scope=TIPC_CLUSTER_SCOPE,
+    ) is None
