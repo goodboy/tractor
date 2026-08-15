@@ -45,15 +45,20 @@ Normative refs are the kernel sources (the tipc.io docs are stale),
 '''
 from __future__ import annotations
 from contextlib import (
+    asynccontextmanager as acm,
     contextmanager as cm,
 )
 import errno
 from hashlib import blake2b
 import os
 import socket
-from socket import SOCK_STREAM
+from socket import (
+    SOCK_SEQPACKET,
+    SOCK_STREAM,
+)
 import struct
 from typing import (
+    AsyncGenerator,
     Callable,
     ClassVar,
     Literal,
@@ -945,3 +950,149 @@ def _decode_name_event(
         node=node,
         ref=ref,
     )
+
+
+async def _stream_name_events(
+    sock,
+    stype: int,
+    scope: int,
+    tx: trio.MemorySendChannel,
+) -> None:
+    '''
+    Read `struct tipc_event`s off a topology-server socket until
+    it's closed, forwarding decoded ones to `tx`.
+
+    '''
+    try:
+        while True:
+            raw: bytes = await sock.recv(_EVENT_SIZE)
+            if not raw:
+                return
+
+            if (ev := _decode_name_event(
+                raw,
+                stype=stype,
+                scope=scope,
+            )) is None:
+                continue
+
+            try:
+                tx.send_nowait(ev)
+            except trio.WouldBlock:
+                # XXX drop rather than block: stalling this reader
+                # backs up the kernel's own queue and we'd lose the
+                # event anyway, just less visibly.
+                log.warning(
+                    f'TIPC topology event buffer full, dropping!\n'
+                    f'{ev}\n'
+                    f' |_raise `buf_size` or consume faster\n'
+                )
+
+    except (
+        trio.ClosedResourceError,
+        trio.BrokenResourceError,
+    ):
+        # normal `@acm` teardown: the socket was closed under us
+        return
+
+    finally:
+        tx.close()
+
+
+@acm
+async def open_topology_events(
+    stype: int = TRACTOR_STYPE,
+    lower: int = 0,
+    upper: int = 0xFFFF_FFFF,
+    filt: int = TIPC_SUB_SERVICE,
+    scope: int = TIPC_CLUSTER_SCOPE,
+    timeout: int = TIPC_WAIT_FOREVER,
+    buf_size: int = 64,
+) -> AsyncGenerator[
+    trio.MemoryReceiveChannel[TIPCNameEvent],
+    None,
+]:
+    '''
+    Subscribe to kernel name-table events for `stype` and yield a
+    `trio` receive-channel of `TIPCNameEvent`.
+
+    This is *push-based* service discovery: the kernel tells us
+    when any actor in the cluster publishes or withdraws a name,
+    so a registrar never has to poll `find_actor()`.
+
+    `filt` selects the granularity,
+    - `TIPC_SUB_SERVICE`: one event per *name* becoming
+      (un)available — "does anyone serve this?"
+    - `TIPC_SUB_PORTS`: one event per *publisher*, so N binders on
+      one name give N events. Verified.
+
+    NOTE this socket is `SOCK_SEQPACKET` and never goes through
+    `MsgpackTransport` — the contract's "`SOCK_STREAM` only"
+    constraint is about `MsgTransport` streams, not this.
+
+    '''
+    topsrv_addr = TIPCAddress(
+        _stype=TIPC_TOP_SRV,
+        _instance=TIPC_TOP_SRV,
+        _scope=scope,
+    )
+    sock = trio_socket.socket(
+        AF_TIPC,
+        SOCK_SEQPACKET,
+    )
+    with _close_on_error(sock):
+        with _reraise_as_connerr(
+            src_excs=(OSError,),
+            addr=topsrv_addr,
+        ):
+            await sock.connect((
+                TIPC_ADDR_NAME,
+                TIPC_TOP_SRV,
+                TIPC_TOP_SRV,
+                0,  # domain: 0 == "anywhere in scope"
+            ))
+            await sock.send(
+                _mk_subscr(
+                    stype=stype,
+                    lower=lower,
+                    upper=upper,
+                    filt=filt,
+                    timeout=timeout,
+                )
+            )
+
+    log.info(
+        f'Subscribed to TIPC name-table events\n'
+        f'[>\n'
+        f' |_stype: 0x{stype:08x}\n'
+        f' |_range: [{lower}, {upper}]\n'
+        f' |_filter: {filt}\n'
+    )
+    tx: trio.MemorySendChannel
+    rx: trio.MemoryReceiveChannel
+    tx, rx = trio.open_memory_channel(buf_size)
+    try:
+        async with trio.open_nursery() as tn:
+            tn.start_soon(
+                _stream_name_events,
+                sock,
+                stype,
+                scope,
+                tx,
+            )
+            try:
+                yield rx
+            finally:
+                # XXX cancel BEFORE closing the fd!
+                #
+                # `.close()`ing out from under a pending
+                # `.recv()` races: trio's retry can land on an
+                # already-freed fd and raise a bare
+                # `OSError(EBADF)` instead of the
+                # `ClosedResourceError` the reader guards for —
+                # which then escapes as an eg from the nursery.
+                # Cancelling first makes teardown deterministic.
+                tn.cancel_scope.cancel()
+    finally:
+        sock.close()
+        await rx.aclose()
