@@ -43,6 +43,7 @@ from tractor.ipc._tipc import (
     TIPCAddress,
     instance_from_seed,
     is_tipc_available,
+    open_topology_events,
     start_listener,
 )
 
@@ -703,3 +704,108 @@ def test_decode_name_event_rejects_junk():
         stype=TRACTOR_STYPE,
         scope=TIPC_CLUSTER_SCOPE,
     ) is None
+
+
+@requires_tipc
+def test_topology_reports_publish_and_withdraw():
+    '''
+    "Publishing a bind IS registration" — but *observed from the
+    outside*, by the kernel pushing us the name-table transition.
+
+    This is the whole point of layer B: cluster-wide service
+    (de)registration with NO registrar actor and NO polling.
+
+    '''
+    async def main():
+        addr: TIPCAddress = TIPCAddress.get_random()
+        got: list = []
+
+        async with open_topology_events(
+            stype=addr._stype,
+        ) as events:
+            # publish..
+            lstnr = await start_listener(addr=addr)
+            with trio.fail_after(5):
+                got.append(await events.receive())
+
+            # ..then withdraw
+            lstnr.socket.close()
+            with trio.fail_after(5):
+                got.append(await events.receive())
+
+        kinds: list[str] = [ev.kind for ev in got]
+        assert kinds == ['published', 'withdrawn']
+
+        for ev in got:
+            assert ev.addr._instance == addr._instance
+            assert ev.addr._stype == addr._stype
+            assert isinstance(ev.ref, int)
+        # both transitions name the SAME publisher port
+        assert got[0].ref == got[1].ref
+        assert 'published' in repr(got[0])
+
+    trio.run(main)
+
+
+@requires_tipc
+def test_topology_acm_closes_cleanly():
+    '''
+    The `@acm` must tear down w/o leaking its reader task — exit
+    closes the sock, the reader's `.recv()` raises
+    `ClosedResourceError`, the nursery collapses.
+
+    Also assert an *unconsumed* subscription doesn't wedge exit.
+
+    '''
+    async def main():
+        addr: TIPCAddress = TIPCAddress.get_random()
+        with trio.fail_after(10):
+            async with open_topology_events(stype=addr._stype):
+                lstnr = await start_listener(addr=addr)
+                # deliberately DON'T read the event
+                await trio.sleep(0.2)
+                lstnr.socket.close()
+
+            # ..and a second open/close round still works
+            async with open_topology_events(
+                stype=addr._stype,
+            ) as events:
+                assert events is not None
+
+    trio.run(main)
+
+
+@requires_tipc
+def test_topology_sub_ports_reports_each_publisher():
+    '''
+    `TIPC_SUB_PORTS` gives one event per *publisher*, so the
+    duplicate-name/round-robin case (§2.3) is observable from the
+    topology feed — which is how a push-registry would ever
+    detect silent crosstalk.
+
+    '''
+    async def main():
+        addr: TIPCAddress = TIPCAddress.get_random()
+
+        async with open_topology_events(
+            stype=addr._stype,
+            filt=_tipc.TIPC_SUB_PORTS,
+        ) as events:
+            first = await start_listener(addr=addr)
+            second = await start_listener(addr=addr)
+
+            refs: set[int] = set()
+            with trio.fail_after(5):
+                for _ in range(2):
+                    ev = await events.receive()
+                    assert ev.kind == 'published'
+                    assert ev.addr._instance == addr._instance
+                    refs.add(ev.ref)
+
+            # two DISTINCT publisher ports on one service name
+            assert len(refs) == 2
+
+            first.socket.close()
+            second.socket.close()
+
+    trio.run(main)
