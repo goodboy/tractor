@@ -52,9 +52,11 @@ from hashlib import blake2b
 import os
 import socket
 from socket import SOCK_STREAM
+import struct
 from typing import (
     Callable,
     ClassVar,
+    Literal,
     Type,
     TYPE_CHECKING,
 )
@@ -107,6 +109,14 @@ try:
         TIPC_IMPORTANCE,
         TIPC_LOW_IMPORTANCE,
         TIPC_NODE_SCOPE,
+        TIPC_PUBLISHED,
+        TIPC_SUB_CANCEL,
+        TIPC_SUB_PORTS,
+        TIPC_SUB_SERVICE,
+        TIPC_SUBSCR_TIMEOUT,
+        TIPC_TOP_SRV,
+        TIPC_WAIT_FOREVER,
+        TIPC_WITHDRAWN,
         TIPC_ZONE_SCOPE,
     )
 except ImportError:
@@ -122,6 +132,14 @@ except ImportError:
     TIPC_HIGH_IMPORTANCE: int = 2
     TIPC_IMPORTANCE: int = 127
     TIPC_DEST_DROPPABLE: int = 129
+    TIPC_TOP_SRV: int = 1
+    TIPC_SUB_PORTS: int = 1
+    TIPC_SUB_SERVICE: int = 2
+    TIPC_SUB_CANCEL: int = 4
+    TIPC_PUBLISHED: int = 1
+    TIPC_WITHDRAWN: int = 2
+    TIPC_SUBSCR_TIMEOUT: int = 3
+    TIPC_WAIT_FOREVER: int = -1
 
 
 # `tractor`'s reserved TIPC service-class ("type"), spelling out
@@ -774,4 +792,156 @@ def _observed_addr(
         _instance=TIPC_NAME_UNKNOWN,
         maybe_node=node,
         maybe_ref=ref,
+    )
+
+
+# ------------------------------------------------------------------
+# layer B, the topology service (`TIPC_TOP_SRV`)
+#
+# The kernel will *push* us name-table `publish`/`withdraw` events,
+# i.e. cluster-wide service (de)registration without a registrar
+# actor and without polling. This is what makes #378's "end game
+# cluster proto" claim real.
+#
+# Layouts below are from `include/uapi/linux/tipc.h` and were
+# verified byte-for-byte against a live kernel (see the §5.2 probe
+# notes in `ai/tpt-backends/01_tipc_backend.md`).
+# ------------------------------------------------------------------
+
+# struct tipc_subscr {
+#   struct tipc_name_seq seq;   /* 3 * __u32: type, lower, upper */
+#   __u32 timeout;
+#   __u32 filter;
+#   char  usr_handle[8];
+# }
+_SUBSCR_FMT: str = '=5I8s'
+
+# struct tipc_event {
+#   __u32 event, found_lower, found_upper;
+#   struct tipc_portid port;    /* {__u32 ref; __u32 node;} */
+#   struct tipc_subscr s;       /* the 28B subscription echo */
+# }
+#
+# NOTE, 48B — NOT the 40 an earlier revision of the plan claimed.
+_EVENT_FMT: str = '=10I8s'
+_EVENT_SIZE: int = struct.calcsize(_EVENT_FMT)
+
+# a `usr_handle[8]` tag so our subs are identifiable in
+# `tipc nametable show`-adjacent debugging.
+_SUBSCR_HANDLE: bytes = b'tractor\0'
+
+_event_kinds: dict[int, str] = {
+    TIPC_PUBLISHED: 'published',
+    TIPC_WITHDRAWN: 'withdrawn',
+    TIPC_SUBSCR_TIMEOUT: 'timeout',
+}
+
+
+class TIPCNameEvent(
+    msgspec.Struct,
+    frozen=True,
+):
+    '''
+    A kernel name-table transition: some service name was
+    published or withdrawn somewhere in the cluster.
+
+    '''
+    kind: Literal[
+        'published',
+        'withdrawn',
+        'timeout',
+    ]
+    addr: TIPCAddress
+    node: int
+    ref: int
+
+    def __repr__(self) -> str:
+        return (
+            f'{type(self).__name__}'
+            f'['
+            f'{self.kind}, {self.addr}, @0x{self.node:08x}:{self.ref}'
+            f']'
+        )
+
+
+def _mk_subscr(
+    stype: int,
+    lower: int,
+    upper: int,
+    filt: int,
+    timeout: int,
+    handle: bytes = _SUBSCR_HANDLE,
+) -> bytes:
+    '''
+    Pack a `struct tipc_subscr` for the topology server.
+
+    NOTE, native (`'='`) byte-order is **accepted** by modern
+    kernels — verified on a live box, both `publish` and
+    `withdraw` events round-tripped w/ the subscription echoed
+    back intact. An earlier revision of the plan proposed a
+    `'>'`-retry endianness probe; it isn't needed.
+
+    '''
+    return struct.pack(
+        _SUBSCR_FMT,
+        stype,
+        lower,
+        upper,
+        # XXX python exposes `TIPC_WAIT_FOREVER` as -1, so it MUST
+        # be masked before packing into an unsigned field.
+        timeout & 0xFFFF_FFFF,
+        filt,
+        handle,
+    )
+
+
+def _decode_name_event(
+    raw: bytes,
+    stype: int,
+    scope: int,
+) -> TIPCNameEvent|None:
+    '''
+    Decode one `struct tipc_event`, or `None` if it's a runt/
+    unrecognized frame.
+
+    '''
+    if len(raw) < _EVENT_SIZE:
+        log.warning(
+            f'Runt TIPC topology event, ignoring\n'
+            f'len: {len(raw)} (want {_EVENT_SIZE})\n'
+        )
+        return None
+
+    (
+        event,
+        found_lower,
+        found_upper,
+        ref,
+        node,
+        *_,  # the 28B subscription echo
+    ) = struct.unpack(_EVENT_FMT, raw[:_EVENT_SIZE])
+
+    if (kind := _event_kinds.get(event)) is None:
+        log.warning(
+            f'Unknown TIPC topology event code, ignoring\n'
+            f'event: {event!r}\n'
+        )
+        return None
+
+    return TIPCNameEvent(
+        kind=kind,
+        # NOTE, `tractor` only ever publishes *singleton* ranges
+        # (`lower == upper`) so the lower bound IS the instance.
+        #
+        # XXX the event carries NO scope — the name-table doesn't
+        # report it — so we echo back the subscription's own. Fine
+        # for our use (we subscribe per-scope) but don't mistake
+        # it for observed data.
+        addr=TIPCAddress(
+            _stype=stype,
+            _instance=found_lower,
+            _scope=scope,
+        ),
+        node=node,
+        ref=ref,
     )
