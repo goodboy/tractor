@@ -4,10 +4,12 @@ IPC and logging
 Under every portal, context and stream sits a per-peer
 :class:`~tractor.Channel`: a msgpack-typed messaging link wrapping
 one OS transport connection. Transports are pluggable per actor
-via ``enable_transports=['tcp' | 'uds']`` — TCP is the default,
-UDS (unix domain sockets) gives you port-less, same-host IPC with
-kernel-provided peer credentials for free — and exactly **one**
-transport may currently be enabled per actor.
+via ``enable_transports=['tcp' | 'uds' | 'tipc']`` — TCP is the
+default, UDS (unix domain sockets) gives you port-less, same-host
+IPC with kernel-provided peer credentials for free, and TIPC is an
+opt-in linux cluster protocol where the address *is* a
+kernel-published service name (see :doc:`/guide/tipc`) — and
+exactly **one** transport may currently be enabled per actor.
 
 .. d2:: diagrams/runtime_stack.d2
    :caption: Where ``Channel`` sits in the runtime stack.
@@ -15,7 +17,8 @@ transport may currently be enabled per actor.
    :alt: layered runtime stack from app code down to transports
 
 Addresses are "unwrapped" tuples at the API edges:
-``('host', port)`` for TCP, filesystem-path pairs for UDS. For
+``('host', port)`` for TCP, filesystem-path pairs for UDS and the
+proto-keyed ``('tipc', stype, instance, scope)`` for TIPC. For
 the full layering story — transport protocols, the IPC server,
 address types and the msg loop — see
 :doc:`/explain/architecture`.
