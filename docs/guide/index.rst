@@ -31,6 +31,8 @@ order,
   SC-supervise ``asyncio`` tasks from ``trio``.
 - :doc:`msging` — typed IPC payloads, the wire
   msg-spec and custom codecs.
+- :doc:`tipc` — the ``AF_TIPC`` cluster backend,
+  where the kernel does discovery for you.
 - :doc:`testing` — running + monitoring the
   test suite (and testing your own actor apps).
 
@@ -49,4 +51,5 @@ order,
    parallelism
    asyncio
    msging
+   tipc
    testing
