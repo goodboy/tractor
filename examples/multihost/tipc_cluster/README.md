@@ -92,8 +92,8 @@ sudo modprobe tipc
 # over ethernet (L2) — simplest when the hosts share a segment
 sudo tipc bearer enable media eth device eth0
 
-# ..or over UDP when L2 isn't available (pairs nicely with the
-# `wg` tunnel examples in ../wg_lan/)
+# ..or over UDP when L2 isn't available — and MANDATORY over a
+# `wg` mesh, see below
 sudo tipc bearer enable media udp name uc localip 10.0.11.1
 
 # verify BEFORE running anything: this must list the peer
@@ -115,6 +115,33 @@ Note what's absent from both scripts: any IP, hostname or port.
 Both sides name the *same service*, and the kernel routes it.
 Move `host_a_srv.py` to a third node and host B's dial keeps
 working, unchanged.
+
+### over a `wg` mesh
+
+TIPC over WireGuard is the intended reference multihost
+deployment (gh #502). One hard constraint: a wg interface is
+L3/`tun` — `POINTOPOINT,NOARP`, `link/none`, no L2 address — so
+TIPC's `eth` media **cannot** bind it. The udp bearer is
+mandatory there, bound to the wg overlay IP, and wg's typical
+1420 MTU sits under ethernet's 1500 so link MTU wants checking.
+
+Composed, the deployment address is:
+
+```
+/ip4/<pub>/udp/51820/wg/u<key>/tipc/<stype>/<inst>/<scope>
+\____ wg bearer ________/\_key_/\______ tractor ep ________/
+```
+
+Note the tipc segment has no locative part, unlike tcp's inner
+`/ip4/../tcp/..` — a service name is location-independent, so wg
+carries the routing and tipc carries identity.
+
+Worth knowing: TIPC is **not** unencrypted. It ships AES-GCM
+crypto of its own (`tipc node set key`, linux 5.9+) with
+cluster/master/per-node keys and rekeying. Those keys are
+symmetric and pre-shared, which is why a wg mesh is still
+preferred — public-key identity, NAT traversal, and one overlay
+shared by every transport.
 
 ### scope
 
