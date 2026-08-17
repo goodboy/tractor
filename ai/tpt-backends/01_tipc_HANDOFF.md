@@ -3,6 +3,14 @@
 Status: **PR [#493] is feature-complete and green**; what remains
 is landing logistics plus a named follow-up track.
 
+Takeover snapshot (2026-08-17): [#493] remains a draft at
+`c7ae6065`, targeting `ng_tpts_planning` ([#492]). Its branch
+point is `ee17ed9f`; #492 has since advanced by two commits to
+`d9a6e2e9`, so #493 still needs rebasing onto that current
+[#492] head before final landing work. The latest `tipc` CI leg
+passed; the workflow as a whole is red only because the macOS
+`tcp` leg failed.
+
 Audience: any agent or human picking this up cold, from any
 provider. Nothing here assumes a particular harness or tooling.
 
@@ -105,8 +113,12 @@ Two design decisions that are **closed**, with reasons:
 
 ## 4. What landed
 
-15 commits, `22ef362d..2d082373`, on `wkt/tipc_backend_378`,
-based on `ng_tpts_planning` (PR [#492], docs-only).
+All §6 steps 1–7 landed on `wkt/tipc_backend_378`, based on
+`ng_tpts_planning` (PR [#492], docs-only). The completed arc is
+17 substantive commits from `22ef362d` through `c7ae6065`, plus
+the incidental `1802641e` local-cache ignore commit. The plan's
+§6 status text is the historical snapshot at `7e20585f`; its
+claim that steps 6–7 remain is no longer current.
 
 - `TIPCAddress` + `is_tipc_available()` + `start_listener()`
 - `MsgpackTIPCStream` (`connect_to()`, `get_stream_addrs()`)
@@ -141,16 +153,24 @@ These live on [#493]'s body as `### TODOs before landing`. They
 are **not** mirrored into an issue — if the PR is ever superseded
 they need re-homing.
 
-1. **Cherry-pick the `pformat` fix onto `main`** as its own PR —
+1. **Cherry-pick the `pformat` fix onto `main`** as its own PR,
+   and land it before [#493] —
    `22ef362d` (red guard test) then `f9f98eeb` (the 1-line fix).
-   Unrelated to TIPC; every branch has the bug.
+   Preserve that order. The pair is unrelated to TIPC, every
+   branch has the bug, and this fix must not disappear if #493
+   is superseded.
 2. **Watch the `tipc` CI leg.** It's gated
    `continue-on-error: ${{ matrix.tpt_proto == 'tipc' }}` because
    GH's runners have never been asked to `modprobe` for us. Once
    it has a few green runs, drop the gate. If the runners refuse
    the `modprobe`, fall back to a container job with
    `--cap-add NET_ADMIN`.
-3. **Rebase onto `main` once #492 merges.**
+3. **Rebase #493 onto #492's current head first.** At this
+   snapshot that means moving from the `ee17ed9f` branch point
+   onto `d9a6e2e9`. #492 is checked out in another worktree, so
+   refresh its authoritative head and coordinate before changing
+   history. Once #492 merges, rebase #493 onto `main` for final
+   landing.
 
 ## 6. The follow-up track
 
@@ -252,6 +272,11 @@ Provider-neutral, but they *are* enforced by review:
   changes, report them, and let the maintainer stage. Asking
   "should we commit?" is a question *for you to answer*, not
   permission to act.
+- **Do not re-ask for an exact forge write already authorized in
+  the current request.** Use the provider adapter's snapshot,
+  digest and drift checks, perform the named edit, then report
+  what was published. This does not authorize unrelated or
+  destructive forge actions.
 - **A failing/guard test lands in its own commit before the fix
   it guards.** Red first, then green.
 - **One commit per logical step**, so history shows *why*. Never
@@ -287,3 +312,8 @@ ai/tpt-backends/01_tipc_backend.md       the (reconciled) plan
 Both single-host examples have been **run against a live
 kernel** — the output pasted in their README is real, not
 illustrative.
+
+External agent memory deliberately contains only a project
+pointer back to this handoff, not a competing copy of the project
+state. Treat this file as the durable source of truth and update
+it when the branch topology or landing sequence changes.
