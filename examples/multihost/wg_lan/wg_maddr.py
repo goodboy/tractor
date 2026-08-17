@@ -2,32 +2,49 @@
 r'''
 Parse `wg`-tunnelled multiaddrs into `tractor`-ready addrs.
 
-The canonical form (per py-multiaddr #108, verified to parse +
-round-trip against its upstream merge) nests the *overlay*
-endpoint **after** the `/wg/` segment:
+The canonical form (per py-multiaddr #108, verified against its
+upstream merge) nests the *overlay* endpoint **after** the `/wg/`
+segment:
 
     /ip4/10.0.0.1/udp/51820/wg/u<key>/ip4/10.0.11.1/tcp/1616
     \_______ wg bearer ______/\_ key _/\____ tractor ep _____/
       (underlay, wg
        `ListenPort`)
 
-- the segments *before* `/wg/` are the **bearer**: the underlay
+Naming follows `py-multiaddr`'s own encapsulation model, where
+earlier segments *wrap* later ones (`.encapsulate()` appends), so
+the two roles are:
+
+- **bearer**: the segs *before* `/wg/`, i.e. the underlay
   `(ip, udp-port)` that `wg(8)` itself listens on. Nothing in
   `tractor` ever binds this — the kernel/`wg` iface owns it.
-- `/wg/u<key>` carries the tunnel peer's Curve25519 pubkey as
-  multibase base64url (std base64 from `wg(8)` contains `/` and
-  can't go in a `/`-delimited maddr).
-- the segments *after* are the **overlay** endpoint, i.e. the
-  addr `tractor` actually binds/dials. This is the only part the
-  runtime sees.
+- **overlay**: the segs *after*, i.e. the addr `tractor` actually
+  binds/dials. The only part the runtime ever sees.
+
+We deliberately avoid `inner`/`outer` for these two: in a *call*
+stack "inner" reads as higher-up and later-called, whereas here
+the encapsulated addr is bound *first* and sits deeper in the
+maddr — two opposite intuitions on one word.
+
+`/wg/u<key>` itself carries the tunnel peer's Curve25519 pubkey
+as multibase base64url (std base64 from `wg(8)` contains `/` and
+so can't go in a `/`-delimited maddr). It binds nothing at all;
+it's an identity, verified out-of-band.
 
 XXX NOTE, `tractor`'s own `parse_maddr()` can't parse this yet
 (`ValueError('Unsupported multiaddr protocol combo')`), which is
-why this module exists: parse here, hand `.inner` to the runtime.
+why this module exists: peel here, hand `.overlay` to the
+runtime.
 
 Design rules this module follows (see
 `ai/tpt-backends/03_wg_tunnel_bindspace.md`):
 
+- **let `py-multiaddr` do the parsing**. Every peel/compose goes
+  through `.decapsulate_code()`, `.split()`, `.join()`,
+  `.encapsulate()` and `.value_for_protocol()`. We hand-roll no
+  segment splitting whatsoever — the whole point of gh #429 was
+  dropping the NIH parser, and that applies to *peeling a tunnel
+  stack* every bit as much as to decoding a single proto.
 - **parsing is pure**. `parse_wg_maddr()` does no I/O, no
   `subprocess`, no netlink. A parser that shells out is a nasty
   surprise.
@@ -36,8 +53,8 @@ Design rules this module follows (see
 - **no new `Address` proto-type**. `wg` gets no entry in
   `tractor.discovery._addr._address_types` (a `bidict`, so 1:1
   proto-key<->type) bc it has no `MsgTransport` of its own. The
-  tunnel is a *bindspace*, so we carry it beside the inner addr
-  and strip to `.inner` at bind/dial time.
+  tunnel is a *bindspace*, so we carry it beside the overlay
+  addr and strip to `.overlay` at bind/dial time.
 
 '''
 from __future__ import annotations
@@ -46,6 +63,11 @@ import subprocess
 from typing import Literal
 
 import msgspec
+from multiaddr import Multiaddr
+from multiaddr.protocols import P_WG
+
+
+IPProto = Literal['ip4', 'ip6']
 
 
 class WGTunnelledAddr(
@@ -66,22 +88,43 @@ class WGTunnelledAddr(
 
     # overlay ep: an `UnwrappedAddress` as accepted by
     # `tractor.discovery.wrap_address()`
-    inner: tuple[str, int]
-    inner_proto: Literal['tcp'] = 'tcp'
+    overlay: tuple[str, int]
+    overlay_proto: Literal['tcp'] = 'tcp'
+
+    # kept so `.as_multiaddr()` re-renders the same ip family it
+    # was parsed from, rather than assuming v4
+    bearer_ip: IPProto = 'ip4'
+    overlay_ip: IPProto = 'ip4'
+
+    def as_multiaddr(self) -> Multiaddr:
+        '''
+        Re-compose the canonical `Multiaddr`, bearer outward-in,
+        using `.encapsulate()` exactly as py-multiaddr's own
+        tunneling example does.
+
+        '''
+        b_host, b_port = self.bearer
+        o_host, o_port = self.overlay
+        return (
+            Multiaddr(f'/{self.bearer_ip}/{b_host}/udp/{b_port}')
+            .encapsulate(
+                Multiaddr(f'/wg/{mb_pubkey(self.peer_pubkey)}')
+            )
+            .encapsulate(
+                Multiaddr(
+                    f'/{self.overlay_ip}/{o_host}'
+                    f'/{self.overlay_proto}/{o_port}'
+                )
+            )
+        )
 
     @property
     def maddr(self) -> str:
         '''
-        Re-render the canonical maddr `str` form.
+        The canonical maddr `str` form.
 
         '''
-        b_host, b_port = self.bearer
-        i_host, i_port = self.inner
-        return (
-            f'/ip4/{b_host}/udp/{b_port}'
-            f'/wg/{mb_pubkey(self.peer_pubkey)}'
-            f'/ip4/{i_host}/{self.inner_proto}/{i_port}'
-        )
+        return str(self.as_multiaddr())
 
 
 def mb_pubkey(wg8_key: str) -> str:
@@ -104,68 +147,6 @@ def wg8_pubkey(mb_key: str) -> str:
     return base64.b64encode(raw).decode('ascii')
 
 
-def parse_wg_maddr(
-    maddr: str,
-) -> WGTunnelledAddr:
-    '''
-    Split a `wg`-tunnelled maddr into its bearer/key/overlay
-    parts. Pure — no I/O.
-
-    Total-or-raises: with a `wg`-aware `py-multiaddr` (#108) an
-    unparseable maddr raises instead of yielding a struct built
-    from garbage segments. See `_segments()` for the degraded
-    pre-#108 path.
-
-    '''
-    segs: list[str] = _segments(maddr)
-    try:
-        wg_at: int = segs.index('wg')
-    except ValueError:
-        raise ValueError(
-            f'Not a `wg`-tunnelled maddr, no `/wg/` segment ??\n'
-            f'maddr: {maddr!r}\n'
-        )
-
-    bearer_segs: list[str] = segs[:wg_at]
-    mb_key: str = segs[wg_at + 1]
-    inner_segs: list[str] = segs[wg_at + 2:]
-
-    match bearer_segs:
-        case ['ip4'|'ip6', str() as b_host, 'udp', str() as b_port]:
-            bearer = (b_host, int(b_port))
-        case _:
-            raise ValueError(
-                f'Bad `wg` bearer, expected `/ip4|ip6/<h>/udp/<p>`\n'
-                f'got: {"/".join(bearer_segs)!r}\n'
-                f'from maddr: {maddr!r}\n'
-            )
-
-    match inner_segs:
-        case ['ip4'|'ip6', str() as i_host, 'tcp', str() as i_port]:
-            inner = (i_host, int(i_port))
-            inner_proto = 'tcp'
-        case []:
-            raise ValueError(
-                f'`wg` maddr declares no overlay endpoint!\n'
-                f'A bare `/…/wg/<key>` names only the tunnel; '
-                f'append the ep `tractor` should bind, e.g.\n'
-                f'  {maddr}/ip4/10.0.11.1/tcp/1616\n'
-            )
-        case _:
-            raise ValueError(
-                f'Unsupported `wg` overlay proto combo\n'
-                f'got: {"/".join(inner_segs)!r}\n'
-                f'from maddr: {maddr!r}\n'
-            )
-
-    return WGTunnelledAddr(
-        bearer=bearer,
-        peer_pubkey=wg8_pubkey(mb_key),
-        inner=inner,
-        inner_proto=inner_proto,
-    )
-
-
 _wg_proto_known: bool|None = None
 
 
@@ -174,8 +155,9 @@ def _have_wg_maddr_proto() -> bool:
     True iff the installed `py-multiaddr` knows the `/wg/` proto,
     i.e. carries py-multiaddr#108.
 
-    Merged upstream 2026-07-28 but in no release as of `0.2.0`,
-    hence the `[tool.uv.sources]` `rev` pin.
+    Merged upstream 2026-07-28 (`f86519da`) but in no release as
+    of `0.2.0`, hence the `[tool.uv.sources]` `rev` pin in
+    `pyproject.toml`.
 
     Pure predicate; result cached since it can't change without a
     reinstall.
@@ -194,26 +176,95 @@ def _have_wg_maddr_proto() -> bool:
     return _wg_proto_known
 
 
-def _segments(maddr: str) -> list[str]:
+def parse_wg_maddr(
+    maddr: str|Multiaddr,
+) -> WGTunnelledAddr:
     '''
-    Deliver a maddr's `/`-split segments, validating via the real
-    parser whenever it knows `wg`.
+    Peel a `wg`-tunnelled maddr into its bearer/key/overlay
+    parts. Pure — no I/O.
+
+    Every cut is made by `py-multiaddr`, so a malformed maddr
+    (incl. a `wg` key that isn't exactly 32B) raises out of
+    `Multiaddr()` rather than yielding a struct quietly built
+    from garbage segs.
 
     '''
-    if _have_wg_maddr_proto():
-        from multiaddr import Multiaddr
-        # the real thing: validates every proto + value, incl.
-        # that the `wg` key decodes to exactly 32 bytes. Let it
-        # raise — a maddr that doesn't parse must NOT reach
-        # `wg8_pubkey()`, which would happily emit a corrupt key.
-        Multiaddr(maddr)
+    if not _have_wg_maddr_proto():
+        raise RuntimeError(
+            f'Installed `py-multiaddr` has no `/wg/` proto!\n'
+            f'Needs py-multiaddr#108, merged upstream but not\n'
+            f'yet released; a `uv sync` picks up the pinned rev.\n'
+            f'maddr: {maddr!r}\n'
+        )
 
-    # XXX, degraded path for a pre-#108 `py-multiaddr` ONLY: no
-    # per-segment validation, so a malformed key survives to the
-    # returned struct. We deliberately DON'T hand-roll a `wg`
-    # codec (the whole point of gh #429 was dropping the NIH
-    # parser) — install the pinned rev to get validation back.
-    return [s for s in maddr.split('/') if s]
+    ma: Multiaddr = (
+        maddr
+        if isinstance(maddr, Multiaddr)
+        else Multiaddr(maddr)
+    )
+    segs: list[Multiaddr] = ma.split()
+    names: list[str] = [
+        proto.name
+        for seg in segs
+        for proto in seg.protocols()
+    ]
+    if 'wg' not in names:
+        raise ValueError(
+            f'Not a `wg`-tunnelled maddr, no `/wg/` segment ??\n'
+            f'maddr: {ma}\n'
+        )
+
+    # NOTE, `.decapsulate_code()` cuts at the LAST occurrence of
+    # the proto and keeps the *prefix*, which is exactly the
+    # bearer. It handles `/wg/` cleanly precisely bc it cuts on
+    # proto-code and never tries to match an addr value — the
+    # key seg has no addr of its own.
+    bearer_ma: Multiaddr = ma.decapsulate_code(P_WG)
+    overlay_ma: Multiaddr = Multiaddr.join(
+        *segs[names.index('wg') + 1:]
+    )
+
+    match [proto.name for proto in bearer_ma.protocols()]:
+        case [('ip4' | 'ip6') as b_ip, 'udp']:
+            bearer = (
+                bearer_ma.value_for_protocol(b_ip),
+                int(bearer_ma.value_for_protocol('udp')),
+            )
+        case _:
+            raise ValueError(
+                f'Bad `wg` bearer, expected `/ip4|ip6/<h>/udp/<p>`\n'
+                f'got: {bearer_ma}\n'
+                f'from maddr: {ma}\n'
+            )
+
+    match [proto.name for proto in overlay_ma.protocols()]:
+        case [('ip4' | 'ip6') as o_ip, ('tcp') as l4]:
+            overlay = (
+                overlay_ma.value_for_protocol(o_ip),
+                int(overlay_ma.value_for_protocol(l4)),
+            )
+        case []:
+            raise ValueError(
+                f'`wg` maddr declares no overlay endpoint!\n'
+                f'A bare `/…/wg/<key>` names only the tunnel; '
+                f'append the ep `tractor` should bind, e.g.\n'
+                f'  {ma}/ip4/10.0.11.1/tcp/1616\n'
+            )
+        case _:
+            raise ValueError(
+                f'Unsupported `wg` overlay proto combo\n'
+                f'got: {overlay_ma}\n'
+                f'from maddr: {ma}\n'
+            )
+
+    return WGTunnelledAddr(
+        bearer=bearer,
+        peer_pubkey=wg8_pubkey(ma.value_for_protocol('wg')),
+        overlay=overlay,
+        overlay_proto=l4,
+        bearer_ip=b_ip,
+        overlay_ip=o_ip,
+    )
 
 
 def verify_wg_peer(
