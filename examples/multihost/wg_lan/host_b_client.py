@@ -33,12 +33,12 @@ async def main():
     async with (
         tractor.open_root_actor(
             name='wg_client',
-            registry_addrs=[addr.inner],
-            enable_transports=[addr.inner_proto],
+            registry_addrs=[addr.overlay],
+            enable_transports=[addr.overlay_proto],
         ),
         tractor.find_actor(
             'echo_srv',
-            registry_addrs=[addr.inner],
+            registry_addrs=[addr.overlay],
         ) as portal,
     ):
         res: str = await portal.run(

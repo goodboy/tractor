@@ -41,13 +41,13 @@ async def main():
     )
     print(
         f'wg bearer (kernel-owned): {addr.bearer}\n'
-        f'tractor overlay ep: {addr.inner}\n'
+        f'tractor overlay ep: {addr.overlay}\n'
     )
     async with tractor.open_nursery(
-        # XXX only `.inner` crosses into the runtime; the bearer
+        # XXX only `.overlay` crosses into the runtime; the bearer
         # + key are iface-layer concerns `tractor` never binds.
-        registry_addrs=[addr.inner],
-        enable_transports=[addr.inner_proto],
+        registry_addrs=[addr.overlay],
+        enable_transports=[addr.overlay_proto],
     ) as an:
         await an.start_actor(
             'echo_srv',
