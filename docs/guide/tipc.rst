@@ -157,11 +157,40 @@ node and the client's dial keeps working, unchanged. See
 (that directory is excluded from CI precisely because it needs
 real hardware).
 
+Over a WireGuard mesh
+~~~~~~~~~~~~~~~~~~~~~
+
+TIPC over a `wg` mesh is the intended reference deployment for
+multihost ``tractor`` (see gh #502), composing with the tunnel
+examples in ``examples/multihost/wg_lan/``.
+
+.. warning::
+
+   A wg interface is L3/``tun`` — ``POINTOPOINT,NOARP`` with
+   ``link/none`` and no L2 address — so TIPC's ``eth`` media
+   **cannot** bind it. Over wg the udp bearer is *mandatory*,
+   not merely an alternative:
+
+   .. code:: bash
+
+       # NOT possible over wg
+       sudo tipc bearer enable media eth device wg0
+
+       # required instead, bound to the wg overlay IP
+       sudo tipc bearer enable media udp name wgmesh \
+           localip 10.0.11.1
+
+   Mind the MTU too: wg links typically sit at 1420, under
+   ethernet's 1500.
+
 .. note::
 
-   TIPC over a UDP bearer composes with the WireGuard tunnel
-   examples in ``examples/multihost/wg_lan/`` — cluster-wide
-   kernel service discovery across an encrypted overlay.
+   TIPC is **not** unencrypted — it ships AES-GCM crypto of its
+   own (``tipc node set key``, linux 5.9+) with cluster, master
+   and per-node keys plus rekeying intervals. Those keys are
+   symmetric and pre-shared though, so a wg mesh is still
+   preferred for public-key identity, NAT traversal, and an
+   overlay every transport can share.
 
 Gotchas
 -------
@@ -197,6 +226,19 @@ protocol in the multiaddr table yet, so the grammar is
 .. code:: text
 
     /tipc/<stype>/<instance>/<scope>
+
+Composed with a wg bearer — the form that actually matters for
+multihost — that becomes:
+
+.. code:: text
+
+    /ip4/<pub>/udp/51820/wg/u<key>/tipc/<stype>/<inst>/<scope>
+
+Note the tipc segment carries **no** locative component, unlike
+the ``/ip4/../tcp/..`` inner segment of the equivalent tcp maddr
+— a TIPC service name is location-independent by design, so the
+wg segments carry all the routing and the tipc segment is pure
+identity.
 
 Running the suite over TIPC
 ---------------------------
