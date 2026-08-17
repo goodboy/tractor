@@ -161,6 +161,10 @@ Session.vim
 # -[ ] everything should be put under a `.gish/` no?
 gitea/
 gh/
+# NOTE, `gh issue create` writes its local cache under the
+# `<backend>/<repo>/<kind>/<num>.md` path, so the dir is named for
+# the *service* not the CLI.
+github/
 
 # ------ macOS ------
 # Finder metadata
