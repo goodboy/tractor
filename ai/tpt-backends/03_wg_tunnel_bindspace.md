@@ -32,9 +32,9 @@ onto `trio` as the library's sans-io layer allows.
   latest `0.2.0` predating it. Spec registration is still tracked
   by multiformats/py-multiaddr#107 and gh #483.
 - so **today's deployable story is declarative**: run `wg-quick`
-  out-of-band, parse the maddr, strip to the inner
+  out-of-band, parse the maddr, strip to the overlay
   `(host, port)`, verify the pubkey against the live tunnel,
-  hand the inner addr to `registry_addrs=`/`tpt_bind_addrs=`.
+  hand the overlay addr to `registry_addrs=`/`tpt_bind_addrs=`.
   #482 already contains working example code for exactly this.
 - `Address.namespace` exists in the Protocol
   (`_addr.py:94-101`, "the if-available OS-specific network
@@ -45,7 +45,7 @@ onto `trio` as the library's sans-io layer allows.
 
 | layer | what | dep | ships |
 | --- | --- | --- | --- |
-| **A. declarative** | commit #482's examples; `parse_maddr()` learns `/wg/u<key>` → inner `Address` + verified pubkey | `multiaddr` (already), `wg(8)` CLI | first |
+| **A. declarative** | commit #482's examples; `parse_maddr()` learns `/wg/u<key>` → overlay `Address` + verified pubkey | `multiaddr` (already), `wg(8)` CLI | first |
 | **B. `pyroute2` read/verify** | replace the `subprocess.run(['sudo','wg','show'])` shelling with netlink queries | `pyroute2` extra | second |
 | **C. `@acm` lifecycle** | create/configure/tear down wg ifaces + netns *from the runtime*, as nested bindspaces; implement `Address.namespace` | `pyroute2` + `CAP_NET_ADMIN` | third |
 
@@ -70,16 +70,16 @@ does not create a new address type.** Two candidate encodings;
       msgspec.Struct,
       frozen=True,
   ):
-      inner: Address           # e.g. TCPAddress
+      overlay: Address         # e.g. TCPAddress
       tunnel: WGTunnelSpec     # proto-specific, frozen
   ```
-  with `.proto_key` **delegating to `inner.proto_key`** so every
+  with `.proto_key` **delegating to `overlay.proto_key`** so every
   existing table lookup (`_addr_to_transport`,
   `enable_transports` guard at `_root.py:391`,
   `transport_from_addr()`) keeps working untouched, and
-  `.unwrap()` delegating to `inner.unwrap()` so **nothing new
+  `.unwrap()` delegating to `overlay.unwrap()` so **nothing new
   crosses the wire**. `.namespace` and `.bindspace` come from
-  the tunnel spec. The wrapper is stripped (`→ .inner`) at the
+  the tunnel spec. The wrapper is stripped (`→ .overlay`) at the
   moment of bind/connect.
   - ⚠️ `is_wrapped_addr()` (`_addr.py:194`) tests
     `type(addr) in _address_types.values()` — a `bidict` of
@@ -154,25 +154,48 @@ Observed protocol-name lists, for writing the `match`:
   | --- | --- | --- |
   | bearer | kernel, via `wg-quick`/`pyroute2` | no |
   | `/wg/u<key>` | nothing — it's an identity | no, verified out-of-band |
-  | overlay | `tractor`'s `IPCServer` | **yes**, as `.inner` |
+  | overlay | `tractor`'s `IPCServer` | **yes**, as `.overlay` |
 
   This owner-split is the real axis of the design, *not* whether
   the maddr stack is "composed" (it is).
+- ⚠️ **CORRECTION**, an earlier draft of this section specced a
+  hand-rolled `_peel_tunnel_segs(proto_names) -> (bearer_names,
+  tunnel_specs, overlay_names)`. **Do not write it.**
+  `py-multiaddr` already ships the whole tunnel compose/peel API
+  and it was simply missed here — see its README "En/decapsulate"
+  and "Tunneling" sections, and gh #443's 2nd bullet which links
+  them. Verified against the pinned rev:
+
+  | need | API |
+  | --- | --- |
+  | isolate the bearer | `ma.decapsulate_code(P_WG)` |
+  | drop the overlay, keep bearer+key | `ma.decapsulate(overlay_ma)` |
+  | per-seg maddrs | `ma.split()` |
+  | rejoin a seg tail | `Multiaddr.join(*segs)` |
+  | read the key | `ma.value_for_protocol('wg')` |
+  | recompose | `bearer.encapsulate(key).encapsulate(overlay)` |
+
+  `.decapsulate_code()` handles the infix `/wg/` seg cleanly
+  *because* it cuts on proto-code and never tries to match an
+  addr value — the key seg has no addr of its own. This is the
+  same NIH trap gh #429 existed to close, one layer up.
+
+- ⚠️ `value_for_protocol('ip4')` on a *full* tunnelled maddr
+  silently returns the **first** match, i.e. the bearer's host.
+  Always call it on a peeled sub-maddr, never the whole stack.
+
 - `parse_maddr()` gains a case on
-  `[('ip4'|'ip6'), 'udp', 'wg', ('ip4'|'ip6'), <inner-l4>]` →
-  build the inner `Address` from the trailing segments, decode
-  the multibase key to std-base64, and return
-  `TunnelledAddress(inner=..., tunnel=WGTunnelSpec(...))` with
-  the bearer recorded in the spec.
+  `[('ip4'|'ip6'), 'udp', 'wg', ('ip4'|'ip6'), <overlay-l4>]` →
+  peel w/ the API above, decode the multibase key to std-base64,
+  and return `TunnelledAddress(overlay=..., tunnel=WGTunnelSpec(
+  ...))` w/ the bearer recorded in the spec.
 - keep the existing 2-proto cases byte-identical; add the new
   case *after* them.
-- generalize by **peeling at the tunnel segment**: split
-  `proto_names` at `'wg'`, hand the trailing list to the existing
-  inner-stack logic, and recurse for nested tunnels. Write it as
-  a small pure fn `_peel_tunnel_segs(proto_names) ->
-  (bearer_names, tunnel_specs, inner_names)`. This is also what
-  makes a wg-inside-wg stack fall out for free.
-- `mk_maddr()` inverse for `TunnelledAddress`.
+- nesting (wg-in-wg) falls out of `.decapsulate_code()` cutting
+  at the *last* occurrence — peel repeatedly rather than
+  recursing through a bespoke splitter.
+- `mk_maddr()` inverse for `TunnelledAddress` is just
+  `.encapsulate()` composition; don't rebuild `str`s by hand.
 - **pending an upstream release**: py-multiaddr#108 is merged, so
   `Multiaddr('/…/wg/u…')` parses — but off a `[tool.uv.sources]`
   `rev` pin, since no release carries the codec. Gate the tests
@@ -217,7 +240,7 @@ side-effect-free; verification is the *caller's* explicit step
   run. Keep prose in the docs; keep the examples runnable and
   minimal.
 - tests: maddr round-trip, `TunnelledAddress` delegation
-  (`proto_key`/`unwrap` identical to inner), `wrap_address()`
+  (`proto_key`/`unwrap` identical to overlay), `wrap_address()`
   regression (a tunnelled maddr `str` → `TunnelledAddress`; a
   plain one → unchanged), and **a real end-to-end over a
   locally-created wg pair** gated on `CAP_NET_ADMIN` (see §5.3).
@@ -305,7 +328,7 @@ async def open_bindspace(
 ) -> AsyncGenerator[Address, None]:
     '''
     Enter the net-bindspace implied by `addr`'s tunnel stack,
-    yielding the *inner* `Address` ready to bind/connect.
+    yielding the *overlay* `Address` ready to bind/connect.
 
     Nests: one `@acm` per tunnel segment, outermost-first, so
     a 2-deep stack is just two nested `async with`s and the
@@ -444,7 +467,7 @@ consider doing it *first* for exactly that reason.
 | risk | mitigation |
 | --- | --- |
 | `to_thread` worker runs in the wrong netns | §5.3; pass `netns=` to pyroute2 or pin a worker; test-first |
-| py-multiaddr#108 merged but unreleased | `[tool.uv.sources]` `rev` pin + `_have_wg_maddr_proto()` gate; layer A's inner-addr path works regardless |
+| py-multiaddr#108 merged but unreleased | `[tool.uv.sources]` `rev` pin + `_have_wg_maddr_proto()` gate; layer A's overlay-addr path works regardless |
 | `TunnelledAddress` leaks into `Endpoint` and breaks `inspect.getmodule()` | unwrap at parse/bindspace boundary; assert `not isinstance(ep.addr, TunnelledAddress)` in `Endpoint.__post_init__` |
 | privileged ops in a library | never `sudo`; explicit cap probe + actionable error; pre-provisioned is the default |
 | pyroute2 0.9 asyncio core drags a loop into the actor | option (1) is a *thread*, not a loop; forbid `trio-asyncio` here (§4.1) |

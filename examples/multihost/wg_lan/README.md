@@ -30,7 +30,7 @@ Three parts, three different owners:
 | --- | --- | --- |
 | `/ip4/../udp/51820` bearer | kernel via `wg-quick`/`pyroute2` | no |
 | `/wg/u<key>` | nothing — it's an identity | no, verified out-of-band |
-| `/ip4/../tcp/1616` overlay | `tractor`'s `IPCServer` | **yes**, as `.inner` |
+| `/ip4/../tcp/1616` overlay | `tractor`'s `IPCServer` | **yes**, as `.overlay` |
 
 Verified against py-multiaddr
 [#108](https://github.com/multiformats/py-multiaddr/pull/108):
@@ -55,12 +55,17 @@ release carries the codec. You also need `multibase`:
 uv pip install multibase
 ```
 
-Without the codec `wg_maddr.py` degrades to a plain segment split
-— the examples still run, but you lose per-segment validation
-(incl. the 32-byte key-length check), so a malformed key reaches
-the returned struct instead of raising. `_have_wg_maddr_proto()`
-is the gate. It deliberately does **not** hand-roll a `wg` codec
-(gh #429 was about *dropping* our NIH parser).
+Without the codec `parse_wg_maddr()` raises immediately with an
+actionable message — there is deliberately **no** degraded
+hand-split fallback. `_have_wg_maddr_proto()` is the predicate.
+
+Every peel and re-compose here goes through `py-multiaddr`'s own
+tunnel API (`.decapsulate_code()`, `.split()`, `.join()`,
+`.encapsulate()`, `.value_for_protocol()`) rather than any
+bespoke segment slicing — see its README "En/decapsulate" and
+"Tunneling" sections. gh #429 was about *dropping* our NIH
+parser, and that applies to peeling a tunnel stack just as much
+as to decoding one proto.
 
 ## 0. tunnel setup (out-of-band, both hosts)
 
@@ -156,7 +161,7 @@ Four corrections, all from
    setups; if yours needs root, run the script as root rather
    than embedding `sudo`.
 4. **no new `Address` proto-type.** The tunnel rides *beside* the
-   inner addr in a frozen `WGTunnelledAddr`, and only `.inner`
+   overlay addr in a frozen `WGTunnelledAddr`, and only `.overlay`
    crosses into `open_nursery()`. #482 §6 floated a `WGAddress`
    registered in `_address_types` — that table is a `bidict`
    (1:1 proto-key↔type) and `_addr_to_transport` wants a
@@ -166,6 +171,6 @@ Four corrections, all from
 
 `WGTunnelledAddr` is deliberately example-local. Promoting it to
 `tractor.discovery` as a `TunnelledAddress` whose
-`.proto_key`/`.unwrap()` delegate to `.inner`, plus
+`.proto_key`/`.unwrap()` delegate to `.overlay`, plus
 `open_bindspace()` `@acm`s that create/tear down the iface +
 netns via `pyroute2`, is layers A→C of the plan doc.
