@@ -84,8 +84,8 @@ plan originally assumed.
 | Topology `struct tipc_event` is **48 bytes** (`4+4+4+8+28`) | the plan said 40 |
 | The topology server **accepts native `'='` byte-order** | the plan's proposed `'>'`-retry endianness probe was deleted as unnecessary |
 | `TIPC_WAIT_FOREVER` is `-1` in python | must be masked (`& 0xFFFFFFFF`) before packing as unsigned |
-| TIPC **has** AES-GCM encryption (`tipc node set key`, linux 5.9+) | cluster/master/per-node keys + rekeying. Symmetric pre-shared, which is why a wg mesh is still preferred — see §6. |
-| A wg interface is L3/`tun` (`POINTOPOINT,NOARP`, `link/none`) | TIPC's `eth` media **cannot** bind it; the udp bearer is mandatory over wg |
+| TIPC **has** AES-GCM encryption (`tipc node set key`, linux 5.9+) | cluster/master/per-node keys + rekeying. So "wg adds the encryption TIPC lacks" is **false** — see §6 for the real motivation. |
+| A wg interface is L3/`tun` (`POINTOPOINT,NOARP`, `link/none`) | TIPC's `eth` media **cannot** bind it — udp media is *mandatory* over wg. See the §6 caveat; this one bites. |
 
 Two design decisions that are **closed**, with reasons:
 
@@ -170,8 +170,48 @@ All filed with the `follow-up` label.
 ### the wg direction
 
 [#502] is the strategic one. The intent is that TIPC-over-`wg`
-becomes our go-to multihost transport deployment, with composed
-addresses of the form:
+becomes our go-to multihost transport deployment.
+
+> ⚠️ **Do not repeat the claim that wg adds encryption TIPC
+> lacks.** We assumed that initially and it is **wrong**. TIPC
+> ships AES-GCM crypto of its own (`tipc node set key`, linux
+> 5.9+) with cluster/master/per-node keys and rekeying.
+>
+> The motivation is different but still real:
+> - **key management** — TIPC keys are symmetric and
+>   *pre-shared*; distribution, rotation and revocation are the
+>   operator's problem. wg gives public-key identity + handshake.
+> - **uniformity** — wg is an overlay *every* backend can sit on
+>   (tcp now, quic later), not a TIPC-only mechanism.
+> - **NAT traversal / roaming**, which raw TIPC bearers have no
+>   story for.
+>
+> Which to default to should be **benchmarked**, not assumed:
+> TIPC-native crypto avoids a tunnel hop and may win on latency
+> for LAN-local clusters.
+
+> ⚠️ **`udp` media is MANDATORY over wg — `eth` cannot work.**
+> A wg interface is L3/`tun`: `POINTOPOINT,NOARP`, `link/none`,
+> no L2 address at all. There is no device for `tipc bearer
+> enable media eth device …` to name.
+>
+> ```bash
+> # impossible over wg
+> sudo tipc bearer enable media eth device wg0
+> # required, bound to the wg overlay IP
+> sudo tipc bearer enable media udp name wgmesh localip 10.0.11.1
+> ```
+>
+> Consequence worth internalizing: #378's "ethernet bearers pair
+> most excellently with wireguard tunnelling" framing does **not**
+> hold — on a given link the low-latency L2 path and the wg path
+> are *mutually exclusive*. Any design that assumes both is
+> broken from the start.
+>
+> Also mind the MTU: wg links are typically 1420, under
+> ethernet's 1500, so TIPC link MTU wants checking not assuming.
+
+Composed addresses take the form:
 
 ```
 /ip4/<pub>/udp/51820/wg/u<key>/tipc/<stype>/<inst>/<scope>
