@@ -92,6 +92,12 @@ jobs:
     timeout-minutes: 16
     runs-on: ${{ matrix.os }}
 
+    # XXX the `tipc` leg stays NON-blocking until the `modprobe`
+    # step below is proven stable on GH's runners; flip this off
+    # once it's had a few green runs. See plan 01 §7.3 in
+    # `ai/tpt-backends/01_tipc_backend.md`.
+    continue-on-error: ${{ matrix.tpt_proto == 'tipc' }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -117,12 +123,18 @@ jobs:
         tpt_proto: [
           'tcp',
           'uds',
+          'tipc',
         ]
         # https://github.com/orgs/community/discussions/26253#discussioncomment-3250989
         exclude:
           # don't do UDS run on macOS (for now)
           - os: macos-latest
             tpt_proto: 'uds'
+
+          # XXX `AF_TIPC` is a linux-kernel protocol; the address
+          # family doesn't exist on darwin at all.
+          - os: macos-latest
+            tpt_proto: 'tipc'
 
     steps:
       - uses: actions/checkout@v4
@@ -149,6 +161,20 @@ jobs:
 
       - name: List deps tree
         run: uv tree
+
+      # XXX `AF_TIPC` needs its kernel module loaded! It ships
+      # with the standard ubuntu kernel package but is NOT loaded
+      # by default, so a bare `--tpt-proto=tipc` run would
+      # otherwise fail at the first `.bind()`.
+      #
+      # If GH's runners ever refuse the `modprobe`, the fallback
+      # is a container job w/ `--cap-add NET_ADMIN`.
+      - name: 'Load the `tipc` kernel module'
+        if: matrix.tpt_proto == 'tipc'
+        run: |
+          sudo modprobe tipc
+          tipc node get address
+          uv run python -c "from tractor.ipc._tipc import TIPCAddress; ok, why = TIPCAddress.is_available(); assert ok, why; print('AF_TIPC available')"
 
       - name: Run tests
         run: >
