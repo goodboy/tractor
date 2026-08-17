@@ -36,16 +36,14 @@ from tractor.ipc._uds import (
     HAS_UDS,
 )
 
-# the UDS backend is importable everywhere but only *usable* where
-# `trio` reports `has_unix` (i.e. POSIX). On Windows / no-`AF_UNIX`
-# hosts `HAS_UDS` is `False` and the runtime registers TCP only.
+# the UDS backend is importable everywhere but only *usable* when
+# `HAS_UDS` is `True`; otherwise the runtime registers TCP only.
 Address = TCPAddress|UDSAddress
 
 # the available msg-transport backends on this host: TCP always,
-# UDS only where usable (`HAS_UDS`). The lookup maps below are all
-# DERIVED from this single list via each backend's ClassVars
-# (`codec_key`, `address_type`) — register a backend here and every
-# map picks it up; no per-map `if HAS_UDS` to keep in sync.
+# UDS only where usable (`HAS_UDS`). The lookup maps below derive
+# from this single list via each backend's `codec_key` and
+# `address_type`: register a backend here and every map picks it up.
 _msg_transports: list[Type[MsgTransport]] = [
     MsgpackTCPStream,
 ]
@@ -65,55 +63,63 @@ _addr_to_transport: dict[Type[Address], Type[MsgTransport]] = {
 }
 
 
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
 def transport_from_addr(
     addr: Address,
-    codec_key: str = "msgpack",
+    codec_key: str = 'msgpack',
 ) -> Type[MsgTransport]:
-    """
+    '''
     Given a destination address and a desired codec, find the
     corresponding `MsgTransport` type.
-    """
+
+    '''
     try:
-        return _addr_to_transport[type(addr)]  # type: ignore[call-arg]
+        addr_type = type(addr)
+        return _addr_to_transport[addr_type]
+
     except KeyError:
         raise NotImplementedError(
-            f"No known transport for address {repr(addr)}"
+            f'No known transport for address '
+            f'{addr!r}'
         )
 
 
 def transport_from_stream(
     stream: trio.abc.Stream,
-    codec_key: str = "msgpack",
+    codec_key: str = 'msgpack',
 ) -> Type[MsgTransport]:
-    """
+    '''
     Given an arbitrary `trio.abc.Stream` and a desired codec,
     find the corresponding `MsgTransport` type.
-    """
-    transport = None
+
+    '''
+    transport: str|None = None
 
     if isinstance(stream, trio.SocketStream):
         sock: socket.socket = stream.socket
-        fam = sock.family
+        match sock.family:
+            case socket.AF_INET | socket.AF_INET6:
+                transport = 'tcp'
 
-        if fam in (socket.AF_INET, getattr(socket, "AF_INET6", None)):
-            transport = "tcp"
+            # `HAS_UDS` short-circuits before `socket.AF_UNIX` on
+            # hosts where that constant is absent.
+            case fam if (
+                HAS_UDS
+                and
+                fam == socket.AF_UNIX
+            ):
+                transport = 'uds'
 
-        # only consider `AF_UNIX` when the UDS backend is active;
-        # `HAS_UDS` short-circuits before `socket.AF_UNIX` so this
-        # stays safe on hosts where that constant is absent.
-        if transport is None and HAS_UDS and fam == socket.AF_UNIX:  # type: ignore[attr-defined]
-            transport = "uds"
-
-        if transport is None:
-            raise NotImplementedError(f"Unsupported socket family: {fam}")
+            case fam:
+                raise NotImplementedError(
+                    f'Unsupported socket family: {fam}'
+                )
 
     if not transport:
         raise NotImplementedError(
-            f"Could not figure out transport type for stream type {type(stream)}"
+            f'Could not figure out transport type for stream type '
+            f'{type(stream)}'
         )
 
     key = (codec_key, transport)
+
     return _key_to_transport[key]

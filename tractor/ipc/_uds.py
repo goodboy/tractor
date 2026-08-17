@@ -114,12 +114,13 @@ _SUN_PATH_LIMIT: int = (
 )
 
 
-# single source of truth for "is the UDS backend usable on this
-# host?" Windows can expose `AF_UNIX`, but this backend remains
+# single source of truth for whether the UDS backend is usable on this
+# host. Windows can expose `AF_UNIX`, but this backend remains
 # POSIX-only until its credential and lifecycle paths are supported.
 HAS_UDS: bool = (
     sys.platform != 'win32'
-    and has_unix
+    and
+    has_unix
 )
 
 
