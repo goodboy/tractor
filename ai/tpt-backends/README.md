@@ -13,7 +13,7 @@ assume it and document only their own deltas.
 
 | plan | issue | dep | size | lands |
 | --- | --- | --- | --- | --- |
-| [01 — TIPC](./01_tipc_backend.md) | [#378] | **none** (stdlib) | small | first |
+| [01 — TIPC](./01_tipc_backend.md) | [#378] | **none** (stdlib) | small | **landed**, PR [#493] — see the [handoff](./01_tipc_HANDOFF.md) |
 | [02 — QUIC/`iroh`](./02_quic_iroh_backend.md) | [#353] | `iroh` (uniffi FFI) | large | needs a prep PR |
 | [03 — `wg` bindspace](./03_wg_tunnel_bindspace.md) | [#482], [#443] | `pyroute2` | medium, 3 layers | layer A now |
 
@@ -54,3 +54,5 @@ lands first ships it.
 [#353]: https://github.com/goodboy/tractor/issues/353
 [#482]: https://github.com/goodboy/tractor/issues/482
 [#443]: https://github.com/goodboy/tractor/issues/443
+
+[#493]: https://github.com/goodboy/tractor/pull/493
