@@ -185,12 +185,18 @@ examples in ``examples/multihost/wg_lan/``.
 
 .. note::
 
-   TIPC is **not** unencrypted — it ships AES-GCM crypto of its
-   own (``tipc node set key``, linux 5.9+) with cluster, master
-   and per-node keys plus rekeying intervals. Those keys are
-   symmetric and pre-shared though, so a wg mesh is still
-   preferred for public-key identity, NAT traversal, and an
-   overlay every transport can share.
+   **wg is not about confidentiality here.** TIPC ships AES-GCM
+   crypto of its own (``tipc node set key``, linux 5.9+) with
+   cluster, master and per-node keys plus rekeying intervals, so
+   "wg adds the encryption TIPC lacks" is simply wrong.
+
+   The motivation is different but real: TIPC's keys are
+   *symmetric and pre-shared*, leaving distribution, rotation and
+   revocation to the operator, whereas wg brings public-key
+   identity and a handshake — plus NAT traversal, and one overlay
+   that *every* transport can share rather than a TIPC-only
+   mechanism. Which to prefer is worth benchmarking; native
+   crypto avoids a tunnel hop entirely.
 
 Gotchas
 -------

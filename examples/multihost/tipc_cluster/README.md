@@ -136,12 +136,21 @@ Note the tipc segment has no locative part, unlike tcp's inner
 `/ip4/../tcp/..` — a service name is location-independent, so wg
 carries the routing and tipc carries identity.
 
-Worth knowing: TIPC is **not** unencrypted. It ships AES-GCM
+**wg here is not about confidentiality.** TIPC ships AES-GCM
 crypto of its own (`tipc node set key`, linux 5.9+) with
-cluster/master/per-node keys and rekeying. Those keys are
-symmetric and pre-shared, which is why a wg mesh is still
-preferred — public-key identity, NAT traversal, and one overlay
-shared by every transport.
+cluster/master/per-node keys and rekeying, so "wg adds the
+encryption TIPC lacks" is wrong.
+
+The motivation is different but real: TIPC's keys are *symmetric
+and pre-shared* — distribution, rotation and revocation are all
+on you — whereas wg gives public-key identity and a handshake,
+NAT traversal, and one overlay shared by every transport instead
+of a TIPC-only mechanism. Worth benchmarking either way; native
+crypto skips the tunnel hop.
+
+Note too that the ethernet-bearer pairing #378 imagined does
+**not** apply over wg: on a given link the L2 path and the wg
+path are mutually exclusive.
 
 ### scope
 
