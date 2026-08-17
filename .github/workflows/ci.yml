@@ -160,7 +160,7 @@ jobs:
       # tractor` must succeed everywhere, and `HAS_UDS` reflects
       # platform capability (False on Windows, True on POSIX).
       - name: 'Smoke: import tractor'
-        run: uv run python -c "import tractor; from tractor.ipc._uds import HAS_UDS; print('import tractor OK | HAS_UDS=', HAS_UDS)"
+        run: uv run python -c "import sys; import tractor; from tractor.ipc._uds import HAS_UDS; assert sys.platform != 'win32' or not HAS_UDS; print('import tractor OK | HAS_UDS=', HAS_UDS)"
 
       - name: Run tests
         run: >

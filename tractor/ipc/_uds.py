@@ -115,10 +115,12 @@ _SUN_PATH_LIMIT: int = (
 
 
 # single source of truth for "is the UDS backend usable on this
-# host?" — reuse `trio`'s `has_unix` (the same predicate that gates
-# `trio.open_unix_socket()`) rather than re-deriving an `AF_UNIX`
-# probe in every consumer module.
-HAS_UDS: bool = has_unix
+# host?" Windows can expose `AF_UNIX`, but this backend remains
+# POSIX-only until its credential and lifecycle paths are supported.
+HAS_UDS: bool = (
+    sys.platform != 'win32'
+    and has_unix
+)
 
 
 def unwrap_sockpath(
