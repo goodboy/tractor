@@ -91,11 +91,10 @@ jobs:
     name: '${{ matrix.os }} Python${{ matrix.python-version }} spawn_backend=${{ matrix.spawn_backend }} tpt_proto=${{ matrix.tpt_proto }}'
     timeout-minutes: 16
     runs-on: ${{ matrix.os }}
-    # Windows support is nascent: keep its legs informational so a
-    # known-incomplete area doesn't block merges. The `import
-    # tractor` smoke step below is the hard signal for this job;
-    # promote the whole leg to required once the suite is green.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    # Windows support is nascent: its full test suite remains
+    # informational, while setup and the `import tractor` smoke below
+    # are hard signals. Promote the test step to required once the
+    # suite is green.
 
     strategy:
       fail-fast: false
@@ -163,6 +162,7 @@ jobs:
         run: uv run python -c "import sys; import tractor; from tractor.ipc._uds import HAS_UDS; assert sys.platform != 'win32' or not HAS_UDS; print('import tractor OK | HAS_UDS=', HAS_UDS)"
 
       - name: Run tests
+        continue-on-error: ${{ matrix.os == 'windows-latest' }}
         run: >
           uv run
           pytest
