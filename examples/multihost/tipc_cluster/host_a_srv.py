@@ -47,6 +47,10 @@ async def main() -> None:
     reg: TIPCAddress = TIPCAddress.get_root()
     print(f'host A publishing {reg}')
 
+    # A registrar root is not an entry in its own
+    # `Registrar._registry`, so host B cannot discover that root by
+    # its actor name. `open_nursery()` keeps the root as registrar
+    # while the named child below registers as the dialable service.
     async with tractor.open_nursery(
         enable_transports=['tipc'],
         registry_addrs=[reg.unwrap()],

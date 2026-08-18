@@ -706,6 +706,21 @@ class MsgpackTIPCStream(MsgpackTransport):
             #
             # Reuse that tolerant observation: a peer can withdraw
             # between `.connect()` and a second `.getpeername()`.
+            #
+            # Peer / kernel                 dial task
+            #      |                            |
+            #      |<----- connect(name) -------|
+            #      |------ connected ---------->|  (A)
+            #      |<----- getpeername() -------|  (B, ctor)
+            #      |-- port-id or `ENOTCONN` -->|
+            #      X withdraws                  |
+            #      |<----- getpeername() -------|  (C, old code)
+            #      |------ `ENOTCONN` --------->|
+            #
+            # If withdrawal precedes B, `_maybe_sockaddr()` records
+            # no port-id and the handshake observes the close. If it
+            # follows B, that first observation remains useful. The
+            # removed C lookup created the only raw-`ENOTCONN` race.
             observed_raddr: TIPCAddress = tpt_stream._raddr
             tpt_stream._raddr = destaddr.with_port_id(
                 node=observed_raddr.maybe_node,
@@ -861,8 +876,17 @@ class TIPCNameEvent(
     frozen=True,
 ):
     '''
-    A kernel name-table transition: some service name was
-    published or withdrawn somewhere in the cluster.
+    A kernel name-table transition, not an application msg.
+
+    A transition reports that the set of TIPC ports matching a
+    subscribed service-name sequence changed: `TIPC_PUBLISHED`
+    adds a matching `(node, ref)`, `TIPC_WITHDRAWN` removes one,
+    and `TIPC_SUBSCR_TIMEOUT` ends a finite subscription.
+
+    Wire definitions:
+    https://github.com/torvalds/linux/blob/master/include/uapi/linux/tipc.h
+    Topology server:
+    https://github.com/torvalds/linux/blob/master/net/tipc/topsrv.c
 
     '''
     kind: Literal[
@@ -880,6 +904,28 @@ class TIPCNameEvent(
             f'['
             f'{self.kind}, {self.addr}, @0x{self.node:08x}:{self.ref}'
             f']'
+        )
+
+
+class TIPCNameEventOverflow(RuntimeError):
+    '''
+    The user-space event buffer lost authoritative continuity.
+
+    The socket reader must not remain blocked while its kernel
+    topology subscription is live. Raising aborts that subscription
+    and forces the consumer to resubscribe and rebuild its name-table
+    view instead of using silently stale state.
+
+    '''
+    def __init__(
+        self,
+        event: TIPCNameEvent,
+    ) -> None:
+        self.event = event
+        super().__init__(
+            'TIPC topology event buffer overflowed; '
+            'resubscribe and rebuild the name-table view.\n'
+            f'lost event: {event!r}'
         )
 
 
@@ -985,7 +1031,10 @@ async def _stream_name_events(
             )) is None:
                 continue
 
-            await tx.send(ev)
+            try:
+                tx.send_nowait(ev)
+            except trio.WouldBlock as src_err:
+                raise TIPCNameEventOverflow(ev) from src_err
             if ev.kind == 'timeout':
                 return
 
