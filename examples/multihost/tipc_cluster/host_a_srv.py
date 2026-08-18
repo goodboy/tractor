@@ -47,14 +47,16 @@ async def main() -> None:
     reg: TIPCAddress = TIPCAddress.get_root()
     print(f'host A publishing {reg}')
 
-    async with tractor.open_root_actor(
-        name='host_a',
+    async with tractor.open_nursery(
         enable_transports=['tipc'],
         registry_addrs=[reg.unwrap()],
-        enable_modules=[__name__],
-    ):
+    ) as an:
+        await an.start_actor(
+            'host_a',
+            enable_modules=[__name__],
+        )
         print(
-            'registrar up — `tipc nametable show` on EITHER host\n'
+            'host_a up — `tipc nametable show` on EITHER host\n'
             'should now list this service. ctrl-c to stop.'
         )
         await trio.sleep_forever()
