@@ -167,6 +167,10 @@ _tipc_reserved_stypes: range = range(0, 64)
 # See `MsgpackTIPCStream.get_stream_addrs()` and plan 01 §3.4.
 TIPC_NAME_UNKNOWN: int = -1
 
+# The topology event wire format carries no publication scope.
+# Never promote caller context into observed address data.
+TIPC_SCOPE_UNKNOWN: int = 0
+
 # XXX, the kernel default (`TIPC_LOW_IMPORTANCE`), i.e. today this
 # is a no-op knob preserving stock behaviour.
 #
@@ -178,6 +182,7 @@ TIPC_NAME_UNKNOWN: int = -1
 TRACTOR_DEF_IMPORTANCE: int = TIPC_LOW_IMPORTANCE
 
 _scope_names: dict[int, str] = {
+    TIPC_SCOPE_UNKNOWN: 'unknown',
     TIPC_ZONE_SCOPE: 'zone',
     TIPC_CLUSTER_SCOPE: 'cluster',
     TIPC_NODE_SCOPE: 'node',
@@ -911,7 +916,6 @@ def _mk_subscr(
 def _decode_name_event(
     raw: bytes,
     stype: int,
-    scope: int,
 ) -> TIPCNameEvent|None:
     '''
     Decode one `struct tipc_event`, or `None` if it's a runt/
@@ -946,14 +950,12 @@ def _decode_name_event(
         # NOTE, `tractor` only ever publishes *singleton* ranges
         # (`lower == upper`) so the lower bound IS the instance.
         #
-        # XXX the event carries NO scope — the name-table doesn't
-        # report it — so we echo back the subscription's own. Fine
-        # for our use (we subscribe per-scope) but don't mistake
-        # it for observed data.
+        # XXX the event carries NO scope — do not fabricate one
+        # from caller context and present it as observed data.
         addr=TIPCAddress(
             _stype=stype,
             _instance=found_lower,
-            _scope=scope,
+            _scope=TIPC_SCOPE_UNKNOWN,
         ),
         node=node,
         ref=ref,
@@ -963,7 +965,6 @@ def _decode_name_event(
 async def _stream_name_events(
     sock,
     stype: int,
-    scope: int,
     tx: trio.MemorySendChannel,
 ) -> None:
     '''
@@ -980,21 +981,12 @@ async def _stream_name_events(
             if (ev := _decode_name_event(
                 raw,
                 stype=stype,
-                scope=scope,
             )) is None:
                 continue
 
-            try:
-                tx.send_nowait(ev)
-            except trio.WouldBlock:
-                # XXX drop rather than block: stalling this reader
-                # backs up the kernel's own queue and we'd lose the
-                # event anyway, just less visibly.
-                log.warning(
-                    f'TIPC topology event buffer full, dropping!\n'
-                    f'{ev}\n'
-                    f' |_raise `buf_size` or consume faster\n'
-                )
+            await tx.send(ev)
+            if ev.kind == 'timeout':
+                return
 
     except (
         trio.ClosedResourceError,
@@ -1013,7 +1005,6 @@ async def open_topology_events(
     lower: int = 0,
     upper: int = 0xFFFF_FFFF,
     filt: int = TIPC_SUB_SERVICE,
-    scope: int = TIPC_CLUSTER_SCOPE,
     timeout: int = TIPC_WAIT_FOREVER,
     buf_size: int = 64,
 ) -> AsyncGenerator[
@@ -1042,7 +1033,7 @@ async def open_topology_events(
     topsrv_addr = TIPCAddress(
         _stype=TIPC_TOP_SRV,
         _instance=TIPC_TOP_SRV,
-        _scope=scope,
+        _scope=TIPC_CLUSTER_SCOPE,
     )
     sock = trio_socket.socket(
         AF_TIPC,
@@ -1085,7 +1076,6 @@ async def open_topology_events(
                 _stream_name_events,
                 sock,
                 stype,
-                scope,
                 tx,
             )
             try:
