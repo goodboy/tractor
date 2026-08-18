@@ -103,13 +103,10 @@ async def _invoke_in_subactor(
             **fn_kwargs,
         )
     finally:
-        # one-shot semantics: the subactor's lifetime is
-        # bound to its lone task's completion; the
-        # cancel-req's bounded wait is shielded
-        # internally (see `Portal.cancel_actor()`) so
-        # this reap also runs when the caller's scope
-        # was itself cancelled.
-        await portal.cancel_actor()
+        # Cancel and join this child before returning. The nursery
+        # helper shields teardown, escalates a missed cancel ack and
+        # waits for the child monitor to remove its process record.
+        await an._cancel_and_reap_child(portal)
 
 
 async def run(

@@ -170,13 +170,16 @@ async def mp_proc(
         # any process we may have started.
 
         portal = Portal(chan)
+        reap_request, _ = actor_nursery._register_child_reap(
+            subactor.aid.uid,
+        )
         actor_nursery._children[subactor.aid.uid] = (subactor, proc, portal)
 
         # unblock parent task
         task_status.started(portal)
 
-        # wait for ``ActorNursery`` block to signal that
-        # subprocesses can be waited upon.
+        # wait for this child or its `ActorNursery` to signal that
+        # the subprocess can be joined.
         # This is required to ensure synchronization
         # with user code that may want to manually await results
         # from nursery spawned sub-actors. We don't want the
@@ -185,7 +188,7 @@ async def mp_proc(
         # nursery block closes do we allow subactor results to be
         # awaited and reported upwards to the supervisor.
         with trio.CancelScope(shield=True):
-            await actor_nursery._join_procs.wait()
+            await reap_request.wait()
 
         async with trio.open_nursery() as nursery:
             if portal in actor_nursery._cancel_after_result_on_exit:
