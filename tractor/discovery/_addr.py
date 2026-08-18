@@ -265,7 +265,11 @@ def wrap_address(
         #
         # NOTE, a bare seq-pattern matches `list` too, which is
         # what `msgpack` decodes our tuples back to.
-        case ('tipc', *_):
+        case (
+            ('tipc', int(), int())
+            |
+            ('tipc', int(), int(), int())
+        ):
             cls = TIPCAddress
 
         # classic network socket-address as tuple/list
