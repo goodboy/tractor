@@ -370,10 +370,11 @@ class TIPCAddress(
         between them (verified). I.e. a collision manifests as
         *silent crosstalk*, not an error.
 
-        So the instance is a `blake2b` digest of a per-call-unique
-        seed, giving a well-spread 32b value. Being a pure fn of the
-        seed it is also *reproducible*, which the (follow-up)
-        registrar-less discovery fast-path wants.
+        So the instance is a `blake2b` digest of the actor UUID, or
+        a per-call token outside a live runtime, giving a well-spread
+        32b value. Being a pure fn of the seed it is also
+        *reproducible*, which the (follow-up) registrar-less
+        discovery fast-path wants.
 
         NOTE the residual risk is birthday-bounded: ~1.2e-2 for 10k
         names sharing one `_stype`. See plan 01 §9 for the
@@ -385,7 +386,7 @@ class TIPCAddress(
             err_on_no_runtime=False,
         )
         if actor:
-            seed: str = f'{actor.aid.name}@{pid}'
+            seed: str = '.'.join(actor.aid.uid)
         else:
             if is_root_process():
                 prefix: str = 'no_runtime_root'
