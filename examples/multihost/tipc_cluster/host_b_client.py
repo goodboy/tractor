@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import trio
 import tractor
+from host_a_srv import echo
 from tractor.ipc._tipc import (
     TIPCAddress,
     is_tipc_available,
@@ -41,7 +42,7 @@ async def main() -> None:
 
             async with (
                 ptl.open_context(
-                    'host_a_srv:echo',
+                    echo,
                 ) as (ctx, _),
                 ctx.open_stream() as stream,
             ):
