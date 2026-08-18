@@ -79,6 +79,9 @@ def mk_maddr(
     dispatching on the `.proto_key` to build the correct
     multiaddr-spec-compliant protocol path.
 
+    Return a `Multiaddr` for registered protocols. TIPC remains
+    an interim `str` until its upstream multiaddr protocol lands.
+
     '''
     from multiaddr import Multiaddr
 
@@ -144,12 +147,18 @@ def parse_maddr(
     # XXX MUST come before `Multiaddr()` which rejects the
     # not-yet-registered `/tipc` proto name outright.
     if maddr_str.startswith(_tipc_maddr_prefix):
-        _, _, stype, instance, scope = maddr_str.split('/')
-        return TIPCAddress(
-            _stype=int(stype),
-            _instance=int(instance),
-            _scope=int(scope),
-        )
+        try:
+            _, _, stype, instance, scope = maddr_str.split('/')
+            return TIPCAddress.from_addr((
+                'tipc',
+                int(stype),
+                int(instance),
+                int(scope),
+            ))
+        except (TypeError, ValueError) as src_err:
+            raise ValueError(
+                f'Invalid TIPC multiaddr: {maddr_str!r}'
+            ) from src_err
 
     maddr = Multiaddr(maddr_str)
     proto_names: list[str] = [

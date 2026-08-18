@@ -147,7 +147,7 @@ class UDSAddress(
     # -[ ] need to check what other mult-transport frameworks do
     #     like zmq, nng, uri-spec et al!
     proto_key: ClassVar[str] = 'uds'
-    unwrapped_type: ClassVar[type] = tuple[str, int]
+    unwrapped_type: ClassVar[type] = tuple[str, str]
     def_bindspace: ClassVar[Path] = get_rt_dir()
 
     # NOTE, `getsockname()` answers the sock-file path as a `str`
@@ -209,7 +209,7 @@ class UDSAddress(
                     f'{addr!r}\n'
                 )
 
-    def unwrap(self) -> tuple[str, int]:
+    def unwrap(self) -> tuple[str, str]:
         # XXX NOTE, since this gets passed DIRECTLY to
         # `.ipc._uds.open_unix_socket_w_passcred()`
         return (

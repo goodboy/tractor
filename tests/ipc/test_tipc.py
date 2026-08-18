@@ -9,11 +9,11 @@ the pure address-algebra cases run everywhere.
 from __future__ import annotations
 import errno
 import struct
+from types import SimpleNamespace
 from socket import (
     SOCK_STREAM,
     SOL_SOCKET,
     SO_ACCEPTCONN,
-    SOL_TIPC,
 )
 
 import pytest
@@ -27,8 +27,10 @@ from tractor.discovery._multiaddr import (
     parse_maddr,
 )
 from tractor.ipc import _tipc
+from tractor.ipc._uds import UDSAddress
 from tractor.ipc._tipc import (
     AF_TIPC,
+    SOL_TIPC,
     TIPC_ADDR_ID,
     TIPC_ADDR_NAME,
     TIPC_CLUSTER_SCOPE,
@@ -112,6 +114,29 @@ def test_zone_scope_normalized_to_cluster():
     )
     assert addr._scope == TIPC_CLUSTER_SCOPE
     assert addr.is_valid
+
+
+def test_maddr_parse_normalizes_and_reports_bad_input():
+    '''
+    The interim `/tipc` parser must route through
+    `TIPCAddress.from_addr()` so deprecated zone scope is normalized
+    exactly like every other unwrapped-address entrypoint.
+
+    A malformed segment count previously leaked the tuple-unpacking
+    `ValueError`, which gave callers no indication that the TIPC
+    multiaddr grammar itself was invalid.
+
+    '''
+    addr: TIPCAddress = parse_maddr(
+        f'/tipc/{TRACTOR_STYPE}/7/{TIPC_ZONE_SCOPE}'
+    )
+    assert addr._scope == TIPC_CLUSTER_SCOPE
+
+    with pytest.raises(
+        ValueError,
+        match='Invalid TIPC multiaddr',
+    ):
+        parse_maddr('/tipc/not-enough-segments')
 
 
 def test_addr_from_bare_port_id_raises():
@@ -234,6 +259,12 @@ def test_wrap_address_dispatches_on_the_proto_key():
     assert _addr._default_lo_addrs['tipc'] == (
         'tipc', TRACTOR_STYPE, 1616, TIPC_CLUSTER_SCOPE,
     )
+
+    # A UDS directory named `tipc` is still a valid classic
+    # 2-element address, not a malformed proto-keyed TIPC one.
+    uds: UDSAddress = wrap_address(('tipc', 'actor.sock'))
+    assert isinstance(uds, UDSAddress)
+    assert UDSAddress.unwrapped_type == tuple[str, str]
 
 
 def test_maddr_roundtrip():
