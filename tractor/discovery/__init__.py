@@ -18,15 +18,21 @@
 Discovery (protocols) API for automatic addressing
 and location management of (service) actors.
 
-NOTE: this ``__init__`` only eagerly imports the
-``._multiaddr`` submodule (for public re-exports).
-Heavier submodules like ``._addr`` and ``._api``
-are NOT imported here to avoid circular imports;
-use direct module paths for those.
+NOTE: this ``__init__`` only eagerly imports the lightweight
+``._multiaddr`` and ``._tunnel`` submodules for public re-exports.
+Heavier submodules like ``._addr`` and ``._api`` are NOT imported
+here to avoid circular imports; use direct module paths for those.
 
 '''
 from ._multiaddr import (
     parse_endpoints as parse_endpoints,
     parse_maddr as parse_maddr,
     mk_maddr as mk_maddr,
+)
+from ._tunnel import (
+    TunnelledAddress as TunnelledAddress,
+    TunnelSpec as TunnelSpec,
+    WGTunnelSpec as WGTunnelSpec,
+    strip_tunnels as strip_tunnels,
+    tunnels_of as tunnels_of,
 )

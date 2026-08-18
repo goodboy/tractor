@@ -124,7 +124,7 @@ that the key decodes to exactly 32 bytes, so a truncated key is a
 ```
 /ip4/192.168.1.50/udp/51820/wg/u<A_pub>/ip4/10.0.11.1/tcp/1616
 \_______ bearer __________/\__ key __/\______ overlay ______/
- underlay, wg `ListenPort`             the ONLY part we bind
+ underlay, wg `ListenPort`             the `MsgTransport` bind
 ```
 
 The `/wg/` segment is **infix, not suffix** — the segments
@@ -151,11 +151,11 @@ Observed protocol-name lists, for writing the `match`:
 - so the three parts have **three different owners**, and only the
   third is an `Endpoint`:
 
-  | part | bound by | in the runtime? |
+  | part | socket owner / provisioner | runtime role |
   | --- | --- | --- |
-  | bearer | kernel, via `wg-quick`/`pyroute2` | no |
-  | `/wg/u<key>` | nothing — it's an identity | no, verified out-of-band |
-  | overlay | `tractor`'s `IPCServer` | **yes**, as `.overlay` |
+  | bearer | kernel-owned; externally provisioned in layer A, tractor bindspace-provisioned in layer C | control-plane metadata, never an `Endpoint` |
+  | `/wg/u<key>` | nothing — it's an identity | parsed and explicitly verified |
+  | overlay | `tractor`'s `IPCServer` | application `MsgTransport`, as `.overlay` |
 
   This owner-split is the real axis of the design, *not* whether
   the maddr stack is "composed" (it is).
@@ -329,6 +329,14 @@ ask for: *"for any tunneled maddr-`str`-entry we deliver a
 data-structure which can easily be passed to nested `@acm`s
 which consecutively setup nested net bindspaces for binding the
 endpoint addrs"*.
+
+Layer C is where tractor takes ownership of bindspace orchestration.
+For a fully bootstrapped deployment it may create the netns and wg
+iface, configure peers/routes, and ask the kernel to establish the
+bearer's UDP `ListenPort` through netlink/`pyroute2`. "Kernel-owned"
+describes the data-plane socket, not who provisions it: tractor owns
+the lifecycle while `Endpoint`/`MsgTransport` remain responsible only
+for the overlay application socket.
 
 ### 5.1 the composition
 
