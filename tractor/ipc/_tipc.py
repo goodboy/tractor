@@ -57,6 +57,7 @@ from socket import (
     SOCK_STREAM,
 )
 import struct
+import sys
 from typing import (
     AsyncGenerator,
     Callable,
@@ -197,6 +198,10 @@ def is_tipc_available() -> bool:
 
     '''
     global _tipc_avail
+    if sys.platform != 'linux':
+        _tipc_avail = False
+        return _tipc_avail
+
     if _tipc_avail is None:
         try:
             socket.socket(
@@ -340,8 +345,8 @@ class TIPCAddress(
 
     def with_port_id(
         self,
-        node: int,
-        ref: int,
+        node: int|None,
+        ref: int|None,
     ) -> TIPCAddress:
         '''
         A copy annotated with an *observed* `TIPC_ADDR_ID`
@@ -683,22 +688,24 @@ class MsgpackTIPCStream(MsgpackTransport):
                     destaddr._scope,
                 ))
 
-        tpt_stream = MsgpackTIPCStream(
-            trio.SocketStream(sock),
-            prefix_size=prefix_size,
-            codec=codec,
-        )
-        # XXX, the dialling side is the ONLY side that knows the
-        # peer's *service name* (a port-id can't be reversed into
-        # one), so re-assert it over the observed-only `._raddr`
-        # that `.get_stream_addrs()` just derived.
-        #
-        # Same move as `MsgpackUDSStream.connect_to()`s peer-pid
-        # re-assign.
-        tpt_stream._raddr = destaddr.with_port_id(
-            *_port_id(sock.getpeername()),
-        )
-        return tpt_stream
+            tpt_stream = MsgpackTIPCStream(
+                trio.SocketStream(sock),
+                prefix_size=prefix_size,
+                codec=codec,
+            )
+            # XXX, the dialling side is the ONLY side that knows
+            # the peer's *service name* (a port-id can't be
+            # reversed into one), so re-assert it over the
+            # observed-only `._raddr` derived above.
+            #
+            # Reuse that tolerant observation: a peer can withdraw
+            # between `.connect()` and a second `.getpeername()`.
+            observed_raddr: TIPCAddress = tpt_stream._raddr
+            tpt_stream._raddr = destaddr.with_port_id(
+                node=observed_raddr.maybe_node,
+                ref=observed_raddr.maybe_ref,
+            )
+            return tpt_stream
 
     @classmethod
     def get_stream_addrs(
