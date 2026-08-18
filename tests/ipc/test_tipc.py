@@ -232,6 +232,43 @@ def test_get_random_collision_resistance():
     assert all(addr.is_valid for addr in addrs)
 
 
+def test_get_random_keys_live_actors_by_uuid(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    TIPC names are cluster-wide while PIDs are host-local. Hashing
+    only `(actor name, pid)` therefore made same-named actors with
+    equal PIDs on different hosts publish one service name, where
+    TIPC silently round-robins connects between them.
+
+    Hold the actor name and PID fixed while changing only its UUID;
+    distinct instances prove the globally unique identity field is
+    now part of the derivation.
+
+    '''
+    monkeypatch.setattr(_tipc.os, 'getpid', lambda: 1616)
+
+    def get_addr(uuid: str) -> TIPCAddress:
+        actor = SimpleNamespace(
+            aid=Aid(
+                name='worker',
+                uuid=uuid,
+                pid=1616,
+            )
+        )
+        monkeypatch.setattr(
+            _tipc,
+            'current_actor',
+            lambda **kwargs: actor,
+        )
+        return TIPCAddress.get_random()
+
+    first: TIPCAddress = get_addr('actor-uuid-a')
+    second: TIPCAddress = get_addr('actor-uuid-b')
+    assert first._instance != second._instance
+    assert get_addr('actor-uuid-a')._instance == first._instance
+
+
 def test_get_random_honors_bindspace():
     addr: TIPCAddress = TIPCAddress.get_random(
         bindspace=TIPC_NODE_SCOPE,
