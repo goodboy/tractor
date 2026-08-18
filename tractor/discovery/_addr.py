@@ -93,7 +93,7 @@ class Address(Protocol):
 
     # TODO, maybe `.netns` is a better name?
     @property
-    def namespace(self) -> tuple[str, int]|None:
+    def namespace(self) -> tuple[str, str|int]|None:
         '''
         The if-available, OS-specific "network namespace" key.
 
@@ -192,7 +192,16 @@ def get_address_cls(name: str) -> Type[Address]:
 
 
 def is_wrapped_addr(addr: any) -> bool:
-    return type(addr) in _address_types.values()
+    # XXX NOTE, a `TunnelledAddress` is genuinely "wrapped" but is
+    # deliberately NOT in `_address_types`: it has no
+    # `MsgTransport` of its own (a tunnel is transparent to
+    # `socket(2)`), so it gets no proto-key entry. See `._tunnel`.
+    from ._tunnel import TunnelledAddress
+    return (
+        type(addr) in _address_types.values()
+        or
+        isinstance(addr, TunnelledAddress)
+    )
 
 
 def mk_uuid() -> str:
