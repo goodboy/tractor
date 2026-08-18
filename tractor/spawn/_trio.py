@@ -161,6 +161,9 @@ async def trio_proc(
         assert proc
 
         portal = Portal(chan)
+        reap_request, _ = actor_nursery._register_child_reap(
+            subactor.aid.uid,
+        )
         actor_nursery._children[subactor.aid.uid] = (
             subactor,
             proc,
@@ -191,9 +194,10 @@ async def trio_proc(
         # resume caller at next checkpoint now that child is up
         task_status.started(portal)
 
-        # wait for ActorNursery.wait() to be called
+        # wait for this child or its `ActorNursery` to request
+        # process joining.
         with trio.CancelScope(shield=True):
-            await actor_nursery._join_procs.wait()
+            await reap_request.wait()
 
         async with trio.open_nursery() as nursery:
             if portal in actor_nursery._cancel_after_result_on_exit:
