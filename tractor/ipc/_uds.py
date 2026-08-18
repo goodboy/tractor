@@ -26,11 +26,21 @@ from pathlib import Path
 import os
 import sys
 from socket import (
-    AF_UNIX,
     SOCK_STREAM,
     SOL_SOCKET,
     error as socket_error,
 )
+# NOTE, `AF_UNIX` is absent on Windows / any CPython built without
+# unix-domain-socket support. Keep this module importable
+# everywhere (so `UDSAddress` stays referenceable for type and
+# `isinstance()` checks plus registry lookups); the `AF_UNIX`-using
+# code paths below are runtime-only and are never reached when the
+# UDS backend is unusable (gated on `trio`'s `has_unix`, see
+# `HAS_UDS`).
+try:
+    from socket import AF_UNIX
+except ImportError:
+    AF_UNIX = None
 import struct
 from typing import (
     Any,
@@ -101,6 +111,16 @@ _SUN_PATH_LIMIT: int = (
     108
     if sys.platform == 'linux'
     else 104
+)
+
+
+# single source of truth for whether the UDS backend is usable on this
+# host. Windows can expose `AF_UNIX`, but this backend remains
+# POSIX-only until its credential and lifecycle paths are supported.
+HAS_UDS: bool = (
+    sys.platform != 'win32'
+    and
+    has_unix
 )
 
 

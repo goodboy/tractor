@@ -120,6 +120,13 @@ async def child_read_shm_list(
                 print(f'(child): reading frame: {frame}')
 
 
+@pytest.mark.skipif(
+    platform.system() == 'Windows',
+    reason=(
+        'parent/child shm IPC deadlocks on Windows '
+        '(frame-size dependent hang); nascent — see #404'
+    ),
+)
 @pytest.mark.parametrize(
     'use_str',
     [False, True],

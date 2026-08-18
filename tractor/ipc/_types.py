@@ -18,17 +18,13 @@
 IPC subsys type-lookup helpers?
 
 '''
-from typing import (
-    Type,
-    # TYPE_CHECKING,
-)
-
-import trio
+from typing import Type
 import socket
+import trio
 
 from tractor.ipc._transport import (
     MsgTransportKey,
-    MsgTransport
+    MsgTransport,
 )
 from tractor.ipc._tcp import (
     TCPAddress,
@@ -37,37 +33,33 @@ from tractor.ipc._tcp import (
 from tractor.ipc._uds import (
     UDSAddress,
     MsgpackUDSStream,
+    HAS_UDS,
 )
 
-# if TYPE_CHECKING:
-#     from tractor._addr import Address
-
-
+# the UDS backend is importable everywhere but only *usable* when
+# `HAS_UDS` is `True`; otherwise the runtime registers TCP only.
 Address = TCPAddress|UDSAddress
 
-# manually updated list of all supported msg transport types
-_msg_transports = [
+# the available msg-transport backends on this host: TCP always,
+# UDS only where usable (`HAS_UDS`). The lookup maps below derive
+# from this single list via each backend's `codec_key` and
+# `address_type`: register a backend here and every map picks it up.
+_msg_transports: list[Type[MsgTransport]] = [
     MsgpackTCPStream,
-    MsgpackUDSStream
 ]
+if HAS_UDS:
+    _msg_transports.append(MsgpackUDSStream)
 
-
-# convert a MsgTransportKey to the corresponding transport type
-_key_to_transport: dict[
-    MsgTransportKey,
-    Type[MsgTransport],
-] = {
-    ('msgpack', 'tcp'): MsgpackTCPStream,
-    ('msgpack', 'uds'): MsgpackUDSStream,
+# map a `MsgTransportKey` -> `MsgTransport` type
+_key_to_transport: dict[MsgTransportKey, Type[MsgTransport]] = {
+    (t.codec_key, t.address_type.proto_key): t
+    for t in _msg_transports
 }
 
-# convert an Address wrapper to its corresponding transport type
-_addr_to_transport: dict[
-    Type[TCPAddress|UDSAddress],
-    Type[MsgTransport]
-] = {
-    TCPAddress: MsgpackTCPStream,
-    UDSAddress: MsgpackUDSStream,
+# map an `Address`-wrapper -> `MsgTransport` type
+_addr_to_transport: dict[Type[Address], Type[MsgTransport]] = {
+    t.address_type: t
+    for t in _msg_transports
 }
 
 
@@ -81,41 +73,51 @@ def transport_from_addr(
 
     '''
     try:
-        return _addr_to_transport[type(addr)]
+        addr_type = type(addr)
+        return _addr_to_transport[addr_type]
 
     except KeyError:
         raise NotImplementedError(
-            f'No known transport for address {repr(addr)}'
+            f'No known transport for address '
+            f'{addr!r}'
         )
 
 
 def transport_from_stream(
     stream: trio.abc.Stream,
-    codec_key: str = 'msgpack'
+    codec_key: str = 'msgpack',
 ) -> Type[MsgTransport]:
     '''
     Given an arbitrary `trio.abc.Stream` and a desired codec,
     find the corresponding `MsgTransport` type.
 
     '''
-    transport = None
+    transport: str|None = None
+
     if isinstance(stream, trio.SocketStream):
         sock: socket.socket = stream.socket
         match sock.family:
             case socket.AF_INET | socket.AF_INET6:
                 transport = 'tcp'
 
-            case socket.AF_UNIX:
+            # `HAS_UDS` short-circuits before `socket.AF_UNIX` on
+            # hosts where that constant is absent.
+            case fam if (
+                HAS_UDS
+                and
+                fam == socket.AF_UNIX
+            ):
                 transport = 'uds'
 
-            case _:
+            case fam:
                 raise NotImplementedError(
-                    f'Unsupported socket family: {sock.family}'
+                    f'Unsupported socket family: {fam}'
                 )
 
     if not transport:
         raise NotImplementedError(
-            f'Could not figure out transport type for stream type {type(stream)}'
+            f'Could not figure out transport type for stream type '
+            f'{type(stream)}'
         )
 
     key = (codec_key, transport)

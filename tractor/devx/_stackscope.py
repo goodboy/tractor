@@ -31,12 +31,21 @@ from threading import (
     RLock,
 )
 import multiprocessing as mp
+
+import platform
+
 from signal import (
     signal,
     getsignal,
-    SIGUSR1,
     SIGINT,
 )
+
+
+if platform.system() != "Windows":
+    from signal import SIGUSR1
+else:
+    SIGUSR1 = None
+
 # import traceback
 from types import ModuleType
 from typing import (
@@ -347,8 +356,8 @@ def dump_tree_on_sig(
 
 
 def enable_stack_on_sig(
-    sig: int = SIGUSR1,
-) -> ModuleType:
+    sig: int|None = SIGUSR1,
+) -> ModuleType|None:
     '''
     Enable `stackscope` tracing on reception of a signal; by
     default this is SIGUSR1.
@@ -367,6 +376,16 @@ def enable_stack_on_sig(
     >> pkill --signal SIGUSR1 -f <part-of-cmd: str>
 
     '''
+    # no `SIGUSR1` on this platform (e.g. Windows) -> nothing to
+    # wire up; degrade gracefully instead of crashing callers that
+    # only guard against a missing `stackscope` (`ImportError`).
+    if sig is None:
+        log.warning(
+            'No `SIGUSR1` on this platform;\n'
+            'skipping `stackscope` trace-on-signal setup!\n'
+        )
+        return None
+
     try:
         # NOTE, `stackscope._glue` does intentional async-gen type
         # introspection at import-time which trips
