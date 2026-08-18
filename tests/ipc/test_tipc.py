@@ -892,6 +892,11 @@ def test_topology_event_scope_is_unknown():
     Decode a valid publication and assert its address uses the
     explicit unknown sentinel rather than inventing reachability.
 
+    TIPC address types and publication scopes:
+    https://docs.kernel.org/networking/tipc.html
+    Event wire format (which has no scope field):
+    https://github.com/torvalds/linux/blob/master/include/uapi/linux/tipc.h
+
     '''
     event: _tipc.TIPCNameEvent|None = _tipc._decode_name_event(
         _pack_topology_event(TIPC_PUBLISHED),
@@ -902,20 +907,24 @@ def test_topology_event_scope_is_unknown():
     assert not event.addr.is_valid
 
 
-def test_topology_stream_applies_backpressure():
+def test_topology_stream_surfaces_overflow():
     '''
-    A full memory channel used to drop topology transitions, letting
-    a future push registry continue with permanently incomplete
-    state. A zero-capacity channel deterministically exercises that
-    pressure: `send_nowait()` loses the event, while `await send()`
-    synchronizes the reader and consumer without loss.
+    Topology transitions are `TIPC_PUBLISHED`/`TIPC_WITHDRAWN`
+    changes to the set of ports matching a subscribed name sequence,
+    as emitted by the kernel topology server:
+    https://github.com/torvalds/linux/blob/master/net/tipc/topsrv.c
 
-    The receive completing with the exact publication proves the
-    stream waits for capacity instead of discarding the transition.
+    Blocking this reader on `tx.send()` stops draining the topology
+    socket and merely pushes pressure into the kernel queue. Silently
+    dropping with `send_nowait()` is worse: a push registry keeps a
+    stale view without knowing it missed a transition.
+
+    A zero-capacity channel deterministically fills the user-space
+    boundary. The dedicated overflow error proves the reader remains
+    non-blocking while forcing consumers to resubscribe and rebuild
+    instead of trusting incomplete state.
 
     '''
-    frame_ready = trio.Event()
-
     class _OneEventSocket:
         def __init__(self):
             self.sent: bool = False
@@ -923,26 +932,23 @@ def test_topology_stream_applies_backpressure():
         async def recv(self, size: int) -> bytes:
             if not self.sent:
                 self.sent = True
-                # `Event.set()` does not checkpoint, so the old
-                # `send_nowait()` runs before the consumer below.
-                frame_ready.set()
                 return _pack_topology_event(TIPC_PUBLISHED)
-            await trio.sleep_forever()
+            raise AssertionError('reader continued after overflow')
 
     async def main() -> None:
         tx, rx = trio.open_memory_channel(0)
-        async with trio.open_nursery() as tn:
-            tn.start_soon(
-                _tipc._stream_name_events,
+        with pytest.raises(
+            _tipc.TIPCNameEventOverflow,
+            match='resubscribe and rebuild',
+        ) as excinfo:
+            await _tipc._stream_name_events(
                 _OneEventSocket(),
                 TRACTOR_STYPE,
                 tx,
             )
-            await frame_ready.wait()
-            with trio.fail_after(1):
-                event: _tipc.TIPCNameEvent = await rx.receive()
-            assert event.kind == 'published'
-            tn.cancel_scope.cancel()
+        assert excinfo.value.event.kind == 'published'
+        with pytest.raises(trio.EndOfChannel):
+            await rx.receive()
 
     trio.run(main)
 
@@ -957,6 +963,9 @@ def test_topology_timeout_closes_stream():
     Feed one timeout frame directly to the reader; receiving that
     event followed by `EndOfChannel` proves the stream terminates at
     the kernel subscription boundary.
+
+    Subscription timeout semantics:
+    https://github.com/torvalds/linux/blob/master/include/uapi/linux/tipc.h
 
     '''
     class _TimeoutSocket:
