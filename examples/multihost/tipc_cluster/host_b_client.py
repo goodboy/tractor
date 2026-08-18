@@ -40,6 +40,10 @@ async def main() -> None:
                     ' |_does `tipc link list` show the peer?\n'
                 )
 
+            # `.open_context()` derives a `NamespacePath` from a
+            # callable. Importing `echo` also loads its module path
+            # locally, while host A's `enable_modules` authorizes the
+            # corresponding remote callable.
             async with (
                 ptl.open_context(
                     echo,
