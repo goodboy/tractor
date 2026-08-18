@@ -38,6 +38,9 @@ from tractor.ipc._tipc import (
     TIPC_IMPORTANCE,
     TIPC_NAME_UNKNOWN,
     TIPC_NODE_SCOPE,
+    TIPC_PUBLISHED,
+    TIPC_SCOPE_UNKNOWN,
+    TIPC_SUBSCR_TIMEOUT,
     TIPC_ZONE_SCOPE,
     TRACTOR_STYPE,
     MsgpackTIPCStream,
@@ -816,6 +819,22 @@ def test_topology_struct_layouts():
     assert len(sub) == 28
 
 
+def _pack_topology_event(
+    event: int,
+    instance: int = 71,
+) -> bytes:
+    return struct.pack(
+        _tipc._EVENT_FMT,
+        event,
+        instance,
+        instance,
+        123,
+        456,
+        0, 0, 0, 0, 0,
+        b'\0' * 8,
+    )
+
+
 def test_wait_forever_is_masked_for_packing():
     '''
     Python exposes `TIPC_WAIT_FOREVER` as `-1`, which `struct`
@@ -847,7 +866,6 @@ def test_decode_name_event_rejects_junk():
     assert _tipc._decode_name_event(
         b'\x00' * 12,
         stype=TRACTOR_STYPE,
-        scope=TIPC_CLUSTER_SCOPE,
     ) is None
 
     bogus: bytes = struct.pack(
@@ -860,8 +878,102 @@ def test_decode_name_event_rejects_junk():
     assert _tipc._decode_name_event(
         bogus,
         stype=TRACTOR_STYPE,
-        scope=TIPC_CLUSTER_SCOPE,
     ) is None
+
+
+def test_topology_event_scope_is_unknown():
+    '''
+    Neither `struct tipc_subscr` nor `struct tipc_event` carries a
+    publication scope. The old decoder copied caller context into
+    each `TIPCAddress`, falsely presenting cluster scope as kernel-
+    observed data even for a node-scoped publisher.
+
+    Decode a valid publication and assert its address uses the
+    explicit unknown sentinel rather than inventing reachability.
+
+    '''
+    event: _tipc.TIPCNameEvent|None = _tipc._decode_name_event(
+        _pack_topology_event(TIPC_PUBLISHED),
+        stype=TRACTOR_STYPE,
+    )
+    assert event is not None
+    assert event.addr._scope == TIPC_SCOPE_UNKNOWN
+    assert not event.addr.is_valid
+
+
+def test_topology_stream_applies_backpressure():
+    '''
+    A full memory channel used to drop topology transitions, letting
+    a future push registry continue with permanently incomplete
+    state. A zero-capacity channel deterministically exercises that
+    pressure: `send_nowait()` loses the event, while `await send()`
+    synchronizes the reader and consumer without loss.
+
+    The receive completing with the exact publication proves the
+    stream waits for capacity instead of discarding the transition.
+
+    '''
+    frame_ready = trio.Event()
+
+    class _OneEventSocket:
+        def __init__(self):
+            self.sent: bool = False
+
+        async def recv(self, size: int) -> bytes:
+            if not self.sent:
+                self.sent = True
+                # `Event.set()` does not checkpoint, so the old
+                # `send_nowait()` runs before the consumer below.
+                frame_ready.set()
+                return _pack_topology_event(TIPC_PUBLISHED)
+            await trio.sleep_forever()
+
+    async def main() -> None:
+        tx, rx = trio.open_memory_channel(0)
+        async with trio.open_nursery() as tn:
+            tn.start_soon(
+                _tipc._stream_name_events,
+                _OneEventSocket(),
+                TRACTOR_STYPE,
+                tx,
+            )
+            await frame_ready.wait()
+            with trio.fail_after(1):
+                event: _tipc.TIPCNameEvent = await rx.receive()
+            assert event.kind == 'published'
+            tn.cancel_scope.cancel()
+
+    trio.run(main)
+
+
+def test_topology_timeout_closes_stream():
+    '''
+    A finite kernel subscription expires after its timeout event.
+    The old reader forwarded that event and waited forever for a
+    second frame that could never arrive, so consumers blocked on a
+    channel that looked live despite having no subscription.
+
+    Feed one timeout frame directly to the reader; receiving that
+    event followed by `EndOfChannel` proves the stream terminates at
+    the kernel subscription boundary.
+
+    '''
+    class _TimeoutSocket:
+        async def recv(self, size: int) -> bytes:
+            return _pack_topology_event(TIPC_SUBSCR_TIMEOUT)
+
+    async def main() -> None:
+        tx, rx = trio.open_memory_channel(1)
+        await _tipc._stream_name_events(
+            _TimeoutSocket(),
+            TRACTOR_STYPE,
+            tx,
+        )
+        assert (await rx.receive()).kind == 'timeout'
+        with pytest.raises(trio.EndOfChannel):
+            await rx.receive()
+
+    trio.run(main)
 
 
 @requires_tipc
@@ -897,6 +1009,7 @@ def test_topology_reports_publish_and_withdraw():
         for ev in got:
             assert ev.addr._instance == addr._instance
             assert ev.addr._stype == addr._stype
+            assert ev.addr._scope == TIPC_SCOPE_UNKNOWN
             assert isinstance(ev.ref, int)
         # both transitions name the SAME publisher port
         assert got[0].ref == got[1].ref
