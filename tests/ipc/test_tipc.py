@@ -354,6 +354,97 @@ def test_eafnosupport_is_actionable_connerr(
     assert type(excinfo.value.__cause__) is OSError
 
 
+def test_availability_probe_is_linux_only(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    The fallback `AF_TIPC` integer keeps imports portable but can
+    alias an unrelated socket family on another OS. Socket creation
+    alone must never turn that numeric collision into a false TIPC
+    capability result.
+
+    Simulate Darwin with a socket constructor that would otherwise
+    succeed; proving it is never called pins the platform gate ahead
+    of the syscall probe.
+
+    '''
+    socket_called: bool = False
+
+    def fake_socket(*args, **kwargs):
+        nonlocal socket_called
+        socket_called = True
+
+    monkeypatch.setattr(_tipc, '_tipc_avail', None)
+    monkeypatch.setattr(_tipc.sys, 'platform', 'darwin')
+    monkeypatch.setattr(_tipc.socket, 'socket', fake_socket)
+
+    assert not is_tipc_available()
+    assert not socket_called
+
+
+def test_connect_reuses_tolerant_peer_observation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    A TIPC peer can withdraw immediately after `.connect()`. The
+    transport constructor already tolerates that race, but the dial
+    path used to call `getpeername()` a second time and leak a raw
+    `ENOTCONN` after an otherwise successful connection.
+
+    The fake socket permits exactly the constructor's first peer
+    lookup. A second lookup raises deterministically, so successful
+    construction proves `connect_to()` reuses the tolerant observed
+    address and transfers socket ownership only after setup.
+
+    '''
+    class _DropAfterObservation:
+        def __init__(self):
+            self.peer_lookups: int = 0
+            self.closed: bool = False
+
+        def setsockopt(self, *args) -> None:
+            pass
+
+        async def connect(self, addr) -> None:
+            pass
+
+        def getsockname(self) -> tuple[int, int, int, int, int]:
+            return (TIPC_ADDR_ID, 1, 2, 0, TIPC_CLUSTER_SCOPE)
+
+        def getpeername(self) -> tuple[int, int, int, int, int]:
+            self.peer_lookups += 1
+            if self.peer_lookups > 1:
+                raise OSError(errno.ENOTCONN, 'peer withdrew')
+            return (TIPC_ADDR_ID, 3, 4, 0, TIPC_CLUSTER_SCOPE)
+
+        def close(self) -> None:
+            self.closed = True
+
+    async def main() -> None:
+        sock = _DropAfterObservation()
+        monkeypatch.setattr(
+            _tipc.trio_socket,
+            'socket',
+            lambda *args: sock,
+        )
+        monkeypatch.setattr(
+            _tipc.trio,
+            'SocketStream',
+            lambda raw_sock: SimpleNamespace(socket=raw_sock),
+        )
+
+        addr: TIPCAddress = TIPCAddress.get_root()
+        stream: MsgpackTIPCStream = (
+            await MsgpackTIPCStream.connect_to(addr)
+        )
+        assert sock.peer_lookups == 1
+        assert stream.raddr.unwrap() == addr.unwrap()
+        assert stream.raddr.maybe_ref == 4
+        assert not sock.closed
+
+    trio.run(main)
+
+
 # ------------------------------------------------------------------
 # kernel-touching
 # ------------------------------------------------------------------
