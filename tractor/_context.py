@@ -1108,10 +1108,11 @@ class Context:
                 # NOTE: we're telling the far end actor to cancel a task
                 # corresponding to *this actor*. The far end local channel
                 # instance is passed to `Actor._cancel_task()` implicitly.
-                await self._portal.run_from_ns(
+                await self._portal._run_from_ns(
                     'self',
                     '_cancel_task',
-                    cid=cid,
+                    kwargs={'cid': cid},
+                    cancel_on_startup=False,
                 )
 
             if cs.cancelled_caught:

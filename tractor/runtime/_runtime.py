@@ -784,6 +784,7 @@ class Actor:
         allow_overruns: bool = False,
         load_nsf: bool = False,
         ack_timeout: float = float('inf'),
+        cancel_on_startup: bool = True,
 
     ) -> Context:
         '''
@@ -835,13 +836,42 @@ class Actor:
 
             f'{pretty_struct.pformat(msg)}'
         )
-        await chan.send(msg)
+        try:
+            await chan.send(msg)
 
-        # NOTE wait on first `StartAck` response msg and validate;
-        # this should be immediate and does not (yet) wait for the
-        # remote child task to sync via `Context.started()`.
-        with trio.fail_after(ack_timeout):
-            first_msg: msgtypes.StartAck = await ctx._rx_chan.receive()
+            # NOTE wait on first `StartAck` response msg and validate;
+            # this should be immediate and does not (yet) wait for the
+            # remote child task to sync via `Context.started()`.
+            with trio.fail_after(ack_timeout):
+                first_msg: msgtypes.StartAck = await ctx._rx_chan.receive()
+
+        except trio.Cancelled:
+            with trio.CancelScope(shield=True):
+                # `MsgpackTransport.send()` closes its stream when
+                # cancellation interrupts the length-prefixed write
+                # because an unknown prefix may already be sent. A
+                # connected channel means cancellation happened before
+                # that write or after it completed, so `_cancel_task`
+                # is protocol-safe (and a no-op if `Start` was unsent).
+                if (
+                    cancel_on_startup
+                    and
+                    chan.connected()
+                ):
+                    try:
+                        await ctx.cancel()
+                    except BaseException as cancel_err:
+                        log.warning(
+                            'Failed to cancel RPC task during '
+                            'startup?\n'
+                            f'{cancel_err!r}\n'
+                        )
+
+                self._drop_context(ctx)
+                if not ctx._rx_chan._closed:
+                    await ctx._rx_chan.aclose()
+
+            raise
         try:
             functype: str = first_msg.functype
         except AttributeError:
