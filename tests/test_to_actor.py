@@ -511,12 +511,30 @@ def test_rejects_portal_and_an_combo():
         )
 
 
-def test_rejects_runtime_kwargs_with_placement():
+@pytest.mark.parametrize(
+    'placement',
+    ['an', 'portal'],
+)
+@pytest.mark.parametrize(
+    'runtime_kwargs',
+    [
+        {},
+        {'loglevel': 'cancel'},
+    ],
+    ids=['empty', 'configured'],
+)
+def test_rejects_runtime_kwargs_with_placement(
+    placement: str,
+    runtime_kwargs: dict,
+):
     '''
     `runtime_kwargs` only applies when the call opens
     its own private actor-nursery; passing it alongside
     a placement opt is an error, never silently
-    ignored.
+    ignored. In particular, an empty dict still means the
+    caller provided this mutually exclusive option; testing
+    both placement modes prevents truthiness checks from
+    accepting it before any actor runtime is started.
 
     '''
     with pytest.raises(ValueError):
@@ -525,10 +543,10 @@ def test_rejects_runtime_kwargs_with_placement():
                 to_actor.run,
                 add_one,
                 1,
-                an=object(),
-                runtime_kwargs=dict(
-                    loglevel='cancel',
-                ),
+                **{
+                    placement: object(),
+                    'runtime_kwargs': runtime_kwargs,
+                },
             )
         )
 
