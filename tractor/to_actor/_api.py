@@ -295,7 +295,7 @@ async def run(
     fn, args, kwargs = _normalize_call(fn, args)
 
     if (
-        runtime_kwargs
+        runtime_kwargs is not None
         and
         (
             an is not None
