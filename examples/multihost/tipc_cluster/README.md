@@ -2,6 +2,10 @@
 
 TIPC is a linux-kernel cluster IPC protocol whose service names
 live in a **cluster-wide name table maintained by the kernel**.
+It is also described as **Cluster Domain Sockets**: the Unix-domain
+socket model extended from one kernel to a cluster. That name is a
+useful explanation for new users, while the code keeps `tipc` as its
+protocol key to match Linux's `AF_TIPC`, kernel module and tooling.
 For `tractor` that means:
 
 - an actor's IPC address is a service name `(stype, instance)`,
@@ -85,36 +89,106 @@ Everything above is single-node (`modprobe` is enough). To span
 hosts you need a **bearer** on both, which is the one thing that
 can't be CI'd.
 
+For the first physical test, use two wired Linux hosts on the same
+L2 segment. Prefer a direct cable or uncomplicated switch; avoid
+Wi-Fi, guest VLANs and port isolation until the basic link works.
+Use the same checkout and Python environment on both hosts:
+
 ```bash
 # on BOTH hosts
+git rev-parse HEAD             # must match on A and B
+uv sync --all-extras --dev
 sudo modprobe tipc
 
-# over ethernet (L2) — simplest when the hosts share a segment
-sudo tipc bearer enable media eth device eth0
+# choose the real wired iface; do not assume `eth0`
+ip -br link
+IFACE=enp3s0
+
+# inspect existing cluster identity before changing anything
+tipc node get address          # must differ between hosts
+tipc node get netid            # must match between hosts
+
+# use one private test netid on BOTH hosts, before enabling bearers
+sudo tipc node set netid 37801
+
+# ethernet is simplest when the hosts share an L2 segment
+sudo tipc bearer enable media eth device "$IFACE"
 
 # ..or over UDP when L2 isn't available — and MANDATORY over a
 # `wg` mesh, see below
 sudo tipc bearer enable media udp name uc localip 10.0.11.1
 
 # verify BEFORE running anything: this must list the peer
+tipc bearer list
 tipc link list
 tipc node list
 ```
 
-Then:
+If the link does not appear, first verify carrier, a common TIPC
+network ID, distinct node addresses, a common VLAN and compatible
+MTUs. Ethernet TIPC uses EtherType traffic rather than IP routing,
+so a successful `ping` alone does not prove the bearer can work.
+
+Run each command from `examples/multihost/tipc_cluster/`:
 
 ```bash
 # host A
-python host_a_srv.py
+uv run python host_a_srv.py
 
 # host B
-python host_b_client.py
+watch -n 0.5 tipc nametable show  # optional second terminal
+uv run python host_b_client.py
 ```
 
 Note what's absent from both scripts: any IP, hostname or port.
 Both sides name the *same service*, and the kernel routes it.
 Move `host_a_srv.py` to a third node and host B's dial keeps
 working, unchanged.
+
+For a first resilience pass, use a local console or separate
+management link so the test does not cut off your own SSH session:
+
+```bash
+# host B: record the healthy baseline
+tipc link list
+tipc link statistics show
+
+# either host: withdraw and recreate the bearer
+sudo tipc bearer disable media eth device "$IFACE"
+tipc link list
+sudo tipc bearer enable media eth device "$IFACE"
+tipc link list
+
+# prove name withdrawal/republication and RPC recovery
+tipc nametable show
+uv run python host_b_client.py
+```
+
+Capture `uname -a`, both node addresses, `tipc bearer list`,
+`tipc link list`, `tipc link statistics show`, the name table and
+both Python transcripts. Those artifacts distinguish an actor bug
+from bearer discovery, cluster identity or switch configuration.
+
+Clean up a disposable Ethernet test on both hosts with:
+
+```bash
+sudo tipc bearer disable media eth device "$IFACE"
+tipc link list
+```
+
+Restore any pre-existing network ID only after all bearers are
+disabled. The first useful automation target is a two-node network
+namespace fixture that asserts link-up, remote publication, RPC,
+withdrawal and republication in that order; physical hardware then
+remains the validation layer for real NIC and switch behaviour.
+
+The commands above use iproute2's `tipc` frontend, which speaks the
+kernel's `TIPCv2` generic-netlink family. The planned `pyroute2`
+dependency already manages WireGuard, interfaces and namespaces and
+provides generic-netlink primitives, but it does not currently ship a
+TIPC message codec. Adding one upstream would let `tractor` replace
+these manual commands with one Python netlink stack instead of
+shelling out; until then, `tipc(8)` remains the canonical frontend.
 
 ### over a `wg` mesh
 
@@ -231,12 +305,10 @@ self-skip when the module is absent.
 ## CI
 
 Single-host TIPC *is* CI-able — the module ships with the
-standard Ubuntu kernel package, so a `sudo modprobe tipc` step
-plus a `--tpt-proto tipc` matrix entry should work. That's not
-wired up yet; verify in a throwaway workflow first, and fall
-back to a container job with `--cap-add NET_ADMIN` if the
-runners refuse. Cross-node (bearer) testing stays manual — this
-README is that smoke test.
+standard Ubuntu kernel package. CI loads it with `sudo modprobe
+tipc` and runs the suite with `--tpt-proto tipc` as a blocking
+matrix leg. Cross-node bearer testing stays manual — this README
+is that smoke test.
 
 ## normative refs
 
