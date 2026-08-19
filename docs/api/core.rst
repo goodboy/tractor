@@ -37,7 +37,6 @@ Spawning actors
 
 .. autoclass:: ActorNursery
    :members: start_actor,
-             run_in_actor,
              cancel,
              cancel_called,
              cancelled_caught
@@ -47,10 +46,22 @@ Spawning actors
    :meth:`ActorNursery.start_actor` (daemon actor + portal) is the
    blessed spawning primitive; pair it with
    ``Portal.open_context()`` for SC-linked remote tasks.
-   :meth:`ActorNursery.run_in_actor` is a *convenience* one-shot —
-   spawn, run a single task, auto-cancel after the result — slated
-   to be rebuilt as a high-level wrapper, so don't design around
-   it as the core model.
+
+One-shot task actors
+--------------------
+
+.. autofunction:: tractor.to_actor.run
+
+.. note::
+
+   :func:`tractor.to_actor.run` (parlance of
+   ``trio.to_thread.run_sync()`` and friends) is the
+   *convenience* one-shot — spawn, run a single task, block on
+   its result, reap — built entirely on
+   :meth:`ActorNursery.start_actor`, a linked
+   :meth:`Portal.open_context` call and per-child cancellation/reaping,
+   so don't design around it as the core model. It supersedes the
+   removed (legacy, non-blocking) ``ActorNursery.run_in_actor()``.
 
 .. deprecated:: 0.1.0a6
 
@@ -71,14 +82,12 @@ flowing back `exactly like trio`_.
    :members: run,
              run_from_ns,
              open_stream_from,
-             wait_for_result,
              cancel_actor,
              chan
 
 .. deprecated:: 0.1.0a6
 
-   ``Portal.result()`` warns; use :meth:`Portal.wait_for_result`.
-   The str-form ``Portal.run('mod.path', 'fn_name')`` also warns;
+   The str-form ``Portal.run('mod.path', 'fn_name')`` warns;
    pass a function *object* whose module is listed in the target's
    ``enable_modules``. ``Portal.channel`` is the legacy spelling
    of :attr:`Portal.chan`.

@@ -2,6 +2,7 @@
 Verifying internal runtime state and undocumented extras.
 
 """
+from functools import partial
 import os
 
 import pytest
@@ -83,13 +84,14 @@ async def test_lifetime_stack_wipes_tmpfile(
             async with tractor.open_nursery(
                 loglevel=loglevel,
             ) as an:
-                await (  # inlined `tractor.Portal`
-                    await an.run_in_actor(
+                await tractor.to_actor.run(
+                    partial(
                         crash_and_clean_tmpdir,
                         tmp_file_path=path,
                         error=error_in_child,
-                    )
-                ).result()
+                    ),
+                    an=an,
+                )
     except (
         tractor.RemoteActorError,
         BaseExceptionGroup,

@@ -46,9 +46,9 @@ async def test_reg_then_unreg(
 
     async with tractor.open_nursery(
         registry_addrs=[reg_addr],
-    ) as n:
+    ) as an:
 
-        portal = await n.start_actor('actor', enable_modules=[__name__])
+        portal = await an.start_actor('actor', enable_modules=[__name__])
         uid = portal.channel.aid.uid
 
         async with tractor.get_registry(reg_addr) as aportal:
@@ -62,7 +62,7 @@ async def test_reg_then_unreg(
                 # XXX: can we figure out what the listen addr will be?
                 assert sockaddrs
 
-        await n.cancel()  # tear down nursery
+        await an.cancel()  # tear down nursery
 
         await trio.sleep(0.1)
         assert uid not in aportal.actor._registry
@@ -89,9 +89,9 @@ async def test_reg_then_unreg_maddr(
 
     async with tractor.open_nursery(
         registry_addrs=[maddr_str],
-    ) as n:
+    ) as an:
 
-        portal = await n.start_actor(
+        portal = await an.start_actor(
             'actor_maddr',
             enable_modules=[__name__],
         )
@@ -105,7 +105,7 @@ async def test_reg_then_unreg_maddr(
                 sockaddrs = actor._registry[uid]
                 assert sockaddrs
 
-        await n.cancel()
+        await an.cancel()
 
         await trio.sleep(0.1)
         assert uid not in aportal.actor._registry
@@ -152,23 +152,37 @@ async def test_trynamic_trio(
     for the directed subs.
 
     '''
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery() as an:
         print("Alright... Action!")
 
-        donny = await n.run_in_actor(
-            ria_fn,
-            other_actor='gretchen',
-            reg_addr=reg_addr,
-            name='donny',
-        )
-        gretchen = await n.run_in_actor(
-            ria_fn,
-            other_actor='donny',
-            reg_addr=reg_addr,
-            name='gretchen',
-        )
-        print(await gretchen.result())
-        print(await donny.result())
+        # donny + gretchen each wait on (then dial!) the *other*, so
+        # both actors must OUTLIVE both hellos: spawn as daemons and
+        # only reap after both tasks complete. NB a pair of eagerly
+        # reaped `to_actor.run()` one-shots races: the first to
+        # finish dies while the other may still be dialing its
+        # registry-resolved (now dead) sockaddr -> conn-refused.
+        portals: dict[str, tractor.Portal] = {
+            name: await an.start_actor(
+                name,
+                enable_modules=[__name__],
+            )
+            for name in ('donny', 'gretchen')
+        }
+
+        async def _direct(this_name: str, other_actor: str):
+            res = await portals[this_name].run(
+                ria_fn,
+                other_actor=other_actor,
+                reg_addr=reg_addr,
+            )
+            print(res)
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(_direct, 'donny', 'gretchen')
+            tn.start_soon(_direct, 'gretchen', 'donny')
+
+        # both hellos have completed; reap the thespians.
+        await an.cancel()
         print("CUTTTT CUUTT CUT!!?! Donny!! You're supposed to say...")
 
 
@@ -270,13 +284,15 @@ async def spawn_and_check_registry(
                         portals = {}
                         for i in range(3):
                             name = f'a{i}'
-                            if with_streaming:
-                                portals[name] = await an.start_actor(
-                                    name=name, enable_modules=[__name__])
-
-                            else:  # no streaming
-                                portals[name] = await an.run_in_actor(
-                                    trio.sleep_forever, name=name)
+                            # a daemon subactor is alive + registered
+                            # without a "main" task; the streaming
+                            # branch below uses the module funcs, the
+                            # non-streaming case just needs it up (was
+                            # `run_in_actor(trio.sleep_forever)`).
+                            portals[name] = await an.start_actor(
+                                name=name,
+                                enable_modules=[__name__],
+                            )
 
                         # wait on last actor to come up
                         async with tractor.wait_for_actor(name):

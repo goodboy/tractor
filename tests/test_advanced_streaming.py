@@ -3,6 +3,7 @@ Advanced streaming patterns using bidirectional streams and contexts.
 
 '''
 from collections import Counter
+from functools import partial
 import itertools
 import platform
 from typing import Type
@@ -173,8 +174,8 @@ def test_dynamic_pub_sub(
     # test. Picked backend-aware: under `trio` backend spawn is
     # cheap (~1s for `cpus` actors) but fork-based backends pay
     # a per-spawn cost (forkserver round-trip + IPC peer-handshake)
-    # that can stack up over `cpus - 1` sequential `n.run_in_actor()`
-    # calls — especially on UDS under cross-pytest contention
+    # that can stack up over the `cpus - 1` one-shot
+    # (`to_actor.run()`) spawns — especially on UDS under cross-pytest contention
     # (#451 / #452). 4s was flaking right at the edge under fork
     # backends — bumped to 8s with diag-snapshot-on-timeout via
     # `fail_after_w_trace` so a borderline run still fails loud
@@ -214,33 +215,59 @@ def test_dynamic_pub_sub(
                     f'enter `fail_after_w_trace({fail_after_s})` scope'
                 )
                 try:
-                    async with tractor.open_nursery(
-                        registry_addrs=[reg_addr],
-                        debug_mode=debug_mode,
-                    ) as n:
+                    async with (
+                        tractor.open_nursery(
+                            registry_addrs=[reg_addr],
+                            debug_mode=debug_mode,
+                        ) as an,
+                        # bg-schedules the forever-streaming
+                        # one-shots below; the user-cancel raise
+                        # cancels them all, each reaping its
+                        # subactor via `to_actor.run()`'s
+                        # (shielded) `Portal.cancel_actor()`.
+                        trio.open_nursery() as tn,
+                    ):
                         test_log.cancel(
                             'test_dynamic_pub_sub: '
                             'actor nursery opened'
                         )
 
                         # name of this actor will be same as target func
-                        await n.run_in_actor(publisher)
+                        tn.start_soon(
+                            partial(
+                                tractor.to_actor.run,
+                                publisher,
+                                an=an,
+                            )
+                        )
 
                         for i, sub in zip(
                             range(cpus - 2),
                             itertools.cycle(_registry.keys())
                         ):
-                            await n.run_in_actor(
-                                consumer,
-                                name=f'consumer_{sub}',
-                                subs=[sub],
+                            tn.start_soon(
+                                partial(
+                                    tractor.to_actor.run,
+                                    partial(
+                                        consumer,
+                                        subs=[sub],
+                                    ),
+                                    an=an,
+                                    name=f'consumer_{sub}',
+                                )
                             )
 
                         # make one dynamic subscriber
-                        await n.run_in_actor(
-                            consumer,
-                            name='consumer_dynamic',
-                            subs=list(_registry.keys()),
+                        tn.start_soon(
+                            partial(
+                                tractor.to_actor.run,
+                                partial(
+                                    consumer,
+                                    subs=list(_registry.keys()),
+                                ),
+                                an=an,
+                                name='consumer_dynamic',
+                            )
                         )
 
                         # block until "cancelled by user"
@@ -347,10 +374,10 @@ def test_reqresp_ontopof_streaming():
             timeout = 4
 
         with trio.move_on_after(timeout):
-            async with tractor.open_nursery() as n:
+            async with tractor.open_nursery() as an:
 
                 # name of this actor will be same as target func
-                portal = await n.start_actor(
+                portal = await an.start_actor(
                     'dual_tasks',
                     enable_modules=[__name__]
                 )
@@ -413,9 +440,9 @@ def test_sigint_both_stream_types():
 
     async def main():
         with trio.fail_after(timeout):
-            async with tractor.open_nursery() as n:
+            async with tractor.open_nursery() as an:
                 # name of this actor will be same as target func
-                portal = await n.start_actor(
+                portal = await an.start_actor(
                     '2_way',
                     enable_modules=[__name__]
                 )
@@ -528,8 +555,8 @@ def test_local_task_fanout_from_stream(
 
         async with tractor.open_nursery(
             debug_mode=debug_mode,
-        ) as tn:
-            p: tractor.Portal = await tn.start_actor(
+        ) as an:
+            p: tractor.Portal = await an.start_actor(
                 'inf_streamer',
                 enable_modules=[__name__],
             )

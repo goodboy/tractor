@@ -21,8 +21,8 @@ async def main() -> None:
 
     async with tractor.open_nursery(
         debug_mode=True,
-    ) as n:
-        portal = await n.start_actor(
+    ) as an:
+        portal = await an.start_actor(
             'ctx_child',
 
             # XXX: we don't enable the current module in order
