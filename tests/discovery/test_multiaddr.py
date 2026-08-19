@@ -10,6 +10,14 @@ from types import SimpleNamespace
 import pytest
 from multiaddr import Multiaddr
 
+from tractor.discovery import (
+    TunnelledAddress,
+    WGTunnelSpec,
+    mb_pubkey,
+    mk_wg_maddr,
+    parse_wg_maddr,
+    tunnels_of,
+)
 from tractor.ipc._tcp import TCPAddress
 from tractor.ipc._uds import UDSAddress
 from tractor.discovery._multiaddr import (
@@ -20,6 +28,19 @@ from tractor.discovery._multiaddr import (
     _maddr_to_tpt_proto,
 )
 from tractor.discovery._addr import wrap_address
+
+
+_WG_PUBKEY: str = (
+    'g3x7z0AdV1rM6UQU22CC7IL3/ivn4DzrE7ikDhCZ/Dc='
+)
+_WG_PUBKEY_2: str = (
+    'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='
+)
+_WG_MADDR: str = (
+    f'/ip4/192.168.1.50/udp/51820'
+    f'/wg/{mb_pubkey(_WG_PUBKEY)}'
+    f'/ip4/10.0.11.1/tcp/1616'
+)
 
 
 def test_tpt_proto_to_maddr_mapping():
@@ -210,6 +231,181 @@ def test_parse_maddr_unsupported():
         parse_maddr('/ip4/127.0.0.1/udp/1234')
 
 
+def test_parse_wg_maddr():
+    '''
+    `parse_maddr()` previously rejected the canonical infix `/wg/`
+    grammar even though `py-multiaddr` parsed it. Feed a bearer,
+    identity, and TCP overlay through both the WG-specific and public
+    parsers, then prove they produce the same local-only tunnel
+    annotation without changing the bindable overlay.
+
+    '''
+    parsed = parse_wg_maddr(_WG_MADDR)
+
+    assert parse_maddr(_WG_MADDR) == parsed
+    assert isinstance(parsed, TunnelledAddress)
+    assert parsed.tunnel == WGTunnelSpec(
+        peer_pubkey=_WG_PUBKEY,
+        bearer=('192.168.1.50', 51820),
+    )
+    assert isinstance(parsed.overlay, TCPAddress)
+    assert parsed.overlay.unwrap() == ('10.0.11.1', 1616)
+
+
+def test_mk_wg_maddr_roundtrip():
+    '''
+    `mk_maddr()` previously saw only the wrapper's delegated TCP
+    proto-key and silently dropped all tunnel metadata. Parse the
+    canonical maddr, compose it through both public entry points, and
+    prove bearer, key, and overlay survive byte-for-byte.
+
+    '''
+    parsed = parse_wg_maddr(_WG_MADDR)
+
+    assert str(mk_wg_maddr(parsed)) == _WG_MADDR
+    assert str(mk_maddr(parsed)) == _WG_MADDR
+
+
+def test_nested_wg_maddr_roundtrip():
+    '''
+    A single first-match lookup confuses nested WG keys and bearers.
+    Arrange an IPv4 outer bearer around an IPv6 inner bearer, parse
+    from the last `/wg/` outward, and assert tunnel ordering plus an
+    exact re-composition of the original stack.
+
+    '''
+    nested_maddr: str = (
+        f'/ip4/192.168.1.50/udp/51820'
+        f'/wg/{mb_pubkey(_WG_PUBKEY)}'
+        f'/ip6/2001:db8::2/udp/51821'
+        f'/wg/{mb_pubkey(_WG_PUBKEY_2)}'
+        f'/ip4/10.0.11.1/tcp/1616'
+    )
+
+    parsed = parse_maddr(nested_maddr)
+    specs = tunnels_of(parsed)
+
+    assert len(specs) == 2
+    assert specs[0].peer_pubkey == _WG_PUBKEY
+    assert specs[0].bearer == ('192.168.1.50', 51820)
+    assert specs[1].peer_pubkey == _WG_PUBKEY_2
+    assert specs[1].bearer == ('2001:db8::2', 51821)
+    assert str(mk_maddr(parsed)) == nested_maddr
+
+
+@pytest.mark.parametrize(
+    'maddr, match',
+    [
+        pytest.param(
+            (
+                f'/ip4/192.168.1.50/tcp/51820'
+                f'/wg/{mb_pubkey(_WG_PUBKEY)}'
+                f'/ip4/10.0.11.1/tcp/1616'
+            ),
+            'Bad `wg` bearer',
+            id='non-udp-bearer',
+        ),
+        pytest.param(
+            (
+                f'/ip4/192.168.1.50/udp/51820'
+                f'/wg/{mb_pubkey(_WG_PUBKEY)}'
+            ),
+            'no overlay endpoint',
+            id='missing-overlay',
+        ),
+        pytest.param(
+            (
+                f'/ip4/192.168.1.50/udp/51820'
+                f'/wg/{mb_pubkey(_WG_PUBKEY)}'
+                f'/ip4/10.0.11.1/udp/1616'
+            ),
+            'Unsupported `wg` overlay',
+            id='non-tcp-overlay',
+        ),
+    ],
+)
+def test_parse_wg_maddr_rejects_bad_grammar(
+    maddr: str,
+    match: str,
+):
+    '''
+    Accepting an invalid bearer or overlay assigns an endpoint to the
+    wrong runtime owner. Exercise parseable but unsupported protocol
+    combinations and prove each fails before constructing a wrapper,
+    with an error identifying the violated WG grammar boundary.
+
+    '''
+    with pytest.raises(ValueError, match=match):
+        parse_maddr(maddr)
+
+
+def test_parse_wg_maddr_rejects_malformed_key():
+    '''
+    A truncated multibase key used to be vulnerable to silent
+    identity corruption in hand-written parsers. Give the upstream
+    `/wg/` codec a short key and prove `Multiaddr()` rejects it
+    before tractor's wrapper parser runs.
+
+    '''
+    maddr: str = (
+        '/ip4/192.168.1.50/udp/51820'
+        '/wg/udG9vIHNob3J0'
+        '/ip4/10.0.11.1/tcp/1616'
+    )
+    with pytest.raises(ValueError):
+        parse_maddr(maddr)
+
+
+def test_parse_wg_maddr_reports_missing_codec(
+    monkeypatch,
+):
+    '''
+    Released `multiaddr==0.2.0` does not know `/wg/` and emits an
+    opaque unknown-protocol parse error. Simulate that registry and
+    prove an actual WG stack reports the dependency action while a
+    Unix path containing a `wg` directory remains ordinary UDS data.
+
+    '''
+    from multiaddr.exceptions import ProtocolNotFoundError
+    from multiaddr import protocols
+
+    def no_wg_proto(name: str):
+        raise ProtocolNotFoundError(name)
+
+    monkeypatch.setattr(
+        protocols,
+        'protocol_with_name',
+        no_wg_proto,
+    )
+    uds = parse_maddr('/unix/tmp/wg/service.sock')
+    assert isinstance(uds, UDSAddress)
+
+    with pytest.raises(
+        RuntimeError,
+        match='py-multiaddr#108',
+    ):
+        parse_maddr(_WG_MADDR)
+
+
+def test_mk_wg_maddr_requires_bearer():
+    '''
+    A key-only tunnel spec relies on local configuration and cannot
+    be reconstructed as the canonical bearer-first maddr. Build that
+    incomplete annotation and prove composition raises instead of
+    emitting a misleading overlay-only address.
+
+    '''
+    addr = TunnelledAddress(
+        overlay=TCPAddress('10.0.11.1', 1616),
+        tunnel=WGTunnelSpec(peer_pubkey=_WG_PUBKEY),
+    )
+    with pytest.raises(
+        ValueError,
+        match='without a bearer',
+    ):
+        mk_maddr(addr)
+
+
 @pytest.mark.parametrize(
     'addr',
     [
@@ -250,6 +446,21 @@ def test_wrap_address_maddr_str():
 
     assert isinstance(result, TCPAddress)
     assert result.unwrap() == ('127.0.0.1', 9999)
+
+
+def test_wrap_address_wg_maddr_str():
+    '''
+    `wrap_address()` delegates slash-prefixed strings to
+    `parse_maddr()`. Pass a canonical WG maddr through that public
+    boundary and prove it preserves the tunnel annotation rather than
+    rejecting the protocol stack or returning only its TCP overlay.
+
+    '''
+    result = wrap_address(_WG_MADDR)
+
+    assert isinstance(result, TunnelledAddress)
+    assert result.tunnel.peer_pubkey == _WG_PUBKEY
+    assert result.overlay.unwrap() == ('10.0.11.1', 1616)
 
 
 # ------ parse_endpoints() tests ------
@@ -300,6 +511,30 @@ def test_parse_endpoints_mixed_tpts():
     filedir, filename = addrs[1].unwrap()
     assert filename == 'broker.sock'
     assert str(filedir) == '/tmp/tractor'
+
+
+def test_parse_endpoints_wg_maddr():
+    '''
+    Service endpoint tables previously rejected WG protocol stacks.
+    Put a tunnelled maddr beside a plain TCP address and prove
+    `parse_endpoints()` retains input order while delivering the
+    wrapper needed by the future bindspace lifecycle.
+
+    '''
+    table = {
+        'registry': [
+            _WG_MADDR,
+            '/ip4/127.0.0.1/tcp/1616',
+        ],
+    }
+    addrs = parse_endpoints(table)['registry']
+
+    assert isinstance(addrs[0], TunnelledAddress)
+    assert addrs[0].tunnel.bearer == (
+        '192.168.1.50',
+        51820,
+    )
+    assert isinstance(addrs[1], TCPAddress)
 
 
 def test_parse_endpoints_unwrapped_tuples():

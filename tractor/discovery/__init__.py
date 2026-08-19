@@ -33,6 +33,10 @@ from ._tunnel import (
     TunnelledAddress as TunnelledAddress,
     TunnelSpec as TunnelSpec,
     WGTunnelSpec as WGTunnelSpec,
+    mb_pubkey as mb_pubkey,
+    mk_wg_maddr as mk_wg_maddr,
+    parse_wg_maddr as parse_wg_maddr,
     strip_tunnels as strip_tunnels,
     tunnels_of as tunnels_of,
+    wg8_pubkey as wg8_pubkey,
 )

@@ -40,9 +40,13 @@ from ..ipc._uds import (
 if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs ~4.5ms
     # of `import tractor` wall-time (gh #470).
+    from ._tunnel import (
+        TunnelledAddress,
+    )
     from ..runtime._runtime import Actor
 else:
     Actor = Any
+    TunnelledAddress = Any
 
 log = get_logger()
 
@@ -232,8 +236,8 @@ def mk_uuid() -> str:
 
 
 def wrap_address(
-    addr: UnwrappedAddress|str,
-) -> Address:
+    addr: UnwrappedAddress|str|Address|TunnelledAddress,
+) -> Address|TunnelledAddress:
     '''
     Wrap an `UnwrappedAddress` as an `Address`-type based
     on matching builtin python data-structures which we adhoc
