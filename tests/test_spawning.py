@@ -51,18 +51,18 @@ async def spawn(
             # recursively spawn this same `spawn()` fn as the lone
             # task of a one-shot child subactor and get its result.
             result = await tractor.to_actor.run(
-                spawn,
+                partial(
+                    spawn,
+                    should_be_root=False,
+                    data=data_to_pass_down,
+                    reg_addr=reg_addr,
+                ),
                 an=an,
 
                 # spawning args
                 name='sub-actor',
                 enable_modules=[__name__],
 
-                # passed to a subactor-recursive RPC invoke
-                # of this same `spawn()` fn.
-                should_be_root=False,
-                data=data_to_pass_down,
-                reg_addr=reg_addr,
             )
             assert result == 10
             return result
@@ -152,9 +152,11 @@ async def test_most_beautiful_word(
             debug_mode=debug_mode,
         ) as an:
             res: Any = await tractor.to_actor.run(
-                cellar_door,
+                partial(
+                    cellar_door,
+                    return_value=return_value,
+                ),
                 an=an,
-                return_value=return_value,
                 name='some_linguist',
             )
             assert res == return_value
@@ -204,10 +206,12 @@ def test_loglevel_propagated_to_subactor(
 
         ) as an:
             await tractor.to_actor.run(
-                check_loglevel,
+                partial(
+                    check_loglevel,
+                    level=level,
+                ),
                 an=an,
                 loglevel=level,
-                level=level,
             )
 
     trio.run(main)
@@ -273,19 +277,23 @@ def test_to_actor_run_can_skip_parent_main_inheritance(
 
             # Default: child receives parent __main__ bootstrap data
             await tractor.to_actor.run(
-                check_parent_main_inheritance,
+                partial(
+                    check_parent_main_inheritance,
+                    expect_inherited=True,
+                ),
                 an=an,
                 name='replaying-parent-main',
-                expect_inherited=True,
             )
 
             # Opt-out: child gets no parent __main__ data
             await tractor.to_actor.run(
-                check_parent_main_inheritance,
+                partial(
+                    check_parent_main_inheritance,
+                    expect_inherited=False,
+                ),
                 an=an,
                 name='isolated-parent-main',
                 inherit_parent_main=False,
-                expect_inherited=False,
             )
 
     trio.run(main)

@@ -91,17 +91,17 @@ somebody-ing:
 
 What's going on here?
 
-- ``start_actor('frank', enable_modules=[__name__])`` forks off
+- :meth:`~tractor.ActorNursery.start_actor` forks off
   a new process, boots a ``tractor`` runtime inside it, and
   allows it to serve functions from the current module (see the
   allowlist section below).
-- each ``await portal.run(...)`` schedules a *new* task in
+- each :meth:`~tractor.Portal.run` call schedules a *new* task in
   frank's task tree and waits on its result — the full RPC story
   lives in :doc:`/guide/rpc`.
 - frank has no main task to complete, so without the final
-  ``await portal.cancel_actor()`` the nursery block would wait
-  on him **forever**. Daemon lifetimes are *yours* to end; that
-  explicitness is the point.
+  :meth:`~tractor.Portal.cancel_actor` call the nursery block would
+  wait on him **forever**. Daemon lifetimes are *yours* to end;
+  that explicitness is the point.
 
 ``to_actor.run()``: quick one-shot parallelism
 ----------------------------------------------
@@ -126,7 +126,9 @@ A few details worth knowing:
   ``name='something_cuter'``.
 - the function's module is auto-added to the child's
   ``enable_modules`` allowlist.
-- extra ``**kwargs`` are forwarded to the function itself.
+- target arguments are positional; use ``functools.partial()``
+  to bind target keyword arguments. Keywords passed directly to
+  ``run()`` configure actor placement and spawning.
 - the call blocks until the result (or error) lands and the
   child is *auto-cancelled* (reaped) right after — so remote
   errors raise directly in your calling task (causality_ is
@@ -138,14 +140,16 @@ A few details worth knowing:
 
 .. note::
 
-   ``to_actor.run()`` is a convenience, **not** the core model —
-   it's built *entirely* on ``start_actor()`` + ``Portal.run()``
-   + ``Portal.cancel_actor()``. Teach your fingers to use it for
-   quick fire-and-collect parallelism — think a per-function
-   trio-parallel_ style one-shot — and reach for
-   ``start_actor()`` + ``open_context()`` for anything
-   long-lived, stateful or streaming
-   (:doc:`/guide/context`).
+   :func:`tractor.to_actor.run` is a convenience, **not** the core
+   model — it's built *entirely* on
+   :meth:`~tractor.ActorNursery.start_actor` plus a linked
+   :meth:`~tractor.Portal.open_context` call and per-child
+   cancellation/reaping. Teach your fingers to use it for quick
+   fire-and-collect parallelism — think a per-function trio-parallel_
+   style one-shot — and reach for
+   :meth:`~tractor.ActorNursery.start_actor` plus
+   :meth:`~tractor.Portal.open_context` for anything long-lived,
+   stateful or streaming; see :doc:`/guide/context`.
 
 Actor lifetimes and teardown order
 ----------------------------------
@@ -154,10 +158,11 @@ So we have two lifetime flavors:
 - **one-shot** (``to_actor.run()``): lives exactly as long as
   its single task; reaped the moment its result (or error)
   arrives back in the (blocking) call.
-- **daemon** (``start_actor()``): lives until *someone* cancels
-  it — an explicit ``await portal.cancel_actor()``, a bulk
-  ``await an.cancel()``, or the one-cancels-all strategy kicking
-  in on error.
+- **daemon** (:meth:`~tractor.ActorNursery.start_actor`): lives
+  until *someone* cancels it — an explicit
+  :meth:`~tractor.Portal.cancel_actor`, a bulk
+  :meth:`~tractor.ActorNursery.cancel`, or the one-cancels-all
+  strategy kicking in on error.
 
 On a clean exit of the nursery block the teardown order is:
 

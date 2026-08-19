@@ -18,9 +18,11 @@ async def spawn_until(depth=0):
         else:
             depth -= 1
             await tractor.to_actor.run(
-                spawn_until,
+                partial(
+                    spawn_until,
+                    depth=depth,
+                ),
                 an=an,
-                depth=depth,
                 name=f'spawn_until_{depth}',
             )
 
@@ -51,9 +53,11 @@ async def main():
         tn.start_soon(
             partial(
                 tractor.to_actor.run,
-                spawn_until,
+                partial(
+                    spawn_until,
+                    depth=1,
+                ),
                 an=an,
-                depth=1,
                 name='spawner1',
             )
         )
@@ -61,9 +65,11 @@ async def main():
         # ..while blocking on the shallow (faster to fail) tree
         # whose propagated error triggers nursery cancellation.
         await tractor.to_actor.run(
-            spawn_until,
+            partial(
+                spawn_until,
+                depth=0,
+            ),
             an=an,
-            depth=0,
             name='spawner0',
         )
 

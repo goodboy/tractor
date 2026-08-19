@@ -248,10 +248,12 @@ def test_dynamic_pub_sub(
                             tn.start_soon(
                                 partial(
                                     tractor.to_actor.run,
-                                    consumer,
+                                    partial(
+                                        consumer,
+                                        subs=[sub],
+                                    ),
                                     an=an,
                                     name=f'consumer_{sub}',
-                                    subs=[sub],
                                 )
                             )
 
@@ -259,10 +261,12 @@ def test_dynamic_pub_sub(
                         tn.start_soon(
                             partial(
                                 tractor.to_actor.run,
-                                consumer,
+                                partial(
+                                    consumer,
+                                    subs=list(_registry.keys()),
+                                ),
                                 an=an,
                                 name='consumer_dynamic',
-                                subs=list(_registry.keys()),
                             )
                         )
 

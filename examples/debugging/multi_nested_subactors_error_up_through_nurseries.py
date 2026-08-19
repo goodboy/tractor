@@ -51,9 +51,11 @@ async def spawn_until(depth=0):
             # `name_error` relays through.
             depth -= 1
             await tractor.to_actor.run(
-                spawn_until,
+                partial(
+                    spawn_until,
+                    depth=depth,
+                ),
                 an=an,
-                depth=depth,
                 name=f'spawn_until_{depth}',
             )
 
@@ -90,18 +92,22 @@ async def main():
         tn.start_soon(
             partial(
                 tractor.to_actor.run,
-                spawn_until,
+                partial(
+                    spawn_until,
+                    depth=3,
+                ),
                 an=an,
-                depth=3,
                 name='spawner0',
             )
         )
         tn.start_soon(
             partial(
                 tractor.to_actor.run,
-                spawn_until,
+                partial(
+                    spawn_until,
+                    depth=4,
+                ),
                 an=an,
-                depth=4,
                 name='spawner1',
             )
         )

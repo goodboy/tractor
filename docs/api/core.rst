@@ -58,10 +58,10 @@ One-shot task actors
    ``trio.to_thread.run_sync()`` and friends) is the
    *convenience* one-shot — spawn, run a single task, block on
    its result, reap — built entirely on
-   :meth:`ActorNursery.start_actor` + :meth:`Portal.run` +
-   :meth:`Portal.cancel_actor`, so don't design around it as the
-   core model. It supersedes the removed (legacy, non-blocking)
-   ``ActorNursery.run_in_actor()``.
+   :meth:`ActorNursery.start_actor`, a linked
+   :meth:`Portal.open_context` call and per-child cancellation/reaping,
+   so don't design around it as the core model. It supersedes the
+   removed (legacy, non-blocking) ``ActorNursery.run_in_actor()``.
 
 .. deprecated:: 0.1.0a6
 

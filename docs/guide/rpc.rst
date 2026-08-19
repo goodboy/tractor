@@ -89,7 +89,12 @@ in one blocking call:
 
 .. code:: python
 
-    final = await tractor.to_actor.run(fib, an=an, n=10)
+    from functools import partial
+
+    final = await tractor.to_actor.run(
+        partial(fib, n=10),
+        an=an,
+    )
 
 Semantics worth knowing:
 
@@ -98,9 +103,10 @@ Semantics worth knowing:
   task.
 - "placement" is composable: ``an=`` spawns from an existing
   actor-nursery, ``portal=`` reuses an already-running actor
-  (no spawn/reap, just a ``Portal.run()``), and passing
-  neither opens a private call-scoped nursery (booting the
-  runtime if needed).
+  (no spawn/reap, just a linked
+  :meth:`~tractor.Portal.open_context` call; see the
+  :doc:`context guide </guide/context>`), and passing neither
+  opens a private call-scoped nursery (booting the runtime if needed).
 - concurrency composes the plain ``trio`` way: schedule
   multiple ``run()`` calls into a local task nursery (see
   ``examples/parallelism/to_actor_one_shots.py``).
@@ -149,7 +155,8 @@ call tears down the entire sub-tree — SC, transitively.
 
 When to graduate to ``Context``
 -------------------------------
-``portal.run()`` is great for one-shot, request-response calls.
+The :meth:`~tractor.Portal.run` method is great for one-shot,
+request-response calls.
 Reach for :meth:`~tractor.Portal.open_context` with an
 ``@tractor.context`` endpoint as soon as you want:
 
@@ -162,10 +169,15 @@ Reach for :meth:`~tractor.Portal.open_context` with an
   :meth:`~tractor.Portal.cancel_actor` nukes the **entire**
   remote runtime and its process.
 
-In fact the source plans for ``Portal.run()`` itself to be
-rebuilt on top of ``open_context()`` — contexts *are* the core
-inter-actor protocol. Take the full tour in
-:doc:`/guide/context`.
+:func:`tractor.to_actor.run` already enters the full
+:meth:`~tractor.Portal.open_context` lifecycle. The older
+:meth:`~tractor.Portal.run` path instead uses the ``Context`` returned
+by the lower-level ``Actor.start_remote_task()`` directly, avoiding a
+``Started`` handshake but owning less lifecycle machinery. A follow-up
+should factor their shared linked-task lifecycle without requiring
+``Portal.run()`` to delegate through the public context API or add
+another wire message. Take the full tour in
+:doc:`the context guide </guide/context>`.
 
 .. seealso::
 

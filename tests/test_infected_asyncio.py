@@ -5,7 +5,7 @@ The hipster way to force SC onto the stdlib's "async": 'infection mode'.
 import asyncio
 import builtins
 from contextlib import ExitStack
-# from functools import partial
+from functools import partial
 import itertools
 import importlib
 import os
@@ -209,10 +209,12 @@ def test_aio_simple_error(
             debug_mode=debug_mode,
         ) as an:
             await to_actor.run(
-                asyncio_actor,
+                partial(
+                    asyncio_actor,
+                    target='sleep_and_err',
+                    expect_err='AssertionError',
+                ),
                 an=an,
-                target='sleep_and_err',
-                expect_err='AssertionError',
                 infect_asyncio=True,
             )
 
@@ -455,10 +457,14 @@ def test_aio_cancelled_from_aio_causes_trio_cancelled(
             # relays the remote error here in the caller's task.
             with trio.fail_after(1 + delay):
                 await to_actor.run(
-                    asyncio_actor,
+                    partial(
+                        asyncio_actor,
+                        target='aio_cancel',
+                        expect_err=(
+                            'tractor.to_asyncio.AsyncioCancelled'
+                        ),
+                    ),
                     an=an,
-                    target='aio_cancel',
-                    expect_err='tractor.to_asyncio.AsyncioCancelled',
                     infect_asyncio=True,
                 )
 
@@ -663,10 +669,12 @@ def test_basic_interloop_channel_stream(
             ) as an:
                 # should raise RAE diectly
                 await to_actor.run(
-                    stream_from_aio,
+                    partial(
+                        stream_from_aio,
+                        fan_out=fan_out,
+                    ),
                     an=an,
                     infect_asyncio=True,
-                    fan_out=fan_out,
                 )
 
     trio.run(main)
@@ -682,9 +690,11 @@ def test_trio_error_cancels_intertask_chan(
         ) as an:
             # should trigger remote actor error
             await to_actor.run(
-                stream_from_aio,
+                partial(
+                    stream_from_aio,
+                    trio_raise_err=True,
+                ),
                 an=an,
-                trio_raise_err=True,
                 infect_asyncio=True,
             )
 
@@ -719,9 +729,11 @@ def test_trio_closes_early_causes_aio_checkpoint_raise(
                 # should raise RAE diectly
                 print('waiting on final infected subactor result..')
                 res: None = await to_actor.run(
-                    stream_from_aio,
+                    partial(
+                        stream_from_aio,
+                        trio_exit_early=True,
+                    ),
                     an=an,
-                    trio_exit_early=True,
                     infect_asyncio=True,
                 )
                 assert res is None
@@ -770,11 +782,13 @@ def test_aio_exits_early_relays_AsyncioTaskExited(
                 # should raise RAE diectly
                 print('waiting on final infected subactor result..')
                 res: None = await to_actor.run(
-                    stream_from_aio,
+                    partial(
+                        stream_from_aio,
+                        trio_exit_early=False,
+                        aio_exit_early=True,
+                    ),
                     an=an,
                     infect_asyncio=True,
-                    trio_exit_early=False,
-                    aio_exit_early=True,
                 )
                 assert res is None
                 print(f'infected subactor returned result: {res!r}\n')
@@ -809,9 +823,11 @@ def test_aio_errors_and_channel_propagates_and_closes(
         ) as an:
             # should trigger RAE directly, not an eg.
             await to_actor.run(
-                stream_from_aio,
+                partial(
+                    stream_from_aio,
+                    aio_raise_err=True,
+                ),
                 an=an,
-                aio_raise_err=True,
                 infect_asyncio=True,
             )
 
