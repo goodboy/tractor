@@ -19,35 +19,35 @@ onto `trio` as the library's sans-io layer allows.
 
 ---
 
-## 1. What exists today (verified, per #482)
+## 1. What exists today (derived from #482)
 
 - `wrap_address()` accepts maddr `str`s (leading-`/` dispatch,
-  `_addr.py:262`) but `parse_maddr()` only knows
-  `/ip4|ip6/<h>/tcp/<p>` and `/unix/<p>`; a `.../wg/u<key>`
-  maddr raises `ValueError('Unsupported multiaddr protocol
-  combo')`.
+  `_addr.py:262`). `parse_maddr()` and `mk_maddr()` support plain
+  TCP/UDS addresses plus nested, canonical bearer-first `/wg/`
+  stacks represented locally as `TunnelledAddress` wrappers.
 - there is no `wg` proto in the multiaddr *spec* yet, but
   multiformats/py-multiaddr#108 (key form `u<base64url>`) is
   **merged** as of 2026-07-28 (`f86519da`) — and unreleased, the
   latest `0.2.0` predating it. Spec registration is still tracked
   by multiformats/py-multiaddr#107 and gh #483.
-- so **today's deployable story is declarative**: run `wg-quick`
-  out-of-band, parse the maddr, strip to the overlay
+- **today's deployable story remains declarative**: run `wg-quick`
+  out-of-band, parse the maddr, strip its wrapper to the overlay
   `(host, port)`, verify the pubkey in its host-specific role,
   hand the overlay addr to `registry_addrs=`/`tpt_bind_addrs=`.
-  #482 already contains working example code for exactly this.
+  The repaired `examples/multihost/wg_lan/` implementation derives
+  from and supersedes #482's original example.
 - `Address.namespace` exists in the Protocol
   (`_addr.py:94-101`, "the if-available OS-specific network
-  namespace key") and **no backend implements it**. This plan is
-  its first consumer.
+  namespace key"). `TunnelledAddress` implements it from its spec;
+  no concrete transport backend implements it yet.
 
 ## 2. Three layers, three PRs
 
 | layer | what | dep | ships |
 | --- | --- | --- | --- |
-| **A. declarative** | commit #482's examples; `parse_maddr()` learns `/wg/u<key>` → overlay `Address` + verified pubkey | `multiaddr` (already), `wg(8)` CLI | first |
-| **B. `pyroute2` read/verify** | replace the `subprocess.run(['sudo','wg','show'])` shelling with netlink queries | `pyroute2` extra | second |
-| **C. `@acm` lifecycle** | create/configure/tear down wg ifaces + netns *from the runtime*, as nested bindspaces; implement `Address.namespace` | `pyroute2` + `CAP_NET_ADMIN` | third |
+| **A. declarative** | land repaired examples derived from #482; `parse_maddr()` learns `/wg/u<key>` → `TunnelledAddress` wrappers carrying overlay `Address` values and declared WG pubkeys | `multiaddr`, `py-multibase`, `wg(8)` CLI | first |
+| **B. `pyroute2` read/verify** | replace the example-local, role-aware async `wg(8)` verification probe with netlink queries | `pyroute2` extra | second |
+| **C. `@acm` lifecycle** | create/configure/tear down wg ifaces + netns *from the runtime*, consume `Address.namespace` for nested bindspaces, and implement explicit `None` on concrete transports | `pyroute2` + `CAP_NET_ADMIN` | third |
 
 Each is independently valuable and independently reviewable.
 **Do not attempt C first** — the interesting design (nested
@@ -73,29 +73,24 @@ does not create a new address type.** Two candidate encodings;
       overlay: Address         # e.g. TCPAddress
       tunnel: WGTunnelSpec     # proto-specific, frozen
   ```
-  with `.proto_key` **delegating to `overlay.proto_key`** so every
-  existing table lookup (`_addr_to_transport`,
-  `enable_transports` guard at `_root.py:391`,
-  `transport_from_addr()`) keeps working untouched, and
-  `.unwrap()` delegating to `overlay.unwrap()` so **nothing new
-  crosses the wire**. `.namespace` and `.bindspace` come from
-  the tunnel spec. The wrapper is stripped (`→ .overlay`) at the
-  moment of bind/connect.
-  - ⚠️ `is_wrapped_addr()` (`_addr.py:194`) tests
-    `type(addr) in _address_types.values()` — the build-registered
-    protocol-key-to-address-type registry. `TunnelledAddress`
-    isn't in it and must not be (it has no transport of its own).
-    So either add an explicit
-    `isinstance(addr, TunnelledAddress)` clause there, or give
-    the wrapper a marker and test structurally. Do the former;
-    it's two lines and honest.
+  with `.proto_key`, `.bindspace`, and `.unwrap()` delegating to
+  the overlay so transport guards retain their existing meaning
+  and **nothing new crosses the wire**. `.namespace` derives from
+  the tunnel spec. Exact-type dispatch through
+  `_addr_to_transport`/`transport_from_addr()` still requires the
+  wrapper to be stripped (`→ .overlay`) at bind/connect time.
+  - ⚠️ `is_wrapped_addr()` explicitly recognizes
+    `TunnelledAddress` even though the wrapper is deliberately not
+    in `_address_types`: it has no `MsgTransport` of its own and
+    therefore gets no build-registered proto-key entry.
   - the reflection in `Endpoint.start_listener()`
     (`inspect.getmodule(self.addr)`) would resolve to the
     *wrapper's* module, not the transport's. **So the wrapper
     must be unwrapped before it reaches `Endpoint`** — i.e. by
-    the bindspace `@acm` (layer C) or by `parse_maddr()`
-    (layer A). State this loudly in the docstring; it's the #1
-    way to get this wrong.
+    the bindspace `@acm` (layer C) or explicitly via `.overlay`
+    or `strip_tunnels()` at each bind/dial boundary (layer A).
+    State this loudly in the docstring; it's the #1 way to get
+    this wrong.
 - (b) add fields to each existing `Address` type. Rejected:
   duplicates tunnel logic per-backend and pollutes `.unwrap()`.
 
@@ -104,11 +99,11 @@ class WGTunnelSpec(
     msgspec.Struct,
     frozen=True,
 ):
-    pubkey: str               # std-base64 `wg(8)` form
+    peer_pubkey: str          # std-base64 `wg(8)` form
+    bearer: tuple[str, int]|None = None
     iface: str = 'wg0'
     netns: str|None = None
     # layer-C-only fields, unset in layer A
-    maybe_endpoint: tuple[str, int]|None = None
     maybe_allowed_ips: tuple[str, ...] = ()
 ```
 
@@ -138,9 +133,8 @@ examples in gh #482) used a *suffix* form
 `/ip4/10.0.11.1/tcp/1616/wg/u<key>`. That parses, but it is
 semantically inverted: it puts the overlay addr where the bearer
 belongs, `tcp` where wg's `udp` `ListenPort` goes, and declares
-no overlay endpoint at all. `parse_wg_maddr()` in
-`examples/multihost/wg_lan/` now rejects it with an actionable
-error.
+no overlay endpoint at all. `tractor.discovery.parse_wg_maddr()`
+now rejects it with an actionable error.
 Observed protocol-name lists, for writing the `match`:
 
 | maddr | `[p.name for p in m.protocols()]` |
@@ -169,7 +163,7 @@ Observed protocol-name lists, for writing the `match`:
 
   | need | API |
   | --- | --- |
-  | isolate the bearer | `ma.decapsulate_code(P_WG)` |
+  | isolate the bearer | `ma.decapsulate_code(_wg_proto_code())` |
   | drop the overlay, keep bearer+key | `ma.decapsulate(overlay_ma)` |
   | per-seg maddrs | `ma.split()` |
   | rejoin a seg tail | `Multiaddr.join(*segs)` |
@@ -185,23 +179,18 @@ Observed protocol-name lists, for writing the `match`:
   silently returns the **first** match, i.e. the bearer's host.
   Always call it on a peeled sub-maddr, never the whole stack.
 
-- `parse_maddr()` gains a case on
-  `[('ip4'|'ip6'), 'udp', 'wg', ('ip4'|'ip6'), <overlay-l4>]` →
-  peel w/ the API above, decode the multibase key to std-base64,
-  and return `TunnelledAddress(overlay=..., tunnel=WGTunnelSpec(
-  ...))` w/ the bearer recorded in the spec.
-- keep the existing 2-proto cases byte-identical; add the new
-  case *after* them.
-- layer A rejects more than one `/wg/` segment. Its wrapper stores
-  one bearer, key, and overlay, so accepting wg-in-wg would
-  silently misrepresent the maddr. Nested tunnel support needs a
-  different data shape and belongs in a later layer.
+- keep the existing 2-proto cases byte-identical; add
+  `case _ if 'wg' in proto_names:` after them.
+- that case delegates to `parse_wg_maddr()`, which repeatedly
+  peels the last `/wg/`, decodes its key to std-base64, records
+  its bearer in `WGTunnelSpec`, and wraps the overlay in one
+  `TunnelledAddress` per segment.
 - `mk_maddr()` inverse for `TunnelledAddress` is just
   `.encapsulate()` composition; don't rebuild `str`s by hand.
 - **pending an upstream release**: py-multiaddr#108 is merged, so
-  `Multiaddr('/…/wg/u…')` parses — but off a `[tool.uv.sources]`
-  `rev` pin, since no release carries the codec. Gate the tests
-  on `_have_wg_maddr_proto()`, implemented as
+  `Multiaddr('/…/wg/u…')` parses off a PEP 621 direct-revision pin,
+  since no release carries the codec. Gate parser entry on
+  `_wg_proto_code()`, implemented as
   `protocols.protocol_with_name('wg')` under
   `except ProtocolNotFoundError`. Do **not** probe by parsing a
   dummy like `Multiaddr('/wg/uAAAA')` — the codec enforces a
@@ -209,19 +198,23 @@ Observed protocol-name lists, for writing the `match`:
   **not** hand-roll a `wg` parser in `tractor` — the whole point
   of #429 was dropping the NIH parser.
 
-### 3.3 verification helper (pure, composable)
+### 3.3 pure parser helpers + explicit verification
 
-Port #482 §2's helpers into `tractor/discovery/_tunnel.py` as
-*pure functions* + one impure probe, cleanly separated:
+The parser/key-codec helpers live in
+`tractor/discovery/_tunnel.py`; the impure verifier remains
+example-local until layer B:
 
 ```python
-def parse_wg_maddr(maddr: str) -> TunnelledAddress: ...   # pure
-def wg8_pubkey(multibase_key: str) -> str: ...            # pure
+def parse_wg_maddr(maddr: str|Multiaddr) -> TunnelledAddress: ...
+def mb_pubkey(wg8_key: str) -> str: ...
+def wg8_pubkey(multibase_key: str) -> str: ...
 async def verify_wg_key(
-    spec: WGTunnelSpec,
+    addr: TunnelledAddress,
     role: Literal['local', 'peer'],
+    iface: str|None = None,
+    timeout: float = 5,
     inspection: str|None = None,
-) -> bool: ...  # impure probe
+) -> bool: ...  # example-local impure probe
 ```
 
 In layer A `verify_wg_key()` may shell out to role-specific
@@ -367,11 +360,11 @@ async def open_wg_iface(spec: WGTunnelSpec) -> AsyncGenerator[WGTunnelSpec, None
 
 and a driver that folds a list of specs into nested contexts
 (`contextlib.AsyncExitStack` for the N-deep case). The
-`parse_endpoints()` API (`_multiaddr.py:153`) is the front door:
-it already returns `dict[name, list[Address]]` and the
-`multiaddr_declare_eps.md` sketch anticipates the recursive
-`dict[str, list[Address]]|dict[...]` return for tunnelled
-entries. Extend it to carry the tunnel stack, not to *enter* it.
+`parse_endpoints()` API (`_multiaddr.py:189`) is the front door:
+its `ParsedEndpoints` values already contain
+`Address|TunnelledAddress` declarations and preserve each tunnel
+stack for the eventual bindspace handler. It carries declarations;
+it does not *enter* their bindspaces.
 
 ### 5.2 `Address.namespace`, at last
 
@@ -486,8 +479,8 @@ consider doing it *first* for exactly that reason.
 | risk | mitigation |
 | --- | --- |
 | `to_thread` worker runs in the wrong netns | §5.3; pass `netns=` to pyroute2 or pin a worker; test-first |
-| py-multiaddr#108 merged but unreleased | `[tool.uv.sources]` `rev` pin + `_have_wg_maddr_proto()` gate; layer A's overlay-addr path works regardless |
-| `TunnelledAddress` leaks into `Endpoint` and breaks `inspect.getmodule()` | unwrap at parse/bindspace boundary; assert `not isinstance(ep.addr, TunnelledAddress)` in `Endpoint.__post_init__` |
+| py-multiaddr#108 merged but unreleased | PEP 621 direct-revision pin + `_wg_proto_code()` gate; replace with a release floor once published |
+| `TunnelledAddress` leaks into `Endpoint` and breaks `inspect.getmodule()` | unwrap with `.overlay`/`strip_tunnels()` at every bind/dial or bindspace boundary; assert `not isinstance(ep.addr, TunnelledAddress)` in `Endpoint.__post_init__` |
 | privileged ops in a library | never `sudo`; explicit cap probe + actionable error; pre-provisioned is the default |
 | pyroute2 0.9 asyncio core drags a loop into the actor | option (1) is a *thread*, not a loop; forbid `trio-asyncio` here (§4.1) |
 | netns teardown strands actor teardown | idempotent/tolerant teardown mirroring `_uds.close_listener()` |
