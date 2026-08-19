@@ -32,6 +32,7 @@ from multiaddr import Multiaddr
 
 if TYPE_CHECKING:
     from tractor.discovery._addr import Address
+    from tractor.discovery._tunnel import TunnelledAddress
 
 # map from tractor-internal `proto_key` identifiers
 # to the standard multiaddr protocol name strings.
@@ -48,7 +49,7 @@ _maddr_to_tpt_proto: dict[str, str] = {
 
 
 def mk_maddr(
-    addr: 'Address',
+    addr: 'Address|TunnelledAddress',
 ) -> Multiaddr:
     '''
     Construct a `Multiaddr` from a tractor `Address` instance,
@@ -56,6 +57,13 @@ def mk_maddr(
     multiaddr-spec-compliant protocol path.
 
     '''
+    from ._tunnel import (
+        TunnelledAddress,
+        mk_wg_maddr,
+    )
+    if isinstance(addr, TunnelledAddress):
+        return mk_wg_maddr(addr)
+
     proto_key: str = addr.proto_key
     maddr_proto: str|None = _tpt_proto_to_maddr.get(proto_key)
     if maddr_proto is None:
@@ -90,7 +98,7 @@ def mk_maddr(
 
 def parse_maddr(
     maddr_str: str,
-) -> 'Address':
+) -> 'Address|TunnelledAddress':
     '''
     Parse a multiaddr string into a tractor `Address`.
 
@@ -101,7 +109,16 @@ def parse_maddr(
     from tractor.ipc._tcp import TCPAddress
     from tractor.ipc._uds import UDSAddress
 
-    maddr = Multiaddr(maddr_str)
+    try:
+        maddr = Multiaddr(maddr_str)
+    except ValueError:
+        # Diagnose an unavailable WG codec after upstream parsing
+        # fails. Pre-checking the raw string would misclassify valid
+        # values such as `/unix/tmp/wg/service.sock`.
+        if '/wg/' in maddr_str:
+            from ._tunnel import _wg_proto_code
+            _wg_proto_code()
+        raise
     proto_names: list[str] = [
         p.name for p in maddr.protocols()
     ]
@@ -124,6 +141,10 @@ def parse_maddr(
                 filename=sockpath.name,
             )
 
+        case _ if 'wg' in proto_names:
+            from ._tunnel import parse_wg_maddr
+            return parse_wg_maddr(maddr)
+
         case _:
             raise ValueError(
                 f'Unsupported multiaddr protocol combo: '
@@ -142,11 +163,11 @@ EndpointsTable = dict[
     list[str|tuple],        # maddr strs or UnwrappedAddress
 ]
 
-# output table: actor/service name -> list of wrapped
-# `Address` instances ready for transport binding.
+# output table: actor/service name -> list of wrapped address
+# declarations ready for bindspace handling.
 ParsedEndpoints = dict[
     str,                    # actor/service name
-    list['Address'],
+    list['Address|TunnelledAddress'],
 ]
 
 
@@ -155,7 +176,7 @@ def parse_endpoints(
 ) -> ParsedEndpoints:
     '''
     Parse a service-endpoint config table into wrapped
-    `Address` instances suitable for transport binding.
+    address declarations suitable for bindspace handling.
 
     Each key is an actor/service name and each value is
     a list of addresses in any format accepted by
@@ -167,6 +188,8 @@ def parse_endpoints(
       ``/uds/`` proto_key)
     - raw unwrapped tuples: ``('127.0.0.1', 1616)``
     - pre-wrapped `Address` objects (passed through)
+    - `wg` maddrs, returned as `TunnelledAddress` wrappers which
+      must be peeled at the eventual bind/dial boundary
 
     Returns a new `dict` with the same keys, where each
     value list contains the corresponding `Address`

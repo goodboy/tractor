@@ -67,12 +67,18 @@ Unwrap at the parse or bindspace boundary; see `.overlay` and
 
 '''
 from __future__ import annotations
+import base64
+import ipaddress
 from typing import (
     ClassVar,
     TYPE_CHECKING,
 )
 
 import msgspec
+import multibase
+from multiaddr import Multiaddr
+from multiaddr.exceptions import ProtocolNotFoundError
+from multiaddr.protocols import protocol_with_name
 
 if TYPE_CHECKING:
     from ._addr import (
@@ -120,6 +126,68 @@ class WGTunnelSpec(
 TunnelSpec = WGTunnelSpec
 
 
+def mb_pubkey(
+    wg8_key: str,
+) -> str:
+    '''
+    Encode a `wg(8)` public key as multibase base64url.
+
+    WireGuard public keys are exactly 32 bytes. Enforce that here
+    before handing the `u`-prefixed result to `py-multiaddr`'s
+    `/wg/` codec.
+
+    '''
+    raw: bytes = base64.b64decode(
+        wg8_key,
+        validate=True,
+    )
+    if (nbytes := len(raw)) != 32:
+        raise ValueError(
+            f'A `wg` public key must decode to 32 bytes, '
+            f'not {nbytes}!'
+        )
+
+    return multibase.encode(
+        'base64url',
+        raw,
+    ).decode('ascii')
+
+
+def wg8_pubkey(
+    mb_key: str,
+) -> str:
+    '''
+    Decode a multibase public key to `wg(8)` standard base64.
+
+    '''
+    raw: bytes = multibase.decode(mb_key)
+    if (nbytes := len(raw)) != 32:
+        raise ValueError(
+            f'A `wg` public key must decode to 32 bytes, '
+            f'not {nbytes}!'
+        )
+
+    return base64.b64encode(raw).decode('ascii')
+
+
+def _wg_proto_code() -> int:
+    '''
+    Deliver the installed `py-multiaddr` `/wg/` protocol code.
+
+    `wg` support is merged upstream but not yet in a release, so
+    fail clearly when tractor was installed without the pinned rev.
+
+    '''
+    try:
+        return protocol_with_name('wg').code
+    except ProtocolNotFoundError as exc:
+        raise RuntimeError(
+            'Installed `py-multiaddr` has no `/wg/` protocol!\n'
+            'Install py-multiaddr#108 or use tractor\'s pinned '
+            'dependency revision.\n'
+        ) from exc
+
+
 class TunnelledAddress(
     msgspec.Struct,
     frozen=True,
@@ -128,14 +196,14 @@ class TunnelledAddress(
     An `Address` annotated with the tunnel it must be reached
     *through*.
 
-    Everything addressy delegates to `.overlay`, so every
-    existing table lookup (`_addr_to_transport`, the
-    `enable_transports` guard, `transport_from_addr()`) keeps
-    working untouched, and `.unwrap()` delegating means **nothing
-    new crosses the wire**.
+    Address-level properties delegate to `.overlay`, so proto-key
+    guards and `.unwrap()` retain their existing meaning and
+    **nothing new crosses the wire**. Transport boundaries which
+    dispatch on exact type or declaring module must first call
+    `strip_tunnels()`.
 
     '''
-    overlay: Address
+    overlay: Address|TunnelledAddress
     tunnel: TunnelSpec
 
     # ---- delegated, so the runtime can't tell the difference ----
@@ -203,6 +271,188 @@ class TunnelledAddress(
             f'iface={self.tunnel.iface!r},\n'
             f')'
         )
+
+
+def _wg_bearer(
+    bearer_ma: Multiaddr,
+    source_ma: Multiaddr,
+) -> tuple[str, int]:
+    '''
+    Parse one kernel-owned `wg` bearer endpoint.
+
+    '''
+    proto_names: list[str] = [
+        proto.name
+        for proto in bearer_ma.protocols()
+    ]
+    match proto_names:
+        case [('ip4' | 'ip6') as ip_proto, 'udp']:
+            return (
+                bearer_ma.value_for_protocol(ip_proto),
+                int(bearer_ma.value_for_protocol('udp')),
+            )
+
+        case _:
+            raise ValueError(
+                f'Bad `wg` bearer, expected '
+                f'`/ip4|ip6/<host>/udp/<port>`\n'
+                f'got: {bearer_ma}\n'
+                f'from maddr: {source_ma}\n'
+            )
+
+
+def parse_wg_maddr(
+    maddr: str|Multiaddr,
+) -> TunnelledAddress:
+    '''
+    Parse a `wg` maddr stack into nested tunnel annotations.
+
+    Pure: every segment operation delegates to `py-multiaddr`.
+    Repeated `.decapsulate_code()` calls peel the last `/wg/`
+    first, while `.split()` and `.join()` isolate that tunnel's
+    bearer without parsing slash-delimited strings ourselves.
+
+    '''
+    ma: Multiaddr = (
+        maddr
+        if isinstance(maddr, Multiaddr)
+        else Multiaddr(maddr)
+    )
+    wg_code: int = _wg_proto_code()
+    segs: list[Multiaddr] = ma.split()
+    proto_names: list[str] = [
+        proto.name
+        for seg in segs
+        for proto in seg.protocols()
+    ]
+    if 'wg' not in proto_names:
+        raise ValueError(
+            f'Not a `wg`-tunnelled maddr; no `/wg/` segment!\n'
+            f'maddr: {ma}\n'
+        )
+
+    final_wg_i: int = len(proto_names) - 1
+    final_wg_i -= proto_names[::-1].index('wg')
+    overlay_ma: Multiaddr = Multiaddr.join(
+        *segs[final_wg_i + 1:]
+    )
+    overlay_names: list[str] = [
+        proto.name
+        for proto in overlay_ma.protocols()
+    ]
+    match overlay_names:
+        case [('ip4' | 'ip6'), 'tcp']:
+            from ._multiaddr import parse_maddr
+            overlay: Address|TunnelledAddress = parse_maddr(
+                str(overlay_ma)
+            )
+
+        case []:
+            raise ValueError(
+                f'`wg` maddr declares no overlay endpoint!\n'
+                f'Append the endpoint tractor should bind.\n'
+                f'maddr: {ma}\n'
+            )
+
+        case _:
+            raise ValueError(
+                f'Unsupported `wg` overlay protocol combo: '
+                f'{overlay_names!r}\n'
+                f'overlay: {overlay_ma}\n'
+                f'from maddr: {ma}\n'
+            )
+
+    cursor: Multiaddr = ma
+    while any(
+        proto.name == 'wg'
+        for proto in cursor.protocols()
+    ):
+        cursor_segs: list[Multiaddr] = cursor.split()
+        cursor_names: list[str] = [
+            proto.name
+            for seg in cursor_segs
+            for proto in seg.protocols()
+        ]
+        wg_i: int = len(cursor_names) - 1
+        wg_i -= cursor_names[::-1].index('wg')
+        mb_key: str = cursor_segs[wg_i].value_for_protocol('wg')
+
+        bearer_prefix: Multiaddr = cursor.decapsulate_code(
+            wg_code
+        )
+        prefix_segs: list[Multiaddr] = bearer_prefix.split()
+        prefix_names: list[str] = [
+            proto.name
+            for seg in prefix_segs
+            for proto in seg.protocols()
+        ]
+        prior_wg_i: int = (
+            len(prefix_names) - 1
+            - prefix_names[::-1].index('wg')
+            if 'wg' in prefix_names
+            else -1
+        )
+        bearer_ma: Multiaddr = Multiaddr.join(
+            *prefix_segs[prior_wg_i + 1:]
+        )
+        overlay = TunnelledAddress(
+            overlay=overlay,
+            tunnel=WGTunnelSpec(
+                peer_pubkey=wg8_pubkey(mb_key),
+                bearer=_wg_bearer(bearer_ma, ma),
+            ),
+        )
+        cursor = bearer_prefix
+
+    return overlay
+
+
+def mk_wg_maddr(
+    addr: TunnelledAddress,
+) -> Multiaddr:
+    '''
+    Compose nested tunnel annotations as a canonical `wg` maddr.
+
+    Only the peer key and bearer have maddr representations. Local
+    interface, namespace, and allowed-IP config remains local.
+
+    '''
+    _wg_proto_code()
+    if (bearer := addr.tunnel.bearer) is None:
+        raise ValueError(
+            f'Can not compose a `wg` maddr without a bearer!\n'
+            f'tunnel: {addr.tunnel!r}\n'
+        )
+
+    bindable: Address = strip_tunnels(addr)
+    if bindable.proto_key != 'tcp':
+        raise ValueError(
+            f'Unsupported `wg` overlay proto-key: '
+            f'{bindable.proto_key!r}\n'
+            f'overlay: {bindable!r}\n'
+        )
+
+    host, port = bearer
+    ip = ipaddress.ip_address(host)
+    ip_proto: str = (
+        'ip4'
+        if ip.version == 4
+        else 'ip6'
+    )
+    bearer_ma = Multiaddr(
+        f'/{ip_proto}/{host}/udp/{port}'
+    )
+    key_ma = Multiaddr(
+        f'/wg/{mb_pubkey(addr.tunnel.peer_pubkey)}'
+    )
+
+    from ._multiaddr import mk_maddr
+    overlay_ma: Multiaddr = mk_maddr(addr.overlay)
+    return (
+        bearer_ma
+        .encapsulate(key_ma)
+        .encapsulate(overlay_ma)
+    )
 
 
 def strip_tunnels(

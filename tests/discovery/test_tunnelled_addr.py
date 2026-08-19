@@ -17,8 +17,10 @@ import pytest
 from tractor.discovery import (
     TunnelledAddress,
     WGTunnelSpec,
+    mb_pubkey,
     strip_tunnels,
     tunnels_of,
+    wg8_pubkey,
 )
 from tractor.discovery._addr import (
     is_wrapped_addr,
@@ -50,6 +52,54 @@ def tunnelled(
     spec: WGTunnelSpec,
 ) -> TunnelledAddress:
     return TunnelledAddress(overlay=overlay, tunnel=spec)
+
+
+def test_wg_pubkey_codec_roundtrip():
+    '''
+    Standard `wg(8)` base64 keys can contain `/`, which cannot be
+    embedded unchanged in a slash-delimited maddr. Prove the helper
+    emits `u`-prefixed multibase base64url without `/` and decodes
+    it back to the exact original 32-byte key.
+
+    '''
+    mb_key: str = mb_pubkey(_PUBKEY)
+
+    assert mb_key.startswith('u')
+    assert '/' not in mb_key
+    assert wg8_pubkey(mb_key) == _PUBKEY
+
+
+@pytest.mark.parametrize(
+    'key, converter',
+    [
+        pytest.param(
+            'dG9vIHNob3J0',
+            mb_pubkey,
+            id='wg8-base64',
+        ),
+        pytest.param(
+            'udG9vIHNob3J0',
+            wg8_pubkey,
+            id='multibase',
+        ),
+    ],
+)
+def test_wg_pubkey_codec_rejects_wrong_size(
+    key: str,
+    converter,
+):
+    '''
+    WireGuard silently-corrupt key handling would let an invalid
+    identity reach peer verification. Exercise both input encodings
+    with a short payload and prove conversion rejects it before a
+    tunnel spec or maddr can be constructed.
+
+    '''
+    with pytest.raises(
+        ValueError,
+        match='must decode to 32 bytes',
+    ):
+        converter(key)
 
 
 def test_proto_key_delegates(
