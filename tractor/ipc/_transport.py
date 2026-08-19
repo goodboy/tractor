@@ -499,6 +499,12 @@ class MsgpackTransport(MsgTransport):
             size: bytes = struct.pack("<I", len(bytes_data))
             try:
                 return await self.stream.send_all(size + bytes_data)
+            except trio.Cancelled:
+                # `send_all()` may have written a partial frame. The
+                # stream can not safely carry another framed msg.
+                with trio.CancelScope(shield=True):
+                    await self.stream.aclose()
+                raise
             except (
                 trio.BrokenResourceError,
                 trio.ClosedResourceError,
