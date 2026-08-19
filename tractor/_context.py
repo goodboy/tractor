@@ -2625,10 +2625,7 @@ async def open_context_from_portal(
             f'uid: {uid}\n'
             f'cid: {ctx.cid}\n'
         )
-        portal.actor._contexts.pop(
-            (uid, ctx.cid),
-            None,
-        )
+        portal.actor._drop_context(ctx)
 
         # XXX revert to prior IPC-task-ctx scope
         _ctxvar_Context.reset(prior_ctx_tok)

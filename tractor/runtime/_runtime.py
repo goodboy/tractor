@@ -753,6 +753,23 @@ class Actor:
 
         return ctx
 
+    def _drop_context(
+        self,
+        ctx: Context,
+    ) -> Context|None:
+        '''
+        Remove `ctx` from this actor's IPC context registry.
+
+        Teardown paths can converge after normal return, cancellation
+        or startup failure, so registry removal is idempotent.
+
+        '''
+        peer_uid: tuple[str, str] = ctx.chan.aid.uid
+        return self._contexts.pop(
+            (peer_uid, ctx.cid),
+            None,
+        )
+
     async def start_remote_task(
         self,
         chan: Channel,
