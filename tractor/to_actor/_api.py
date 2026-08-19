@@ -23,8 +23,8 @@ the lower level daemon-actor spawn + portal APIs,
 
 - `ActorNursery.start_actor()` for (daemon-style) subactor
   spawning,
-- `Portal.run()` for scheduling the lone remote task and
-  waiting on its result,
+- `Portal.open_context()` for scheduling the lone remote
+  task with linked cancellation and waiting on its result,
 - `Portal.cancel_actor()` for reaping the subactor once
   that result (or error) arrives,
 
@@ -36,13 +36,24 @@ spawn-machinery nurseries as with the (to be deprecated)
 
 '''
 from __future__ import annotations
+import functools
 import inspect
 from typing import (
     Any,
+    Awaitable,
     Callable,
     TYPE_CHECKING,
+    TypeVar,
+    TypeVarTuple,
+    Unpack,
 )
 
+from .._context import (
+    Context,
+    context,
+)
+from ..msg.ptr import NamespacePath
+from ..runtime._state import current_actor
 from ..runtime._supervise import (
     ActorNursery,
     open_nursery,
@@ -53,6 +64,10 @@ if TYPE_CHECKING:
     from ..runtime._portal import Portal
 
 
+ArgsT = TypeVarTuple('ArgsT')
+RetT = TypeVar('RetT')
+
+
 def _validate_one_shot_fn(
     fn: Callable,
 ) -> None:
@@ -60,7 +75,7 @@ def _validate_one_shot_fn(
     Ensure `fn` is a non-streaming async function, raise
     a `TypeError` otherwise.
 
-    The same constraint enforced by `Portal.run()` but
+    The same constraint enforced by `Portal.open_context()` but
     checked up-front, BEFORE any subactor is spawned.
 
     '''
@@ -79,18 +94,127 @@ def _validate_one_shot_fn(
         )
 
 
+def _normalize_call(
+    fn: Callable,
+    args: tuple[Any, ...],
+) -> tuple[
+    Callable,
+    tuple[Any, ...],
+    dict[str, Any],
+]:
+    '''
+    Normalize Trio-style positional and partial-bound arguments.
+
+    Actor calls must send a namespace-addressable base function and
+    serializable inputs to another process, so decompose partials and
+    validate their complete call signature before runtime startup.
+
+    '''
+    kwargs: dict[str, Any] = {}
+    while isinstance(fn, functools.partial):
+        partial_args: tuple[Any, ...] = fn.args
+
+        # `functools.Placeholder` was added in Python 3.14. Drop
+        # this `getattr()` guard once 3.14 is the minimum version.
+        placeholder = getattr(
+            functools,
+            'Placeholder',
+            None,
+        )
+        if (
+            placeholder is not None
+            and
+            any(
+                arg is placeholder
+                for arg in partial_args
+            )
+        ):
+            call_args = iter(args)
+            merged_args: list[Any] = []
+            for arg in partial_args:
+                if arg is placeholder:
+                    try:
+                        arg = next(call_args)
+                    except StopIteration:
+                        raise TypeError(
+                            'Not enough positional arguments to '
+                            'fill `functools.Placeholder`s'
+                        ) from None
+
+                merged_args.append(arg)
+
+            merged_args.extend(call_args)
+            args = tuple(merged_args)
+        else:
+            args = partial_args + args
+
+        partial_kwargs = dict(fn.keywords or {})
+        partial_kwargs.update(kwargs)
+        kwargs = partial_kwargs
+        fn = fn.func
+
+    _validate_one_shot_fn(fn)
+    inspect.signature(fn).bind(*args, **kwargs)
+    return fn, args, kwargs
+
+
+@context
+async def _invoke_one_shot(
+    ctx: Context,
+    namespace: str,
+    funcname: str,
+    args: list[Any],
+    kwargs: dict[str, Any],
+) -> Any:
+    '''
+    Invoke an ordinary async function inside a linked IPC context.
+
+    '''
+    # Do not use `NamespacePath.load_ref()` here: target resolution
+    # must remain behind the actor's RPC module allowlist.
+    fn: Callable = current_actor()._get_rpc_func(
+        namespace,
+        funcname,
+    )
+    _validate_one_shot_fn(fn)
+    await ctx.started()
+    return await fn(*args, **kwargs)
+
+
+async def _invoke_from_portal(
+    portal: Portal,
+    fn: Callable,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    '''
+    Run `fn` through the context-linked one-shot endpoint.
+
+    '''
+    namespace, funcname = NamespacePath.from_ref(fn).to_tuple()
+    async with portal.open_context(
+        _invoke_one_shot,
+        namespace=namespace,
+        funcname=funcname,
+        args=list(args),
+        kwargs=kwargs,
+    ) as (ctx, _):
+        return await ctx.wait_for_result()
+
+
 async def _invoke_in_subactor(
     an: ActorNursery,
     fn: Callable,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
     name: str,
     spawn_kwargs: dict[str, Any],
-    fn_kwargs: dict[str, Any],
 ) -> Any:
     '''
     Spawn a (daemon) subactor via `an.start_actor()`,
-    schedule `fn` as its lone remote task via
-    `Portal.run()` and, ALWAYS, reap the subactor once
-    that task's result (or error) has been delivered.
+    schedule `fn` as its context-linked lone remote task and,
+    ALWAYS, reap the subactor once that task's result (or error)
+    has been delivered.
 
     '''
     portal: Portal = await an.start_actor(
@@ -98,9 +222,11 @@ async def _invoke_in_subactor(
         **spawn_kwargs,
     )
     try:
-        return await portal.run(
+        return await _invoke_from_portal(
+            portal,
             fn,
-            **fn_kwargs,
+            args,
+            kwargs,
         )
     finally:
         # Cancel and join this child before returning. The nursery
@@ -110,8 +236,8 @@ async def _invoke_in_subactor(
 
 
 async def run(
-    fn: Callable,
-    *,
+    fn: Callable[[Unpack[ArgsT]], Awaitable[RetT]],
+    *args: Unpack[ArgsT],
 
     # actor "placement": reuse an already-running peer
     # via its `portal`, spawn a fresh subactor from
@@ -139,14 +265,20 @@ async def run(
     # when NO `an`/`portal` is provided.
     runtime_kwargs: dict[str, Any]|None = None,
 
-    **fn_kwargs,  # explicit (keyword) args to `fn`
-
-) -> Any:
+) -> RetT:
     '''
-    Run the async `fn` as the lone task in a (new)
-    subactor, block waiting on its result and return it;
-    the distributed-parallelism equivalent of
+    Run the async `fn(*args)` as the lone task in a (new)
+    subactor, block waiting on its result and return it; the
+    distributed-parallelism equivalent of
     `trio.to_thread.run_sync()`.
+
+    As with Trio's API, target arguments are positional. Use
+    `functools.partial()` to bind target keyword arguments; all
+    keyword arguments accepted here configure actor placement or
+    spawning. A caller-supplied `portal` must address an actor started
+    with both `tractor.to_actor.MODULE` and the target function's
+    module in its `enable_modules` list. Calls that spawn their own
+    actor add the trampoline module automatically.
 
     Unlike `ActorNursery.run_in_actor()` (which returns
     a `Portal` whose result is only collected at
@@ -160,7 +292,7 @@ async def run(
 
     '''
     __runtimeframe__: int = 1  # noqa
-    _validate_one_shot_fn(fn)
+    fn, args, kwargs = _normalize_call(fn, args)
 
     if (
         runtime_kwargs
@@ -183,15 +315,22 @@ async def run(
                 'Pass at most ONE of `portal` or `an`, '
                 'not both!'
             )
-        return await portal.run(
+        return await _invoke_from_portal(
+            portal,
             fn,
-            **fn_kwargs,
+            args,
+            kwargs,
         )
 
     name: str = name or fn.__name__
     spawn_kwargs: dict[str, Any] = dict(
         enable_modules=(
-            [fn.__module__]
+            [
+                # The public `to_actor.MODULE` alias is only for
+                # callers configuring an existing actor.
+                __name__,
+                fn.__module__,
+            ]
             +
             (enable_modules or [])
         ),
@@ -206,18 +345,21 @@ async def run(
         return await _invoke_in_subactor(
             an,
             fn,
+            args,
+            kwargs,
             name,
             spawn_kwargs,
-            fn_kwargs,
         )
 
+    an: ActorNursery
     async with open_nursery(
         **(runtime_kwargs or {}),
     ) as an:
         return await _invoke_in_subactor(
             an,
             fn,
+            args,
+            kwargs,
             name,
             spawn_kwargs,
-            fn_kwargs,
         )

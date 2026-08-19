@@ -7,6 +7,7 @@ https://github.com/goodboy/tractor/issues/477
 
 '''
 from functools import partial
+from pathlib import Path
 
 import pytest
 import trio
@@ -16,6 +17,9 @@ from tractor import (
     to_actor,
 )
 from tractor._testing import tractor_test
+from tractor.msg import ptr as msgptr
+from tractor.msg.ptr import NamespacePath
+from tractor.to_actor import _api as to_actor_api
 
 
 async def add_one(
@@ -26,6 +30,98 @@ async def add_one(
 
 async def raise_value_error() -> None:
     raise ValueError('kaboom')
+
+
+async def echo_control_names(
+    value: int,
+    /,
+    *,
+    name: str,
+    portal: str,
+    an: str,
+    runtime_kwargs: str,
+) -> dict[str, int|str]:
+    return {
+        'value': value,
+        'name': name,
+        'portal': portal,
+        'an': an,
+        'runtime_kwargs': runtime_kwargs,
+    }
+
+
+async def mark_task_cancellation(
+    started_path: str,
+    cancelled_path: str,
+) -> None:
+    Path(started_path).touch()
+    try:
+        await trio.sleep_forever()
+    finally:
+        Path(cancelled_path).touch()
+
+
+async def echo_startup_control(
+    _cancel_on_startup: str,
+) -> str:
+    return _cancel_on_startup
+
+
+async def collect_args(
+    *args: object,
+) -> tuple[object, ...]:
+    return args
+
+
+async def collect_call(
+    *args: object,
+    **kwargs: object,
+) -> tuple[tuple[object, ...], dict[str, object]]:
+    return args, kwargs
+
+
+def _non_registration_contexts(
+    actor: tractor.Actor,
+) -> dict[tuple, str]:
+    return {
+        key: str(ctx._nsf)
+        for key, ctx in actor._contexts.items()
+        if str(ctx._nsf) != (
+            'tractor.discovery._registry:'
+            'Registrar.register_actor'
+        )
+    }
+
+
+def test_namespace_path_retains_target_ref(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Reuse the client-side target ref when splitting its namespace path.
+
+    `NamespacePath.from_ref()` previously discarded `add_one`, so
+    `to_tuple()` imported and resolved the just-created string again.
+    Replacing `resolve_name()` with a failure proves the retained ref
+    supplies the tuple without a redundant lookup. The public module
+    alias assertion also keeps internal `_api.__name__` authoritative.
+
+    '''
+    target = NamespacePath.from_ref(add_one)
+
+    def fail_resolve(name: str) -> object:
+        raise AssertionError(f'unexpected lookup for {name!r}')
+
+    monkeypatch.setattr(
+        msgptr,
+        'resolve_name',
+        fail_resolve,
+    )
+    assert target.to_tuple() == (
+        add_one.__module__,
+        add_one.__name__,
+    )
+    assert to_actor.MODULE == to_actor_api.__name__
+    assert not hasattr(to_actor_api, 'MODULE')
 
 
 @tractor_test
@@ -40,7 +136,7 @@ async def test_one_shot_in_private_nursery(
     '''
     assert await to_actor.run(
         add_one,
-        n=1,
+        1,
     ) == 2
 
 
@@ -61,7 +157,7 @@ def test_one_shot_boots_implicit_runtime(
         ) is None
         result = await to_actor.run(
             add_one,
-            n=41,
+            41,
             runtime_kwargs=dict(
                 registry_addrs=[reg_addr],
                 start_method=start_method,
@@ -110,8 +206,8 @@ async def test_spawn_from_caller_nursery(
     async with tractor.open_nursery() as an:
         assert await to_actor.run(
             add_one,
+            10,
             an=an,
-            n=10,
         ) == 11
         assert not an._children
 
@@ -152,8 +248,8 @@ async def test_cancel_ack_failure_hard_reaps_child(
         with trio.fail_after(5):
             assert await to_actor.run(
                 add_one,
+                20,
                 an=an,
-                n=20,
             ) == 21
         assert not an._children
 
@@ -213,18 +309,34 @@ async def test_reuse_existing_actor_via_portal(
     Pass `portal=` to schedule the one-shot task in an
     already-running actor; no spawn, no implicit reap.
 
+    The low-level `Portal.run_from_ns()` assertion also proves its
+    target kwargs remain separate from the private startup-cancel
+    policy used by context cleanup.
+
     '''
     async with tractor.open_nursery() as an:
+        actor = tractor.current_actor()
         portal: tractor.Portal = await an.start_actor(
             'one_shot_worker',
-            enable_modules=[__name__],
+            enable_modules=[
+                __name__,
+                to_actor.MODULE,
+            ],
         )
+        contexts_before = _non_registration_contexts(actor)
         for i in range(3):
             assert await to_actor.run(
                 add_one,
+                i,
                 portal=portal,
-                n=i,
             ) == i + 1
+
+        assert await portal.run_from_ns(
+            __name__,
+            'echo_startup_control',
+            _cancel_on_startup='target_value',
+        ) == 'target_value'
+        assert _non_registration_contexts(actor) == contexts_before
 
         # still alive: caller owns the actor's lifetime.
         await portal.cancel_actor()
@@ -251,9 +363,9 @@ async def test_concurrent_one_shots_from_task_nursery(
     ) -> None:
         results[i] = await to_actor.run(
             add_one,
+            i,
             an=an,
             name=f'one_shot_{i}',
-            n=i,
         )
 
     async with (
@@ -304,6 +416,83 @@ def test_rejects_streaming_fn():
         )
 
 
+def test_partial_placeholder_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Preserve Python 3.14 `functools.partial` placeholder semantics.
+
+    The test environment runs Python 3.13, so this installs an identity
+    sentinel matching Python 3.14's `functools.Placeholder` API.
+    Interleaved placeholders prove call-time positional arguments are
+    merged in order. Undersupply and a mismatched final target
+    signature both fail locally before actor runtime startup.
+
+    '''
+    placeholder = object()
+    monkeypatch.setattr(
+        to_actor_api.functools,
+        'Placeholder',
+        placeholder,
+        raising=False,
+    )
+    fn = partial(
+        collect_args,
+        placeholder,
+        2,
+        placeholder,
+    )
+    normalized_fn, args, kwargs = to_actor_api._normalize_call(
+        fn,
+        (1, 3, 4),
+    )
+    assert normalized_fn is collect_args
+    assert args == (1, 2, 3, 4)
+    assert kwargs == {}
+
+    with pytest.raises(TypeError, match='Not enough positional'):
+        to_actor_api._normalize_call(fn, (1,))
+
+    with pytest.raises(TypeError, match='too many positional'):
+        to_actor_api._normalize_call(
+            partial(add_one, 1),
+            (2,),
+        )
+
+
+def test_nested_partial_normalization():
+    '''
+    Flatten every retained `functools.partial` layer before RPC.
+
+    CPython normally combines nested partials, but preserves the inner
+    object when it has instance attributes. Unwrapping only the outer
+    layer left a non-namespace-addressable partial as the RPC target.
+    The custom attribute triggers that retained shape; the assertions
+    prove positional ordering and outer-keyword precedence match a
+    direct nested-partial call.
+
+    '''
+    inner = partial(
+        collect_call,
+        1,
+        label='inner',
+    )
+    inner.note = 'retain this partial layer'
+    outer = partial(
+        inner,
+        2,
+        label='outer',
+    )
+
+    fn, args, kwargs = to_actor_api._normalize_call(
+        outer,
+        (3,),
+    )
+    assert fn is collect_call
+    assert args == (1, 2, 3)
+    assert kwargs == {'label': 'outer'}
+
+
 def test_rejects_portal_and_an_combo():
     '''
     `portal=` and `an=` are mutually exclusive
@@ -315,9 +504,9 @@ def test_rejects_portal_and_an_combo():
             partial(
                 to_actor.run,
                 add_one,
+                1,
                 portal=object(),
                 an=object(),
-                n=1,
             )
         )
 
@@ -335,10 +524,179 @@ def test_rejects_runtime_kwargs_with_placement():
             partial(
                 to_actor.run,
                 add_one,
+                1,
                 an=object(),
                 runtime_kwargs=dict(
                     loglevel='cancel',
                 ),
-                n=1,
             )
         )
+
+
+@tractor_test
+async def test_trio_style_args_and_partial_kwargs(
+    start_method: str,
+    debug_mode: bool,
+):
+    '''
+    Forward positional args and partial-bound keyword arguments.
+
+    The original API captured every keyword matching an actor
+    control, so ordinary target parameters such as `name`, `portal`,
+    `an` and `runtime_kwargs` could not be called. This test uses a
+    positional-only target argument plus all colliding keyword names.
+    Binding the target keywords with `functools.partial()` proves the
+    Trio-style calling convention keeps target inputs separate from
+    actor controls.
+
+    '''
+    fn = partial(
+        echo_control_names,
+        name='target_name',
+        portal='target_portal',
+        an='target_an',
+        runtime_kwargs='target_runtime_kwargs',
+    )
+    async with tractor.open_nursery() as an:
+        result = await to_actor.run(
+            fn,
+            42,
+            an=an,
+            name='actor_name',
+        )
+
+    assert result == {
+        'value': 42,
+        'name': 'target_name',
+        'portal': 'target_portal',
+        'an': 'target_an',
+        'runtime_kwargs': 'target_runtime_kwargs',
+    }
+
+
+@tractor_test
+async def test_portal_task_cancelled_with_local_caller(
+    tmp_path: Path,
+    start_method: str,
+    debug_mode: bool,
+):
+    '''
+    Couple a reused portal's remote task to its local caller.
+
+    The former `Portal.run()` path abandoned its remote task when the
+    local `to_actor.run()` caller was cancelled. The target writes
+    one file after starting and another from its cancellation
+    `finally`. Cancelling the local task nursery and observing the
+    second file proves `Portal.open_context()` propagated
+    cancellation before the caller exited. A subsequent call proves
+    the caller-owned actor was not cancelled with that task.
+
+    '''
+    started_path = tmp_path / 'started'
+    cancelled_path = tmp_path / 'cancelled'
+
+    async with tractor.open_nursery() as an:
+        actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'context_worker',
+            enable_modules=[
+                __name__,
+                to_actor.MODULE,
+            ],
+        )
+        contexts_before = _non_registration_contexts(actor)
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(
+                partial(
+                    to_actor.run,
+                    mark_task_cancellation,
+                    str(started_path),
+                    str(cancelled_path),
+                    portal=portal,
+                ),
+            )
+            with trio.fail_after(5):
+                while not started_path.exists():
+                    await trio.sleep(0.01)
+            tn.cancel_scope.cancel()
+
+        assert cancelled_path.exists()
+        assert _non_registration_contexts(actor) == contexts_before
+        assert await to_actor.run(
+            add_one,
+            1,
+            portal=portal,
+        ) == 2
+        assert _non_registration_contexts(actor) == contexts_before
+
+        await portal.cancel_actor()
+
+
+@tractor_test
+async def test_context_trampoline_preserves_module_allowlist(
+    start_method: str,
+    debug_mode: bool,
+):
+    '''
+    Keep target resolution behind the actor's RPC module allowlist.
+
+    Loading the target with `NamespacePath.load_ref()` would silently
+    bypass the actor's existing module-exposure boundary. This actor
+    exposes only the trusted trampoline, not the test module; the
+    boxed `ModuleNotExposed` proves the trampoline delegates target
+    resolution to `Actor._get_rpc_func()`.
+
+    '''
+    async with tractor.open_nursery() as an:
+        actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'restricted_context_worker',
+            enable_modules=[to_actor.MODULE],
+        )
+        contexts_before = _non_registration_contexts(actor)
+        with pytest.raises(RemoteActorError) as excinfo:
+            await to_actor.run(
+                add_one,
+                1,
+                portal=portal,
+            )
+
+        assert excinfo.value.boxed_type is tractor.ModuleNotExposed
+        assert _non_registration_contexts(actor) == contexts_before
+        await portal.cancel_actor()
+
+
+@tractor_test
+async def test_portal_requires_context_trampoline(
+    start_method: str,
+    debug_mode: bool,
+):
+    '''
+    Require explicit trampoline exposure on a caller-owned actor.
+
+    Automatically exposing the module in every actor weakens the RPC
+    allowlist for actors that never use `to_actor.run()`. A portal to
+    such an actor instead fails with the usual `ModuleNotExposed`,
+    naming the module callers must opt into.
+
+    '''
+    async with tractor.open_nursery() as an:
+        actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'no_context_trampoline_worker',
+            enable_modules=[__name__],
+        )
+        contexts_before = _non_registration_contexts(actor)
+        with pytest.raises(RemoteActorError) as excinfo:
+            await to_actor.run(
+                add_one,
+                1,
+                portal=portal,
+            )
+
+        err = excinfo.value
+        assert err.boxed_type is tractor.ModuleNotExposed
+        assert to_actor.MODULE in str(err)
+        assert _non_registration_contexts(actor) == contexts_before
+        await portal.cancel_actor()
