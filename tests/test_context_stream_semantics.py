@@ -7,6 +7,7 @@ sync-opening a ``tractor.Context`` beforehand.
 '''
 from itertools import count
 import math
+from pathlib import Path
 import platform
 from pprint import pformat
 import sys
@@ -73,6 +74,37 @@ from tractor._testing import (
 
 
 _state: bool = False
+
+
+def _non_registration_contexts(
+    actor: Actor,
+) -> dict[tuple, str]:
+    return {
+        key: str(ctx._nsf)
+        for key, ctx in actor._contexts.items()
+        if str(ctx._nsf) != (
+            'tractor.discovery._registry:'
+            'Registrar.register_actor'
+        )
+    }
+
+
+@tractor.context
+async def startup_cancel_target(
+    ctx: Context,
+    started_path: str,
+    cancelled_path: str,
+) -> None:
+    Path(started_path).touch()
+    try:
+        await ctx.started()
+        await trio.sleep_forever()
+    finally:
+        Path(cancelled_path).touch()
+
+
+async def return_one() -> int:
+    return 1
 
 
 @tractor.context
@@ -166,6 +198,92 @@ async def simple_setup_teardown(
 async def assert_state(value: bool):
     global _state
     assert _state == value
+
+
+@tractor_test
+async def test_cancel_during_context_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    start_method: str,
+    debug_mode: bool,
+):
+    '''
+    Cancel a context after sending `Start` but before its ack.
+
+    `Portal.open_context()` allocates its caller-side `Context` while
+    entering the async context manager. Cancellation used to strand
+    that local context and leave the remote target running. The patched
+    `Channel.send()` publishes `Start`, then blocks before
+    `Actor.start_remote_task()` can await `StartAck`. Cancelling the
+    caller proves cleanup issues one bounded, non-recursive cancel RPC,
+    stops the target and removes both helper contexts. A subsequent
+    RPC proves the caller-owned actor remains usable.
+
+    '''
+    started_path = tmp_path / 'startup_started'
+    cancelled_path = tmp_path / 'startup_cancelled'
+    start_sent = trio.Event()
+    original_send = tractor.Channel.send
+
+    async def delay_after_start(
+        chan: tractor.Channel,
+        payload: object,
+        hide_tb: bool = False,
+    ) -> None:
+        await original_send(
+            chan,
+            payload,
+            hide_tb=hide_tb,
+        )
+        if isinstance(payload, tractor.msg.Start):
+            if payload.func == 'startup_cancel_target':
+                start_sent.set()
+            await trio.sleep_forever()
+
+    async def open_target(
+        portal: tractor.Portal,
+    ) -> None:
+        async with portal.open_context(
+            startup_cancel_target,
+            started_path=str(started_path),
+            cancelled_path=str(cancelled_path),
+        ):
+            raise AssertionError('context startup should be cancelled')
+
+    async with tractor.open_nursery() as an:
+        actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'startup_cancel_worker',
+            enable_modules=[__name__],
+        )
+        contexts_before = _non_registration_contexts(actor)
+        monkeypatch.setattr(
+            tractor.Channel,
+            'send',
+            delay_after_start,
+        )
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(open_target, portal)
+            with trio.fail_after(5):
+                await start_sent.wait()
+                while not started_path.exists():
+                    await trio.sleep(0.01)
+            tn.cancel_scope.cancel()
+
+        monkeypatch.setattr(
+            tractor.Channel,
+            'send',
+            original_send,
+        )
+        assert cancelled_path.exists()
+        assert _non_registration_contexts(actor) == contexts_before
+        assert await portal.run_from_ns(
+            __name__,
+            'return_one',
+        ) == 1
+        assert _non_registration_contexts(actor) == contexts_before
+        await portal.cancel_actor()
 
 
 @pytest.mark.parametrize(

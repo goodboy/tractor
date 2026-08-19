@@ -379,6 +379,38 @@ class Portal:
 
             return False
 
+    async def _run_from_ns(
+        self,
+        namespace_path: str,
+        function_name: str,
+        kwargs: dict[str, Any],
+        cancel_on_startup: bool = True,
+    ) -> Any:
+        '''
+        Run a namespace target with local startup policy controls.
+
+        '''
+        nsf = NamespacePath(
+            f'{namespace_path}:{function_name}'
+        )
+        ctx: Context = await self.actor.start_remote_task(
+            chan=self.channel,
+            nsf=nsf,
+            kwargs=kwargs,
+            portal=self,
+            cancel_on_startup=cancel_on_startup,
+        )
+        try:
+            return await ctx._pld_rx.recv_pld(
+                ipc=ctx,
+                expect_msg=Return,
+            )
+        finally:
+            self.actor._drop_context(ctx)
+            if not ctx._rx_chan._closed:
+                with trio.CancelScope(shield=True):
+                    await ctx._rx_chan.aclose()
+
     # TODO: do we still need this for low level `Actor`-runtime
     # method calls or can we also remove it?
     async def run_from_ns(
@@ -404,18 +436,10 @@ class Portal:
 
         '''
         __runtimeframe__: int = 1  # noqa
-        nsf = NamespacePath(
-            f'{namespace_path}:{function_name}'
-        )
-        ctx: Context = await self.actor.start_remote_task(
-            chan=self.channel,
-            nsf=nsf,
+        return await self._run_from_ns(
+            namespace_path,
+            function_name,
             kwargs=kwargs,
-            portal=self,
-        )
-        return await ctx._pld_rx.recv_pld(
-            ipc=ctx,
-            expect_msg=Return,
         )
 
     # TODO: factor this out into a `.highlevel` API-wrapper that uses
