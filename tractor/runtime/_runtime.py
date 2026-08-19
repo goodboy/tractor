@@ -836,8 +836,10 @@ class Actor:
 
             f'{pretty_struct.pformat(msg)}'
         )
+        start_published: bool = False
         try:
             await chan.send(msg)
+            start_published = True
 
             # NOTE wait on first `StartAck` response msg and validate;
             # this should be immediate and does not (yet) wait for the
@@ -845,7 +847,22 @@ class Actor:
             with trio.fail_after(ack_timeout):
                 first_msg: msgtypes.StartAck = await ctx._rx_chan.receive()
 
-        except trio.Cancelled:
+            try:
+                functype: str = first_msg.functype
+            except AttributeError:
+                raise unpack_error(first_msg, chan)
+
+            if functype not in (
+                'asyncfunc',
+                'asyncgen',
+                'context',
+            ):
+                raise ValueError(
+                    f'Invalid `StartAck.functype: str = '
+                    f'{first_msg!r}` ??'
+                )
+
+        except BaseException as startup_err:
             with trio.CancelScope(shield=True):
                 # `MsgpackTransport.send()` closes its stream when
                 # cancellation interrupts the length-prefixed write
@@ -856,7 +873,14 @@ class Actor:
                 if (
                     cancel_on_startup
                     and
-                    chan.connected()
+                    (
+                        start_published
+                        or (
+                            isinstance(startup_err, trio.Cancelled)
+                            and
+                            chan.connected()
+                        )
+                    )
                 ):
                     try:
                         await ctx.cancel()
@@ -872,19 +896,6 @@ class Actor:
                     await ctx._rx_chan.aclose()
 
             raise
-        try:
-            functype: str = first_msg.functype
-        except AttributeError:
-            raise unpack_error(first_msg, chan)
-
-        if functype not in (
-            'asyncfunc',
-            'asyncgen',
-            'context',
-        ):
-            raise ValueError(
-                f'Invalid `StartAck.functype: str = {first_msg!r}` ??'
-            )
 
         ctx._remote_func_type = functype
         return ctx
