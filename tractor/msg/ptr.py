@@ -125,7 +125,9 @@ class NamespacePath(str):
     ) -> NamespacePath:
 
         fqnp: tuple[str, str] = cls._mk_fqnp(ref)
-        return cls(':'.join(fqnp))
+        nsp = cls(':'.join(fqnp))
+        nsp._ref = ref
+        return nsp
 
     def to_tuple(
         self,

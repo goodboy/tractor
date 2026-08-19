@@ -22,12 +22,18 @@ Adopts the "run it over there" parlance from analogous
 `anyio.to_process` but for SC-supervised actors: spawn (or
 reuse) a subactor, schedule a single remote task, wait on
 its result and (when the call owns the subactor) reap it.
+Target arguments follow Trio's positional convention; use
+`functools.partial()` to bind target keyword arguments.
 
 The "spiritual successor" to (and eventual replacement of)
 the `ActorNursery.run_in_actor()` API; see
 https://github.com/goodboy/tractor/issues/477
 
 '''
+from . import _api as _api
 from ._api import (
     run as run,
 )
+
+
+MODULE: str = _api.__name__

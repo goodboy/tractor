@@ -600,14 +600,21 @@ class Actor:
     # - cancel_rpc_tasks(),
     # - _cancel_task(),
     #
-    def _get_rpc_func(self, ns, funcname):
+    def _get_rpc_func(
+        self,
+        ns: str,
+        funcname: str,
+    ):
         '''
         Try to lookup and return a target RPC func from the
         post-fork enabled module set.
 
         '''
         try:
-            return getattr(self._mods[ns], funcname)
+            return getattr(
+                self._mods[ns],
+                funcname,
+            )
         except KeyError as err:
             mne = ModuleNotExposed(*err.args)
 

@@ -41,7 +41,7 @@ async def main() -> None:
     # subactor, tears the runtime back down.
     assert await tractor.to_actor.run(
         is_prime,
-        n=2,
+        2,
     )
 
     # the "worker-pool-ish" pattern from the original
@@ -57,9 +57,9 @@ async def main() -> None:
     ) -> None:
         results[n] = await tractor.to_actor.run(
             is_prime,
+            n,
             an=an,
             name=f'prime_checker_{i}',
-            n=n,
         )
 
     inputs: list[int] = [
