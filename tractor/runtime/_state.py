@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 TransportProtocolKey = Literal[
     'tcp',
     'uds',
+    'tipc',
 ]
 _def_tpt_proto: TransportProtocolKey = 'tcp'
 

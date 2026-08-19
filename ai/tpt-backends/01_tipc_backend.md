@@ -94,7 +94,7 @@ class TIPCAddress(
     maybe_ref: int|None = None
 
     proto_key: ClassVar[str] = 'tipc'
-    unwrapped_type: ClassVar[type] = tuple[str, int]
+    unwrapped_type: ClassVar[type] = tuple[str, int, int, int]
     def_bindspace: ClassVar[int] = TIPC_CLUSTER_SCOPE
 ```
 
@@ -236,10 +236,11 @@ Notes / hazards:
 - **no `close_listener()` needed** — nothing to unlink. Omit the
   function entirely (contract §1.2: absence means implicit).
   Withdrawal of the published name happens on socket close.
-- ⚠️ `SocketListener.__init__` will try
-  `getsockopt(SOL_SOCKET, SO_ACCEPTCONN)`. If TIPC rejects it,
-  trio's `except OSError: pass` covers us. Assert this in a
-  unit test rather than assuming.
+- ✅ **SETTLED** (step-0 probe, live kernel): `SocketListener.
+  __init__`'s `getsockopt(SOL_SOCKET, SO_ACCEPTCONN)` **works**
+  on `AF_TIPC` and answers `1`. We do *not* rely on trio's
+  `except OSError: pass` carve-out at all. Pinned by
+  `test_listener_tolerates_so_acceptconn`.
 - Wrap the bind in a `_reraise_as_connerr()`-style `@cm` (copy
   the `_uds.py:256` pattern) so `EADDRINUSE`-ish and
   `EAFNOSUPPORT` become `ConnectionError` with the addr in the
@@ -261,19 +262,26 @@ the name-seq we bound. So the `!=` is **always true** and
 Handle it inside `TIPCAddress.from_addr()` — do **not** patch
 `_server.py`:
 
+⚠️ the sketch that stood here used the `'tipc:<stype>:<scope>'`
+string-prefix hack §2.2 explicitly **withdrew**. Corrected to
+the proto-keyed form (and note a bare seq-pattern matches the
+`list` that `msgpack` decodes our tuples back to, so no
+separate `[...]` alternative is needed):
+
 ```python
 @classmethod
 def from_addr(cls, addr) -> TIPCAddress:
     match addr:
-        # our own unwrapped form
-        case (str() as tag, int() as inst) if tag.startswith('tipc:'):
-            _, stype, scope = tag.split(':')
-            return TIPCAddress(int(stype), inst, int(scope))
+        # our own proto-keyed unwrapped form
+        case ('tipc', int() as stype, int() as inst, int() as scope):
+            return TIPCAddress(stype, inst, _norm_scope(scope))
 
-        # a kernel-observed TIPC_ADDR_ID 5-tuple: keep the
-        # *service* identity we already know and only annotate
-        # the observed port-id.
-        case (int() as atype, *rest) if atype == socket.TIPC_ADDR_ID:
+        # ..w/ the scope defaulted
+        case ('tipc', int() as stype, int() as inst):
+            return TIPCAddress(stype, inst)
+
+        # a kernel-observed TIPC_ADDR_ID 5-tuple
+        case (int() as atype, *_) if atype == TIPC_ADDR_ID:
             ...
 ```
 
@@ -363,11 +371,19 @@ class MsgpackTIPCStream(MsgpackTransport):
     leave at default, we have `trio` cancel scopes.
   - `TIPC_DEST_DROPPABLE = 0` on the connection so undeliverable
     msgs come back as errors rather than being silently dropped.
-- **`connect_to()` on a name with no publisher**: TIPC returns
-  `ECONNREFUSED`/`EHOSTUNREACH` promptly (no SYN-timeout wait),
-  which is *better* discovery-ping behaviour than TCP. Confirm
-  the errno and make sure it surfaces as `ConnectionError`
-  (contract §4 — the registrar ping path depends on it).
+- ✅ **SETTLED** — **`connect_to()` on a name with no
+  publisher**: TIPC answers `EHOSTUNREACH` (113) *instantly*
+  (no SYN-timeout wait), which is indeed better discovery-ping
+  behaviour than TCP.
+
+  ⚠️ BUT the errno matters more than expected: python maps
+  `EHOSTUNREACH` to a **bare `OSError`**, NOT to a
+  `ConnectionError` subtype the way it maps `ECONNREFUSED` ->
+  `ConnectionRefusedError`. So the `_reraise_as_connerr()` wrap
+  is **load-bearing for contract §4**, not cosmetic polish —
+  without it the registrar ping path sees a foreign exc type.
+  (For contrast, dialling a bogus *port-id* — as opposed to a
+  name — does give `ECONNREFUSED`.)
 
 ### 3.4 `get_stream_addrs()`
 
@@ -408,6 +424,35 @@ Problem: neither end's port-id tells us the *service name*. The
   work. Verify nothing asserts `laddr == ep.addr` — grep for
   `.laddr` uses before committing (`_server.py`'s
   `con_status` logging, `Channel.pformat()`).
+  ✅ grepped: `.laddr` is repr/logging-ONLY. `.raddr` has three
+  real consumers (`discovery/_api.py:277`'s `query_actor()`
+  yield, plus two test asserts) — and note `uds` *already* has
+  this same wart (its accepting-side `raddr` is the listener's
+  own sockpath), so (a) is consistent with the status quo.
+
+- 🐛 **HAZARD the original draft missed — a dropped peer must
+  not kill the actor.** Unlike tcp/uds — where the kernel keeps
+  answering the peer addr until *we* close — a TIPC socket
+  whose peer has already gone answers **`ENOTCONN`** from
+  `getpeername()`.
+
+  That's fatal as written, because
+  `MsgpackTransport.__init__()` calls `get_stream_addrs()` (via
+  `Channel.from_stream()`) **before** the handshake, so the
+  `OSError` escapes `handle_stream_from_peer()`'s
+  handshake-failure tolerance (contract §4) and tears down the
+  **whole actor**. i.e. any connect-then-immediately-drop peer
+  — a port scan, a liveness probe, a cancelled dial — is a
+  remote actor-kill.
+
+  Wrap both `getsockname`/`getpeername` in a tolerant helper
+  and degrade to a port-id-less addr. A dead peer must cost us
+  an addr, not the runtime.
+
+  NOTE this is *not* hypothetical: the discovery suite's own
+  `daemon` readiness probe
+  (`tests/discovery/conftest.py`) does exactly this, which is
+  how it was found.
 
 ---
 
@@ -512,8 +557,18 @@ _SUBSCR_FMT: str = '=IIIII8s'   # ⚠ 5*I is 20 -> use '=5I8s'
 - **events**: `struct tipc_event` is `event: u32`,
   `found_lower: u32`, `found_upper: u32`,
   `port: {ref: u32, node: u32}`, then the 28-byte subscription
-  echo → 40 bytes. `event ∈ {TIPC_PUBLISHED, TIPC_WITHDRAWN,
+  echo. `event ∈ {TIPC_PUBLISHED, TIPC_WITHDRAWN,
   TIPC_SUBSCR_TIMEOUT}`.
+
+  ⚠️ **CORRECTION**: that totals **48** bytes
+  (`4 + 4 + 4 + 8 + 28`), not the 40 an earlier revision of this
+  plan claimed. Verified via `struct.calcsize()` at step 0. Use
+  `'=5I8s'` (28) for the subscription and a 48-byte read for the
+  event.
+
+  ⚠️ also: python exposes `TIPC_WAIT_FOREVER` as **`-1`**, not
+  `0xFFFFFFFF`, so it must be masked (`& 0xFFFFFFFF`) before
+  packing into an unsigned `'I'` field.
 - **trio shape** — this is where the "nearly-functional,
   modern-async" style pays off; expose it as an `@acm` yielding
   a `trio` receive-channel of typed events, *not* a class:
@@ -538,7 +593,7 @@ async def open_topology_events(
   `kind: Literal['published','withdrawn','timeout']`,
   `addr: TIPCAddress`, `node: int`, `ref: int`. One
   `trio.lowlevel`-free implementation: a nursery-spawned reader
-  task doing `await sock.recv(40)` in a loop and
+  task doing `await sock.recv(48)` in a loop and
   `send_nowait()`ing decoded events, with the `@acm` closing the
   socket on exit → reader gets `ClosedResourceError` → cancel
   scope collapses. Standard `tractor` `@acm` discipline.
@@ -554,6 +609,18 @@ async def open_topology_events(
 ---
 
 ## 6. Commit sequencing (each independently reviewable + green)
+
+**STATUS** (gh PR #493, stacked on #492): steps 1-5 landed as
+9 commits, `22ef362d..51d7133f`. Acceptance bar met — 122
+passed / 1 xfailed / 2 xpassed under `--tpt-proto tipc` across
+`ipc`, `discovery`, `runtime`, `spawning`, `local`, `rpc`,
+`cancellation`; `tcp`/`uds` unchanged. Steps 6-7 remain.
+
+Two commits fell out that this plan did NOT anticipate,
+- a wire-spec widening for the 4-tuple (§9), and
+- an unrelated `devx.pformat` crasher that masked EVERY
+  send-side `MsgTypeError`; it's on `main` and every branch,
+  so it wants cherry-picking out of this stack.
 
 1. `_server.py`: add `Address.rebind_from_sockname:
    ClassVar[bool]`, gate the `getsockname()` reconciliation on
@@ -602,7 +669,13 @@ side effects, no logging.
 
 ### 7.2 gating
 
-- `pytest.mark.tipc` registered in `pyproject.toml`.
+- `pytest.mark.tipc` registered in
+  `_testing/pytest.py::pytest_configure()` alongside `no_tpt`,
+  `skipon_spawn_backend` et al.
+  ⚠️ **CORRECTION**: an earlier revision said `pyproject.toml`;
+  the repo has no `[tool.pytest.ini_options] markers` table and
+  registers every custom mark via `config.addinivalue_line()`.
+  Per contract §0, the code wins.
 - module-level
   `pytestmark = pytest.mark.skipif(not is_tipc_available(),
   reason='`tipc` kernel module not loaded (`modprobe tipc`)')`
@@ -636,12 +709,31 @@ side effects, no logging.
   `(stype, inst)`, then from a second task `connect()` by name
   and assert it lands — *without* any `tractor` registrar.
 - **`get_random()` collision resistance**: 10k `get_random()`
-  calls with no live runtime → 10k distinct `_instance`s.
-  (This is the silent-crosstalk risk from §2.3; if the 4-byte
-  digest ever collides in this test, escalate to §9.)
-- **round-robin surprise**: two listeners bound to the *same*
-  `(stype, inst)` both succeed (TIPC allows it) and connects
-  distribute. Assert the observed behaviour and reference it
+  calls with no live runtime.
+  ⚠️ **CORRECTION**: asserting **10k distinct** is a ~1.2%
+  flaky test, not a guarantee —
+  `P(collision) ≈ 1 - exp(-n²/2^33) ≈ 1.16e-2` for `n=10k` in a
+  32-bit instance space. That's ~1-in-86 runs red, which the
+  project's fix-flakes-at-source rule forbids. Assert
+  `>= n - 2` instead (`P(>2 collisions) ≈ 1e-7`) and document
+  the arithmetic inline.
+
+  Also add a *deterministic* sibling asserting the derivation
+  is a pure fn of the seed, which is the property the (§5.1)
+  registrar-less fast path will actually depend on.
+
+  ⚠️ do **NOT** take §9's "fold a 6-byte digest into
+  `(stype_low, instance)`" escalation: §5.2's topology
+  subscription can only watch **one** service type, so varying
+  `_stype` per-actor would need 65536 subscriptions and kills
+  layer B outright. The instance space is 32b and that's that;
+  if crosstalk ever bites for real, the answer is the post-bind
+  verification handshake, not stype bits.
+- ✅ **SETTLED — round-robin surprise is REAL**: two listeners
+  bound to the *same* `(stype, inst)` both bind fine and
+  connects alternate strictly (`b,a,b,a,b,a` observed over 6
+  dials). So a `get_random()` clash is *silent crosstalk*, never
+  `EADDRINUSE`. Assert the observed behaviour and reference it
   from the `get_random()` docstring so the next reader knows
   why the hash matters.
 - **scope isolation**: a `TIPC_NODE_SCOPE` bind is not visible
@@ -678,14 +770,36 @@ single best demo this backend has; lead with it.
 
 ## 9. Known risks + escalations
 
-| risk | mitigation |
-| --- | --- |
-| `_instance` hash collision → silent crosstalk (two actors share a service name, TIPC round-robins connects between them) | §7.4 test; if it bites, add a post-bind verification handshake, or bump to a 6-byte digest folded into `(stype_low, instance)` |
-| kernel/module unavailability everywhere (dev boxes, macOS, CI) | hard gating (§7.2); TIPC is explicitly an *opt-in cluster* transport, never a default |
-| `getsockname()` returns port-id not name | the `rebind_from_sockname` opt-out (§3.2), landed first |
-| unregistered `/tipc` multiaddr proto | `str` maddr fallback (§4) + upstream track gh #483 |
-| stale docs (#378 notes tipc.io docs may be out of date) | treat `include/uapi/linux/tipc.h` + `net/tipc/` as the only normative source; cite file+symbol in code comments |
-| `SOCK_SEQPACKET` topology framing byte-order | probe helper + `?TODO` (§5.2) |
+Status column reconciled against the **step-0 probe on a live
+kernel** (`modprobe tipc`, py3.13) plus the landed impl. Rows
+marked ⚠️ are the ones whose *stated* mitigation turned out to
+be wrong or insufficient.
+
+| risk | status | mitigation |
+| --- | --- | --- |
+| `_instance` hash collision → silent crosstalk (two actors share a service name, TIPC round-robins connects between them) | ✅ **confirmed real** — dup binds both succeed, dials alternate strictly | `blake2b` 32b digest + §7.4 tests. ⚠️ the "6-byte digest folded into `(stype_low, instance)`" escalation is **withdrawn** — it breaks §5.2's single-type subscription. Real escalation is a post-bind verification handshake |
+| kernel/module unavailability everywhere (dev boxes, macOS, CI) | ✅ handled | `is_tipc_available()` + the generic `Address.is_available() -> (ok, why_not)` hook consumed by the `tpt_protos` fixture; module stays importable on non-linux via uapi-value fallbacks. TIPC is *opt-in cluster* only, never a default |
+| `getsockname()` returns port-id not name | ✅ confirmed (true even *pre*-bind) | `rebind_from_sockname` opt-out (§3.2), landed first |
+| dial of an unpublished name doesn't normalize | ⚠️ **worse than stated** — `EHOSTUNREACH` is a **bare `OSError`**, not a `ConnectionError` subtype | `_reraise_as_connerr()` is REQUIRED for contract §4, not polish (§3.3) |
+| a connect-then-drop peer kills the whole actor via `ENOTCONN` from `getpeername()` | ⚠️ **NOT in the original plan; found by our own test harness** | tolerant `getsockname`/`getpeername` helper degrading to a port-id-less addr (§3.4) |
+| the unwrapped 4-tuple doesn't fit the wire msg-spec | ⚠️ **NOT in the original plan** — `SpawnSpec.reg_addrs`/`.bind_addrs` pinned a 2-tuple | widen to `UnwrappedAddress`, **variadic** `tuple[str\|int, ...]` since `msgspec` refuses a union w/ >1 array-like type. Own commit; first real bite of contract §1.1 |
+| `SO_ACCEPTCONN` rejected by `AF_TIPC` | ✅ **non-issue** — answers `1` | none needed; pinned by a test anyway |
+| unregistered `/tipc` multiaddr proto | ✅ handled (interim) | `str` maddr + `parse_maddr()` prefix special-case *before* `Multiaddr()` (§4); upstream track gh #483. Keeps gh #443 blocked |
+| stale docs (#378 notes tipc.io docs may be out of date) | ✅ still true | treat `include/uapi/linux/tipc.h` + `net/tipc/` as the only normative source; cite file+symbol in code comments |
+| `SOCK_SEQPACKET` topology framing byte-order | ⏳ open (layer B) | probe helper + `?TODO` (§5.2). Note the event struct is **48B not 40B** and `TIPC_WAIT_FOREVER` is `-1` in python |
+
+Non-risks worth recording so nobody re-litigates them:
+
+- **graceful peer close arrives as `BrokenResourceError`
+  /`ECONNRESET`, not a clean 0-byte EOF** like tcp/uds. Benign:
+  `MsgpackTransport._iter_packets()` already `match`es
+  `'Connection reset by peer'` into the `loglevel='transport'`
+  "normal operation breakage" branch, so `TransportClosed`
+  classification is unchanged. Worth a sentence in the docs
+  page (§8) since it *looks* alarming in transport logs.
+- **`tipc nametable show` really does list our published
+  services** (type `1953628160` == `0x74720000`), so the §8 demo
+  works as advertised.
 
 ## 10. Follow-up issue seeds
 

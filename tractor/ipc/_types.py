@@ -38,17 +38,23 @@ from tractor.ipc._uds import (
     UDSAddress,
     MsgpackUDSStream,
 )
+from tractor.ipc._tipc import (
+    AF_TIPC,
+    TIPCAddress,
+    MsgpackTIPCStream,
+)
 
 # if TYPE_CHECKING:
 #     from tractor._addr import Address
 
 
-Address = TCPAddress|UDSAddress
+Address = TCPAddress|UDSAddress|TIPCAddress
 
 # manually updated list of all supported msg transport types
 _msg_transports = [
     MsgpackTCPStream,
-    MsgpackUDSStream
+    MsgpackUDSStream,
+    MsgpackTIPCStream,
 ]
 
 
@@ -59,15 +65,17 @@ _key_to_transport: dict[
 ] = {
     ('msgpack', 'tcp'): MsgpackTCPStream,
     ('msgpack', 'uds'): MsgpackUDSStream,
+    ('msgpack', 'tipc'): MsgpackTIPCStream,
 }
 
 # convert an Address wrapper to its corresponding transport type
 _addr_to_transport: dict[
-    Type[TCPAddress|UDSAddress],
+    Type[TCPAddress|UDSAddress|TIPCAddress],
     Type[MsgTransport]
 ] = {
     TCPAddress: MsgpackTCPStream,
     UDSAddress: MsgpackUDSStream,
+    TIPCAddress: MsgpackTIPCStream,
 }
 
 
@@ -107,6 +115,12 @@ def transport_from_stream(
 
             case socket.AF_UNIX:
                 transport = 'uds'
+
+            # NOTE, `AF_TIPC` is linux-only in CPython so we
+            # match the `._tipc` constant (which carries a uapi
+            # fallback) rather than `socket.AF_TIPC`.
+            case _ if sock.family == AF_TIPC:
+                transport = 'tipc'
 
             case _:
                 raise NotImplementedError(

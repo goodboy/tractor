@@ -33,6 +33,7 @@ from ..runtime._state import (
 )
 from ..ipc._tcp import TCPAddress
 from ..ipc._uds import UDSAddress
+from ..ipc._tipc import TIPCAddress
 
 if TYPE_CHECKING:
     from ..runtime._runtime import Actor
@@ -65,9 +66,22 @@ log = get_logger()
 #
 UnwrappedAddress = (
     # tcp/udp/uds
+    #   ('127.0.0.1', 1616)
+    #   ('/run/user/1000/tractor', 'registry@1616.sock')
+    #
+    # ..and the explicitly proto-keyed (`multiaddr`-spelled)
+    # form, which is where ALL backends should eventually land
+    # per the note below,
+    #   ('tipc', 1953628160, 1616, 2)
+    #
+    # XXX VARIADIC bc `msgspec` refuses a union of >1 array-like
+    # type, so the two shapes can't be spelled as a union. Keep
+    # in sync with `.msg.types.UnwrappedAddress` which
+    # re-declares this to dodge a circular import AND is what
+    # actually validates the `SpawnSpec` wire msg!
     tuple[
-        str,  # host/domain(tcp), filesys-dir(uds)
-        int|str,  # port/path(uds)
+        str|int,
+        ...,
     ]
     # ?TODO? should we also include another 2 fields from
     # our `Aid` msg such that we include the runtime `Actor.uid`
@@ -82,6 +96,17 @@ UnwrappedAddress = (
 class Address(Protocol):
     proto_key: ClassVar[str]
     unwrapped_type: ClassVar[UnwrappedAddress]
+
+    # whether `.ipc._server.Endpoint.start_listener()` should
+    # reconcile a bound `.addr` against its listener's
+    # `socket.getsockname()`.
+    #
+    # XXX NOTE, that reconciliation exists ONLY to learn the
+    # kernel-*assigned* port from a `port=0` tcp bind; a backend
+    # whose `getsockname()` reports a categorically different thing
+    # than what was `.bind()`ed must opt out with `False`, else the
+    # ep's addr gets clobbered by an un-dialable one.
+    rebind_from_sockname: ClassVar[bool]
 
     # TODO, i feel like an `.is_bound()` is a better thing to
     # support?
@@ -172,7 +197,8 @@ class Address(Protocol):
 
 _address_types: bidict[str, Type[Address]] = {
     'tcp': TCPAddress,
-    'uds': UDSAddress
+    'uds': UDSAddress,
+    'tipc': TIPCAddress,
 }
 
 
@@ -184,6 +210,9 @@ _default_lo_addrs: dict[
 ] = {
     'tcp': TCPAddress.get_root().unwrap(),
     'uds': UDSAddress.get_root().unwrap(),
+    # NOTE, pure/cheap: a service-name pair, no kernel module
+    # nor I/O required at import time.
+    'tipc': TIPCAddress.get_root().unwrap(),
 }
 
 
@@ -228,6 +257,20 @@ def wrap_address(
     # if 'sock' in addr[0]:
     #     import pdbp; pdbp.set_trace()
     match addr:
+
+        # XXX, the explicitly proto-keyed form (spelled with the
+        # `multiaddr` proto name) which is where ALL backends
+        # should eventually land per the `UnwrappedAddress`
+        # migration note above.
+        #
+        # NOTE, a bare seq-pattern matches `list` too, which is
+        # what `msgpack` decodes our tuples back to.
+        case (
+            ('tipc', int(), int())
+            |
+            ('tipc', int(), int(), int())
+        ):
+            cls = TIPCAddress
 
         # classic network socket-address as tuple/list
         case (

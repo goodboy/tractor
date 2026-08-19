@@ -19,7 +19,10 @@ from tractor.discovery._multiaddr import (
     _tpt_proto_to_maddr,
     _maddr_to_tpt_proto,
 )
-from tractor.discovery._addr import wrap_address
+from tractor.discovery._addr import (
+    wrap_address,
+    _address_types,
+)
 
 
 def test_tpt_proto_to_maddr_mapping():
@@ -30,7 +33,12 @@ def test_tpt_proto_to_maddr_mapping():
     '''
     assert _tpt_proto_to_maddr['tcp'] == 'tcp'
     assert _tpt_proto_to_maddr['uds'] == 'unix'
-    assert len(_tpt_proto_to_maddr) == 2
+    assert _tpt_proto_to_maddr['tipc'] == 'tipc'
+
+    # NOTE, drive the expected set off the registration table
+    # (per the "drive-the-set-from-the-`Literal`" pattern) so
+    # adding a backend can't fail this for the wrong reason.
+    assert set(_tpt_proto_to_maddr) == set(_address_types)
 
 
 def test_mk_maddr_tcp_ipv4():
@@ -153,9 +161,12 @@ def test_maddr_to_tpt_proto_mapping():
 
     '''
     assert _maddr_to_tpt_proto == {
-        'tcp': 'tcp',
-        'unix': 'uds',
+        maddr_proto: proto_key
+        for proto_key, maddr_proto in _tpt_proto_to_maddr.items()
     }
+    assert _maddr_to_tpt_proto['tcp'] == 'tcp'
+    assert _maddr_to_tpt_proto['unix'] == 'uds'
+    assert _maddr_to_tpt_proto['tipc'] == 'tipc'
 
 
 def test_parse_maddr_tcp_ipv4():

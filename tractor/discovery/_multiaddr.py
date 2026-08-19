@@ -38,7 +38,22 @@ if TYPE_CHECKING:
 _tpt_proto_to_maddr: dict[str, str] = {
     'tcp': 'tcp',
     'uds': 'unix',
+    'tipc': 'tipc',
 }
+
+# XXX, there is NO `/tipc` in the multiaddr protocol table yet
+# (upstream track: gh #483 + multiformats/py-multiaddr#107), and
+# `Multiaddr()` rejects an unregistered proto name outright.
+#
+# So until that lands `tipc` maddrs stay **`str`**-only — which
+# `MsgTransport.maddr`s `Multiaddr|str` return type already
+# allows and `MsgpackUDSStream.maddr` already exercises — and
+# `parse_maddr()` special-cases the prefix BEFORE handing
+# anything to `Multiaddr()`.
+#
+# This is also why gh #443's "always return `Multiaddr`" item
+# stays blocked.
+_tipc_maddr_prefix: str = '/tipc/'
 
 # reverse mapping: multiaddr protocol name -> tractor proto_key
 _maddr_to_tpt_proto: dict[str, str] = {
@@ -49,11 +64,14 @@ _maddr_to_tpt_proto: dict[str, str] = {
 
 def mk_maddr(
     addr: 'Address',
-) -> Multiaddr:
+) -> Multiaddr|str:
     '''
     Construct a `Multiaddr` from a tractor `Address` instance,
     dispatching on the `.proto_key` to build the correct
     multiaddr-spec-compliant protocol path.
+
+    Return a `Multiaddr` for registered protocols. TIPC remains
+    an interim `str` until its upstream multiaddr protocol lands.
 
     '''
     proto_key: str = addr.proto_key
@@ -73,6 +91,18 @@ def mk_maddr(
             )
             return Multiaddr(
                 f'/{net_proto}/{host}/{maddr_proto}/{port}'
+            )
+
+        # NOTE, interim `str`-only grammar (see the
+        # `_tipc_maddr_prefix` note above),
+        #
+        #   /tipc/<stype>/<instance>/<scope>
+        #
+        # mirroring how `uds` maps onto the spec-legal `/unix`.
+        case 'tipc':
+            _, stype, instance, scope = addr.unwrap()
+            return (
+                f'/{maddr_proto}/{stype}/{instance}/{scope}'
             )
 
         case 'uds':
@@ -100,6 +130,23 @@ def parse_maddr(
     # lazy imports to avoid circular deps
     from tractor.ipc._tcp import TCPAddress
     from tractor.ipc._uds import UDSAddress
+    from tractor.ipc._tipc import TIPCAddress
+
+    # XXX MUST come before `Multiaddr()` which rejects the
+    # not-yet-registered `/tipc` proto name outright.
+    if maddr_str.startswith(_tipc_maddr_prefix):
+        try:
+            _, _, stype, instance, scope = maddr_str.split('/')
+            return TIPCAddress.from_addr((
+                'tipc',
+                int(stype),
+                int(instance),
+                int(scope),
+            ))
+        except (TypeError, ValueError) as src_err:
+            raise ValueError(
+                f'Invalid TIPC multiaddr: {maddr_str!r}'
+            ) from src_err
 
     maddr = Multiaddr(maddr_str)
     proto_names: list[str] = [
