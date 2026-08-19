@@ -22,24 +22,23 @@ onto `trio` as the library's sans-io layer allows.
 ## 1. What exists today (verified, per #482)
 
 - `wrap_address()` accepts maddr `str`s (leading-`/` dispatch,
-  `_addr.py:262`) but `parse_maddr()` only knows
-  `/ip4|ip6/<h>/tcp/<p>` and `/unix/<p>`; a `.../wg/u<key>`
-  maddr raises `ValueError('Unsupported multiaddr protocol
-  combo')`.
+  `_addr.py:262`). `parse_maddr()` and `mk_maddr()` support plain
+  TCP/UDS addresses plus nested, canonical bearer-first `/wg/`
+  stacks represented locally as `TunnelledAddress` wrappers.
 - there is no `wg` proto in the multiaddr *spec* yet, but
   multiformats/py-multiaddr#108 (key form `u<base64url>`) is
   **merged** as of 2026-07-28 (`f86519da`) — and unreleased, the
   latest `0.2.0` predating it. Spec registration is still tracked
   by multiformats/py-multiaddr#107 and gh #483.
-- so **today's deployable story is declarative**: run `wg-quick`
-  out-of-band, parse the maddr, strip to the overlay
+- **today's deployable story remains declarative**: run `wg-quick`
+  out-of-band, parse the maddr, strip its wrapper to the overlay
   `(host, port)`, verify the pubkey against the live tunnel,
   hand the overlay addr to `registry_addrs=`/`tpt_bind_addrs=`.
   #482 already contains working example code for exactly this.
 - `Address.namespace` exists in the Protocol
   (`_addr.py:94-101`, "the if-available OS-specific network
-  namespace key") and **no backend implements it**. This plan is
-  its first consumer.
+  namespace key"). `TunnelledAddress` implements it from its spec;
+  no concrete transport backend implements it yet.
 
 ## 2. Three layers, three PRs
 
@@ -197,9 +196,9 @@ Observed protocol-name lists, for writing the `match`:
 - `mk_maddr()` inverse for `TunnelledAddress` is just
   `.encapsulate()` composition; don't rebuild `str`s by hand.
 - **pending an upstream release**: py-multiaddr#108 is merged, so
-  `Multiaddr('/…/wg/u…')` parses — but off a `[tool.uv.sources]`
-  `rev` pin, since no release carries the codec. Gate the tests
-  on `_have_wg_maddr_proto()`, implemented as
+  `Multiaddr('/…/wg/u…')` parses off a PEP 621 direct-revision pin,
+  since no release carries the codec. Gate parser entry on
+  `_wg_proto_code()`, implemented as
   `protocols.protocol_with_name('wg')` under
   `except ProtocolNotFoundError`. Do **not** probe by parsing a
   dummy like `Multiaddr('/wg/uAAAA')` — the codec enforces a
@@ -209,13 +208,14 @@ Observed protocol-name lists, for writing the `match`:
 
 ### 3.3 verification helper (pure, composable)
 
-Port #482 §2's helpers into `tractor/discovery/_tunnel.py` as
-*pure functions* + one impure probe, cleanly separated:
+Port #482 §2's pure helpers into
+`tractor/discovery/_tunnel.py`, keeping the impure probe cleanly
+separated until layer B:
 
 ```python
 def parse_wg_maddr(maddr: str) -> TunnelledAddress: ...   # pure
 def wg8_pubkey(multibase_key: str) -> str: ...            # pure
-def verify_wg_peer(spec: WGTunnelSpec) -> bool: ...       # impure probe
+def verify_wg_peer(spec: WGTunnelSpec) -> bool: ...       # layer B
 ```
 
 In layer A `verify_wg_peer()` may shell out (`wg show <if>
@@ -475,7 +475,7 @@ consider doing it *first* for exactly that reason.
 | risk | mitigation |
 | --- | --- |
 | `to_thread` worker runs in the wrong netns | §5.3; pass `netns=` to pyroute2 or pin a worker; test-first |
-| py-multiaddr#108 merged but unreleased | `[tool.uv.sources]` `rev` pin + `_have_wg_maddr_proto()` gate; layer A's overlay-addr path works regardless |
+| py-multiaddr#108 merged but unreleased | PEP 621 direct-revision pin + `_wg_proto_code()` gate; replace with a release floor once published |
 | `TunnelledAddress` leaks into `Endpoint` and breaks `inspect.getmodule()` | unwrap at parse/bindspace boundary; assert `not isinstance(ep.addr, TunnelledAddress)` in `Endpoint.__post_init__` |
 | privileged ops in a library | never `sudo`; explicit cap probe + actionable error; pre-provisioned is the default |
 | pyroute2 0.9 asyncio core drags a loop into the actor | option (1) is a *thread*, not a loop; forbid `trio-asyncio` here (§4.1) |

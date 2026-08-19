@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import tractor
 import trio
+from tractor.discovery import (
+    TunnelledAddress,
+    parse_wg_maddr,
+)
 
 from host_a_srv import echo  # noqa: F401  (RPC refs it by mod path)
-from wg_maddr import (
-    parse_wg_maddr,
-    verify_wg_peer,
-    WGTunnelledAddr,
-)
+from wg_maddr import verify_wg_peer
 
 # same maddr as host A: A's bearer, A's key, A's overlay ep
 WG_MADDR: str = (
@@ -25,7 +25,7 @@ WG_MADDR: str = (
 
 
 async def main():
-    addr: WGTunnelledAddr = parse_wg_maddr(WG_MADDR)
+    addr: TunnelledAddress = parse_wg_maddr(WG_MADDR)
     assert verify_wg_peer(addr), (
         f'wg pubkey from maddr not a peer on wg0 !\n'
         f'maddr: {WG_MADDR}\n'
@@ -34,7 +34,7 @@ async def main():
         tractor.open_root_actor(
             name='wg_client',
             registry_addrs=[addr.overlay],
-            enable_transports=[addr.overlay_proto],
+            enable_transports=[addr.overlay.proto_key],
         ),
         tractor.find_actor(
             'echo_srv',
