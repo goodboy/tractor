@@ -17,7 +17,63 @@ import trio
 import tractor
 from tractor import Actor
 from tractor.discovery import _addr
+from tractor.ipc._transport import MsgpackTransport
 from tractor.runtime import _state
+
+
+
+def test_cancelled_transport_send_closes_stream():
+    '''
+    Discard a transport after cancellation interrupts a framed send.
+
+    Trio's `SendStream.send_all()` may write an arbitrary frame prefix
+    before raising `Cancelled`. Sending another IPC msg afterward
+    would append a second frame and desynchronize the peer decoder.
+    The fake stream checkpoints after recording send entry; cancelling
+    its nursery deterministically interrupts that unknown-publication
+    window. Its close assertion proves the transport is made unusable
+    before another framed msg can be attempted.
+
+    '''
+    class PartialSendStream:
+        def __init__(self) -> None:
+            self.send_entered = trio.Event()
+            self.closed = False
+
+        async def send_all(
+            self,
+            data: bytes,
+        ) -> None:
+            assert data
+            self.send_entered.set()
+            await trio.sleep_forever()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    async def main() -> None:
+        stream = PartialSendStream()
+        transport = object.__new__(MsgpackTransport)
+        transport.stream = stream
+        transport._send_lock = trio.StrictFIFOLock()
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(
+                transport.send,
+                tractor.msg.Start(
+                    ns=__name__,
+                    func='add_one',
+                    kwargs={'n': 1},
+                    uid=('root', 'test'),
+                    cid='partial-send',
+                ),
+            )
+            await stream.send_entered.wait()
+            tn.cancel_scope.cancel()
+
+        assert stream.closed
+
+    trio.run(main)
 
 
 @pytest.fixture
