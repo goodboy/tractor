@@ -96,12 +96,6 @@ jobs:
     # are hard signals. Promote the test step to required once the
     # suite is green.
 
-    # XXX the `tipc` leg stays NON-blocking until the `modprobe`
-    # step below is proven stable on GH's runners; flip this off
-    # once it's had a few green runs. See plan 01 §7.3 in
-    # `ai/tpt-backends/01_tipc_backend.md`.
-    continue-on-error: ${{ matrix.tpt_proto == 'tipc' }}
-
     strategy:
       fail-fast: false
       matrix:
