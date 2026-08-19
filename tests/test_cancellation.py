@@ -104,7 +104,7 @@ async def do_nuthin():
     [
         # expected to be thrown in assert_err
         ({}, AssertionError),
-        # argument mismatch raised in _invoke()
+        # argument mismatch rejected locally before spawn
         ({'unexpected': 10}, TypeError)
     ],
     ids=['no_args', 'unexpected_args'],
@@ -130,47 +130,33 @@ def test_remote_error(
 
             # `to_actor.run()` blocks on the one-shot's result and
             # raises the remote error directly here in the caller's
-            # task (a bad-arg `TypeError` likewise relays as a
-            # `RemoteActorError`).
+            # task. Invalid target args fail local signature binding
+            # before any one-shot actor is spawned.
             try:
                 await tractor.to_actor.run(
-                    assert_err,
+                    partial(assert_err, **args),
                     an=an,
                     name='errorer',
-                    **args
                 )
             except tractor.RemoteActorError as err:
                 assert err.boxed_type == errtype
                 print("Look Maa that actor failed hard, hehh")
                 raise
 
-    # ensure boxed errors
+    # Invalid args never cross the process boundary.
     if args:
-        with pytest.raises(tractor.RemoteActorError) as excinfo:
+        with pytest.raises(errtype):
+            trio.run(main)
+
+    else:
+        # The linked one-shot raises the child's boxed error
+        # directly in this caller task.
+        with pytest.raises(
+            tractor.RemoteActorError,
+        ) as excinfo:
             trio.run(main)
 
         assert excinfo.value.boxed_type == errtype
-
-    else:
-        # the root task will also error on the `Portal.result()`
-        # call so we expect an error from there AND the child.
-        # |_ tho seems like on new `trio` this doesn't always
-        #    happen?
-        with pytest.raises((
-            BaseExceptionGroup,
-            tractor.RemoteActorError,
-        )) as excinfo:
-            trio.run(main)
-
-        # ensure boxed errors are `errtype`
-        err: BaseException = excinfo.value
-        if isinstance(err, BaseExceptionGroup):
-            suberrs: list[BaseException] = err.exceptions
-        else:
-            suberrs: list[BaseException] = [err]
-
-        for exc in suberrs:
-            assert exc.boxed_type == errtype
 
 
 def test_multierror(
@@ -391,10 +377,9 @@ async def test_some_cancels_all(
                     tn.start_soon(
                         partial(
                             tractor.to_actor.run,
-                            func,
+                            partial(func, **kwargs),
                             an=an,
                             name=f'actor_{i}',
-                            **kwargs,
                         )
                     )
 
@@ -469,12 +454,14 @@ async def spawn_and_error(
             if depth > 0:
 
                 args = (
-                    spawn_and_error,
+                    partial(
+                        spawn_and_error,
+                        breadth=breadth,
+                        depth=depth - 1,
+                    ),
                 )
                 kwargs = {
                     'name': f'spawner_{i}_depth_{depth}',
-                    'breadth': breadth,
-                    'depth': depth - 1,
                 }
             else:
                 args = (
@@ -705,11 +692,13 @@ async def test_nested_multierrors(
                     tn.start_soon(
                         partial(
                             tractor.to_actor.run,
-                            spawn_and_error,
+                            partial(
+                                spawn_and_error,
+                                breadth=subactor_breadth,
+                                depth=depth,
+                            ),
                             an=an,
                             name=f'spawner_{i}',
-                            breadth=subactor_breadth,
-                            depth=depth,
                         )
                     )
         except (
