@@ -879,10 +879,8 @@ async def _invoke(
             # don't pop the local context until we know the
             # associated child isn't in debug any more
             await debug.maybe_wait_for_debugger()
-            ctx: Context = actor._contexts.pop((
-                chan.aid.uid,
-                cid,
-            ))
+            dropped_ctx: Context|None = actor._drop_context(ctx)
+            assert dropped_ctx is ctx
 
             logmeth: Callable = log.runtime
             merr: Exception|None = ctx.maybe_error
