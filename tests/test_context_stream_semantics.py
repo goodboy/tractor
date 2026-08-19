@@ -286,6 +286,82 @@ async def test_cancel_during_context_startup(
         await portal.cancel_actor()
 
 
+@tractor_test
+async def test_start_serialization_error_cleans_context(
+    start_method: str,
+    debug_mode: bool,
+):
+    '''
+    Deallocate caller state when `Start` can not be serialized.
+
+    `Actor.start_remote_task()` registers its caller-side `Context`
+    before encoding the request. An unsupported argument used to raise
+    `MsgTypeError` before publication while leaking that registry
+    entry. Comparing the context registry around the failed start
+    proves cleanup, and a following valid context proves no bytes
+    reached or damaged the reused portal's transport.
+
+    '''
+    async with tractor.open_nursery() as an:
+        actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'serialization_error_worker',
+            enable_modules=[__name__],
+        )
+        contexts_before = _non_registration_contexts(actor)
+        with pytest.raises(tractor.MsgTypeError):
+            async with portal.open_context(
+                simple_setup_teardown,
+                data=object(),
+            ):
+                raise AssertionError('invalid `Start` was accepted')
+
+        assert _non_registration_contexts(actor) == contexts_before
+        async with portal.open_context(
+            simple_setup_teardown,
+            data=1,
+        ) as (ctx, started):
+            assert started == 2
+            assert await ctx.wait_for_result() == 'yo'
+
+        assert _non_registration_contexts(actor) == contexts_before
+        await portal.cancel_actor()
+
+
+@tractor_test
+async def test_start_module_error_cleans_context(
+    start_method: str,
+    debug_mode: bool,
+):
+    '''
+    Deallocate caller state after a remote startup rejection.
+
+    A target actor without this test module rejects the requested
+    context before sending `StartAck`. That remote
+    `ModuleNotExposed` used to escape startup validation while leaving
+    the caller context registered. The boxed error and before/after
+    registry comparison prove the remote failure remains visible and
+    local startup state is released.
+
+    '''
+    async with tractor.open_nursery() as an:
+        actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'module_error_worker',
+        )
+        contexts_before = _non_registration_contexts(actor)
+        with pytest.raises(tractor.RemoteActorError) as excinfo:
+            async with portal.open_context(
+                simple_setup_teardown,
+                data=1,
+            ):
+                raise AssertionError('unexposed context was started')
+
+        assert excinfo.value.boxed_type is tractor.ModuleNotExposed
+        assert _non_registration_contexts(actor) == contexts_before
+        await portal.cancel_actor()
+
+
 @pytest.mark.parametrize(
     'error_parent',
     [False, ValueError, KeyboardInterrupt],
