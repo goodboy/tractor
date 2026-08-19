@@ -57,7 +57,10 @@ async def main() -> None:
     ) as an:
         await an.start_actor(
             'host_a',
-            enable_modules=[__name__],
+            # Host B imports this same module name to construct the
+            # RPC `NamespacePath`; direct script execution would
+            # otherwise expose it as `__main__` on host A.
+            enable_modules=['host_a_srv'],
         )
         print(
             'host_a up — `tipc nametable show` on EITHER host\n'
