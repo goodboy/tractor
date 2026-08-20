@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import tractor
 import trio
-
-from wg_maddr import (
+from tractor.discovery import (
+    TunnelledAddress,
+    mk_maddr,
     parse_wg_maddr,
-    verify_wg_peer,
-    WGTunnelledAddr,
 )
+
+from wg_maddr import verify_wg_peer
 
 # bearer = host A's underlay `(ip, wg ListenPort)`
 # key    = host A's OWN tunnel pubkey
@@ -33,27 +34,27 @@ async def echo(msg: str) -> str:
 
 
 async def main():
-    addr: WGTunnelledAddr = parse_wg_maddr(WG_MADDR)
+    addr: TunnelledAddress = parse_wg_maddr(WG_MADDR)
     assert verify_wg_peer(addr), (
         f'wg pubkey from maddr not active on wg0 !\n'
         f'maddr: {WG_MADDR}\n'
-        f'key: {addr.peer_pubkey}\n'
+        f'key: {addr.tunnel.peer_pubkey}\n'
     )
     print(
-        f'wg bearer (kernel-owned): {addr.bearer}\n'
+        f'wg bearer (kernel-owned): {addr.tunnel.bearer}\n'
         f'tractor overlay ep: {addr.overlay}\n'
     )
     async with tractor.open_nursery(
         # XXX only `.overlay` crosses into the runtime; the bearer
-        # + key are iface-layer concerns `tractor` never binds.
+        # + key are bindspace metadata, never `Endpoint` addrs.
         registry_addrs=[addr.overlay],
-        enable_transports=[addr.overlay_proto],
+        enable_transports=[addr.overlay.proto_key],
     ) as an:
         await an.start_actor(
             'echo_srv',
             enable_modules=[__name__],
         )
-        print(f'echo_srv up on\n  {addr.maddr}\n')
+        print(f'echo_srv up on\n  {mk_maddr(addr)}\n')
         await trio.sleep_forever()
 
 

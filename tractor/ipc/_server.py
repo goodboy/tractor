@@ -59,13 +59,17 @@ from ..msg import (
 from ..trionics import maybe_open_nursery
 from ..runtime import _state
 from .. import log
-from ..discovery._addr import Address
+from ..discovery._addr import (
+    Address,
+    UnwrappedAddress,
+)
 from ._chan import Channel
 from ._transport import MsgTransport
 from ._uds import UDSAddress
 from ._tcp import TCPAddress
 
 if TYPE_CHECKING:
+    from ..discovery._tunnel import TunnelledAddress
     from ..runtime._runtime import Actor
     from ..runtime._supervise import ActorNursery
 
@@ -959,7 +963,9 @@ class Server(Struct):
     async def listen_on(
         self,
         *,
-        accept_addrs: list[tuple[str, int|str]]|None = None,
+        accept_addrs: list[
+            UnwrappedAddress|Address|TunnelledAddress
+        ]|None = None,
         stream_handler_nursery: Nursery|None = None,
     ) -> list[Endpoint]:
         '''
@@ -1042,7 +1048,7 @@ async def _serve_ipc_eps(
     *,
     server: IPCServer,
     stream_handler_tn: Nursery,
-    listen_addrs: list[tuple[str, int|str]],
+    listen_addrs: list[Address|TunnelledAddress],
 
     task_status: TaskStatus[
         Nursery,
@@ -1058,6 +1064,8 @@ async def _serve_ipc_eps(
     `.cancel_server()` is called.
 
     '''
+    from ..discovery._tunnel import strip_tunnels
+
     try:
         listen_tn: Nursery
         async with trio.open_nursery() as listen_tn:
@@ -1066,7 +1074,8 @@ async def _serve_ipc_eps(
             # XXX NOTE, required to call `serve_listeners()` below.
             # ?TODO, maybe just pass `list(eps.values()` tho?
             listeners: list[trio.abc.Listener] = []
-            for addr in listen_addrs:
+            for declared_addr in listen_addrs:
+                addr: Address = strip_tunnels(declared_addr)
                 ep = Endpoint(
                     addr=addr,
                     listen_tn=listen_tn,

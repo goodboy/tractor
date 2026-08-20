@@ -18,7 +18,9 @@ from uuid import uuid4
 from typing import (
     Protocol,
     ClassVar,
+    Literal,
     Type,
+    TypeAlias,
     TYPE_CHECKING,
 )
 
@@ -35,6 +37,7 @@ from ..ipc._tcp import TCPAddress
 from ..ipc._uds import UDSAddress
 
 if TYPE_CHECKING:
+    from ._tunnel import TunnelledAddress
     from ..runtime._runtime import Actor
 
 log = get_logger()
@@ -63,25 +66,44 @@ log = get_logger()
 #    seems like the right name as per,
 #    https://www.geeksforgeeks.org/introduction-to-address-descriptor/
 #
-UnwrappedAddress = (
-    # tcp/udp/uds
-    tuple[
-        str,  # host/domain(tcp), filesys-dir(uds)
-        int|str,  # port/path(uds)
-    ]
-    # ?TODO? should we also include another 2 fields from
-    # our `Aid` msg such that we include the runtime `Actor.uid`
-    # of `.name` and `.uuid`?
-    # - would ensure uniqueness across entire net?
-    # - allows for easier runtime-level filtering of "actors by
-    #   service name"
+TaggedTCPAddress: TypeAlias = tuple[
+    Literal['tcp'],
+    str,
+    int,
+]
+TaggedUnixAddress: TypeAlias = tuple[
+    Literal['unix'],
+    str,
+]
+TaggedUDSAlias: TypeAlias = tuple[
+    Literal['uds'],
+    str,
+]
+TaggedAddress: TypeAlias = (
+    TaggedTCPAddress
+    |TaggedUnixAddress
 )
+
+# Input-only compatibility forms retained for older callers and
+# serialized payloads.
+LegacyTCPAddress: TypeAlias = tuple[str, int]
+LegacyUDSAddress: TypeAlias = tuple[str, str]
+LegacyUnwrappedAddress: TypeAlias = (
+    LegacyTCPAddress
+    |LegacyUDSAddress
+)
+UnwrappedAddress = TaggedAddress
+# ?TODO? should we also include another 2 fields from our `Aid` msg
+# such that we include the runtime `Actor.uid` of `.name` and `.uuid`?
+# - would ensure uniqueness across entire net?
+# - allows for easier runtime-level filtering of "actors by service
+#   name"
 
 
 # TODO, maybe rename to `SocketAddress`?
 class Address(Protocol):
     proto_key: ClassVar[str]
-    unwrapped_type: ClassVar[UnwrappedAddress]
+    unwrapped_type: ClassVar[type]
 
     # TODO, i feel like an `.is_bound()` is a better thing to
     # support?
@@ -93,7 +115,7 @@ class Address(Protocol):
 
     # TODO, maybe `.netns` is a better name?
     @property
-    def namespace(self) -> tuple[str, int]|None:
+    def namespace(self) -> tuple[str, str|int]|None:
         '''
         The if-available, OS-specific "network namespace" key.
 
@@ -192,7 +214,16 @@ def get_address_cls(name: str) -> Type[Address]:
 
 
 def is_wrapped_addr(addr: any) -> bool:
-    return type(addr) in _address_types.values()
+    # XXX NOTE, a `TunnelledAddress` is genuinely "wrapped" but is
+    # deliberately NOT in `_address_types`: it has no
+    # `MsgTransport` of its own (a tunnel is transparent to
+    # `socket(2)`), so it gets no proto-key entry. See `._tunnel`.
+    from ._tunnel import TunnelledAddress
+    return (
+        type(addr) in _address_types.values()
+        or
+        isinstance(addr, TunnelledAddress)
+    )
 
 
 def mk_uuid() -> str:
@@ -206,8 +237,16 @@ def mk_uuid() -> str:
 
 
 def wrap_address(
-    addr: UnwrappedAddress|str,
-) -> Address:
+    addr: (
+        TaggedAddress
+        |TaggedUDSAlias
+        |LegacyUnwrappedAddress
+        |list[str|int]
+        |str
+        |Address
+        |TunnelledAddress
+    ),
+) -> Address|TunnelledAddress:
     '''
     Wrap an `UnwrappedAddress` as an `Address`-type based
     on matching builtin python data-structures which we adhoc
@@ -228,6 +267,20 @@ def wrap_address(
     # if 'sock' in addr[0]:
     #     import pdbp; pdbp.set_trace()
     match addr:
+
+        case (
+            ('tcp', str(), int())
+            |
+            ['tcp', str(), int()]
+        ):
+            return TCPAddress.from_addr(addr)
+
+        case (
+            (('unix' | 'uds'), str())
+            |
+            [('unix' | 'uds'), str()]
+        ):
+            return UDSAddress.from_addr(addr)
 
         # classic network socket-address as tuple/list
         case (

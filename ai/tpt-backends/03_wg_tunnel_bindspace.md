@@ -22,24 +22,23 @@ onto `trio` as the library's sans-io layer allows.
 ## 1. What exists today (verified, per #482)
 
 - `wrap_address()` accepts maddr `str`s (leading-`/` dispatch,
-  `_addr.py:262`) but `parse_maddr()` only knows
-  `/ip4|ip6/<h>/tcp/<p>` and `/unix/<p>`; a `.../wg/u<key>`
-  maddr raises `ValueError('Unsupported multiaddr protocol
-  combo')`.
+  `_addr.py:262`). `parse_maddr()` and `mk_maddr()` support plain
+  TCP/UDS addresses plus nested, canonical bearer-first `/wg/`
+  stacks represented locally as `TunnelledAddress` wrappers.
 - there is no `wg` proto in the multiaddr *spec* yet, but
   multiformats/py-multiaddr#108 (key form `u<base64url>`) is
   **merged** as of 2026-07-28 (`f86519da`) — and unreleased, the
   latest `0.2.0` predating it. Spec registration is still tracked
   by multiformats/py-multiaddr#107 and gh #483.
-- so **today's deployable story is declarative**: run `wg-quick`
-  out-of-band, parse the maddr, strip to the overlay
+- **today's deployable story remains declarative**: run `wg-quick`
+  out-of-band, parse the maddr, strip its wrapper to the overlay
   `(host, port)`, verify the pubkey against the live tunnel,
   hand the overlay addr to `registry_addrs=`/`tpt_bind_addrs=`.
   #482 already contains working example code for exactly this.
 - `Address.namespace` exists in the Protocol
   (`_addr.py:94-101`, "the if-available OS-specific network
-  namespace key") and **no backend implements it**. This plan is
-  its first consumer.
+  namespace key"). `TunnelledAddress` implements it from its spec;
+  no concrete transport backend implements it yet.
 
 ## 2. Three layers, three PRs
 
@@ -123,7 +122,7 @@ that the key decodes to exactly 32 bytes, so a truncated key is a
 ```
 /ip4/192.168.1.50/udp/51820/wg/u<A_pub>/ip4/10.0.11.1/tcp/1616
 \_______ bearer __________/\__ key __/\______ overlay ______/
- underlay, wg `ListenPort`             the ONLY part we bind
+ underlay, wg `ListenPort`             the `MsgTransport` bind
 ```
 
 The `/wg/` segment is **infix, not suffix** — the segments
@@ -150,11 +149,11 @@ Observed protocol-name lists, for writing the `match`:
 - so the three parts have **three different owners**, and only the
   third is an `Endpoint`:
 
-  | part | bound by | in the runtime? |
+  | part | socket owner / provisioner | runtime role |
   | --- | --- | --- |
-  | bearer | kernel, via `wg-quick`/`pyroute2` | no |
-  | `/wg/u<key>` | nothing — it's an identity | no, verified out-of-band |
-  | overlay | `tractor`'s `IPCServer` | **yes**, as `.overlay` |
+  | bearer | kernel-owned; externally provisioned in layer A, tractor bindspace-provisioned in layer C | control-plane metadata, never an `Endpoint` |
+  | `/wg/u<key>` | nothing — it's an identity | parsed and explicitly verified |
+  | overlay | `tractor`'s `IPCServer` | application `MsgTransport`, as `.overlay` |
 
   This owner-split is the real axis of the design, *not* whether
   the maddr stack is "composed" (it is).
@@ -197,9 +196,9 @@ Observed protocol-name lists, for writing the `match`:
 - `mk_maddr()` inverse for `TunnelledAddress` is just
   `.encapsulate()` composition; don't rebuild `str`s by hand.
 - **pending an upstream release**: py-multiaddr#108 is merged, so
-  `Multiaddr('/…/wg/u…')` parses — but off a `[tool.uv.sources]`
-  `rev` pin, since no release carries the codec. Gate the tests
-  on `_have_wg_maddr_proto()`, implemented as
+  `Multiaddr('/…/wg/u…')` parses off a PEP 621 direct-revision pin,
+  since no release carries the codec. Gate parser entry on
+  `_wg_proto_code()`, implemented as
   `protocols.protocol_with_name('wg')` under
   `except ProtocolNotFoundError`. Do **not** probe by parsing a
   dummy like `Multiaddr('/wg/uAAAA')` — the codec enforces a
@@ -209,13 +208,14 @@ Observed protocol-name lists, for writing the `match`:
 
 ### 3.3 verification helper (pure, composable)
 
-Port #482 §2's helpers into `tractor/discovery/_tunnel.py` as
-*pure functions* + one impure probe, cleanly separated:
+Port #482 §2's pure helpers into
+`tractor/discovery/_tunnel.py`, keeping the impure probe cleanly
+separated until layer B:
 
 ```python
 def parse_wg_maddr(maddr: str) -> TunnelledAddress: ...   # pure
 def wg8_pubkey(multibase_key: str) -> str: ...            # pure
-def verify_wg_peer(spec: WGTunnelSpec) -> bool: ...       # impure probe
+def verify_wg_peer(spec: WGTunnelSpec) -> bool: ...       # layer B
 ```
 
 In layer A `verify_wg_peer()` may shell out (`wg show <if>
@@ -319,40 +319,118 @@ data-structure which can easily be passed to nested `@acm`s
 which consecutively setup nested net bindspaces for binding the
 endpoint addrs"*.
 
+Layer C is where tractor takes ownership of bindspace orchestration.
+For a fully bootstrapped deployment it may create the netns and wg
+iface, configure peers/routes, and ask the kernel to establish the
+bearer's UDP `ListenPort` through netlink/`pyroute2`. "Kernel-owned"
+describes the data-plane socket, not who provisions it: tractor owns
+the lifecycle while `Endpoint`/`MsgTransport` remain responsible only
+for the overlay application socket.
+
 ### 5.1 the composition
 
+The maddr describes the composed network path and can be used as
+either a source/listen or destination/dial handle. It does **not**
+select the local instance of that network stack. A netns, VRF,
+interface, user namespace, or equivalent platform resource is
+orthogonal augmentation carried alongside/below the maddr.
+
+Keep two bindspace representations with deliberately different
+lifetimes:
+
 ```python
+class BindspaceSpec(msgspec.Struct, frozen=True):
+    '''Serializable spawn/config declaration.'''
+    kind: str                 # `netns`, later `vrf`, ...
+    key: str|None             # requested name/key, if any
+
+
+class BindspaceIdentity(msgspec.Struct, frozen=True):
+    '''Stable identity of the realized platform resource.'''
+    kind: str
+    key: str|None
+    inode: int|None           # Linux namespace identity
+
+
+class BindspaceHandle:
+    '''Scoped, non-serializable capability for one live bindspace.'''
+    spec: BindspaceSpec
+    identity: BindspaceIdentity
+    namespace_fd: int|None
+    ownership: Literal['owned', 'borrowed']
+
+
 @acm
 async def open_bindspace(
-    addr: TunnelledAddress,
-) -> AsyncGenerator[Address, None]:
+    spec: BindspaceSpec,
+    *,
+    role: Literal['listen', 'dial'],
+) -> AsyncGenerator[BindspaceHandle, None]:
     '''
-    Enter the net-bindspace implied by `addr`'s tunnel stack,
-    yielding the *overlay* `Address` ready to bind/connect.
-
-    Nests: one `@acm` per tunnel segment, outermost-first, so
-    a 2-deep stack is just two nested `async with`s and the
-    teardown order is guaranteed by `trio`.
+    Provision/borrow one bindspace and yield its live capability.
 
     '''
 ```
 
-with per-tunnel-kind implementations:
+The exact field set remains design work; the required split does not:
+`BindspaceSpec` crosses config/spawn serialization, while
+`BindspaceHandle` contains live OS resources (especially an open
+namespace FD), pins identity/lifetime, and must never cross msgpack.
+An FD is a stronger capability than a namespace name: it avoids
+name-resolution TOCTOU, survives rename/unlink, and identifies the
+exact namespace the parent provisioned.
+
+`open_bindspace()` is **not** an address factory and does not return a
+`TunnelledAddress`. At the declaration layer, listener allocation can
+use the handle to replace an overlay while preserving every tunnel:
+
+```python
+async with open_bindspace(
+    bindspace_spec,
+    role='listen',
+) as bindspace:
+    listen_decl = declared_addr.get_random(
+        bindspace=bindspace,
+    )
+    transport_addr = strip_tunnels(listen_decl)
+```
+
+That sketch intentionally leaves the `.get_random()`/bindspace value
+contract open. A concrete transport call returns a concrete overlay;
+a declaration-level call may replace the overlay and return a new
+`TunnelledAddress`. In either case wrappers remain until the final
+transport bind/dial boundary, where `strip_tunnels()` is mandatory.
+
+Per-platform provisioning still composes one resource context per
+tunnel/bindspace layer:
 
 ```python
 @acm
-async def open_netns(name: str) -> AsyncGenerator[None, None]: ...
+async def open_netns(
+    spec: BindspaceSpec,
+    role: Literal['listen', 'dial'],
+) -> AsyncGenerator[BindspaceHandle, None]: ...
+
 @acm
-async def open_wg_iface(spec: WGTunnelSpec) -> AsyncGenerator[WGTunnelSpec, None]: ...
+async def open_wg_iface(
+    spec: WGTunnelSpec,
+    bindspace: BindspaceHandle,
+    role: Literal['listen', 'dial'],
+) -> AsyncGenerator[WGTunnelSpec, None]: ...
 ```
 
 and a driver that folds a list of specs into nested contexts
 (`contextlib.AsyncExitStack` for the N-deep case). The
 `parse_endpoints()` API (`_multiaddr.py:153`) is the front door:
-it already returns `dict[name, list[Address]]` and the
+it already returns
+`dict[name, list[Address|TunnelledAddress]]` and the
 `multiaddr_declare_eps.md` sketch anticipates the recursive
 `dict[str, list[Address]]|dict[...]` return for tunnelled
 entries. Extend it to carry the tunnel stack, not to *enter* it.
+
+The caller supplies `role`; do not infer it from maddr shape. The same
+composed maddr can name a server source or client destination, and the
+required local provisioning/ownership differs (§5.3).
 
 ### 5.2 `Address.namespace`, at last
 
@@ -368,6 +446,13 @@ entries. Extend it to carry the tunnel stack, not to *enter* it.
   `f'|_netns: {netns}\n'` placeholder sitting in
   `Endpoint.pformat()`, `_server.py:645`). Fill that in; it's
   the cheapest possible proof the layer is wired.
+
+Use `github/ns_aware@e4688cad` as prototype evidence, not code to
+cherry-pick unchanged. Its `/proc/<pid>/ns/<type>` inode reader and
+`ip netns identify` probe establish the useful `(key, inode)` identity
+pair. Layer C should move that shape into `BindspaceIdentity`, avoid a
+subprocess where netlink/procfs suffices, and hold the namespace FD in
+`BindspaceHandle` to pin the identity.
 
 ### 5.3 the netns/process reality — read this before designing
 
@@ -396,26 +481,52 @@ server bound in the old namespace.
 - entering a netns is *process-global-ish and irreversible-ish*
   in practice. Therefore: **netns membership belongs to the
   actor process, decided before the runtime binds**, not to a
-  mid-life `@acm`. Design:
-  - the root/parent decides the netns for a subactor and passes
-    it in the spawn spec (there's already
+  mid-life actor API. Design:
+  - the root/parent decides the `BindspaceSpec`, provisions or
+    borrows it, and passes the spec plus an inherited/transferred
+    namespace-FD capability through the spawn backend (there's already
     `enable_transports`/`accept_addrs` plumbing at
     `_runtime.py:1595-1615` — the netns rides alongside).
-  - the child, in `_runtime.async_main()` **before**
-    `IPCServer.listen_on()`, enters it.
-  - the mid-life `@acm` form is then only for the *root* /
-    single-actor case, and for iface creation (which is
-    genuinely scoped).
+  - the child spawn/bootstrap trampoline calls `setns()` **before**
+    `_runtime.async_main()`, `IPCServer.listen_on()`, parent-channel
+    connection, or creation of any worker thread/socket.
+  - only after successful entry does the child drop namespace-entry
+    privileges and initialize the actor runtime.
+  - a root/single-actor process follows the same ordering: enter during
+    root bootstrap, never after actor runtime startup.
+  - iface/route/WG provisioning is genuinely scoped and remains under
+    the parent/supervisor's `BindspaceHandle` context.
   - document the constraint rather than hiding it; a
-    `RuntimeError` if `open_netns()` is entered after any
-    listener exists.
-- privileges: iface/netns creation needs `CAP_NET_ADMIN`.
-  Never `sudo` from inside the runtime. Two supported modes:
+    `RuntimeError` if namespace entry is attempted after bootstrap.
+- capabilities: iface/netns creation/config needs `CAP_NET_ADMIN`;
+  entering an existing Linux namespace normally requires
+  `CAP_SYS_ADMIN` in the owning user namespace. Never `sudo` from
+  inside the runtime. A privileged parent/helper should provision the
+  stack and open the namespace FD; the child receives only the scoped
+  capability and temporary authority needed to enter it, then drops
+  that authority before actor code runs. This separates create/config
+  authority from enter/use authority and fits user-namespace/capability
+  deployments without granting every actor broad ambient caps.
+  Two supported modes remain:
   (i) pre-provisioned out-of-band (layers A/B — the default,
-  and what #482 documents), (ii) runtime-managed when the
-  process already holds the cap. Detect with a cheap
-  `os.geteuid()==0 or CAP_NET_ADMIN in /proc/self/status`
-  probe and *fail loudly with an actionable message* otherwise.
+  and what #482 documents), (ii) runtime-managed when the supervising
+  process/helper holds the required caps. Probe exact required caps and
+  *fail loudly with an actionable message* otherwise.
+- role semantics are explicit:
+  - `listen`: may create/own the local bindspace, iface, routes, WG
+    peer/listener state, and random local overlay; lifetime normally
+    extends through all listeners and the actor process.
+  - `dial`: may borrow an actor-wide bindspace or ensure local routing
+    and tunnel state reaches the remote stack; it does not own the
+    remote maddr and may need no new local resource at all.
+  - source/destination use is an operation property, never permanently
+    encoded into the maddr or inferred from segment ordering.
+- teardown follows capability ownership, not just address type:
+  - owned listener bindspaces tear down after endpoints/channels and
+    the actor process have exited;
+  - borrowed dial/actor-wide bindspaces only release their handle;
+  - nested resources exit inside-out, but shared resources remain until
+    their owning supervisor drops the final capability.
 - teardown must be idempotent and tolerant: an iface/netns
   already gone must not strand the rest of the teardown — the
   exact lesson `_uds.close_listener()`'s `FileNotFoundError`
@@ -434,6 +545,13 @@ server bound in the old namespace.
   self-contained — no second host, no `sudo` in the test body.
 - the `to_thread`-netns-mismatch regression from §5.3, written
   **first** (red), then the fix (green), per project convention.
+- bootstrap ordering: assert the child reports the expected namespace
+  inode before parent-channel connect and listener creation.
+- FD capability: rename/unlink the namespace name after opening its FD
+  and prove child entry still selects the pinned inode.
+- privilege drop: prove actor code lacks provisioning caps after entry.
+- role/ownership: fake listen/dial resources and assert owned listener
+  teardown versus borrowed dial-handle release.
 
 ---
 
@@ -467,8 +585,12 @@ consider doing it *first* for exactly that reason.
 | risk | mitigation |
 | --- | --- |
 | `to_thread` worker runs in the wrong netns | §5.3; pass `netns=` to pyroute2 or pin a worker; test-first |
-| py-multiaddr#108 merged but unreleased | `[tool.uv.sources]` `rev` pin + `_have_wg_maddr_proto()` gate; layer A's overlay-addr path works regardless |
-| `TunnelledAddress` leaks into `Endpoint` and breaks `inspect.getmodule()` | unwrap at parse/bindspace boundary; assert `not isinstance(ep.addr, TunnelledAddress)` in `Endpoint.__post_init__` |
+| namespace name is renamed/replaced between provision and spawn | pass an open namespace FD; verify `(key, inode)` after child entry |
+| child starts sockets/threads before `setns()` | enter in the spawn bootstrap trampoline before `_runtime.async_main()`; assert inode ordering |
+| ambient capabilities leak into actor app code | split provision/enter authority and drop caps before runtime initialization |
+| dial path tears down a shared actor bindspace | encode ownership in `BindspaceHandle`; borrowed handles never remove resources |
+| py-multiaddr#108 merged but unreleased | PEP 621 direct-revision pin + `_wg_proto_code()` gate; replace with a release floor once published |
+| `TunnelledAddress` leaks into transport reflection/type dispatch | keep wrappers through declaration/bindspace handling, call `strip_tunnels()` at channel/endpoint boundaries, and retain the boundary regressions |
 | privileged ops in a library | never `sudo`; explicit cap probe + actionable error; pre-provisioned is the default |
 | pyroute2 0.9 asyncio core drags a loop into the actor | option (1) is a *thread*, not a loop; forbid `trio-asyncio` here (§4.1) |
 | netns teardown strands actor teardown | idempotent/tolerant teardown mirroring `_uds.close_listener()` |

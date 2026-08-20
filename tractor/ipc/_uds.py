@@ -63,6 +63,7 @@ from tractor.runtime._state import (
 )
 
 if TYPE_CHECKING:
+    from tractor.discovery._addr import TaggedUnixAddress
     from tractor.runtime._runtime import Actor
 
 
@@ -114,7 +115,7 @@ class UDSAddress(
     # -[ ] need to check what other mult-transport frameworks do
     #     like zmq, nng, uri-spec et al!
     proto_key: ClassVar[str] = 'uds'
-    unwrapped_type: ClassVar[type] = tuple[str, int]
+    unwrapped_type: ClassVar[type] = tuple
     def_bindspace: ClassVar[Path] = get_rt_dir()
 
     @property
@@ -132,7 +133,7 @@ class UDSAddress(
 
     @property
     def sockpath(self) -> Path:
-        return self.bindspace / self.filename
+        return Path(self.bindspace) / self.filename
 
     @property
     def is_valid(self) -> bool:
@@ -146,16 +147,26 @@ class UDSAddress(
     def from_addr(
         cls,
         addr: (
-            tuple[Path|str, Path|str]|Path|str
+            tuple|list|Path|str
         ),
     ) -> UDSAddress:
         match addr:
-            case tuple()|list():
-                filedir = Path(addr[0])
-                filename = Path(addr[1])
+            case (
+                (('unix' | 'uds'), str()|Path() as sockpath)
+                |
+                [('unix' | 'uds'), str()|Path() as sockpath]
+            ):
+                path = Path(sockpath)
+                return UDSAddress(*unwrap_sockpath(path))
+
+            case (
+                (str()|Path() as filedir, str()|Path() as filename)
+                |
+                [str()|Path() as filedir, str()|Path() as filename]
+            ):
                 return UDSAddress(
-                    filedir=filedir,
-                    filename=filename,
+                    filedir=Path(filedir),
+                    filename=Path(filename),
                     # maybe_pid=pid,
                 )
             # NOTE, in case we ever decide to just `.unwrap()`
@@ -170,12 +181,10 @@ class UDSAddress(
                     f'{addr!r}\n'
                 )
 
-    def unwrap(self) -> tuple[str, int]:
-        # XXX NOTE, since this gets passed DIRECTLY to
-        # `.ipc._uds.open_unix_socket_w_passcred()`
+    def unwrap(self) -> TaggedUnixAddress:
         return (
-            str(self.filedir),
-            str(self.filename),
+            'unix',
+            str(self.sockpath),
         )
 
     @classmethod

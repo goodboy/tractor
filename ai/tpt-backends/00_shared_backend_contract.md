@@ -112,7 +112,12 @@ Hard constraints learned from the existing two:
 - **`.bindspace` semantics**: "the address' bindable space" —
   ip/host for `tcp`, the socket-file *directory* for `uds`. For
   the new backends: the TIPC *scope* (§1 of plan 01), the iroh
-  *ALPN + relay/discovery realm* (plan 02), the netns (plan 03).
+  *ALPN + relay/discovery realm* (plan 02). Do not overload this
+  transport-level bind selector with process namespace lifecycle.
+  Plan 03 augments an maddr/address declaration with a serializable
+  `BindspaceSpec` and a scoped, non-serializable `BindspaceHandle`;
+  the latter owns namespace identity/FD/lifetime and is consumed at
+  spawn bootstrap before a concrete address reaches transport bind.
   `Address.namespace` is already spec'd in the Protocol as
   "the if-available OS-specific network namespace key" and is
   currently unimplemented by both backends — plan 03 is the
