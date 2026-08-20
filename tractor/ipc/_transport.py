@@ -498,13 +498,30 @@ class MsgpackTransport(MsgTransport):
             # https://stackoverflow.com/a/54027962
             size: bytes = struct.pack("<I", len(bytes_data))
             try:
-                return await self.stream.send_all(size + bytes_data)
-            except trio.Cancelled:
-                # `send_all()` may have written a partial frame. The
-                # stream can not safely carry another framed msg.
+                # Every IPC msg is length-prefixed and all contexts
+                # on this actor pair share one transport stream. If
+                # cancellation interrupts `send_all()`, an unknown
+                # frame prefix may already be on the wire; allowing
+                # the next sender to append would corrupt framing.
+                # Closing the stream avoids that corruption but lets
+                # one context-local cancellation destroy every sibling
+                # context using the channel.
+                #
+                # Keep the `._send_lock` and defer cancellation only
+                # for complete frame publication. Broken/closed stream
+                # failures still escape to the handlers below. Once
+                # the frame is complete, the explicit checkpoint
+                # immediately delivers any pending cancellation.
+                #
+                # This can delay cancellation while a peer is not
+                # reading; peer/channel teardown must close the stream
+                # to unblock a permanently stalled socket write.
                 with trio.CancelScope(shield=True):
-                    await self.stream.aclose()
-                raise
+                    await self.stream.send_all(size + bytes_data)
+
+                await trio.lowlevel.checkpoint_if_cancelled()
+                return None
+
             except (
                 trio.BrokenResourceError,
                 trio.ClosedResourceError,

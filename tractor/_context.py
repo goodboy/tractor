@@ -2021,9 +2021,16 @@ class Context:
                     await chan.send(err_msg)
                     return True
 
-                # XXX: local consumer has closed their side of
-                # the IPC so cancel the far end streaming task
-                except trio.BrokenResourceError:
+                # XXX: the local consumer may have closed its side of
+                # the IPC, in which case context/channel teardown owns
+                # cancellation of the far-end streaming task. The same
+                # shipment can raise `TransportClosed` when either peer
+                # has already closed the shared IPC channel. In both
+                # cases the primary overrun can no longer be reported.
+                except (
+                    TransportClosed,
+                    trio.BrokenResourceError,
+                ):
                     log.warning(
                         'Channel for ctx is already closed?\n'
                         f'|_{chan}\n'

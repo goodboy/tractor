@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import socket
 import stat
+import struct
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from unittest.mock import Mock
 
 import pytest
 import trio
+from trio.testing import wait_all_tasks_blocked
 import tractor
 from tractor import Actor
 from tractor.discovery import _addr
@@ -22,56 +24,112 @@ from tractor.runtime import _state
 
 
 
-def test_cancelled_transport_send_closes_stream():
+def test_cancelled_transport_send_completes_frame():
     '''
-    Discard a transport after cancellation interrupts a framed send.
+    Finish an in-flight frame before delivering sender cancellation.
 
-    Trio's `SendStream.send_all()` may write an arbitrary frame prefix
-    before raising `Cancelled`. Sending another IPC msg afterward
-    would append a second frame and desynchronize the peer decoder.
-    The fake stream checkpoints after recording send entry; cancelling
-    its nursery deterministically interrupts that unknown-publication
-    window. Its close assertion proves the transport is made unusable
-    before another framed msg can be attempted.
+    A cancelled `send_all()` may leave an arbitrary frame prefix on the
+    wire. Closing the actor-wide stream avoids decoder corruption but
+    also destroys unrelated contexts using that channel. The fake
+    stream publishes two header bytes and blocks, letting this test
+    cancel the sender inside frame publication. The sender must remain
+    blocked until the complete frame is written, then observe pending
+    cancellation; a second complete frame proves channel reuse remains
+    safe.
 
     '''
     class PartialSendStream:
         def __init__(self) -> None:
             self.send_entered = trio.Event()
+            self.release = trio.Event()
             self.closed = False
+            self.wire = bytearray()
 
         async def send_all(
             self,
             data: bytes,
         ) -> None:
             assert data
-            self.send_entered.set()
-            await trio.sleep_forever()
+            if not self.wire:
+                self.wire.extend(data[:2])
+                self.send_entered.set()
+                await self.release.wait()
+                self.wire.extend(data[2:])
+            else:
+                self.wire.extend(data)
 
         async def aclose(self) -> None:
             self.closed = True
+
+    def count_frames(wire: bytearray) -> int:
+        offset: int = 0
+        count: int = 0
+        while offset < len(wire):
+            header_end: int = offset + 4
+            assert header_end <= len(wire)
+            size, = struct.unpack('<I', wire[offset:header_end])
+            offset = header_end + size
+            assert offset <= len(wire)
+            count += 1
+
+        assert offset == len(wire)
+        return count
 
     async def main() -> None:
         stream = PartialSendStream()
         transport = object.__new__(MsgpackTransport)
         transport.stream = stream
         transport._send_lock = trio.StrictFIFOLock()
+        sender_done = trio.Event()
+        sender_scopes: list[trio.CancelScope] = []
+        cancelled_caught: bool = False
+
+        first_msg = tractor.msg.Start(
+            ns=__name__,
+            func='add_one',
+            kwargs={'n': 1},
+            uid=('root', 'test'),
+            cid='partial-send',
+        )
+        second_msg = tractor.msg.Start(
+            ns=__name__,
+            func='add_one',
+            kwargs={'n': 2},
+            uid=('root', 'test'),
+            cid='second-send',
+        )
+
+        async def send_first() -> None:
+            nonlocal cancelled_caught
+            with trio.CancelScope() as cs:
+                sender_scopes.append(cs)
+                await transport.send(first_msg)
+
+            cancelled_caught = cs.cancelled_caught
+            sender_done.set()
 
         async with trio.open_nursery() as tn:
             tn.start_soon(
-                transport.send,
-                tractor.msg.Start(
-                    ns=__name__,
-                    func='add_one',
-                    kwargs={'n': 1},
-                    uid=('root', 'test'),
-                    cid='partial-send',
-                ),
+                send_first,
             )
             await stream.send_entered.wait()
-            tn.cancel_scope.cancel()
+            sender_scopes[0].cancel()
+            await wait_all_tasks_blocked()
 
-        assert stream.closed
+            assert not stream.closed
+            assert not sender_done.is_set()
+
+            stream.release.set()
+            await sender_done.wait()
+
+            assert cancelled_caught
+            assert not stream.closed
+            assert count_frames(stream.wire) == 1
+
+            await transport.send(second_msg)
+            assert count_frames(stream.wire) == 2
+
+            tn.cancel_scope.cancel()
 
     trio.run(main)
 

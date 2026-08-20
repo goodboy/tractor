@@ -11,8 +11,13 @@ from pathlib import Path
 import platform
 from pprint import pformat
 import sys
+from types import SimpleNamespace
 from typing import (
     Callable,
+)
+from unittest.mock import (
+    AsyncMock,
+    Mock,
 )
 
 import pytest
@@ -26,6 +31,7 @@ from tractor import (
 from tractor._exceptions import (
     StreamOverrun,
     ContextCancelled,
+    TransportClosed,
 )
 from tractor.runtime._state import current_ipc_ctx
 
@@ -72,6 +78,88 @@ from tractor._testing import (
 # - cancel/error termination: as per the context semantics above but
 #   with implicit stream closure on the cancelling end.
 
+
+def test_overrun_error_send_tolerates_transport_close(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Preserve a stream overrun when its error can not be shipped.
+
+    A full local stream buffer makes `Context._deliver_msg()` package
+    `StreamOverrun` for the remote sender. On Darwin, a concurrently
+    closing socket is wrapped as `TransportClosed`; allowing that
+    secondary error to escape replaces the primary overrun and crashes
+    the actor-wide RPC loop. This fake context forces that ordering and
+    proves failed error shipment reports non-delivery without raising.
+
+    '''
+    error_msg = tractor.msg.Error(
+        src_uid=('local', 'test'),
+        src_type_str='StreamOverrun',
+        boxed_type_str='StreamOverrun',
+        relay_path=[],
+        sender=('peer', 'test'),
+        cid='overrun',
+    )
+    packed: dict[str, object] = {}
+
+    def pack_overrun(
+        local_err: BaseException,
+        cid: str,
+        **kwargs,
+    ) -> tractor.msg.Error:
+        packed['local_err'] = local_err
+        packed['cid'] = cid
+        packed['kwargs'] = kwargs
+        return error_msg
+
+    monkeypatch.setattr(
+        'tractor._context.pack_from_raise',
+        pack_overrun,
+    )
+
+    async def main() -> None:
+        send_chan = Mock()
+        send_chan.send_nowait.side_effect = trio.WouldBlock
+        chan = SimpleNamespace(
+            aid=SimpleNamespace(uid=('peer', 'test')),
+            send=AsyncMock(
+                side_effect=TransportClosed('peer closed'),
+            ),
+        )
+        local_aid = SimpleNamespace(
+            name='local',
+            reprol=lambda: 'local@test',
+        )
+        ctx = SimpleNamespace(
+            cid='overrun',
+            chan=chan,
+            _send_chan=send_chan,
+            _nsf='tests:overrun',
+            side='parent',
+            peer_side='child',
+            _portal=object(),
+            _task=None,
+            repr_api='Context',
+            repr_caller='test',
+            _in_overrun=False,
+            _actor=SimpleNamespace(aid=local_aid),
+            _stream_opened=True,
+            _allow_overruns=False,
+        )
+        msg = tractor.msg.Yield(
+            cid=ctx.cid,
+            pld='payload',
+        )
+
+        delivered: bool = await Context._deliver_msg(ctx, msg)
+
+        assert delivered is False
+        assert isinstance(packed['local_err'], StreamOverrun)
+        assert packed['cid'] == ctx.cid
+        chan.send.assert_awaited_once_with(error_msg)
+
+    trio.run(main)
 
 _state: bool = False
 
