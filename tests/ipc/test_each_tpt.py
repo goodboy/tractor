@@ -134,6 +134,79 @@ def test_cancelled_transport_send_completes_frame():
     trio.run(main)
 
 
+def test_cancelled_transport_send_preserves_cancellation():
+    '''
+    Prefer sender cancellation when teardown closes the stream.
+
+    `MsgpackTransport.send()` shields frame publication. Before this
+    regression fix, if an outer scope cancelled the sender and actor
+    teardown then made `send_all()` raise `ClosedResourceError`, the
+    transport error escaped instead of the pending cancellation. That
+    defeated `move_on_after()` and failed otherwise orderly teardown.
+
+    The fake stream blocks inside the shield until the test cancels the
+    sender, then raises the same close error seen on macOS UDS. Observing
+    `CancelScope.cancelled_caught` proves cancellation wins once the
+    shield unwinds.
+
+    '''
+    class ClosingStream:
+        def __init__(self) -> None:
+            self.send_entered = trio.Event()
+            self.release = trio.Event()
+
+        async def send_all(
+            self,
+            data: bytes,
+        ) -> None:
+            assert data
+            self.send_entered.set()
+            await self.release.wait()
+            raise trio.ClosedResourceError(
+                'this socket was already closed'
+            )
+
+    async def main() -> None:
+        stream = ClosingStream()
+        transport = object.__new__(MsgpackTransport)
+        transport.stream = stream
+        transport._send_lock = trio.StrictFIFOLock()
+        sender_done = trio.Event()
+        sender_scopes: list[trio.CancelScope] = []
+        cancelled_caught: bool = False
+
+        msg = tractor.msg.Start(
+            ns=__name__,
+            func='add_one',
+            kwargs={'n': 1},
+            uid=('root', 'test'),
+            cid='close-during-cancelled-send',
+        )
+
+        async def send() -> None:
+            nonlocal cancelled_caught
+            with trio.CancelScope() as cs:
+                sender_scopes.append(cs)
+                await transport.send(msg)
+
+            cancelled_caught = cs.cancelled_caught
+            sender_done.set()
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(send)
+            await stream.send_entered.wait()
+            sender_scopes[0].cancel()
+            await wait_all_tasks_blocked()
+
+            assert not sender_done.is_set()
+            stream.release.set()
+            await sender_done.wait()
+
+        assert cancelled_caught
+
+    trio.run(main)
+
+
 @pytest.fixture
 def bindspace_dir_str() -> str:
 

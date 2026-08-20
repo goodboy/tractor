@@ -892,20 +892,28 @@ def test_multi_nested_subactors_error_through_nurseries(
     # happening but ONLY WHEN RUN FROM THE TEST, bc when i try to
     # run the test script manually the correct output ALWAYS seems
     # to be in the last `str(child.before.decode())` output !?!?
+    transcript: str = '\n'.join(transcript_parts)
     if (
         not is_forking_spawner
         and
         last_send_char == 'q'
     ):
-        expect_patts += [
-            # expect the pdb-quit exc.
-            "bdb.BdbQuit",
-            # BUT WHY these dude!?
-            "src_uid=('spawn_until_0'",
-            "relay_uid=('spawn_until_1'",
-        ]
+        # Cancellation can swap which intermediary is rendered as
+        # the immediate source vs. relay. Require both actor levels
+        # below without pinning those racy roles.
+        expect_patts.append('bdb.BdbQuit')
+        for uid in (
+            'spawn_until_0',
+            'spawn_until_1',
+        ):
+            assert any(
+                role in transcript
+                for role in (
+                    f"src_uid=('{uid}'",
+                    f"relay_uid=('{uid}'",
+                )
+            )
 
-    transcript: str = '\n'.join(transcript_parts)
     for part in expect_patts:
         assert part in transcript
 

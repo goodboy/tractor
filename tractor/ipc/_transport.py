@@ -526,6 +526,12 @@ class MsgpackTransport(MsgTransport):
                 trio.BrokenResourceError,
                 trio.ClosedResourceError,
             ) as _re:
+                # A shielded send can race outer cancellation with
+                # stream teardown. If teardown closes the stream, let
+                # the pending cancellation retain precedence instead
+                # of converting that close into `TransportClosed`.
+                await trio.lowlevel.checkpoint_if_cancelled()
+
                 trans_err = _re
                 tpt_name: str = f'{type(self).__name__!r}'
 
