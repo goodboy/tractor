@@ -57,6 +57,7 @@ from .discovery._addr import (
     mk_uuid,
     wrap_address,
 )
+from .discovery._tunnel import strip_tunnels
 from .trionics import (
     is_multi_cancelled,
     collapse_eg,
@@ -534,6 +535,7 @@ async def open_root_actor(
             # proto if not already provided.
             if not tpt_bind_addrs:
                 for addr in ponged_addrs:
+                    bindable_addr: Address = strip_tunnels(addr)
                     tpt_bind_addrs.append(
                         # XXX, these are `Address` NOT `UnwrappedAddress`.
                         #
@@ -541,8 +543,8 @@ async def open_root_actor(
                         # protos we allocate port=0 such that the system
                         # allocates a random value at bind time; this
                         # happens in the `.ipc.*` stack's backend.
-                        addr.get_random(
-                            bindspace=addr.bindspace,
+                        bindable_addr.get_random(
+                            bindspace=bindable_addr.bindspace,
                         )
                     )
 
