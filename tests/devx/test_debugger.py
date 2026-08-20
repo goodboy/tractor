@@ -769,6 +769,15 @@ def test_multi_subactors_root_errors(
 
 
 @has_nested_actors
+@pytest.mark.skipif(
+    platform.system() == 'Darwin'
+    and
+    _ci_env,
+    reason=(
+        'Nested crash-REPL ordering is unreliable on macOS CI; '
+        'see https://github.com/goodboy/tractor/issues/320'
+    ),
+)
 def test_multi_nested_subactors_error_through_nurseries(
     ci_env: bool,
     spawn: PexpectSpawner,
