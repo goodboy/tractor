@@ -772,7 +772,7 @@ def test_multi_subactors_root_errors(
 @pytest.mark.skipif(
     platform.system() == 'Darwin'
     and
-    _ci_env,
+    bool(_ci_env),
     reason=(
         'Nested crash-REPL ordering is unreliable on macOS CI; '
         'see https://github.com/goodboy/tractor/issues/320'
