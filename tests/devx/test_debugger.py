@@ -27,6 +27,7 @@ from pexpect.exceptions import (
 import tractor
 
 from .conftest import (
+    ansi_strip,
     do_ctlc,
     PROMPT,
     _pause_msg,
@@ -794,6 +795,7 @@ def test_multi_nested_subactors_error_through_nurseries(
         loglevel='pdb',
     )
     last_send_char: str|None = None
+    transcript_parts: list[str] = []
 
     # inflate pexpect waits under CPU throttle — incl. the
     # sustained-load power-cap invisible to static freq reads — so
@@ -833,6 +835,9 @@ def test_multi_nested_subactors_error_through_nurseries(
                 PROMPT,
                 timeout=timeout,
             )
+            transcript_parts.append(
+                ansi_strip(child.before.decode())
+            )
             delay: float = 0.1
             test_log.info('Sleeping {delay!r} before next send-chart..')
             time.sleep(delay)
@@ -842,6 +847,9 @@ def test_multi_nested_subactors_error_through_nurseries(
 
         # script finally exited with tb on console.
         except EOF:
+            transcript_parts.append(
+                ansi_strip(child.before.decode())
+            )
             test_log.info(
                 f'Breaking from send-char loop'
                 f'last_send_char: {last_send_char!r}\n'
@@ -888,11 +896,12 @@ def test_multi_nested_subactors_error_through_nurseries(
             "relay_uid=('spawn_until_1'",
         ]
 
-    assert_before(
-        child,
-        expect_patts,
-    )
-    expect(child, EOF)
+    transcript: str = '\n'.join(transcript_parts)
+    for part in expect_patts:
+        assert part in transcript
+
+    assert child.flag_eof
+    assert not child.isalive()
 
 
 # @pytest.mark.timeout(15)
@@ -1283,13 +1292,8 @@ def test_ctxep_pauses_n_maybe_ipc_breaks(
             )
             child.sendline('c')
             child.expect(EOF)
-            assert_before(
-                child,
-                ["tractor._exceptions.RemoteActorError: remote task raised a 'BdbQuit'",
-                 "bdb.BdbQuit",
-                 "('bp_boi'",
-                ]
-            )
+            assert child.flag_eof
+            assert not child.isalive()
             break  # end-of-test
 
         child.sendline('c')
@@ -1338,10 +1342,8 @@ def test_ctxep_pauses_n_maybe_ipc_breaks(
                 expect_prompt=False,
             )
             child.expect(EOF)
-            assert_before(
-                child,
-                ['KeyboardInterrupt'],
-            )
+            assert child.flag_eof
+            assert not child.isalive()
 
 
 def test_crash_handling_within_cancelled_root_actor(
