@@ -166,6 +166,17 @@ sync_pause = {requires-python = ">=3.13, <3.14"}
 # linux kernel networking
 # 'pyroute2
 
+# XXX TEMP, the `/wg/u<key>` maddr proto is MERGED upstream (in
+# py-multiaddr#108, 2026-07-28) but is in NO release yet; the
+# latest `0.2.0` (2026-03-17) predates the merge by ~4 months.
+# Pinned by `rev` (not `branch`) so CI stays reproducible.
+#
+# Drop this pin (and bump the `multiaddr` dep floor above) the
+# moment a release carries the `wg` codec; the only consumer is
+# `examples/multihost/wg_lan/`.
+# |_https://github.com/multiformats/py-multiaddr/pull/108
+multiaddr = { git = 'https://github.com/multiformats/py-multiaddr.git', rev = 'f86519daaa21699023d0037c58cdff600313dd09' }
+
 # ------ tool.uv.sources ------
 
 [tool.uv]
