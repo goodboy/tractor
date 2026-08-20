@@ -183,7 +183,7 @@ def test_non_registrar_root_tpt_bind_addrs(
             for uw_addr in bound:
                 w = wrap_address(uw_addr)
                 if w.proto_key == 'tcp':
-                    _host, port = uw_addr
+                    _, _host, port = uw_addr
                     assert port > 0
 
     trio.run(_main)
@@ -255,7 +255,7 @@ def test_tpt_bind_addrs_as_maddr_str(
             for uw_addr in actor.accept_addrs:
                 w = wrap_address(uw_addr)
                 if w.proto_key == 'tcp':
-                    _host, port = uw_addr
+                    _, _host, port = uw_addr
                     assert port > 0
 
     trio.run(_main)
@@ -287,7 +287,7 @@ def test_registrar_merge_binds_union(
     # actually differ (always true for TCP, may
     # collide for UDS).
     expect_disjoint: bool = (
-        tuple(reg_addr) != rando.unwrap()
+        reg_wrapped.unwrap() != rando.unwrap()
     )
 
     async def _main():

@@ -84,16 +84,15 @@ TaggedAddress: TypeAlias = (
     |TaggedUnixAddress
 )
 
-# Input-only compatibility forms. `UnwrappedAddress` remains the
-# emitted form until the tagged writer migration switches it in the
-# next atomic change.
+# Input-only compatibility forms retained for older callers and
+# serialized payloads.
 LegacyTCPAddress: TypeAlias = tuple[str, int]
 LegacyUDSAddress: TypeAlias = tuple[str, str]
 LegacyUnwrappedAddress: TypeAlias = (
     LegacyTCPAddress
     |LegacyUDSAddress
 )
-UnwrappedAddress = LegacyUnwrappedAddress
+UnwrappedAddress = TaggedAddress
 # ?TODO? should we also include another 2 fields from our `Aid` msg
 # such that we include the runtime `Actor.uid` of `.name` and `.uuid`?
 # - would ensure uniqueness across entire net?
@@ -104,7 +103,7 @@ UnwrappedAddress = LegacyUnwrappedAddress
 # TODO, maybe rename to `SocketAddress`?
 class Address(Protocol):
     proto_key: ClassVar[str]
-    unwrapped_type: ClassVar[UnwrappedAddress]
+    unwrapped_type: ClassVar[type]
 
     # TODO, i feel like an `.is_bound()` is a better thing to
     # support?

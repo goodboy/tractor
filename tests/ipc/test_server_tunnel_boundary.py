@@ -46,8 +46,8 @@ def test_server_peels_before_endpoint_construction():
             endpoint = eps[0]
 
             assert type(endpoint.addr) is TCPAddress
-            host, port = endpoint.addr.unwrap()
-            assert host == overlay.unwrap()[0]
+            _, host, port = endpoint.addr.unwrap()
+            assert host == overlay.unwrap()[1]
             assert port > 0
             assert endpoint.addr is not tunnelled
             assert tunnels_of(tunnelled) == (

@@ -73,7 +73,7 @@ def mk_maddr(
 
     match proto_key:
         case 'tcp':
-            host, port = addr.unwrap()
+            _, host, port = addr.unwrap()
             ip = ipaddress.ip_address(host)
             net_proto: str = (
                 'ip4' if ip.version == 4
@@ -84,13 +84,12 @@ def mk_maddr(
             )
 
         case 'uds':
-            filedir, filename = addr.unwrap()
-            filepath = Path(filedir) / filename
+            _, sockpath = addr.unwrap()
             # NOTE, strip any leading `/` to avoid
             # double-slash `/unix//run/..` which the
             # multiaddr parser rejects as "empty
             # protocol path".
-            fpath_str: str = str(filepath).lstrip('/')
+            fpath_str: str = sockpath.lstrip('/')
             return Multiaddr(
                 f'/{maddr_proto}/{fpath_str}'
             )

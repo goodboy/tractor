@@ -211,10 +211,11 @@ class SpawnSpec(
     # module import capability
     enable_modules: dict[str, str]
 
-    # TODO: not just sockaddr pairs?
-    # -[ ] abstract into a `TransportAddr` type?
-    reg_addrs: list[tuple[str, str|int]]
-    bind_addrs: list[tuple[str, str|int]]|None
+    # Tagged addresses have protocol-specific tuple shapes which
+    # msgspec cannot express as one decodable union. `wrap_address()`
+    # validates each tuple at the transport boundary.
+    reg_addrs: list[tuple]
+    bind_addrs: list[tuple]|None
 
 
 # TODO: caps based RPC support in the payload?
