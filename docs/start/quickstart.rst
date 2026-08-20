@@ -43,15 +43,16 @@ Run it::
 What's going on here?
 
 - ``trio.run(main)`` starts the **root actor**; the ``tractor``
-  runtime boots *implicitly* inside ``tractor.to_actor.run()``
-  whenever it isn't already up. No special entrypoint, no
-  framework takeover - it's just a ``trio`` app,
+  runtime boots *implicitly* inside this ``tractor.to_actor.run()``
+  call because neither ``an=`` nor ``portal=`` was supplied. No
+  special entrypoint, no framework takeover - it's just a ``trio``
+  app,
 - inside ``main()`` a *subactor* is spawned via
   ``tractor.to_actor.run()`` and told to run exactly one
   function: ``cellar_door()``,
 - the subactor, *some_linguist*, boots a fresh ``trio.run()`` in
-  a **new process** and executes ``cellar_door()`` as its *main
-  task* (note the child proving it is *not* the root with
+  a **new process** and executes ``cellar_door()`` as its linked
+  one-shot task (note the child proving it is *not* the root with
   ``tractor.is_root_process()``), then ships the return value
   back over IPC,
 - the call *blocks* until that final result arrives, then
@@ -67,10 +68,10 @@ What's going on here?
 
 .. note::
 
-   ``to_actor.run()`` (parlance of ``trio.to_thread`` and
-   friends) is the *convenience* wrapper: one-shot
-   spawn-run-reap semantics for when a subactor's entire job is
-   a single function call. The core primitives are
+   Without ``portal=``, ``to_actor.run()`` (parlance of
+   ``trio.to_thread`` and friends) is the *convenience* wrapper:
+   one-shot spawn-run-reap semantics for when a subactor's entire
+   job is a single function call. The core primitives are
    :meth:`~tractor.ActorNursery.start_actor` (next up) — which
    hands you a ``Portal``, your handle for invoking tasks in the
    new process's (separate!) memory domain — paired with
@@ -79,10 +80,10 @@ What's going on here?
 
 Daemon actors and RPC
 ---------------------
-A ``to_actor.run()`` one-shot subactor terminates when its lone
-task returns. But often you want long-lived *daemon* actors
-instead: spawned once, then serving (allowlisted) RPC requests
-until told otherwise. That's ``start_actor()``:
+A subactor spawned by ``to_actor.run()`` terminates after its lone
+task returns. But often you want long-lived *daemon* actors instead:
+spawned once, then serving (allowlisted) RPC requests until told
+otherwise. That's ``start_actor()``:
 
 .. literalinclude:: ../../examples/actor_spawning_and_causality_with_daemon.py
    :caption: examples/actor_spawning_and_causality_with_daemon.py
@@ -90,13 +91,16 @@ until told otherwise. That's ``start_actor()``:
 
 Two lifetime rules to internalize:
 
-- a ``to_actor.run()`` one-shot actor lives exactly as long as
-  its lone task; the call blocks until that function (and thus
-  the process) completes,
+- a subactor spawned and owned by ``to_actor.run()`` is cancelled
+  and reaped before the call returns its result or raises its error,
 - a ``start_actor()`` actor *lives forever* - an RPC daemon the
   nursery will happily wait on **indefinitely** - until some
   task explicitly cancels it via ``Portal.cancel_actor()`` (as
   above), or its parent nursery is cancelled wholesale.
+
+Passing ``portal=`` is different: the call owns only the linked
+remote task. It neither spawns nor reaps the existing actor; the
+portal's owner must end that actor's lifetime.
 
 .. tip::
 

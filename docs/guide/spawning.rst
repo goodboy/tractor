@@ -105,9 +105,9 @@ What's going on here?
 
 ``to_actor.run()``: quick one-shot parallelism
 ----------------------------------------------
-:func:`tractor.to_actor.run` is the convenience wrapper: spawn
-an actor, run exactly one async function in it, block on the
-result, then reap the process — the distributed sibling of
+Without ``portal=``, :func:`tractor.to_actor.run` is the convenience
+wrapper: spawn an actor, run exactly one async function in it, block
+on the result, then reap the process — the distributed sibling of
 ``trio.to_thread.run_sync()``.
 
 .. code:: python
@@ -126,6 +126,10 @@ A few details worth knowing:
   ``name='something_cuter'``.
 - the function's module is auto-added to the child's
   ``enable_modules`` allowlist.
+- the target must be a module-global async function, or a
+  ``functools.partial`` thereof. Nested functions, methods and callable
+  objects have no stable ``module:name`` RPC address and are rejected
+  before actor startup.
 - target arguments are positional; use ``functools.partial()``
   to bind target keyword arguments. Keywords passed directly to
   ``run()`` configure actor placement and spawning.
@@ -133,18 +137,23 @@ A few details worth knowing:
   child is *auto-cancelled* (reaped) right after — so remote
   errors raise directly in your calling task (causality_ is
   paramount!).
-- "placement" composes: ``an=`` spawns from a caller-managed
-  actor-nursery, ``portal=`` reuses an already-running actor
-  (no spawn/reap), and passing neither opens a private
-  call-scoped nursery (booting the runtime if needed).
+- "placement" composes: ``an=`` spawns a call-owned child from an
+  existing actor nursery, while passing neither opens a private
+  call-scoped nursery. ``portal=`` instead reuses an existing actor:
+  the call scopes only its linked remote task, neither spawns nor
+  reaps the actor, and leaves its lifetime with the portal's owner.
+  That actor must expose both the target module and
+  ``tractor.to_actor.MODULE``.
 
 .. note::
 
    :func:`tractor.to_actor.run` is a convenience, **not** the core
-   model — it's built *entirely* on
-   :meth:`~tractor.ActorNursery.start_actor` plus a linked
-   :meth:`~tractor.Portal.open_context` call and per-child
-   cancellation/reaping. Teach your fingers to use it for quick
+   model. For actor-owning placements it combines
+   :meth:`~tractor.ActorNursery.start_actor`, a linked
+   :meth:`~tractor.Portal.open_context` call, and per-child
+   cancellation/reaping. With ``portal=`` it uses only the linked
+   context call and leaves the existing actor's lifetime untouched.
+   Teach your fingers to use it for quick
    fire-and-collect parallelism — think a per-function trio-parallel_
    style one-shot — and reach for
    :meth:`~tractor.ActorNursery.start_actor` plus
@@ -153,25 +162,25 @@ A few details worth knowing:
 
 Actor lifetimes and teardown order
 ----------------------------------
-So we have two lifetime flavors:
+There are two actor-lifetime flavors:
 
-- **one-shot** (``to_actor.run()``): lives exactly as long as
-  its single task; reaped the moment its result (or error)
-  arrives back in the (blocking) call.
-- **daemon** (:meth:`~tractor.ActorNursery.start_actor`): lives
-  until *someone* cancels it — an explicit
+- **call-owned one-shot** (``to_actor.run()`` without ``portal=``):
+  spawned for one task, then cancelled and joined before ``run()``
+  returns its result or raises its error.
+- **caller-owned daemon** (:meth:`~tractor.ActorNursery.start_actor`),
+  including an actor later reused through
+  ``to_actor.run(..., portal=portal)``: lives until *someone*
+  cancels it via an explicit
   :meth:`~tractor.Portal.cancel_actor`, a bulk
   :meth:`~tractor.ActorNursery.cancel`, or the one-cancels-all
   strategy kicking in on error.
 
 On a clean exit of the nursery block the teardown order is:
 
-1. one-shot actors never make it to nursery exit: each is
-   reaped inside its own ``to_actor.run()`` call, any error
-   raising immediately in the calling task so your code
-   (acting as supervisor) gets first crack at handling it.
-2. the nursery then waits on daemon actors — **indefinitely**.
-   If you spawned a daemon, you own its lifetime.
+1. call-owned actors do not survive their own ``to_actor.run()``
+   calls; each is reaped before its call returns.
+2. the nursery waits on caller-owned daemon actors
+   **indefinitely**. If you spawned one, you own its lifetime.
 
 When a child *is* cancelled, teardown is graceful-first per SC
 discipline: the runtime sends an IPC cancel request and gives

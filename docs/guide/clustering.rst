@@ -62,7 +62,10 @@ one kwarg away,
 .. code:: python
 
     async with tractor.open_actor_cluster(
-        modules=['mylib.workers'],
+        modules=[
+            'mylib.workers',
+            tractor.to_actor.MODULE,
+        ],
         count=4,
         names=['scout', 'miner', 'smelter', 'smith'],
         debug_mode=True,    # whole-fleet crash-to-REPL
@@ -71,9 +74,11 @@ one kwarg away,
 
 From here the composition patterns are the usual ``tractor`` fare:
 ``portal.run()`` for bare one-shot RPCs (as in the demo),
-``tractor.to_actor.run(..., portal=portal)`` for linked one-shot calls,
-or — for a persistent bidirectional dialog per worker — concurrently
-enter N ``portal.open_context()`` blocks with
+``tractor.to_actor.run(..., portal=portal)`` for cancellation-linked
+one-shot tasks in an existing worker (include
+``tractor.to_actor.MODULE`` in ``modules``; the cluster still owns
+the worker's lifetime), or — for a persistent bidirectional dialog
+per worker — concurrently enter N ``portal.open_context()`` blocks with
 ``tractor.trionics.gather_contexts()``; see :doc:`/guide/context`
 for that whole layer.
 

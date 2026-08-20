@@ -15,12 +15,12 @@ a single `structured concurrency`_ (SC) scope over IPC.
    :alt: sequence diagram of the context handshake msg flow
 
 Pretty much everything else is (or is slated to be) built on this
-one primitive: ``tractor.to_actor.run()`` is a convenience for
-"spawn, run the lone task, await the result, tear down"; plain
-``Portal.run()`` RPC is planned to be re-implemented on top of it;
-the multi-process debugger's tree-wide REPL lock rides one. Grok
-this page and the rest of the library reads as convenience
-wrappers B)
+one primitive: ``tractor.to_actor.run()`` uses it for a linked
+one-shot task, spawning and reaping an actor only when no ``portal=``
+is supplied; plain ``Portal.run()`` RPC is planned to be
+re-implemented on top of it; the multi-process debugger's tree-wide
+REPL lock rides one. Grok this page and the rest of the library reads
+as convenience wrappers B)
 
 The endpoint contract
 ---------------------

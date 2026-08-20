@@ -82,10 +82,9 @@ don't build your app on it.
 
 One-shot subactors: ``to_actor.run()``
 --------------------------------------
-When a subactor's *entire job* is a single function call, skip
-the portal plumbing with :func:`tractor.to_actor.run`: spawn,
-run the lone task, return its result and reap the process — all
-in one blocking call:
+When the call should own a fresh subactor whose entire job is one
+function call, :func:`tractor.to_actor.run` spawns it, runs the task,
+returns its result and reaps the process — all in one blocking call:
 
 .. code:: python
 
@@ -101,15 +100,36 @@ Semantics worth knowing:
 - it blocks until the remote task returns, re-raising any
   remote error in the usual boxed form right in the calling
   task.
-- "placement" is composable: ``an=`` spawns from an existing
-  actor-nursery, ``portal=`` reuses an already-running actor
-  (no spawn/reap, just a linked
-  :meth:`~tractor.Portal.open_context` call; see the
-  :doc:`context guide </guide/context>`), and passing neither
-  opens a private call-scoped nursery (booting the runtime if needed).
+- placement also determines process ownership: ``an=`` spawns and
+  reaps a fresh child in an existing actor nursery, while passing
+  neither does the same in a private call-scoped nursery (booting
+  the runtime if needed). ``portal=`` instead runs one linked task
+  in an existing actor; it neither spawns nor reaps that actor, so
+  the portal's owner remains responsible for its lifetime.
 - concurrency composes the plain ``trio`` way: schedule
   multiple ``run()`` calls into a local task nursery (see
   ``examples/parallelism/to_actor_one_shots.py``).
+
+A reused actor must expose both the target module and the
+``to_actor`` context trampoline:
+
+.. code:: python
+
+    async with tractor.open_nursery() as an:
+        portal = await an.start_actor(
+            'worker',
+            enable_modules=[
+                __name__,
+                tractor.to_actor.MODULE,
+            ],
+        )
+        try:
+            final = await tractor.to_actor.run(
+                partial(fib, n=10),
+                portal=portal,
+            )
+        finally:
+            await portal.cancel_actor()
 
 Pure RPC daemons: ``run_daemon()``
 ----------------------------------

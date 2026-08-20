@@ -54,15 +54,16 @@ One-shot task actors
 
 .. note::
 
-   :func:`tractor.to_actor.run` (parlance of
-   ``trio.to_thread.run_sync()`` and friends) is the
-   *convenience* one-shot — spawn, run a single task, block on
-   its result, reap — built entirely on
-   :meth:`ActorNursery.start_actor`, a linked
-    :meth:`Portal.open_context` call and per-child cancellation/reaping,
-    so don't design around it as the core model. It supersedes the
-    legacy, non-blocking ``ActorNursery.run_in_actor()`` retained only
-    for compatibility until its removal in PR #484.
+   Without ``portal=``, :func:`tractor.to_actor.run` (parlance of
+   ``trio.to_thread.run_sync()`` and friends) is the convenience
+   one-shot: spawn, run one task, block on its result and reap. It
+   combines :meth:`ActorNursery.start_actor`, a linked
+   :meth:`Portal.open_context` call and per-child reaping. With
+   ``portal=`` it owns only the linked task and leaves the existing
+   actor's lifetime to the portal owner; that actor must expose both
+   the target module and ``tractor.to_actor.MODULE``. It supersedes
+   the legacy, non-blocking ``ActorNursery.run_in_actor()`` retained
+   only for compatibility until its removal in PR #484.
 
 .. deprecated:: 0.1.0a6
 
