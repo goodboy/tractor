@@ -30,11 +30,12 @@ Starting asyncio tasks from trio
 .. note::
 
    :func:`open_channel_from` mirrors the
-   ``Portal.open_context()`` handshake: the asyncio side calls
+   :meth:`tractor.Portal.open_context` handshake: the asyncio side calls
    ``chan.started_nowait(value)`` and that value pops out as
    ``first`` on the trio side. :func:`run_task` is the one-shot
    form — run a single asyncio-compatible coroutine fn and return
-   its result to trio.
+   its result to trio; :func:`tractor.to_actor.run` is its
+   cross-process sibling.
 
 The inter-loop channel
 ----------------------

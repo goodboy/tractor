@@ -70,9 +70,10 @@ one kwarg away,
         ...
 
 From here the composition patterns are the usual ``tractor`` fare:
-``portal.run()`` for one-shot calls (as in the demo), or — for a
-persistent bidirectional dialog per worker — concurrently enter N
-``portal.open_context()`` blocks with
+``portal.run()`` for bare one-shot RPCs (as in the demo),
+``tractor.to_actor.run(..., portal=portal)`` for linked one-shot calls,
+or — for a persistent bidirectional dialog per worker — concurrently
+enter N ``portal.open_context()`` blocks with
 ``tractor.trionics.gather_contexts()``; see :doc:`/guide/context`
 for that whole layer.
 
@@ -87,8 +88,8 @@ Clusters vs. nurseries
 
 ``open_actor_cluster()`` is sugar, not a new primitive: under the
 hood it's just :func:`tractor.open_nursery` plus N concurrent
-``start_actor()`` calls plus a ``.cancel()`` on the way out. Reach
-for it when,
+:meth:`~tractor.ActorNursery.start_actor` calls plus a ``.cancel()``
+on the way out. Reach for it when,
 
 - you want a *flat*, homogeneous fleet (classic worker-pool or
   map-style fan-out shapes),

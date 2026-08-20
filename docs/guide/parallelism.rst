@@ -119,15 +119,16 @@ Run a func in a process
 
 Even a pool can be overkill; "run this one async func in a
 subprocess and give me the result" is a one-liner via
-:meth:`tractor.ActorNursery.run_in_actor`,
+:func:`tractor.to_actor.run`,
 
 .. literalinclude:: ../../examples/parallelism/single_func.py
    :caption: examples/parallelism/single_func.py
    :language: python
 
-``run_in_actor()`` is a *convenience wrapper* — spawn an actor, run
-exactly one task in it, reap on result — not the core spawning
-model (that's :meth:`tractor.ActorNursery.start_actor` plus
+``to_actor.run()`` is a *convenience wrapper* — spawn an actor,
+run exactly one task in it, block on and return its result, reap
+— not the core spawning model (that's
+:meth:`tractor.ActorNursery.start_actor` plus
 :meth:`tractor.Portal.open_context`; see :doc:`/guide/context`).
 But for this fire-and-collect shape it's exactly the right amount
 of typing.

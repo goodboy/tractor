@@ -5,8 +5,9 @@ This is the curated reference for ``tractor``'s public surface: the
 names you can import and lean on without reading runtime internals.
 Everything below is re-exported at the top level (``import
 tractor``) unless a page says otherwise; subsystems like
-``tractor.msg``, ``tractor.trionics``, ``tractor.to_asyncio``,
-``tractor.devx`` and ``tractor.log`` are importable as submodules.
+``tractor.msg``, ``tractor.trionics``, ``tractor.to_actor``,
+``tractor.to_asyncio``, ``tractor.devx`` and ``tractor.log`` are
+importable as submodules.
 
 ``tractor`` is "just trio_" extended across processes: every API
 here is designed to keep the structured concurrency (SC) rules you
@@ -23,6 +24,7 @@ Most-used names at a glance:
 
    open_root_actor
    open_nursery
+   to_actor.run
    run_daemon
    ActorNursery
    Portal
