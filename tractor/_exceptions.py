@@ -1509,7 +1509,7 @@ def _mk_send_mte(
             f'invalid msg -> {msg}: {type(msg)}\n\n'
             f'{tb_fmt}\n'
             f'Valid IPC msgs are:\n\n'
-            f'{codec.msg_spec_str}\n',
+            f'{codec.msg_spec_str}\n'
         )
     elif src_type_error:
         src_message: str = str(src_type_error)

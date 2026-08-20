@@ -430,7 +430,7 @@ class MsgCodec(Struct):
     # wrapped field over the `.msg_spec` one?
     @property
     def msg_spec_str(self) -> str:
-        return pformat_msgspec(self.msg_spec)
+        return pformat_msgspec(self)
 
     lib: ModuleType = msgspec
 
