@@ -23,13 +23,13 @@ def test_decode_tagged_tcp_address(value):
     Shape-only decoding cannot distinguish future transport address
     forms. Feed canonical tuple and msgpack-style list values through
     the compatibility boundary and prove the explicit `tcp` tag
-    selects the TCP backend without changing legacy emission yet.
+    selects the TCP backend and emits the canonical tagged form.
 
     '''
     addr = wrap_address(value)
 
     assert type(addr) is TCPAddress
-    assert addr.unwrap() == ('127.0.0.1', 1616)
+    assert addr.unwrap() == ('tcp', '127.0.0.1', 1616)
 
 
 @pytest.mark.parametrize(
@@ -44,8 +44,8 @@ def test_decode_tagged_unix_address(
     '''
     Multiaddr calls the protocol `unix` while tractor's transport key
     remains `uds`. Decode both spellings from tuple/list containers,
-    normalize them to one `UDSAddress`, and retain legacy pair
-    emission until the writer migration lands.
+    normalize them to one `UDSAddress`, and emit the canonical `unix`
+    spelling.
 
     '''
     value = container((tag, '/tmp/tractor/registry.sock'))
@@ -54,8 +54,8 @@ def test_decode_tagged_unix_address(
     assert type(addr) is UDSAddress
     assert addr.sockpath == Path('/tmp/tractor/registry.sock')
     assert addr.unwrap() == (
-        '/tmp/tractor',
-        'registry.sock',
+        'unix',
+        '/tmp/tractor/registry.sock',
     )
 
 
@@ -75,11 +75,14 @@ def test_decode_legacy_address_forms(
     '''
     Existing callers, config, and older msgpack payloads still
     provide untagged pairs. Keep tuple/list forms readable while
-    canonical tagged decoding is introduced, proving this
-    reader-first commit does not break shipped input behavior.
+    canonical tagged emission is introduced, proving the writer
+    migration does not break shipped input behavior.
 
     '''
-    assert type(wrap_address(value)) is expected_type
+    addr = wrap_address(value)
+
+    assert type(addr) is expected_type
+    assert addr.unwrap()[0] in {'tcp', 'unix'}
 
 
 def test_tcp_from_native_ipv6_sockname():
@@ -94,4 +97,4 @@ def test_tcp_from_native_ipv6_sockname():
         ('::1', 1616, 0, 0)
     )
 
-    assert addr.unwrap() == ('::1', 1616)
+    assert addr.unwrap() == ('tcp', '::1', 1616)

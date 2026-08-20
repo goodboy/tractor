@@ -77,10 +77,12 @@ if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs
     # `import tractor` wall-time (gh #470).
     from multiaddr import Multiaddr
+    from tractor.discovery._addr import TaggedUnixAddress
     from tractor.runtime._runtime import Actor
 else:
     Multiaddr = Any
     Actor = Any
+    TaggedUnixAddress = Any
 
 
 # Platform-specific credential passing constants
@@ -147,7 +149,7 @@ class UDSAddress(
     # -[ ] need to check what other mult-transport frameworks do
     #     like zmq, nng, uri-spec et al!
     proto_key: ClassVar[str] = 'uds'
-    unwrapped_type: ClassVar[type] = tuple[str, int]
+    unwrapped_type: ClassVar[type] = tuple
     def_bindspace: ClassVar[Path] = get_rt_dir()
 
     @property
@@ -165,7 +167,7 @@ class UDSAddress(
 
     @property
     def sockpath(self) -> Path:
-        return self.bindspace / self.filename
+        return Path(self.bindspace) / self.filename
 
     @property
     def is_valid(self) -> bool:
@@ -213,12 +215,10 @@ class UDSAddress(
                     f'{addr!r}\n'
                 )
 
-    def unwrap(self) -> tuple[str, int]:
-        # XXX NOTE, since this gets passed DIRECTLY to
-        # `.ipc._uds.open_unix_socket_w_passcred()`
+    def unwrap(self) -> TaggedUnixAddress:
         return (
-            str(self.filedir),
-            str(self.filename),
+            'unix',
+            str(self.sockpath),
         )
 
     @classmethod

@@ -188,7 +188,7 @@ def test_parse_maddr_tcp_ipv4():
     result = parse_maddr('/ip4/127.0.0.1/tcp/1234')
 
     assert isinstance(result, TCPAddress)
-    assert result.unwrap() == ('127.0.0.1', 1234)
+    assert result.unwrap() == ('tcp', '127.0.0.1', 1234)
 
 
 def test_parse_maddr_tcp_ipv6():
@@ -200,7 +200,7 @@ def test_parse_maddr_tcp_ipv6():
     result = parse_maddr('/ip6/::1/tcp/5678')
 
     assert isinstance(result, TCPAddress)
-    assert result.unwrap() == ('::1', 5678)
+    assert result.unwrap() == ('tcp', '::1', 5678)
 
 
 def test_parse_maddr_uds():
@@ -213,9 +213,10 @@ def test_parse_maddr_uds():
     result = parse_maddr('/unix/tmp/tractor_test/test.sock')
 
     assert isinstance(result, UDSAddress)
-    filedir, filename = result.unwrap()
-    assert filename == 'test.sock'
-    assert str(filedir) == '/tmp/tractor_test'
+    assert result.unwrap() == (
+        'unix',
+        '/tmp/tractor_test/test.sock',
+    )
 
 
 def test_parse_maddr_unsupported():
@@ -249,7 +250,7 @@ def test_parse_wg_maddr():
         bearer=('192.168.1.50', 51820),
     )
     assert isinstance(parsed.overlay, TCPAddress)
-    assert parsed.overlay.unwrap() == ('10.0.11.1', 1616)
+    assert parsed.overlay.unwrap() == ('tcp', '10.0.11.1', 1616)
 
 
 def test_mk_wg_maddr_roundtrip():
@@ -445,7 +446,7 @@ def test_wrap_address_maddr_str():
     result = wrap_address('/ip4/127.0.0.1/tcp/9999')
 
     assert isinstance(result, TCPAddress)
-    assert result.unwrap() == ('127.0.0.1', 9999)
+    assert result.unwrap() == ('tcp', '127.0.0.1', 9999)
 
 
 def test_wrap_address_wg_maddr_str():
@@ -460,7 +461,7 @@ def test_wrap_address_wg_maddr_str():
 
     assert isinstance(result, TunnelledAddress)
     assert result.tunnel.peer_pubkey == _WG_PUBKEY
-    assert result.overlay.unwrap() == ('10.0.11.1', 1616)
+    assert result.overlay.unwrap() == ('tcp', '10.0.11.1', 1616)
 
 
 # ------ parse_endpoints() tests ------
@@ -481,11 +482,11 @@ def test_parse_endpoints_tcp_only():
 
     reg_addr = result['registry'][0]
     assert isinstance(reg_addr, TCPAddress)
-    assert reg_addr.unwrap() == ('127.0.0.1', 1616)
+    assert reg_addr.unwrap() == ('tcp', '127.0.0.1', 1616)
 
     feed_addr = result['data_feed'][0]
     assert isinstance(feed_addr, TCPAddress)
-    assert feed_addr.unwrap() == ('0.0.0.0', 5555)
+    assert feed_addr.unwrap() == ('tcp', '0.0.0.0', 5555)
 
 
 def test_parse_endpoints_mixed_tpts():
@@ -505,12 +506,13 @@ def test_parse_endpoints_mixed_tpts():
 
     assert len(addrs) == 2
     assert isinstance(addrs[0], TCPAddress)
-    assert addrs[0].unwrap() == ('127.0.0.1', 4040)
+    assert addrs[0].unwrap() == ('tcp', '127.0.0.1', 4040)
 
     assert isinstance(addrs[1], UDSAddress)
-    filedir, filename = addrs[1].unwrap()
-    assert filename == 'broker.sock'
-    assert str(filedir) == '/tmp/tractor'
+    assert addrs[1].unwrap() == (
+        'unix',
+        '/tmp/tractor/broker.sock',
+    )
 
 
 def test_parse_endpoints_wg_maddr():
@@ -550,7 +552,7 @@ def test_parse_endpoints_unwrapped_tuples():
 
     addr = result['ems'][0]
     assert isinstance(addr, TCPAddress)
-    assert addr.unwrap() == ('127.0.0.1', 6666)
+    assert addr.unwrap() == ('tcp', '127.0.0.1', 6666)
 
 
 def test_parse_endpoints_mixed_str_and_tuple():
@@ -570,10 +572,10 @@ def test_parse_endpoints_mixed_str_and_tuple():
 
     assert len(addrs) == 2
     assert isinstance(addrs[0], TCPAddress)
-    assert addrs[0].unwrap() == ('127.0.0.1', 7777)
+    assert addrs[0].unwrap() == ('tcp', '127.0.0.1', 7777)
 
     assert isinstance(addrs[1], TCPAddress)
-    assert addrs[1].unwrap() == ('127.0.0.1', 8888)
+    assert addrs[1].unwrap() == ('tcp', '127.0.0.1', 8888)
 
 
 def test_parse_endpoints_unsupported_proto():
