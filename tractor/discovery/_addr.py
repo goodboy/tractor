@@ -18,7 +18,9 @@ from uuid import uuid4
 from typing import (
     Protocol,
     ClassVar,
+    Literal,
     Type,
+    TypeAlias,
     TYPE_CHECKING,
 )
 
@@ -64,19 +66,39 @@ log = get_logger()
 #    seems like the right name as per,
 #    https://www.geeksforgeeks.org/introduction-to-address-descriptor/
 #
-UnwrappedAddress = (
-    # tcp/udp/uds
-    tuple[
-        str,  # host/domain(tcp), filesys-dir(uds)
-        int|str,  # port/path(uds)
-    ]
-    # ?TODO? should we also include another 2 fields from
-    # our `Aid` msg such that we include the runtime `Actor.uid`
-    # of `.name` and `.uuid`?
-    # - would ensure uniqueness across entire net?
-    # - allows for easier runtime-level filtering of "actors by
-    #   service name"
+TaggedTCPAddress: TypeAlias = tuple[
+    Literal['tcp'],
+    str,
+    int,
+]
+TaggedUnixAddress: TypeAlias = tuple[
+    Literal['unix'],
+    str,
+]
+TaggedUDSAlias: TypeAlias = tuple[
+    Literal['uds'],
+    str,
+]
+TaggedAddress: TypeAlias = (
+    TaggedTCPAddress
+    |TaggedUnixAddress
 )
+
+# Input-only compatibility forms. `UnwrappedAddress` remains the
+# emitted form until the tagged writer migration switches it in the
+# next atomic change.
+LegacyTCPAddress: TypeAlias = tuple[str, int]
+LegacyUDSAddress: TypeAlias = tuple[str, str]
+LegacyUnwrappedAddress: TypeAlias = (
+    LegacyTCPAddress
+    |LegacyUDSAddress
+)
+UnwrappedAddress = LegacyUnwrappedAddress
+# ?TODO? should we also include another 2 fields from our `Aid` msg
+# such that we include the runtime `Actor.uid` of `.name` and `.uuid`?
+# - would ensure uniqueness across entire net?
+# - allows for easier runtime-level filtering of "actors by service
+#   name"
 
 
 # TODO, maybe rename to `SocketAddress`?
@@ -216,7 +238,15 @@ def mk_uuid() -> str:
 
 
 def wrap_address(
-    addr: UnwrappedAddress|str|Address|TunnelledAddress,
+    addr: (
+        TaggedAddress
+        |TaggedUDSAlias
+        |LegacyUnwrappedAddress
+        |list[str|int]
+        |str
+        |Address
+        |TunnelledAddress
+    ),
 ) -> Address|TunnelledAddress:
     '''
     Wrap an `UnwrappedAddress` as an `Address`-type based
@@ -238,6 +268,20 @@ def wrap_address(
     # if 'sock' in addr[0]:
     #     import pdbp; pdbp.set_trace()
     match addr:
+
+        case (
+            ('tcp', str(), int())
+            |
+            ['tcp', str(), int()]
+        ):
+            return TCPAddress.from_addr(addr)
+
+        case (
+            (('unix' | 'uds'), str())
+            |
+            [('unix' | 'uds'), str()]
+        ):
+            return UDSAddress.from_addr(addr)
 
         # classic network socket-address as tuple/list
         case (

@@ -146,16 +146,26 @@ class UDSAddress(
     def from_addr(
         cls,
         addr: (
-            tuple[Path|str, Path|str]|Path|str
+            tuple|list|Path|str
         ),
     ) -> UDSAddress:
         match addr:
-            case tuple()|list():
-                filedir = Path(addr[0])
-                filename = Path(addr[1])
+            case (
+                (('unix' | 'uds'), str()|Path() as sockpath)
+                |
+                [('unix' | 'uds'), str()|Path() as sockpath]
+            ):
+                path = Path(sockpath)
+                return UDSAddress(*unwrap_sockpath(path))
+
+            case (
+                (str()|Path() as filedir, str()|Path() as filename)
+                |
+                [str()|Path() as filedir, str()|Path() as filename]
+            ):
                 return UDSAddress(
-                    filedir=filedir,
-                    filename=filename,
+                    filedir=Path(filedir),
+                    filename=Path(filename),
                     # maybe_pid=pid,
                 )
             # NOTE, in case we ever decide to just `.unwrap()`

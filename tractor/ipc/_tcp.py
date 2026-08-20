@@ -104,11 +104,26 @@ class TCPAddress(
     @classmethod
     def from_addr(
         cls,
-        addr: tuple[str, int]
+        addr: tuple|list,
     ) -> TCPAddress:
         match addr:
-            case (str(), int()):
-                return TCPAddress(addr[0], addr[1])
+            case (
+                ('tcp', str() as host, int() as port)
+                |
+                ['tcp', str() as host, int() as port]
+                |
+                (str() as host, int() as port)
+                |
+                [str() as host, int() as port]
+                |
+                (
+                    str() as host,
+                    int() as port,
+                    int(),
+                    int(),
+                )
+            ):
+                return TCPAddress(host, port)
             case _:
                 raise ValueError(
                     f'Invalid unwrapped address for {cls}\n'
