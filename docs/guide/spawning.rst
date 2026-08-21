@@ -126,10 +126,10 @@ A few details worth knowing:
   ``name='something_cuter'``.
 - the function's module is auto-added to the child's
   ``enable_modules`` allowlist.
-- the target must be a module-global async function, or a
-  ``functools.partial`` thereof. Nested functions, methods and callable
-  objects have no stable ``module:name`` RPC address and are rejected
-  before actor startup.
+- targets cross IPC as ``module:name`` references, so portable calls
+  use module-global async functions or ``functools.partial`` objects
+  wrapping them. Nested functions, methods and callable objects do not
+  provide that stable address.
 - target arguments are positional; use ``functools.partial()``
   to bind target keyword arguments. Keywords passed directly to
   ``run()`` configure actor placement and spawning.
