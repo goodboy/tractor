@@ -793,6 +793,11 @@ class Actor:
         ack_timeout: float = float('inf'),
         cancel_on_startup: bool = True,
 
+        # Optional absolute deadline for publishing this exact `Start`
+        # frame. Used by actor-wide cancel RPCs whose outer timeout
+        # cannot penetrate complete-frame transport shielding.
+        send_deadline: float = float('inf'),
+
     ) -> Context:
         '''
         Send a `'cmd'` msg to a remote actor, which requests the
@@ -845,7 +850,13 @@ class Actor:
         )
         start_published: bool = False
         try:
-            await chan.send(msg)
+            if send_deadline == float('inf'):
+                await chan.send(msg)
+            else:
+                await chan.send(
+                    msg,
+                    send_deadline=send_deadline,
+                )
             start_published = True
 
             # NOTE wait on first `StartAck` response msg and validate;

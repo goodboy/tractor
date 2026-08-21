@@ -15,7 +15,10 @@ from unittest.mock import Mock
 
 import pytest
 import trio
-from trio.testing import wait_all_tasks_blocked
+from trio.testing import (
+    MockClock,
+    wait_all_tasks_blocked,
+)
 import tractor
 from tractor import Actor
 from tractor.discovery import _addr
@@ -132,6 +135,65 @@ def test_cancelled_transport_send_completes_frame():
             tn.cancel_scope.cancel()
 
     trio.run(main)
+
+
+def test_transport_send_deadline_closes_partial_frame():
+    '''
+    Bound one shielded frame without exposing a corrupt stream.
+
+    Ordinary cancellation cannot interrupt complete-frame publication.
+    Actor-wide cancellation instead passes its absolute deadline into
+    this operation. The fake stream writes a partial header and stalls;
+    when the send's own deadline fires, the transport must close the
+    stream before releasing its shared send lock and report the channel
+    unusable.
+
+    '''
+    class StalledStream:
+        def __init__(self) -> None:
+            self.closed = False
+            self.wire = bytearray()
+
+        async def send_all(
+            self,
+            data: bytes,
+        ) -> None:
+            self.wire.extend(data[:2])
+            await trio.sleep_forever()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    async def main() -> None:
+        stream = StalledStream()
+        transport = object.__new__(MsgpackTransport)
+        transport.stream = stream
+        transport._send_lock = trio.StrictFIFOLock()
+        msg = tractor.msg.Start(
+            ns=__name__,
+            func='add_one',
+            kwargs={'n': 1},
+            uid=('root', 'test'),
+            cid='deadline-send',
+        )
+
+        with pytest.raises(
+            tractor.TransportClosed,
+            match='frame publication exceeded',
+        ):
+            await transport.send(
+                msg,
+                send_deadline=1,
+            )
+
+        assert stream.closed
+        assert len(stream.wire) == 2
+        assert not transport._send_lock.locked()
+
+    trio.run(
+        main,
+        clock=MockClock(autojump_threshold=0),
+    )
 
 
 def test_cancelled_transport_send_preserves_cancellation():

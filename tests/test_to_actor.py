@@ -11,12 +11,14 @@ from pathlib import Path
 
 import pytest
 import trio
+from trio.testing import MockClock
 import tractor
 from tractor import (
     RemoteActorError,
     to_actor,
 )
 from tractor._testing import tractor_test
+from tractor._exceptions import ActorTooSlowError
 from tractor.msg import ptr as msgptr
 from tractor.msg.ptr import NamespacePath
 from tractor.to_actor import _api as to_actor_api
@@ -252,6 +254,67 @@ async def test_cancel_ack_failure_hard_reaps_child(
                 an=an,
             ) == 21
         assert not an._children
+
+
+def test_cancel_actor_timeout_closes_blocked_send():
+    '''
+    Thread one absolute cancel deadline into shielded frame publication.
+
+    The cancel RPC's outer timeout cannot penetrate a complete-frame
+    shield. The fake private RPC applies the forwarded send deadline to
+    its own shielded wait, then checkpoints into the outer scope. A
+    bounded `ActorTooSlowError` and the recorded absolute deadline prove
+    publication and acknowledgement share one timeout budget.
+
+    '''
+    class ConnectedChannel:
+        def __init__(self) -> None:
+            self._cancel_called = False
+            self.aid = tractor.msg.Aid(
+                name='blocked_peer',
+                uuid='test',
+            )
+
+        def connected(self) -> bool:
+            return True
+
+    async def main() -> None:
+        channel = ConnectedChannel()
+        portal = object.__new__(tractor.Portal)
+        portal._chan = channel
+        deadlines: list[float] = []
+
+        async def blocked_cancel(
+            namespace: str,
+            function: str,
+            kwargs: dict[str, object],
+            cancel_on_startup: bool,
+            send_deadline: float,
+        ) -> None:
+            assert (namespace, function) == ('self', 'cancel')
+            assert kwargs == {}
+            assert not cancel_on_startup
+            deadlines.append(send_deadline)
+            with trio.CancelScope(
+                deadline=send_deadline,
+                shield=True,
+            ):
+                await trio.sleep_forever()
+            await trio.lowlevel.checkpoint_if_cancelled()
+
+        portal._run_from_ns = blocked_cancel
+        with pytest.raises(ActorTooSlowError):
+            await portal.cancel_actor(
+                timeout=1,
+                raise_on_timeout=True,
+            )
+
+        assert deadlines == [1.]
+
+    trio.run(
+        main,
+        clock=MockClock(autojump_threshold=0),
+    )
 
 
 def test_late_child_reap_registration_is_released():
