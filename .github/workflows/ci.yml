@@ -162,6 +162,10 @@ jobs:
         run: uv run python -c "import sys; import tractor; from tractor.ipc._uds import HAS_UDS; assert sys.platform != 'win32' or not HAS_UDS; print('import tractor OK | HAS_UDS=', HAS_UDS)"
 
       - name: Run tests
+        # Actor/PTY scheduling on macOS can fail a different
+        # timing-sensitive node between otherwise-green runs. Retry
+        # only that matrix leg; deterministic failures still fail
+        # after the final attempt.
         continue-on-error: ${{ matrix.os == 'windows-latest' }}
         run: >
           uv run
@@ -171,6 +175,8 @@ jobs:
           --spawn-backend=${{ matrix.spawn_backend }}
           --tpt-proto=${{ matrix.tpt_proto }}
           --capture=fd
+          --reruns=${{ matrix.os == 'macos-latest' && 2 || 0 }}
+          --reruns-delay=1
 
   # XXX legacy NOTE XXX
   #
