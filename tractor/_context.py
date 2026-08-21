@@ -1108,10 +1108,11 @@ class Context:
                 # NOTE: we're telling the far end actor to cancel a task
                 # corresponding to *this actor*. The far end local channel
                 # instance is passed to `Actor._cancel_task()` implicitly.
-                await self._portal.run_from_ns(
+                await self._portal._run_from_ns(
                     'self',
                     '_cancel_task',
-                    cid=cid,
+                    kwargs={'cid': cid},
+                    cancel_on_startup=False,
                 )
 
             if cs.cancelled_caught:
@@ -2020,9 +2021,16 @@ class Context:
                     await chan.send(err_msg)
                     return True
 
-                # XXX: local consumer has closed their side of
-                # the IPC so cancel the far end streaming task
-                except trio.BrokenResourceError:
+                # XXX: the local consumer may have closed its side of
+                # the IPC, in which case context/channel teardown owns
+                # cancellation of the far-end streaming task. The same
+                # shipment can raise `TransportClosed` when either peer
+                # has already closed the shared IPC channel. In both
+                # cases the primary overrun can no longer be reported.
+                except (
+                    TransportClosed,
+                    trio.BrokenResourceError,
+                ):
                     log.warning(
                         'Channel for ctx is already closed?\n'
                         f'|_{chan}\n'
@@ -2625,10 +2633,7 @@ async def open_context_from_portal(
             f'uid: {uid}\n'
             f'cid: {ctx.cid}\n'
         )
-        portal.actor._contexts.pop(
-            (uid, ctx.cid),
-            None,
-        )
+        portal.actor._drop_context(ctx)
 
         # XXX revert to prior IPC-task-ctx scope
         _ctxvar_Context.reset(prior_ctx_tok)

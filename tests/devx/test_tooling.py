@@ -191,9 +191,8 @@ def test_shield_pause(
     ]
     if not no_capfd:
         expect_on_teardown += [
-            # 'Shutting down actor runtime',
-            '#T-800 deployed to collect zombie B0',
-            "'--uid', \"('hanger',",
+            'Cancel-ack TIMED OUT for sub-actor',
+            '-> escalating to `proc.kill()` (hard-reap)',
         ]
     assert_before(
         child,

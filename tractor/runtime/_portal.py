@@ -319,45 +319,61 @@ class Portal:
             or
             self.cancel_timeout
         )
+        cancel_deadline: float = (
+            trio.current_time()
+            +
+            cancel_timeout
+        )
+        # NOTE: Actor-runtime cancellation currently rides the normal
+        # RPC envelope:
+        #
+        # `Start(self.cancel)` -> `StartAck` -> `CancelAck`.
+        #
+        # `Actor.start_remote_task()` consumes the `StartAck`, then
+        # `._run_from_ns()` returns only after `PldRx.recv_pld()`
+        # decodes the final `CancelAck`. Thus this flag means that ack
+        # reached this portal after the peer's `Actor.cancel()` routine
+        # completed; it does not prove the peer OS process has exited.
+        # A dedicated `Cancel` request msg can eventually replace the
+        # internal `Start` RPC envelope and its extra `StartAck`.
+        cancel_ack_received: bool = False
         try:
-            # send cancel cmd - might not get response
-            # XXX: sure would be nice to make this work with
-            # a proper shield
-            with trio.move_on_after(cancel_timeout) as cs:
+            with trio.move_on_at(cancel_deadline) as cs:
                 cs.shield: bool = True
-                await self.run_from_ns(
+                await self._run_from_ns(
                     'self',
                     'cancel',
+                    kwargs={},
+                    cancel_on_startup=False,
+                    send_deadline=cancel_deadline,
                 )
-                return True
+                cancel_ack_received = True
 
-            # `move_on_after` fired — peer didn't ack within
+            # Preserve shielded actor teardown, then immediately
+            # redeliver any cancellation pending from an outer scope.
+            await trio.lowlevel.checkpoint_if_cancelled()
+
+            # `move_on_at` fired — peer didn't ack within
             # bounded window. Behaviour depends on
             # `raise_on_timeout`:
-            if (
-                cs.cancelled_caught
-                and
-                raise_on_timeout
-            ):
-                raise ActorTooSlowError(
-                    f'Peer {peer_id} did not ack its '
-                    f'`Actor.cancel()` RPC within bounded wait '
-                    f'of {cancel_timeout!r}s'
-                )
+            if cs.cancelled_caught:
+                if raise_on_timeout:
+                    raise ActorTooSlowError(
+                        f'Peer {peer_id} did not ack its '
+                        f'`Actor.cancel()` RPC within bounded wait '
+                        f'of {cancel_timeout!r}s'
+                    )
 
-            # legacy fire-and-forget path: log + return False so
-            # the caller can decide whether to escalate.
-            #
-            # NOTE, we also land here in the (unexpected) case where
-            # the shielded `move_on_after` block exits WITHOUT
-            # `return True` and WITHOUT the deadline firing — prefer
-            # a soft `False` over an `assert`-crash mid-teardown.
-            log.debug(
-                f'May have failed to cancel peer?\n'
-                f'\n'
-                f'c)=?> {peer_id}\n'
-            )
-            return False
+                # Legacy fire-and-forget callers decide whether to
+                # escalate the missed acknowledgement themselves.
+                log.debug(
+                    f'May have failed to cancel peer?\n'
+                    f'\n'
+                    f'c)=?> {peer_id}\n'
+                )
+                return False
+
+            return cancel_ack_received
 
         except TransportClosed as tpt_err:
             ipc_borked_report: str = (
@@ -378,6 +394,47 @@ class Portal:
                     log.warning(ipc_borked_report)
 
             return False
+
+    # TODO: Replace actor-runtime cancellation's internal
+    # `Start -> StartAck -> CancelAck` RPC with a dedicated
+    # `Cancel -> CancelAck` transaction:
+    # https://github.com/goodboy/tractor/issues/506
+    async def _run_from_ns(
+        self,
+        namespace_path: str,
+        function_name: str,
+        kwargs: dict[str, Any],
+        cancel_on_startup: bool = True,
+        send_deadline: float = float('inf'),
+    ) -> Any:
+        '''
+        Run a namespace target with local startup policy controls.
+
+        `send_deadline` bounds only publication of the `Start` frame;
+        the caller owns any larger RPC/acknowledgement deadline.
+
+        '''
+        nsf = NamespacePath(
+            f'{namespace_path}:{function_name}'
+        )
+        ctx: Context = await self.actor.start_remote_task(
+            chan=self.channel,
+            nsf=nsf,
+            kwargs=kwargs,
+            portal=self,
+            cancel_on_startup=cancel_on_startup,
+            send_deadline=send_deadline,
+        )
+        try:
+            return await ctx._pld_rx.recv_pld(
+                ipc=ctx,
+                expect_msg=Return,
+            )
+        finally:
+            self.actor._drop_context(ctx)
+            if not ctx._rx_chan._closed:
+                with trio.CancelScope(shield=True):
+                    await ctx._rx_chan.aclose()
 
     # TODO: do we still need this for low level `Actor`-runtime
     # method calls or can we also remove it?
@@ -404,18 +461,10 @@ class Portal:
 
         '''
         __runtimeframe__: int = 1  # noqa
-        nsf = NamespacePath(
-            f'{namespace_path}:{function_name}'
-        )
-        ctx: Context = await self.actor.start_remote_task(
-            chan=self.channel,
-            nsf=nsf,
+        return await self._run_from_ns(
+            namespace_path,
+            function_name,
             kwargs=kwargs,
-            portal=self,
-        )
-        return await ctx._pld_rx.recv_pld(
-            ipc=ctx,
-            expect_msg=Return,
         )
 
     # TODO: factor this out into a `.highlevel` API-wrapper that uses

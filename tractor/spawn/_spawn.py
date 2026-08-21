@@ -446,18 +446,21 @@ async def new_proc(
     # mark the new actor with the global spawn method
     subactor._spawn_method = _spawn_method
 
-    await target(
-        name,
-        actor_nursery,
-        subactor,
-        errors,
-        bind_addrs,
-        parent_addr,
-        _runtime_vars,  # run time vars
-        infect_asyncio=infect_asyncio,
-        task_status=task_status,
-        proc_kwargs=proc_kwargs
-    )
+    try:
+        await target(
+            name,
+            actor_nursery,
+            subactor,
+            errors,
+            bind_addrs,
+            parent_addr,
+            _runtime_vars,  # run time vars
+            infect_asyncio=infect_asyncio,
+            task_status=task_status,
+            proc_kwargs=proc_kwargs
+        )
+    finally:
+        actor_nursery._mark_child_reaped(subactor.aid.uid)
 
 
 # NOTE: bottom-of-module to avoid a circular import since the

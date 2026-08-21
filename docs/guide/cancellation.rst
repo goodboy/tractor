@@ -64,11 +64,13 @@ What's going on here?
 - three healthy actors are spawned as daemons via
   :meth:`tractor.ActorNursery.start_actor`; left alone they'd
   happily idle forever,
-- a fourth actor runs ``assert_err()`` via ``.run_in_actor()`` and
-  promptly trips its ``assert 0``,
+- a fourth actor runs ``assert_err()`` via a blocking
+  ``tractor.to_actor.run()`` one-shot and promptly trips its
+  ``assert 0``,
 - the resulting ``AssertionError`` ships back over IPC as a
-  serialized error msg and re-raises *boxed* inside the nursery
-  block as a :class:`tractor.RemoteActorError`,
+  serialized error msg and re-raises *boxed* right at the call
+  inside the nursery block as a
+  :class:`tractor.RemoteActorError`,
 - the nursery reacts like any ``trio`` nursery would: it cancels
   the three healthy siblings (graceful runtime-cancel requests,
   acks awaited), reaps all four processes, then re-raises,

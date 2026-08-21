@@ -10,17 +10,14 @@ async def cellar_door():
 async def main():
     """The main ``tractor`` routine.
     """
-    async with tractor.open_nursery() as n:
-
-        portal = await n.run_in_actor(
+    # spawn a subactor, run ``cellar_door()`` as its lone task,
+    # block until its result arrives and the subactor is reaped.
+    print(
+        await tractor.to_actor.run(
             cellar_door,
             name='some_linguist',
         )
-
-    # The ``async with`` will unblock here since the 'some_linguist'
-    # actor has completed its main task ``cellar_door``.
-
-    print(await portal.wait_for_result())
+    )
 
 
 if __name__ == '__main__':
