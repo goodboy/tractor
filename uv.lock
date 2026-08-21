@@ -783,6 +783,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-rerunfailures"
+version = "16.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ed/63/0114e45d4b2fcd5f6297dac655c067b47de28be4d33e088f200f0f2c4c28/pytest_rerunfailures-16.6.tar.gz", hash = "sha256:29dbfee46f542073c888e0ed4e81c51e15b9096f49a299eb1a759629c601684a", size = 42806, upload-time = "2026-08-17T07:11:00.447Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5d/5e/1e994889673d7a0da11651f17ef789b6c83bfe349f29f871873dd3802445/pytest_rerunfailures-16.6-py3-none-any.whl", hash = "sha256:6af2d1ebd6e5cb79666ac408942cd6a0672a49fefd8523664770718560795e13", size = 19137, upload-time = "2026-08-17T07:10:59.121Z" },
+]
+
+[[package]]
 name = "pytest-timeout"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1131,6 +1144,7 @@ dev = [
     { name = "psutil" },
     { name = "pyperclip" },
     { name = "pytest" },
+    { name = "pytest-rerunfailures" },
     { name = "pytest-timeout" },
     { name = "stackscope" },
     { name = "typing-extensions" },
@@ -1170,6 +1184,7 @@ testing = [
     { name = "pexpect" },
     { name = "psutil" },
     { name = "pytest" },
+    { name = "pytest-rerunfailures" },
     { name = "pytest-timeout" },
 ]
 
@@ -1195,6 +1210,7 @@ dev = [
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyperclip", specifier = ">=1.9.0" },
     { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-rerunfailures", specifier = ">=16.6,<17" },
     { name = "pytest-timeout", specifier = ">=2.3" },
     { name = "stackscope", specifier = ">=0.2.2,<0.3" },
     { name = "typing-extensions", specifier = ">=4.14.1" },
@@ -1226,6 +1242,7 @@ testing = [
     { name = "pexpect", specifier = ">=4.9.0,<5" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-rerunfailures", specifier = ">=16.6,<17" },
     { name = "pytest-timeout", specifier = ">=2.3" },
 ]
 
