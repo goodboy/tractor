@@ -138,12 +138,22 @@ async def mp_proc(
         # daemon=True,
         name=name,
     )
-
-    # `multiprocessing` only (since no async interface):
-    # register the process before start in case we get a cancel
-    # request before the actor has fully spawned - then we can wait
-    # for it to fully come up before sending a cancel request
-    actor_nursery._children[subactor.aid.uid] = (subactor, proc, None)
+    # `multiprocessing` only (since no async interface): publish the
+    # process and its reap coordination before start so cancellation
+    # can own every subsequently started child.
+    (
+        reap_request,
+        _,
+        cancel_during_registration,
+    ) = actor_nursery._register_child(
+        subactor,
+        proc,
+        None,
+    )
+    if cancel_during_registration:
+        raise RuntimeError(
+            'Actor registered after its nursery began cancelling'
+        )
 
     proc.start()
     if not proc.is_alive():
@@ -170,9 +180,6 @@ async def mp_proc(
         # any process we may have started.
 
         portal = Portal(chan)
-        reap_request, _ = actor_nursery._register_child_reap(
-            subactor.aid.uid,
-        )
         actor_nursery._children[subactor.aid.uid] = (subactor, proc, portal)
 
         # unblock parent task

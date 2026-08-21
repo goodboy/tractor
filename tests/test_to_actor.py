@@ -8,6 +8,7 @@ https://github.com/goodboy/tractor/issues/477
 '''
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import trio
@@ -21,6 +22,7 @@ from tractor._testing import tractor_test
 from tractor._exceptions import ActorTooSlowError
 from tractor.msg import ptr as msgptr
 from tractor.msg.ptr import NamespacePath
+from tractor.spawn import _mp as mp_spawn
 from tractor.to_actor import _api as to_actor_api
 
 
@@ -315,6 +317,125 @@ def test_cancel_actor_timeout_closes_blocked_send():
         main,
         clock=MockClock(autojump_threshold=0),
     )
+
+
+def _mock_actor_nursery() -> tractor.ActorNursery:
+    an = object.__new__(tractor.ActorNursery)
+    an._children = {}
+    an._join_procs = trio.Event()
+    an._child_reap_requests = {}
+    an._child_reaped = {}
+    an._at_least_one_child_in_debug = False
+    an._cancel_called = False
+    return an
+
+
+def test_late_child_registration_observes_cancel():
+    '''
+    Make registration atomically observe nursery cancellation.
+
+    `ActorNursery.cancel()` previously snapshotted `_children` before
+    its next checkpoint. A process monitor registering after that
+    snapshot received a reap request but no runtime cancellation, then
+    waited forever for natural exit. Publishing the child and its reap
+    events together returns cancellation ownership to the late monitor.
+
+    '''
+    an = _mock_actor_nursery()
+    an._cancel_called = True
+    aid = tractor.msg.Aid(
+        name='late_child',
+        uuid='test',
+    )
+    subactor = SimpleNamespace(aid=aid)
+    proc = object()
+
+    (
+        reap_request,
+        reaped,
+        cancel_during_registration,
+    ) = an._register_child(
+        subactor,
+        proc,
+        None,
+    )
+
+    assert cancel_during_registration
+    assert an._children[aid.uid] == (
+        subactor,
+        proc,
+        None,
+    )
+    assert an._child_reap_requests[aid.uid] is reap_request
+    assert an._child_reaped[aid.uid] is reaped
+
+
+def test_mp_late_registration_never_starts_process(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Refuse to start an MP child already owned by nursery cancellation.
+
+    A concurrent `ActorNursery.cancel()` can publish cancellation after
+    `start_actor()` checks its flag but before the MP backend registers
+    its process. The fake registration reports that exact schedule.
+    Proving `FakeProcess.start()` is never called prevents a child from
+    starting after it was omitted from the cancellation snapshot.
+
+    '''
+    class FakeProcess:
+        started: bool = False
+
+        def start(self) -> None:
+            self.started = True
+
+    process = FakeProcess()
+
+    class FakeContext:
+        def get_start_method(self) -> str:
+            return 'spawn'
+
+        def Process(self, **kwargs: object) -> FakeProcess:
+            assert kwargs
+            return process
+
+    nursery = SimpleNamespace(
+        _register_child=lambda *args: (
+            trio.Event(),
+            trio.Event(),
+            True,
+        ),
+    )
+    subactor = SimpleNamespace(
+        aid=tractor.msg.Aid(
+            name='late_mp_child',
+            uuid='test',
+        ),
+    )
+    monkeypatch.setattr(
+        mp_spawn._spawn,
+        '_ctx',
+        FakeContext(),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match='nursery began cancelling',
+    ):
+        trio.run(
+            partial(
+                mp_spawn.mp_proc,
+                name='late_mp_child',
+                actor_nursery=nursery,
+                subactor=subactor,
+                errors={},
+                bind_addrs=[],
+                parent_addr=SimpleNamespace(),
+                _runtime_vars={},
+            )
+        )
+
+    assert not process.started
 
 
 def test_late_child_reap_registration_is_released():

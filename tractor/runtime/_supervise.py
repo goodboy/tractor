@@ -327,6 +327,29 @@ class ActorNursery:
             reap_request.set()
         return reap_request, reaped
 
+    def _register_child(
+        self,
+        subactor: Actor,
+        proc: 'ProcessType',
+        portal: Portal|None,
+    ) -> tuple[trio.Event, trio.Event, bool]:
+        '''
+        Atomically publish one child and its reap coordination.
+
+        '''
+        uid: tuple[str, str] = subactor.aid.uid
+        self._children[uid] = (
+            subactor,
+            proc,
+            portal,
+        )
+        reap_request, reaped = self._register_child_reap(uid)
+        return (
+            reap_request,
+            reaped,
+            self._cancel_called,
+        )
+
     def _request_reap_all(self) -> None:
         '''
         Release every child monitor into its process-join phase.
@@ -419,6 +442,12 @@ class ActorNursery:
 
         '''
         __runtimeframe__: int = 1  # noqa
+        if self._cancel_called:
+            raise RuntimeError(
+                'Cannot start an actor in a cancelling '
+                '`ActorNursery`'
+            )
+
         loglevel: str = (
             loglevel
             or self._actor.loglevel
