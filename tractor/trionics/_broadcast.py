@@ -100,6 +100,20 @@ class Lagged(trio.TooSlowError):
     '''
 
 
+class BroadcastReceiveError(Exception):
+    '''
+    A shared underlying receiver failed in another subscriber task.
+
+    '''
+
+
+class _BroadcastReceiverClosed(Exception):
+    '''
+    An active receiver was closed while owning the source read.
+
+    '''
+
+
 class BroadcastState(Struct):
     '''
     Common state to all receivers of a broadcast.
@@ -115,6 +129,7 @@ class BroadcastState(Struct):
     # broadcast event to wake up all sleeping consumer tasks
     # on a newly produced value from the sender.
     recv_ready: tuple[int, trio.Event]|None = None
+    recv_scope: trio.CancelScope|None = None
 
     # if a ``trio.EndOfChannel`` is received on any
     # consumer all consumers should be placed in this state
@@ -122,7 +137,13 @@ class BroadcastState(Struct):
     # For now, this is solely for testing/debugging purposes.
     eoc: bool = False
 
-    # If the broadcaster was cancelled, we might as well track it
+    # Any non-EOC failure from the shared underlying receiver is
+    # terminal for every subscriber. Retained values remain readable
+    # before this failure is replayed at each receiver's boundary.
+    receive_exc: Exception | None = None
+
+    # Retain the latest interrupted source-reader task until its
+    # receiver next makes progress or closes.
     cancelled: dict[int, Task] = {}
 
     def statistics(self) -> dict[str, Any]:
@@ -142,13 +163,20 @@ class BroadcastState(Struct):
 
         qlens: dict[int, int] = {}
         for tid, sz in subs.items():
-            qlens[tid] = sz if sz != -1 else 0
+            qlens[tid] = min(
+                sz + 1,
+                len(self.queue),
+            )
 
         return {
             'open_consumers': len(subs),
             'queued_len_by_task': qlens,
             'max_buffer_size': self.maxlen,
-            'tasks_waiting': ev.statistics().tasks_waiting if ev else 0,
+            'tasks_waiting': (
+                ev.statistics().tasks_waiting
+                if ev is not None
+                else 0
+            ),
             'tasks_cancelled': self.cancelled,
             'next_value_receiver_id': key,
         }
@@ -190,6 +218,7 @@ class BroadcastReceiver(ReceiveChannel):
         self._recv = receive_afunc or rx_chan.receive
         self._closed: bool = False
         self._raise_on_lag = raise_on_lag
+        self._wait_scope: trio.CancelScope|None = None
 
     def receive_nowait(
         self,
@@ -237,7 +266,10 @@ class BroadcastReceiver(ReceiveChannel):
                 # https://docs.rs/tokio/1.11.0/tokio/sync/broadcast/index.html#lagging
 
                 mxln = state.maxlen
-                lost = seq - mxln
+                # `seq == mxln` is already one past the final
+                # valid deque index, so include that first
+                # displaced value in the loss count.
+                lost = seq - mxln + 1
 
                 # decrement to the last value and expect
                 # consumer to either handle the ``Lagged`` and come back
@@ -255,7 +287,20 @@ class BroadcastReceiver(ReceiveChannel):
                     return self.receive_nowait(_key, _state)
 
             state.subs[key] -= 1
+            state.cancelled.pop(key, None)
             return value
+
+        receive_exc = state.receive_exc
+        if receive_exc is not None:
+            # Re-raising one shared exception mutates its traceback on
+            # every delivery. Give each receiver a stable wrapper while
+            # retaining the original failure as its cause.
+            raise BroadcastReceiveError(
+                'Shared broadcast receiver failed'
+            ) from receive_exc
+
+        if state.eoc:
+            raise trio.EndOfChannel
 
         raise trio.WouldBlock
 
@@ -270,14 +315,34 @@ class BroadcastReceiver(ReceiveChannel):
             raise trio.ClosedResourceError
 
         event = trio.Event()
+        recv_scope = trio.CancelScope()
         assert state.recv_ready is None
+        assert state.recv_scope is None
         state.recv_ready = key, event
+        state.recv_scope = recv_scope
 
         try:
             # if we're cancelled here it should be
             # fine to bail without affecting any other consumers
             # right?
-            value = await self._recv()
+            receive_exc: BaseException|None = None
+            with recv_scope:
+                try:
+                    value = await self._recv()
+                except BaseException as exc:
+                    receive_exc = exc
+
+            # Only this receiver's `aclose()` cancels its private
+            # source-read scope, and it marks the receiver closed
+            # first without a checkpoint. Outer task cancellation does
+            # not set `recv_scope.cancel_called`; it remains a real
+            # `trio.Cancelled` and follows the handler below.
+            if recv_scope.cancel_called:
+                assert self._closed
+            if self._closed:
+                raise _BroadcastReceiverClosed
+            if receive_exc is not None:
+                raise receive_exc
 
             # items with lower indices are "newer"
             # NOTE: ``collections.deque`` implicitly takes care of
@@ -303,6 +368,8 @@ class BroadcastReceiver(ReceiveChannel):
             ):
                 state.subs[sub_key] += 1
 
+            state.cancelled.pop(key, None)
+
             # NOTE: this should ONLY be set if the above task was *NOT*
             # cancelled on the `._recv()` call.
             event.set()
@@ -312,10 +379,19 @@ class BroadcastReceiver(ReceiveChannel):
             # if any one consumer gets an EOC from the underlying
             # receiver we need to unblock and send that signal to
             # all other consumers.
+            state.cancelled.clear()
             self._state.eoc = True
             if event.statistics().tasks_waiting:
                 event.set()
             raise
+
+        except _BroadcastReceiverClosed:
+            # `aclose()` cancelled this receiver's source-read scope.
+            # Wake peers so one of them can take ownership after this
+            # task clears `recv_ready` in `finally`.
+            if event.statistics().tasks_waiting:
+                event.set()
+            raise trio.ClosedResourceError
 
         except (
             trio.Cancelled,
@@ -329,12 +405,33 @@ class BroadcastReceiver(ReceiveChannel):
                 event.set()
             raise
 
+        except Exception as receive_exc:
+            # The underlying receiver is shared by every subscriber,
+            # so any non-EOC failure terminates the entire broadcast.
+            # Publish it before waking peers so they can drain their
+            # retained values and then observe the same failure.
+            state.cancelled.clear()
+            state.receive_exc = receive_exc
+            if event.statistics().tasks_waiting:
+                event.set()
+            raise
+
+        except BaseException:
+            # Process-control and cancellation-like exceptions must
+            # not become durable broadcast state, but peers still
+            # need waking before `recv_ready` is cleared.
+            state.cancelled.pop(key, None)
+            if event.statistics().tasks_waiting:
+                event.set()
+            raise
+
         finally:
             # Reset receiver waiter task event for next blocking condition.
             # this MUST be reset even if the above ``.recv()`` call
             # was cancelled to avoid the next consumer from blocking on
             # an event that won't be set!
             state.recv_ready = None
+            state.recv_scope = None
 
     async def receive(self) -> ReceiveType:
         key = self.key
@@ -362,7 +459,23 @@ class BroadcastReceiver(ReceiveChannel):
                 # seq = state.subs[key]
                 # assert seq == -1  # sanity
                 _, ev = state.recv_ready
-                await ev.wait()
+                wait_scope = trio.CancelScope()
+                self._wait_scope = wait_scope
+                try:
+                    with wait_scope:
+                        await ev.wait()
+
+                    # As with `recv_scope`, only this receiver's
+                    # `aclose()` cancels its private peer-wait scope
+                    # after marking the receiver closed. Outer task
+                    # cancellation remains `trio.Cancelled`.
+                    if wait_scope.cancel_called:
+                        assert self._closed
+                    if self._closed:
+                        raise trio.ClosedResourceError
+                finally:
+                    self._wait_scope = None
+
                 try:
                     return self.receive_nowait(
                         _key=key,
@@ -440,17 +553,34 @@ class BroadcastReceiver(ReceiveChannel):
         if self._closed:
             return
 
-        # if there are sleeping consumers wake
-        # them on closure.
-        rr = self._state.recv_ready
-        if rr:
-            _, event = rr
-            event.set()
-
         # XXX: leaving it like this consumers can still get values
         # up to the last received that still reside in the queue.
-        self._state.subs.pop(self.key)
+        state = self._state
+        state.subs.pop(self.key)
+        state.cancelled.pop(self.key, None)
         self._closed = True
+
+        # A non-owner close must not wake peers waiting behind some
+        # other receiver's source read. If this receiver owns that
+        # read, cancel only its private scope; the owner task wakes
+        # peers after cancellation is delivered and state is ready
+        # for a clean ownership handoff.
+        rr = state.recv_ready
+        if (
+            rr is not None
+
+            # `recv_ready[0]` identifies the receiver which currently
+            # owns the one shared source read. Only that receiver may
+            # cancel `BroadcastState.recv_scope`; closing any other
+            # subscriber must not disturb the owner or its peer tasks.
+            and
+            rr[0] == self.key
+        ):
+            recv_scope = state.recv_scope
+            assert recv_scope is not None
+            recv_scope.cancel()
+        elif (wait_scope := self._wait_scope) is not None:
+            wait_scope.cancel()
 
 
 def broadcast_receiver(
@@ -461,6 +591,11 @@ def broadcast_receiver(
     raise_on_lag: bool = True,
 
 ) -> BroadcastReceiver:
+
+    if max_buffer_size < 1:
+        raise ValueError(
+            '`max_buffer_size` must be greater than zero'
+        )
 
     return BroadcastReceiver(
         recv_chan,

@@ -213,6 +213,14 @@ class LinkedTaskChannel(
     _broadcaster: BroadcastReceiver|None = None
 
     async def aclose(self) -> None:
+        # `LinkedTaskChannel.subscribe()` lazily allocates and retains
+        # this root receiver. Close it first so its receiver-local
+        # source-read scope and cancellation diagnostics are released
+        # before `self._from_aio` becomes inaccessible; child
+        # subscriptions retain their own independent close lifetimes.
+        if (broadcaster := self._broadcaster) is not None:
+            await broadcaster.aclose()
+
         await self._from_aio.aclose()
 
     # ?TODO? async version of this?
@@ -324,6 +332,7 @@ class LinkedTaskChannel(
     @acm
     async def subscribe(
         self,
+        raise_on_lag: bool = True,
 
     ) -> AsyncIterator[BroadcastReceiver]:
         '''
@@ -335,6 +344,11 @@ class LinkedTaskChannel(
 
         See ``tractor._streaming.MsgStream.subscribe()`` for further
         similar details.
+
+        ``raise_on_lag=False`` makes this subscription warn and resume
+        at the oldest retained value after an overrun. The first call
+        also sets that policy for this channel's root receive handle;
+        later child subscriptions choose their policy independently.
         '''
         if self._broadcaster is None:
 
@@ -343,11 +357,14 @@ class LinkedTaskChannel(
                 # use memory channel size by default
                 self._from_aio._state.max_buffer_size,  # type: ignore
                 receive_afunc=self.receive,
+                raise_on_lag=raise_on_lag,
             )
 
             self.receive = bcast.receive  # type: ignore
 
-        async with self._broadcaster.subscribe() as bstream:
+        async with self._broadcaster.subscribe(
+            raise_on_lag=raise_on_lag,
+        ) as bstream:
             assert bstream.key != self._broadcaster.key
             assert bstream._recv == self._broadcaster._recv
             yield bstream
