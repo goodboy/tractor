@@ -69,6 +69,7 @@ Unwrap at the parse or bindspace boundary; see `.overlay` and
 from __future__ import annotations
 import base64
 import ipaddress
+import sys
 from typing import (
     Any,
     ClassVar,
@@ -77,6 +78,7 @@ from typing import (
 
 import msgspec
 import multibase
+import trio
 
 if TYPE_CHECKING:
     from multiaddr import Multiaddr
@@ -172,6 +174,145 @@ def wg8_pubkey(
         )
 
     return base64.b64encode(raw).decode('ascii')
+
+
+def _wg8_key_str(
+    value: bytes|str,
+) -> str:
+    '''
+    Validate and normalize one pyroute2-decoded WireGuard key.
+
+    '''
+    if isinstance(value, bytes):
+        try:
+            key: str = value.decode('ascii')
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                'WireGuard key is not base64 ASCII!'
+            ) from exc
+    else:
+        key = value
+
+    # Reuse `mb_pubkey()`'s strict base64 + 32-byte validation.
+    mb_pubkey(key)
+    return key
+
+
+def _read_wg_keys(
+    iface: str,
+    netns: str|None,
+) -> tuple[str, tuple[str, ...]]:
+    '''
+    Read one WireGuard device using pyroute2's synchronous API.
+
+    This whole function runs in a worker thread because pyroute2's
+    synchronous netlink API owns a private asyncio loop.
+
+    '''
+    if sys.platform != 'linux':
+        raise NotImplementedError(
+            'WireGuard netlink inspection is Linux-only!'
+        )
+
+    try:
+        from pyroute2 import WireGuard
+    except ImportError as exc:
+        raise RuntimeError(
+            'WireGuard inspection requires the `tractor[wg]` extra.'
+        ) from exc
+
+    # Pyroute2 defaults namespace flags to `os.O_CREAT`; a read must
+    # never create a missing namespace as a side effect.
+    wg: Any = WireGuard(
+        netns=netns,
+        flags=0,
+    )
+    try:
+        infos: tuple[Any, ...] = tuple(wg.info(iface))
+    finally:
+        wg.close()
+
+    pubkey: str|None = None
+    peers: list[str] = []
+    info: Any
+    for info in infos:
+        raw_pubkey: Any
+        if raw_pubkey := info.get_attr(
+            'WGDEVICE_A_PUBLIC_KEY'
+        ):
+            next_pubkey: str = _wg8_key_str(raw_pubkey)
+            if (
+                pubkey is not None
+                and
+                pubkey != next_pubkey
+            ):
+                raise RuntimeError(
+                    f'Conflicting public keys returned for '
+                    f'{iface!r}!'
+                )
+            pubkey = next_pubkey
+
+        peer: Any
+        for peer in (
+            info.get_attr('WGDEVICE_A_PEERS')
+            or ()
+        ):
+            raw_peer: Any
+            if raw_peer := peer.get_attr(
+                'WGPEER_A_PUBLIC_KEY'
+            ):
+                peers.append(_wg8_key_str(raw_peer))
+
+    if pubkey is None:
+        raise RuntimeError(
+            f'No public key returned for WireGuard iface '
+            f'{iface!r}!'
+        )
+
+    return (
+        pubkey,
+        tuple(dict.fromkeys(peers)),
+    )
+
+
+async def read_wg_pubkey(
+    iface: str = 'wg0',
+    netns: str|None = None,
+) -> str:
+    '''
+    Read a WireGuard interface's public key through netlink.
+
+    '''
+    keys: tuple[
+        str,
+        tuple[str, ...],
+    ] = await trio.to_thread.run_sync(
+        _read_wg_keys,
+        iface,
+        netns,
+        abandon_on_cancel=False,
+    )
+    return keys[0]
+
+
+async def read_wg_peers(
+    iface: str = 'wg0',
+    netns: str|None = None,
+) -> tuple[str, ...]:
+    '''
+    Read configured peer public keys through netlink.
+
+    '''
+    keys: tuple[
+        str,
+        tuple[str, ...],
+    ] = await trio.to_thread.run_sync(
+        _read_wg_keys,
+        iface,
+        netns,
+        abandon_on_cancel=False,
+    )
+    return keys[1]
 
 
 def _wg_proto_code() -> int:

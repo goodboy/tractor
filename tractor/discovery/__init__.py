@@ -36,6 +36,8 @@ from ._tunnel import (
     mb_pubkey as mb_pubkey,
     mk_wg_maddr as mk_wg_maddr,
     parse_wg_maddr as parse_wg_maddr,
+    read_wg_peers as read_wg_peers,
+    read_wg_pubkey as read_wg_pubkey,
     strip_tunnels as strip_tunnels,
     tunnels_of as tunnels_of,
     wg8_pubkey as wg8_pubkey,
