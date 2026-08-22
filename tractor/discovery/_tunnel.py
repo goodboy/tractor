@@ -198,7 +198,7 @@ def _wg8_key_str(
     return key
 
 
-def _read_wg_keys(
+def _sync_read_wg_keys(
     iface: str,
     netns: str|None,
 ) -> tuple[str, tuple[str, ...]]:
@@ -275,6 +275,22 @@ def _read_wg_keys(
     )
 
 
+async def _read_wg_keys(
+    iface: str,
+    netns: str|None,
+) -> tuple[str, tuple[str, ...]]:
+    '''
+    Read one WireGuard key snapshot without blocking Trio.
+
+    '''
+    return await trio.to_thread.run_sync(
+        _sync_read_wg_keys,
+        iface,
+        netns,
+        abandon_on_cancel=False,
+    )
+
+
 async def read_wg_pubkey(
     iface: str = 'wg0',
     netns: str|None = None,
@@ -286,11 +302,9 @@ async def read_wg_pubkey(
     keys: tuple[
         str,
         tuple[str, ...],
-    ] = await trio.to_thread.run_sync(
-        _read_wg_keys,
+    ] = await _read_wg_keys(
         iface,
         netns,
-        abandon_on_cancel=False,
     )
     return keys[0]
 
@@ -306,13 +320,37 @@ async def read_wg_peers(
     keys: tuple[
         str,
         tuple[str, ...],
-    ] = await trio.to_thread.run_sync(
-        _read_wg_keys,
+    ] = await _read_wg_keys(
         iface,
         netns,
-        abandon_on_cancel=False,
     )
     return keys[1]
+
+
+async def verify_wg_peer(
+    spec: WGTunnelSpec,
+) -> bool:
+    '''
+    Verify a declared WireGuard identity against local kernel state.
+
+    A source/listen maddr names the local interface key, while a
+    destination/dial maddr names one configured peer. Accept either
+    match without making verification an implicit part of parsing.
+
+    '''
+    declared_key: str = _wg8_key_str(spec.peer_pubkey)
+    keys: tuple[
+        str,
+        tuple[str, ...],
+    ] = await _read_wg_keys(
+        spec.iface,
+        spec.netns,
+    )
+    return (
+        declared_key == keys[0]
+        or
+        declared_key in keys[1]
+    )
 
 
 def _wg_proto_code() -> int:

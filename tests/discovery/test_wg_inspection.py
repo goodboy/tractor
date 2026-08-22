@@ -16,7 +16,10 @@ import trio
 from tractor.discovery import (
     read_wg_peers,
     read_wg_pubkey,
+    verify_wg_peer,
+    WGTunnelSpec,
 )
+from tractor.discovery import _tunnel
 
 pyroute2: Any = pytest.importorskip('pyroute2')
 
@@ -24,6 +27,7 @@ pyroute2: Any = pytest.importorskip('pyroute2')
 _PUBKEY: str = 'g3x7z0AdV1rM6UQU22CC7IL3/ivn4DzrE7ikDhCZ/Dc='
 _PEER_1: str = '7PClzcj8o1yAjyPJb0zL2Gt0s2J7yZ6c0JXYqNBGr0E='
 _PEER_2: str = 'H7bJbl1bpY7VzDlB5wI3KjA7JsiYoMWGDJd8dYgc5iw='
+_MISSING_KEY: str = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
 
 class Attrs:
@@ -215,3 +219,87 @@ def test_wg_client_closes_when_read_fails(
 
     assert instance is not None
     assert instance.closed
+
+
+@pytest.mark.parametrize(
+    ('declared_key', 'expected'),
+    (
+        (_PUBKEY, True),
+        (_PEER_2, True),
+        (_MISSING_KEY, False),
+    ),
+)
+def test_verify_wg_peer(
+    monkeypatch: pytest.MonkeyPatch,
+    declared_key: str,
+    expected: bool,
+) -> None:
+    '''
+    A tunnel declaration can identify either side of one local iface.
+
+    Return one stable key snapshot from the async reader, then prove
+    a local interface key and configured peer both verify while an
+    absent key does not. Also prove the spec selects the iface/netns
+    supplied to the read instead of silently using process defaults.
+
+    '''
+    reads: list[tuple[str, str|None]] = []
+
+    async def read_keys(
+        iface: str,
+        netns: str|None,
+    ) -> tuple[str, tuple[str, ...]]:
+        '''
+        Return one deterministic WireGuard key snapshot.
+
+        '''
+        reads.append((iface, netns))
+        return _PUBKEY, (_PEER_1, _PEER_2)
+
+    monkeypatch.setattr(
+        _tunnel,
+        '_read_wg_keys',
+        read_keys,
+    )
+    spec: WGTunnelSpec = WGTunnelSpec(
+        peer_pubkey=declared_key,
+        iface='wg-test',
+        netns='actor-net',
+    )
+
+    assert trio.run(verify_wg_peer, spec) is expected
+    assert reads == [('wg-test', 'actor-net')]
+
+
+def test_verify_wg_peer_validates_before_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    A directly constructed tunnel spec can contain a malformed key.
+
+    Install a reader which would fail if called, pass malformed
+    base64, and prove validation rejects the declaration before any
+    kernel-state inspection occurs.
+
+    '''
+    async def unexpected_read(
+        iface: str,
+        netns: str|None,
+    ) -> NoReturn:
+        '''
+        Fail if malformed-key validation reaches the read boundary.
+
+        '''
+        raise AssertionError('WireGuard read must not run')
+
+    monkeypatch.setattr(
+        _tunnel,
+        '_read_wg_keys',
+        unexpected_read,
+    )
+    spec: WGTunnelSpec = WGTunnelSpec(
+        peer_pubkey='not-base64',
+    )
+
+    with pytest.raises(ValueError):
+        trio.run(verify_wg_peer, spec)

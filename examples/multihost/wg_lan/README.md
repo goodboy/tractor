@@ -45,12 +45,13 @@ no `wg` codec. So `pyproject.toml` temporarily pins the merge commit
 in its PEP 621 dependency metadata, and a plain
 
 ```bash
-uv sync
+uv sync --extra wg
 ```
 
-gets you a `wg`-aware `multiaddr`. That pin goes away once a
-release carries the codec. `py-multibase` is a direct project
-dependency, so no separate install command is needed.
+gets you a `wg`-aware `multiaddr` plus pyroute2's Linux netlink API.
+The multiaddr pin goes away once a release carries the codec.
+`py-multibase` is a direct project dependency, so no separate install
+command is needed.
 
 Without the codec `parse_wg_maddr()` raises immediately with an
 actionable message — there is deliberately **no** degraded
@@ -130,27 +131,21 @@ the same string — A's bearer, A's key, A's overlay ep).
 
 ## 2. verify the keys
 
-Interface inspection commonly needs `CAP_NET_ADMIN`. Keep that
-privileged operation separate from the `tractor` processes:
+Both scripts explicitly call `await verify_wg_peer(addr.tunnel)`
+before starting `tractor`. The helper validates the maddr's declared
+key, reads one `wg0` key snapshot through pyroute2's Linux
+generic-netlink API, and accepts the key when it is either the
+interface's own public key or one of its configured peers.
 
-```bash
-# host A: output must equal the maddr's A_pub key
-export WG_KEY_INSPECTION="$(sudo wg show wg0 public-key)"
+This establishes key presence only. It does not enforce a
+host-specific local/peer role and does not verify `Endpoint`,
+`AllowedIPs`, a recent handshake, or routing.
 
-# host B: output must contain the maddr's A_pub key
-export WG_KEY_INSPECTION="$(sudo wg show wg0 peers)"
-```
-
-These checks establish only that host A uses the declared local
-key and host B has that key as a configured peer. They do not
-verify `Endpoint`, `AllowedIPs`, a recent handshake, or routing.
-The exported text contains public keys only. Each script passes it
-to `verify_wg_key()` with its host-specific role before starting
-`tractor`. Callers that already have permission to inspect the
-interface may omit that argument; the helper's direct query is
-async and requests cancellation after five seconds. Trio's
-subprocess termination escalation can make final process cleanup
-take longer than that cancellation deadline.
+Interface inspection commonly requires `CAP_NET_ADMIN` in the user
+namespace that owns the target network namespace. Run each program in
+a security context that already has the required inspection authority.
+The helper never invokes `sudo` or `wg(8)`, escalates privileges, or
+creates a namespace.
 
 ## 3. run
 
@@ -162,11 +157,10 @@ python host_a_srv.py
 python host_b_client.py
 ```
 
-Run both `tractor` programs as the normal application account,
-not as root. Privilege is needed only for tunnel setup and the
-separate inspection above. If using that preflight, keep the
-host-specific `WG_KEY_INSPECTION` value exported in each
-program's shell.
+Run both `tractor` programs as the normal application account in a
+security context with the inspection authority described above. No
+`WG_KEY_INSPECTION` export or subprocess preflight is used; tunnel
+setup remains out-of-band. Do not run the applications as root.
 
 The client binds its own actor listener to `10.0.11.2:0`, while
 the service actor binds to host A's `10.0.11.1` overlay host with
@@ -189,12 +183,13 @@ Four corrections, all from
    all. `parse_wg_maddr()` now rejects it with an actionable
    error.
 2. **parsing is pure.** #482's helper had the key-check adjacent
-   to the parse; `verify_wg_key()` is now a separate, explicitly
-   composed step for inspection-capable callers. A parser that
-   shells out is a nasty surprise.
-3. **no `sudo`.** #482 ran `sudo wg show`; a library/example must
-   never escalate or run `tractor` as root. Privileged tunnel
-   setup and key inspection are separate shell steps.
+   to the parse; async `verify_wg_peer()` is now a separate,
+   explicitly composed step that the caller invokes. Implicit
+   kernel inspection from a parser is a nasty surprise.
+3. **no `sudo` or subprocess.** #482 ran `sudo wg show`; tractor's
+   helper reads generic netlink through pyroute2 and never attempts
+   privilege escalation or namespace creation. The caller must
+   already have the required inspection authority.
 4. **no new `Address` proto-type.** The tunnel rides *beside* the
    overlay addr in a frozen `TunnelledAddress`, and only `.overlay`
    crosses into `open_nursery()`. #482 §6 floated a `WGAddress`
@@ -205,7 +200,7 @@ Four corrections, all from
 
 ## next
 
-Layer A's `TunnelledAddress` and native maddr parser now live in
-`tractor.discovery`. Next, replace this example's `wg(8)` verification
-probe with `pyroute2`, then add `open_bindspace()` `@acm`s which
-create/tear down the iface and netns.
+Layer A's `TunnelledAddress` and native maddr parser plus Layer B's
+explicit pyroute2 verification now live in `tractor.discovery`. Next,
+add `open_bindspace()` `@acm`s which create/tear down the iface and
+netns.
