@@ -247,7 +247,7 @@ side-effect-free; verification is the *caller's* explicit step
   (`proto_key`/`unwrap` identical to overlay), `wrap_address()`
   regression (a tunnelled maddr `str` → `TunnelledAddress`; a
   plain one → unchanged), and **a real end-to-end over a
-  locally-created wg pair** gated on `CAP_NET_ADMIN` (see §5.3).
+  locally-created wg pair** gated on `CAP_NET_ADMIN` (see §5.4).
 
 ---
 
@@ -293,9 +293,12 @@ converting anything else — there is no perf argument here, only
 a "no foreign event loop in a trio actor" argument, which (1)
 already satisfies (a thread is not an event loop).
 
-Explicitly **do not** pull in `trio-asyncio` for pyroute2: it
-would be the one place in the runtime where an asyncio loop
-exists for no reason.
+Explicitly **do not** pull in `trio-asyncio` for pyroute2 or infect
+every wg-using actor merely to service one-shot netlink calls. A
+dedicated `wgman` actor (§5.1) is the one plausible asyncio-hosted
+shape: it can use tractor's own `.to_asyncio` task linkage while
+keeping the foreign loop and provisioning authority out of ordinary
+actor processes.
 
 ### 4.2 API shape
 
@@ -331,7 +334,68 @@ describes the data-plane socket, not who provisions it: tractor owns
 the lifecycle while `Endpoint`/`MsgTransport` remain responsible only
 for the overlay application socket.
 
-### 5.1 the composition
+### 5.1 candidate default: first-child `wgman`
+
+For a WG-enabled deployment profile, consider eagerly spawning one
+private **WireGuard manager** (`wgman`) as the root actor's logical
+first child. It is a narrow network-control-plane service, not a
+general worker and not an application-visible transport endpoint.
+The naive profile gets one manager for the actor tree; advanced
+deployments may disable it for pre-provisioned networking or place
+one manager in each capability/bindspace security domain.
+
+"First child" describes supervision and teardown ordering, not a
+serial startup barrier. Submit the `wgman` spawn in the same startup
+wave as ordinary children, start its pyroute2 import, generic-netlink
+discovery and declared-tunnel reconciliation immediately, and publish
+a readiness signal separately. Sibling processes can boot in parallel;
+only their first WG-dependent bind/dial waits for manager readiness.
+This overlaps setup with actor-tree startup and avoids every sibling
+paying its own pyroute2/loop/socket initialization latency.
+
+The initial manager can still call the sync helpers from §4.1. A
+natural follow-up is to spawn it with `infect_asyncio=True` and keep
+`AsyncWireGuard` clients alive on asyncio's host loop through
+`tractor.to_asyncio.run_task()`. Tractor then owns cross-loop task
+linkage, cancellation and error propagation, while normal siblings
+remain plain Trio actors. Keep one client per realized namespace or
+other kernel control domain; do not share a pyroute2 socket across
+domains merely to reduce object count.
+
+Keep the authority surface deliberately small:
+
+- accept structured inspect/verify/ensure/release requests derived
+  from `WGTunnelSpec`, `BindspaceSpec` and explicit `role`; never
+  expose arbitrary pyroute2 calls, shell commands or `setns()` RPC;
+- let the root/supervisor mediate access initially, or hand siblings
+  a scoped manager capability; do not register a privileged `wgman`
+  endpoint for unrestricted cluster-wide discovery;
+- never return private keys or namespace FDs to application actors;
+  pass secrets and live capabilities into the manager through the
+  supervisor-owned bootstrap path;
+- grant only the capabilities required for the manager's assigned
+  domain. Prefer a manager already placed in that user/net namespace
+  over one process holding ambient authority across every namespace;
+- make ensure/release idempotent and reference-count ownership so one
+  sibling cannot tear down a tunnel still borrowed by another.
+
+The root owns the manager's lifetime. `wgman` must outlive all
+siblings borrowing its tunnels and exit before the root drops the
+underlying namespace/capability handles. A manager crash fails closed:
+dependent operations receive an explicit service error; restart, if
+enabled, reconciles declared state idempotently before advertising
+readiness again. Do not silently let siblings fall back to privileged
+local provisioning, since that defeats both the security boundary and
+the single warm control-plane benefit.
+
+Treat eager `wgman` as a measured deployment-profile choice. Compare
+root startup with no WG declarations, pre-provisioned read-only WG,
+and runtime-managed tunnels before making it unconditional whenever
+the `wg` extra is installed. The intended invariant is "one warm
+manager per simple WG actor tree", not "every tractor program spawns
+a privileged child".
+
+### 5.2 the composition
 
 The maddr describes the composed network path and can be used as
 either a source/listen or destination/dial handle. It does **not**
@@ -433,9 +497,9 @@ it does not *enter* their bindspaces.
 
 The caller supplies `role`; do not infer it from maddr shape. The same
 composed maddr can name a server source or client destination, and the
-required local provisioning/ownership differs (§5.3).
+required local provisioning/ownership differs (§5.4).
 
-### 5.2 `Address.namespace`, at last
+### 5.3 `Address.namespace`, at last
 
 - `TunnelledAddress.namespace` → `(kind, id)` e.g.
   `('netns', 'tractor-wg0')`.
@@ -457,7 +521,7 @@ pair. Layer C should move that shape into `BindspaceIdentity`, avoid a
 subprocess where netlink/procfs suffices, and hold the namespace FD in
 `BindspaceHandle` to pin the identity.
 
-### 5.3 the netns/process reality — read this before designing
+### 5.4 the netns/process reality — read this before designing
 
 **The headline consequence, stated up front**: netns is a
 **runtime-level config API, not an actor-app-code API.** It is
@@ -536,7 +600,7 @@ server bound in the old namespace.
   tolerance and `_serve_ipc_eps()`'s per-ep `try/except`
   encode. Mirror both.
 
-### 5.4 tests for layer C
+### 5.5 tests for layer C
 
 - unit: fold-N-tunnel-specs-into-nested-`@acm`s, with fakes; assert
   enter/exit ordering (outermost-last-out) via a trace list.
@@ -547,7 +611,7 @@ server bound in the old namespace.
   and a subactor in the other, then `find_actor()` across the tunnel.
   This is fully self-contained — no second host and no `sudo` in the
   test body.
-- the `to_thread`-netns-mismatch regression from §5.3, written
+- the `to_thread`-netns-mismatch regression from §5.4, written
   **first** (red), then the fix (green), per project convention.
 - bootstrap ordering: assert the child reports the expected namespace
   inode before parent-channel connect and listener creation.
@@ -556,6 +620,14 @@ server bound in the old namespace.
 - privilege drop: prove actor code lacks provisioning caps after entry.
 - role/ownership: fake listen/dial resources and assert owned listener
   teardown versus borrowed dial-handle release.
+- `wgman` bootstrap: prove sibling process startup overlaps manager
+  reconciliation while the first WG operation still waits for its
+  readiness signal.
+- `wgman` authority: reject arbitrary callers/operations and prove an
+  unprivileged sibling cannot receive secrets, FDs or provisioning
+  authority through the manager API.
+- `wgman` lifetime: prove it outlives tunnel borrowers, fails pending
+  requests explicitly on crash and reconciles before restart-ready.
 
 ---
 
@@ -570,7 +642,7 @@ machinery covers any iface-layer tunnel `pyroute2` can drive —
 `kind: ClassVar[str]`, and dispatch `open_*` by `match` on it.
 Design for it now (union + `match`), implement only `wg` +
 `netns`. `veth`-pairs-in-netns is the natural second one because
-it makes the §5.4 integration test possible without wg at all —
+it makes the §5.5 integration test possible without wg at all —
 consider doing it *first* for exactly that reason.
 
 ## 7. Non-goals
@@ -588,7 +660,7 @@ consider doing it *first* for exactly that reason.
 
 | risk | mitigation |
 | --- | --- |
-| `to_thread` worker runs in the wrong netns | §5.3; pass `netns=` to pyroute2 or pin a worker; test-first |
+| `to_thread` worker runs in the wrong netns | §5.4; pass `netns=` to pyroute2 or pin a worker; test-first |
 | namespace name is renamed/replaced between provision and spawn | pass an open namespace FD; verify `(key, inode)` after child entry |
 | child starts sockets/threads before `setns()` | enter in the spawn bootstrap trampoline before `_runtime.async_main()`; assert inode ordering |
 | ambient capabilities leak into actor app code | split provision/enter authority and drop caps before runtime initialization |
@@ -596,7 +668,9 @@ consider doing it *first* for exactly that reason.
 | py-multiaddr#108 merged but unreleased | PEP 621 direct-revision pin + `_wg_proto_code()` gate; replace with a release floor once published |
 | `TunnelledAddress` leaks into transport reflection/type dispatch | keep wrappers through declaration/bindspace handling, call `strip_tunnels()` at channel/endpoint boundaries, and retain the boundary regressions |
 | privileged ops in a library | never `sudo`; explicit cap probe + actionable error; pre-provisioned is the default |
-| pyroute2 0.9 asyncio core drags a loop into the actor | option (1) is a *thread*, not a loop; forbid `trio-asyncio` here (§4.1) |
+| pyroute2 0.9 asyncio core drags a loop into every actor | use a worker for one-shots; confine persistent asyncio to an infected `wgman` (§4.1, §5.1) |
+| eager `wgman` serializes or slows root bootstrap | spawn it in parallel; gate only WG-dependent operations on readiness; measure before making the profile unconditional |
+| `wgman` becomes a cluster-wide privilege oracle | keep it private/scoped, expose structured verbs only and split managers by capability domain |
 | netns teardown strands actor teardown | idempotent/tolerant teardown mirroring `_uds.close_listener()` |
 
 ## 9. Follow-up issue seeds
@@ -608,6 +682,7 @@ consider doing it *first* for exactly that reason.
 - `wg` proto into the multiaddr **spec** (gh #483), then flip
   `MsgTransport.maddr` to always return `Multiaddr` (the third
   #443 bullet)
-- runtime-managed wg key rotation / peer add-remove as a
-  `tractor` service actor — the natural "actor that owns the
-  network" demo
+- first-child `wgman` prototype: concurrent bootstrap, scoped sibling
+  access, infected-asyncio pyroute2 ownership and restart reconciliation
+- runtime-managed wg key rotation / peer add-remove through `wgman` —
+  the natural "actor that owns the network" demo
