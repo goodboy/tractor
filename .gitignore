@@ -121,14 +121,6 @@ snippets/
 .claude/skills/resolve-conflicts
 .claude/skills/inter-skill-review
 
-# /taken-export specifics
-.claude/skills/taken-export
-.opencode/skills/taken-export
-.ai/taken/exports/
-
-# opencode local command deployment
-.opencode/commands/
-
 # /open-wkt specifics
 .claude/skills/open-wkt
 .claude/wkts/
