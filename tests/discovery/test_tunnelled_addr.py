@@ -27,6 +27,7 @@ from tractor.discovery._addr import (
     wrap_address,
 )
 from tractor.ipc._tcp import TCPAddress
+from tractor.ipc._uds import UDSAddress
 
 
 # a valid-looking std-base64 `wg(8)` pubkey (32B -> 44 chars)
@@ -174,16 +175,13 @@ def test_namespace_comes_from_the_tunnel(
     overlay: TCPAddress,
 ):
     '''
-    First real consumer of `Address.namespace`, spec'd in the
-    protocol since day one and implemented by no backend.
+    Plain transport addresses explicitly select no namespace, while
+    a tunnel can select one for the same concrete overlay.
 
     '''
-    # XXX, "no backend implements it" is literal — the member
-    # isn't even declared, so this is `AttributeError` not `None`.
-    # This assert is the guard: when a backend finally declares
-    # `.namespace`, it fails and the `getattr()` fallback in
-    # `TunnelledAddress.namespace` can go.
-    assert not hasattr(overlay, 'namespace')
+    uds_addr: UDSAddress = UDSAddress('/tmp', 'tractor-test.sock')
+    assert overlay.namespace is None
+    assert uds_addr.namespace is None
 
     no_ns = TunnelledAddress(
         overlay=overlay,

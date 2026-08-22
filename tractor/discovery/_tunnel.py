@@ -432,20 +432,9 @@ class TunnelledAddress(
         '''
         The tunnel's netns, when it declares one.
 
-        This is the first real consumer of `Address.namespace`,
-        spec'd in the `Address` protocol since day one and
-        implemented by no backend.
-
-        XXX NOTE, "implemented by no backend" is literal: neither
-        `TCPAddress` nor `UDSAddress` defines `.namespace` at all,
-        so a plain attr access on an overlay raises
-        `AttributeError` rather than yielding `None`. Hence the
-        `getattr()` — drop it once the backends actually declare
-        the member.
-
         '''
         if (netns := self.tunnel.netns) is None:
-            return getattr(self.overlay, 'namespace', None)
+            return self.overlay.namespace
 
         return ('netns', netns)
 

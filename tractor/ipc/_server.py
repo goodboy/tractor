@@ -631,6 +631,7 @@ class Endpoint(Struct):
 
     '''
     addr: Address
+    declared_addr: Address|TunnelledAddress
     listen_tn: Nursery
     stream_handler_tn: Nursery|None = None
 
@@ -645,15 +646,27 @@ class Endpoint(Struct):
         MsgTransport,  # handle to encoded-msg transport stream
     ] = {}
 
+    @property
+    def namespace(self) -> tuple[str, str|int]|None:
+        '''
+        Return the original address declaration's namespace.
+
+        `Endpoint.addr` is peeled to its concrete transport before
+        listener reflection, so `.declared_addr` retains bindspace
+        metadata for diagnostics and later provisioning.
+
+        '''
+        return self.declared_addr.namespace
+
     def pformat(
         self,
         indent: int = 0,
         privates: bool = False,
     ) -> str:
         type_repr: str = type(self).__name__
+        namespace: tuple[str, str|int]|None = self.namespace
         fmtstr: str = (
-            # !TODO, always be ns aware!
-            # f'|_netns: {netns}\n'
+            f' |.namespace: {namespace!r}\n'
             f' |.addr: {self.addr!r}\n'
             f' |_peers: {len(self.peer_tpts)}\n'
         )
@@ -931,9 +944,17 @@ class Server(Struct):
                 ep.addr for ep in eps
             ]
             repr_eps: str = ppfmt(addrs)
+            namespaces: list[
+                tuple[str, str|int]|None
+            ] = []
+            ep: Endpoint
+            for ep in eps:
+                namespaces.append(ep.namespace)
+            repr_namespaces: str = ppfmt(namespaces)
 
             fmtstr += (
                 f' |_endpoints: {repr_eps}\n'
+                f' |_namespaces: {repr_namespaces}\n'
                 # ^TODO? how to indent closing ']'..
             )
 
@@ -1086,6 +1107,7 @@ async def _serve_ipc_eps(
                     addr=addr,
                     listen_tn=listen_tn,
                     stream_handler_tn=stream_handler_tn,
+                    declared_addr=declared_addr,
                 )
                 try:
                     ep_sclang: str = nest_from_op(

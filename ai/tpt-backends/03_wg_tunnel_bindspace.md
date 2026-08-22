@@ -465,6 +465,10 @@ contract open. A concrete transport call returns a concrete overlay;
 a declaration-level call may replace the overlay and return a new
 `TunnelledAddress`. In either case wrappers remain until the final
 transport bind/dial boundary, where `strip_tunnels()` is mandatory.
+At the listener boundary, keep the split explicit:
+`Endpoint.addr` is the peeled concrete address used for transport
+reflection, while `Endpoint.declared_addr` retains the original
+wrapper for namespace diagnostics and later bindspace orchestration.
 
 Per-platform provisioning still composes one resource context per
 tunnel/bindspace layer:
@@ -500,16 +504,13 @@ required local provisioning/ownership differs (§5.4).
 
 - `TunnelledAddress.namespace` → `(kind, id)` e.g.
   `('netns', 'tractor-wg0')`.
-- **and** the existing backends should implement it as `None`
-  explicitly (they currently just don't define it), so the
-  Protocol stops lying.
-- consumers to audit: nothing reads `.namespace` today — so
-  adding it is safe, but the *point* is that
-  `Endpoint`/`Server.pformat()` should start showing it (there's
-  already a `# !TODO, always be ns aware!` +
-  `f'|_netns: {netns}\n'` placeholder sitting in
-  `Endpoint.pformat()`, `_server.py:645`). Fill that in; it's
-  the cheapest possible proof the layer is wired.
+- existing plain backends implement it explicitly as `None`, so the
+  Protocol does not lie and tunnel delegation needs no `getattr()`
+  fallback.
+- `Endpoint.namespace` reads the retained declaration rather than its
+  peeled transport addr; both `Endpoint.pformat()` and
+  `Server.pformat()` expose that value as the cheapest proof the layer
+  is wired.
 
 Use `github/ns_aware@e4688cad` as prototype evidence, not code to
 cherry-pick unchanged. Its `/proc/<pid>/ns/<type>` inode reader and
