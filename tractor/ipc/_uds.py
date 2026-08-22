@@ -166,6 +166,14 @@ class UDSAddress(
         )
 
     @property
+    def namespace(self) -> None:
+        '''
+        Report that plain UDS uses the process's current namespace.
+
+        '''
+        return None
+
+    @property
     def sockpath(self) -> Path:
         return Path(self.bindspace) / self.filename
 

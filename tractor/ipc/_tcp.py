@@ -108,6 +108,14 @@ class TCPAddress(
         return self._host
 
     @property
+    def namespace(self) -> None:
+        '''
+        Report that plain TCP uses the process's current namespace.
+
+        '''
+        return None
+
+    @property
     def domain(self) -> str:
         return self._host
 
