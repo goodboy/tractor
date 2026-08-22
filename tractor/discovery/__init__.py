@@ -40,5 +40,6 @@ from ._tunnel import (
     read_wg_pubkey as read_wg_pubkey,
     strip_tunnels as strip_tunnels,
     tunnels_of as tunnels_of,
+    verify_wg_peer as verify_wg_peer,
     wg8_pubkey as wg8_pubkey,
 )

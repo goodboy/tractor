@@ -32,8 +32,10 @@ onto `trio` as the library's sans-io layer allows.
   by multiformats/py-multiaddr#107 and gh #483.
 - **today's deployable story remains declarative**: run `wg-quick`
   out-of-band, parse the maddr, strip its wrapper to the overlay
-  `(host, port)`, verify the pubkey in its host-specific role,
-  hand the overlay addr to `registry_addrs=`/`tpt_bind_addrs=`.
+  `(host, port)`, explicitly verify the declared pubkey against the
+  local interface key or configured peers with async
+  `verify_wg_peer()`, then hand the overlay addr to
+  `registry_addrs=`/`tpt_bind_addrs=`.
   The repaired `examples/multihost/wg_lan/` implementation derives
   from and supersedes #482's original example.
 - `Address.namespace` exists in the Protocol
@@ -200,31 +202,25 @@ Observed protocol-name lists, for writing the `match`:
 
 ### 3.3 pure parser helpers + explicit verification
 
-The parser/key-codec helpers live in
-`tractor/discovery/_tunnel.py`; the impure verifier remains
-example-local until layer B:
+The parser/key-codec helpers and async production verifier live in
+`tractor/discovery/_tunnel.py`; parsing remains pure while verification
+is an explicit, impure caller step:
 
 ```python
 def parse_wg_maddr(maddr: str|Multiaddr) -> TunnelledAddress: ...
 def mb_pubkey(wg8_key: str) -> str: ...
 def wg8_pubkey(multibase_key: str) -> str: ...
-async def verify_wg_key(
-    addr: TunnelledAddress,
-    role: Literal['local', 'peer'],
-    iface: str|None = None,
-    timeout: float = 5,
-    inspection: str|None = None,
-) -> bool: ...  # example-local impure probe
+async def verify_wg_peer(spec: WGTunnelSpec) -> bool: ... # layer B
 ```
 
-In layer A `verify_wg_key()` may shell out to role-specific
-`wg show <if> public-key|peers` queries, but it must be a *single*
-async, time-bounded function so it never blocks trio's run thread
-and layer B swaps only its body. It verifies key presence only,
-not `Endpoint`, `AllowedIPs`, handshake state, or routing. Never
-run `tractor` as root: privileged inspection stays a separate
-step whose public-key output can be passed as `inspection`. Never
-call it implicitly from
+Layer A's example-local `verify_wg_key()` used role-specific
+`wg show <if> public-key|peers` queries. Layer B replaces it with
+`verify_wg_peer()`, backed by one pyroute2 key snapshot selected by
+`spec.iface` and `spec.netns`. It validates the declared key before
+I/O and accepts either the interface's own public key or a configured
+peer key. It does not enforce a host-specific role and verifies key
+presence only, not `Endpoint`, `AllowedIPs`, handshake state, or
+routing. Never call it implicitly from
 `wrap_address()`/`parse_maddr()` — parsing must stay pure and
 side-effect-free; verification is the *caller's* explicit step
 (and later, the bindspace `@acm`'s).
@@ -285,13 +281,13 @@ Three integration options, in increasing trio-nativeness:
 - (3) reimplement the codecs. Never.
 
 **Recommended split**: ship (1) first so layer B is a small,
-reviewable, behaviour-preserving swap of `verify_wg_key()`'s
-body; then land (2) as a follow-up commit for the read path
-(`wg get`, `link get`) where the sans-io surface is smallest,
-and keep (1) for the privileged mutating ops. Measure before
-converting anything else — there is no perf argument here, only
-a "no foreign event loop in a trio actor" argument, which (1)
-already satisfies (a thread is not an event loop).
+reviewable replacement of the example-local verification probe with
+production `verify_wg_peer()`; then land (2) as a follow-up commit for
+the read path (`wg get`, `link get`) where the sans-io surface is
+smallest, and keep (1) for the privileged mutating ops. Measure before
+converting anything else — there is no perf argument here, only a "no
+foreign event loop in a trio actor" argument, which (1) already
+satisfies (a thread is not an event loop).
 
 Explicitly **do not** pull in `trio-asyncio` for pyroute2 or infect
 every wg-using actor merely to service one-shot netlink calls. A
@@ -313,7 +309,8 @@ async def read_wg_peers(
 async def read_wg_pubkey(iface: str = 'wg0', ...) -> str: ...
 ```
 
-and `verify_wg_key()` becomes a thin composition over the two.
+and `verify_wg_peer()` becomes a thin composition over one shared key
+snapshot.
 Note the pure-getter rule: no `read_wg_peers(..., create=True)`.
 
 ---
