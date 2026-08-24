@@ -370,10 +370,17 @@ class ActorNursery:
 
         '''
         self._children.pop(uid, None)
-        self._child_reap_requests.pop(uid, None)
+        reap_request: trio.Event|None = (
+            self._child_reap_requests.pop(uid, None)
+        )
         reaped: trio.Event|None = self._child_reaped.pop(
             uid,
             None,
+        )
+        assert (
+            (reap_request is None)
+            ==
+            (reaped is None)
         )
         if reaped is not None:
             reaped.set()

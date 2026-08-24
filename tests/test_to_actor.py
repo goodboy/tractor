@@ -201,10 +201,10 @@ async def test_spawn_from_caller_nursery(
 
     Previously `to_actor.run()` treated an actor-runtime cancel ack
     as process reaping, so the call returned while the child monitor
-    and its `ActorNursery._children` record remained alive until the
-    entire nursery exited. The assertion inside the still-open
-    nursery proves child-process joining and record removal now
-    complete before the one-shot call returns.
+    and its `ActorNursery` child/reap bookkeeping remained alive until
+    the entire nursery exited. The assertions inside the still-open
+    nursery prove child-process joining and removal from all three
+    mappings complete before the one-shot call returns.
 
     '''
     async with tractor.open_nursery() as an:
@@ -214,6 +214,8 @@ async def test_spawn_from_caller_nursery(
             an=an,
         ) == 11
         assert not an._children
+        assert not an._child_reap_requests
+        assert not an._child_reaped
 
 
 @tractor_test
@@ -231,7 +233,7 @@ async def test_cancel_ack_failure_hard_reaps_child(
     gate and then waited forever for a still-running process. This
     test forces that exact result without cancelling the actor, caps
     the call to detect the former hang and verifies the child monitor
-    removes its `ActorNursery._children` record before returning.
+    removes every `ActorNursery` child/reap entry before returning.
 
     '''
     async def cancel_without_ack(
@@ -256,6 +258,8 @@ async def test_cancel_ack_failure_hard_reaps_child(
                 an=an,
             ) == 21
         assert not an._children
+        assert not an._child_reap_requests
+        assert not an._child_reaped
 
 
 def test_cancel_actor_timeout_closes_blocked_send():
