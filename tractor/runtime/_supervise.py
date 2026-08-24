@@ -130,12 +130,21 @@ async def _try_cancel_then_kill(
     # mutated by per-child `debug_mode=True`). ORing covers
     # every flavor without false-positively skipping
     # legitimate hard-kill paths in non-debug trees.
+    def child_in_debug() -> bool:
+        '''
+        Sample child/tree debugger protection state.
+
+        '''
+        return (
+            debug_mode_active
+            or
+            debug.Lock.ctx_in_debug is not None
+        )
+
     debug_protected: bool = (
-        debug.Lock.ctx_in_debug is not None
+        child_in_debug()
         or
         _state._runtime_vars.get('_debug_mode', False)
-        or
-        debug_mode_active
     )
 
     try:
@@ -145,11 +154,8 @@ async def _try_cancel_then_kill(
         if not cancelled:
             if debug_protected:
                 await debug.maybe_wait_for_debugger(
-                    child_in_debug=(
-                        debug_mode_active
-                        or
-                        debug.Lock.ctx_in_debug is not None
-                    ),
+                    # Re-sample after the cancel-RPC checkpoint.
+                    child_in_debug=child_in_debug(),
                     header_msg=(
                         'Delaying subproc hard-reap while '
                         'debugger locked..\n'
