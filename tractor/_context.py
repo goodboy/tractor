@@ -1097,7 +1097,12 @@ class Context:
                 )
 
             cid: str = self.cid
-            with trio.move_on_after(timeout) as cs:
+            cancel_deadline: float = (
+                trio.current_time()
+                +
+                timeout
+            )
+            with trio.move_on_at(cancel_deadline) as cs:
                 cs.shield = True
                 log.cancel(
                     header
@@ -1113,6 +1118,7 @@ class Context:
                     '_cancel_task',
                     kwargs={'cid': cid},
                     cancel_on_startup=False,
+                    send_deadline=cancel_deadline,
                 )
 
             if cs.cancelled_caught:

@@ -319,6 +319,67 @@ def test_cancel_actor_timeout_closes_blocked_send():
     )
 
 
+def test_context_cancel_timeout_closes_blocked_send():
+    '''
+    Bound context-cancel publication and acknowledgement together.
+
+    `Context.cancel()` shields its transaction from outer cancellation,
+    while `MsgpackTransport.send()` separately shields complete frame
+    publication. Previously the context's timeout was not forwarded to
+    that inner shield, so a peer which stopped reading could leave the
+    cancel task blocked forever instead of respecting `timeout`.
+
+    The fake private RPC records the forwarded absolute deadline and
+    blocks under a send-like shield until that deadline. The mock clock
+    advances directly to it; completion and the exact recorded value
+    prove that publication shares the context's one-second budget.
+
+    '''
+    async def main() -> None:
+        deadlines: list[float] = []
+
+        async def blocked_cancel(
+            namespace: str,
+            function: str,
+            kwargs: dict[str, object],
+            cancel_on_startup: bool,
+            send_deadline: float,
+        ) -> None:
+            assert (namespace, function) == ('self', '_cancel_task')
+            assert kwargs == {'cid': 'blocked-context'}
+            assert not cancel_on_startup
+            deadlines.append(send_deadline)
+            with trio.CancelScope(
+                deadline=send_deadline,
+                shield=True,
+            ):
+                await trio.sleep_forever()
+            await trio.lowlevel.checkpoint_if_cancelled()
+
+        peer_aid = tractor.msg.Aid(
+            name='blocked_peer',
+            uuid='test',
+        )
+        ctx = object.__new__(tractor.Context)
+        ctx.chan = SimpleNamespace(
+            aid=peer_aid,
+            connected=lambda: True,
+            transport=SimpleNamespace(maddr='test://blocked'),
+        )
+        ctx.cid = 'blocked-context'
+        ctx._portal = SimpleNamespace(_run_from_ns=blocked_cancel)
+        ctx._nsf = NamespacePath.from_ref(add_one)
+
+        await ctx.cancel(timeout=1)
+
+        assert deadlines == [1.]
+
+    trio.run(
+        main,
+        clock=MockClock(autojump_threshold=0),
+    )
+
+
 def _mock_actor_nursery() -> tractor.ActorNursery:
     an = object.__new__(tractor.ActorNursery)
     an._children = {}
