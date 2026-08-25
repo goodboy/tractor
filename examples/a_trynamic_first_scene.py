@@ -35,8 +35,12 @@ async def main():
             for name in ('donny', 'gretchen')
         }
 
-        async def run_and_print(name: str, other_actor: str):
+        async def run_and_print(
+            name: str,
+            other_actor: str,
+        ) -> None:
             print(
+                # RPC through an existing actor's `Portal`.
                 await portals[name].run(
                     say_hello,
                     other_actor=other_actor,

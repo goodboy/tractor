@@ -100,7 +100,7 @@ Semantics worth knowing:
 - it blocks until the remote task returns, re-raising any
   remote error in the usual boxed form right in the calling
   task.
-- placement also determines process ownership: ``an=`` spawns and
+- lifetime mode also determines process ownership: ``an=`` spawns and
   reaps a fresh child in an existing actor nursery, while passing
   neither does the same in a private call-scoped nursery (booting
   the runtime if needed). ``portal=`` instead runs one linked task
@@ -108,7 +108,7 @@ Semantics worth knowing:
   the portal's owner remains responsible for its lifetime.
 - concurrency composes the plain ``trio`` way: schedule
   multiple ``run()`` calls into a local task nursery (see
-  ``examples/parallelism/to_actor_one_shots.py``).
+  ``examples/parallelism/concurrent_toactor_primes.py``).
 
 A reused actor must expose both the target module and the
 ``to_actor`` context trampoline:

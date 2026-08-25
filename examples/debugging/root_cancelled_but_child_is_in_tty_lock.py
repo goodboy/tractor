@@ -44,7 +44,7 @@ async def main():
     async with (
         tractor.open_nursery(
             debug_mode=True,
-            enable_transports=['uds'],  # TODO, apss this via osenv?
+            enable_transports=['uds'],  # TODO, pass this via osenv?
             loglevel='devx',  # XXX, required for test!
         ) as an,
         trio.open_nursery() as tn,

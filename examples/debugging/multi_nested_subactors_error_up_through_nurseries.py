@@ -37,6 +37,8 @@ async def spawn_until(depth=0):
                 )
             )
 
+            # Let the background one-shot enter `breakpoint_forever()`
+            # before its sibling raises and cancellation propagates.
             await trio.sleep(0.5)
             # rx and propagate error from child
             await tractor.to_actor.run(

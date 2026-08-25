@@ -31,7 +31,7 @@ async def main():
         tn.start_soon(burn_cpu)
 
         # run the same func as the lone task in a subactor,
-        # block on (and collect) its result
+        # block on and collect its PID as the caller-side result
         pid = await tractor.to_actor.run(burn_cpu)
 
     print(f"Collected subproc {pid}")

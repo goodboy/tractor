@@ -1,5 +1,5 @@
 '''
-`tractor.to_actor.run()`: one-shot single-task subactor
+`tractor.to_actor.run()`: concurrent one-shot prime checks
 invocation, the SC-parallelism sibling of
 `trio.to_thread.run_sync()` (and `anyio.to_process`).
 
