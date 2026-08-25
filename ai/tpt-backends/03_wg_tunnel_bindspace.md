@@ -460,6 +460,13 @@ not call `setns()`; it never creates, enters or removes a namespace.
 Future `open_netns()` creation and owned teardown remain a separate
 privileged supervisor change.
 
+`open_netns()` is that owned counterpart: it requires a named spec,
+creates through pyroute2 in a shielded worker call, attaches the live
+FD, and yields `ownership='owned'`. FD closure precedes another
+shielded pyroute2 removal call on every post-creation exit, including
+cancellation. It still never calls `setns()`; process entry remains a
+spawn/bootstrap operation.
+
 `open_bindspace()` is **not** an address factory and does not return a
 `TunnelledAddress`. At the declaration layer, listener allocation can
 use the handle to replace an overlay while preserving every tunnel:

@@ -32,6 +32,7 @@ from ._bindspace import (
     BindspaceSpec as BindspaceSpec,
     CURRENT_NETNS as CURRENT_NETNS,
     attach_netns as attach_netns,
+    open_netns as open_netns,
 )
 from ._multiaddr import (
     parse_endpoints as parse_endpoints,
