@@ -25,6 +25,11 @@ from tractor.msg.ptr import NamespacePath
 from tractor.spawn import _mp as mp_spawn
 from tractor.to_actor import _api as to_actor_api
 
+from ._helpers import (
+    CancellationMarkers,
+    non_registration_contexts,
+)
+
 
 async def add_one(
     n: int,
@@ -58,11 +63,11 @@ async def mark_task_cancellation(
     started_path: str,
     cancelled_path: str,
 ) -> None:
-    Path(started_path).touch()
-    try:
+    with CancellationMarkers(
+        started_path,
+        cancelled_path,
+    ):
         await trio.sleep_forever()
-    finally:
-        Path(cancelled_path).touch()
 
 
 async def echo_startup_control(
@@ -82,19 +87,6 @@ async def collect_call(
     **kwargs: object,
 ) -> tuple[tuple[object, ...], dict[str, object]]:
     return args, kwargs
-
-
-def _non_registration_contexts(
-    actor: tractor.Actor,
-) -> dict[tuple, str]:
-    return {
-        key: str(ctx._nsf)
-        for key, ctx in actor._contexts.items()
-        if str(ctx._nsf) != (
-            'tractor.discovery._registry:'
-            'Registrar.register_actor'
-        )
-    }
 
 
 def test_namespace_path_retains_target_ref(
@@ -588,7 +580,7 @@ async def test_reuse_existing_actor_via_portal(
                 to_actor.MODULE,
             ],
         )
-        contexts_before = _non_registration_contexts(actor)
+        contexts_before = non_registration_contexts(actor)
         for i in range(3):
             assert await to_actor.run(
                 add_one,
@@ -601,7 +593,7 @@ async def test_reuse_existing_actor_via_portal(
             'echo_startup_control',
             _cancel_on_startup='target_value',
         ) == 'target_value'
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
 
         # still alive: caller owns the actor's lifetime.
         await portal.cancel_actor()
@@ -887,7 +879,7 @@ async def test_portal_task_cancelled_with_local_caller(
                 to_actor.MODULE,
             ],
         )
-        contexts_before = _non_registration_contexts(actor)
+        contexts_before = non_registration_contexts(actor)
 
         async with trio.open_nursery() as tn:
             tn.start_soon(
@@ -905,13 +897,13 @@ async def test_portal_task_cancelled_with_local_caller(
             tn.cancel_scope.cancel()
 
         assert cancelled_path.exists()
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
         assert await to_actor.run(
             add_one,
             1,
             portal=portal,
         ) == 2
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
 
         await portal.cancel_actor()
 
@@ -937,7 +929,7 @@ async def test_context_trampoline_preserves_module_allowlist(
             'restricted_context_worker',
             enable_modules=[to_actor.MODULE],
         )
-        contexts_before = _non_registration_contexts(actor)
+        contexts_before = non_registration_contexts(actor)
         with pytest.raises(RemoteActorError) as excinfo:
             await to_actor.run(
                 add_one,
@@ -946,7 +938,7 @@ async def test_context_trampoline_preserves_module_allowlist(
             )
 
         assert excinfo.value.boxed_type is tractor.ModuleNotExposed
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
         await portal.cancel_actor()
 
 
@@ -970,7 +962,7 @@ async def test_portal_requires_context_trampoline(
             'no_context_trampoline_worker',
             enable_modules=[__name__],
         )
-        contexts_before = _non_registration_contexts(actor)
+        contexts_before = non_registration_contexts(actor)
         with pytest.raises(RemoteActorError) as excinfo:
             await to_actor.run(
                 add_one,
@@ -981,5 +973,5 @@ async def test_portal_requires_context_trampoline(
         err = excinfo.value
         assert err.boxed_type is tractor.ModuleNotExposed
         assert to_actor.MODULE in str(err)
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
         await portal.cancel_actor()

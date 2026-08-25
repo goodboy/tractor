@@ -40,6 +40,11 @@ from tractor._testing import (
     expect_ctxc,
 )
 
+from ._helpers import (
+    CancellationMarkers,
+    non_registration_contexts,
+)
+
 # ``Context`` semantics are as follows,
 #  ------------------------------------
 
@@ -164,31 +169,18 @@ def test_overrun_error_send_tolerates_transport_close(
 _state: bool = False
 
 
-def _non_registration_contexts(
-    actor: Actor,
-) -> dict[tuple, str]:
-    return {
-        key: str(ctx._nsf)
-        for key, ctx in actor._contexts.items()
-        if str(ctx._nsf) != (
-            'tractor.discovery._registry:'
-            'Registrar.register_actor'
-        )
-    }
-
-
 @tractor.context
 async def startup_cancel_target(
     ctx: Context,
     started_path: str,
     cancelled_path: str,
 ) -> None:
-    Path(started_path).touch()
-    try:
+    with CancellationMarkers(
+        started_path,
+        cancelled_path,
+    ):
         await ctx.started()
         await trio.sleep_forever()
-    finally:
-        Path(cancelled_path).touch()
 
 
 async def return_one() -> int:
@@ -317,11 +309,13 @@ async def test_cancel_during_context_startup(
         chan: tractor.Channel,
         payload: object,
         hide_tb: bool = False,
+        send_deadline: float = float('inf'),
     ) -> None:
         await original_send(
             chan,
             payload,
             hide_tb=hide_tb,
+            send_deadline=send_deadline,
         )
         if isinstance(payload, tractor.msg.Start):
             if payload.func == 'startup_cancel_target':
@@ -344,7 +338,7 @@ async def test_cancel_during_context_startup(
             'startup_cancel_worker',
             enable_modules=[__name__],
         )
-        contexts_before = _non_registration_contexts(actor)
+        contexts_before = non_registration_contexts(actor)
         monkeypatch.setattr(
             tractor.Channel,
             'send',
@@ -365,12 +359,12 @@ async def test_cancel_during_context_startup(
             original_send,
         )
         assert cancelled_path.exists()
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
         assert await portal.run_from_ns(
             __name__,
             'return_one',
         ) == 1
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
         await portal.cancel_actor()
 
 
@@ -396,7 +390,7 @@ async def test_start_serialization_error_cleans_context(
             'serialization_error_worker',
             enable_modules=[__name__],
         )
-        contexts_before = _non_registration_contexts(actor)
+        contexts_before = non_registration_contexts(actor)
         with pytest.raises(tractor.MsgTypeError):
             async with portal.open_context(
                 simple_setup_teardown,
@@ -404,7 +398,7 @@ async def test_start_serialization_error_cleans_context(
             ):
                 raise AssertionError('invalid `Start` was accepted')
 
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
         async with portal.open_context(
             simple_setup_teardown,
             data=1,
@@ -412,7 +406,7 @@ async def test_start_serialization_error_cleans_context(
             assert started == 2
             assert await ctx.wait_for_result() == 'yo'
 
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
         await portal.cancel_actor()
 
 
@@ -437,7 +431,7 @@ async def test_start_module_error_cleans_context(
         portal: tractor.Portal = await an.start_actor(
             'module_error_worker',
         )
-        contexts_before = _non_registration_contexts(actor)
+        contexts_before = non_registration_contexts(actor)
         with pytest.raises(tractor.RemoteActorError) as excinfo:
             async with portal.open_context(
                 simple_setup_teardown,
@@ -446,7 +440,7 @@ async def test_start_module_error_cleans_context(
                 raise AssertionError('unexposed context was started')
 
         assert excinfo.value.boxed_type is tractor.ModuleNotExposed
-        assert _non_registration_contexts(actor) == contexts_before
+        assert non_registration_contexts(actor) == contexts_before
         await portal.cancel_actor()
 
 
