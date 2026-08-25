@@ -431,8 +431,8 @@ def test_late_child_registration_observes_cancel():
         proc,
         None,
     )
-    assert an._child_reap_requests[aid.uid] is reap_request
-    assert an._child_reaped[aid.uid] is reaped
+    assert an._child_reap_requests[aid] is reap_request
+    assert an._child_reaped[aid] is reaped
 
 
 def test_mp_late_registration_never_starts_process(
@@ -521,9 +521,11 @@ def test_late_child_reap_registration_is_released():
     an._child_reaped = {}
 
     an._join_procs.set()
-    reap_request, _ = an._register_child_reap(
-        ('late_child', 'uid'),
+    aid = tractor.msg.Aid(
+        name='late_child',
+        uuid='uid',
     )
+    reap_request, _ = an._register_child_reap(aid)
 
     assert reap_request.is_set()
 

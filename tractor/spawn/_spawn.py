@@ -460,7 +460,7 @@ async def new_proc(
             proc_kwargs=proc_kwargs
         )
     finally:
-        actor_nursery._mark_child_reaped(subactor.aid.uid)
+        actor_nursery._mark_child_reaped(subactor.aid)
 
 
 # NOTE: bottom-of-module to avoid a circular import since the

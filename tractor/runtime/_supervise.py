@@ -46,6 +46,7 @@ from ..log import (
     get_logger,
     get_loglevel,
 )
+from ..msg import Aid
 from ._runtime import Actor
 from ._portal import Portal
 from ..trionics import (
@@ -246,11 +247,11 @@ class ActorNursery:
 
         self._join_procs = trio.Event()
         self._child_reap_requests: dict[
-            tuple[str, str],
+            Aid,
             trio.Event,
         ] = {}
         self._child_reaped: dict[
-            tuple[str, str],
+            Aid,
             trio.Event,
         ] = {}
         self._at_least_one_child_in_debug: bool = False
@@ -319,7 +320,7 @@ class ActorNursery:
 
     def _register_child_reap(
         self,
-        uid: tuple[str, str],
+        aid: Aid,
     ) -> tuple[trio.Event, trio.Event]:
         '''
         Register a child monitor's process-reap events.
@@ -327,8 +328,8 @@ class ActorNursery:
         '''
         reap_request = trio.Event()
         reaped = trio.Event()
-        self._child_reap_requests[uid] = reap_request
-        self._child_reaped[uid] = reaped
+        self._child_reap_requests[aid] = reap_request
+        self._child_reaped[aid] = reaped
         if self._join_procs.is_set():
             reap_request.set()
         return reap_request, reaped
@@ -343,13 +344,14 @@ class ActorNursery:
         Atomically publish one child and its reap coordination.
 
         '''
-        uid: tuple[str, str] = subactor.aid.uid
+        aid: Aid = subactor.aid
+        uid: tuple[str, str] = aid.uid
         self._children[uid] = (
             subactor,
             proc,
             portal,
         )
-        reap_request, reaped = self._register_child_reap(uid)
+        reap_request, reaped = self._register_child_reap(aid)
         return (
             reap_request,
             reaped,
@@ -369,18 +371,19 @@ class ActorNursery:
 
     def _mark_child_reaped(
         self,
-        uid: tuple[str, str],
+        aid: Aid,
     ) -> None:
         '''
         Publish completed child-process teardown to its waiter.
 
         '''
+        uid: tuple[str, str] = aid.uid
         self._children.pop(uid, None)
         reap_request: trio.Event|None = (
-            self._child_reap_requests.pop(uid, None)
+            self._child_reap_requests.pop(aid, None)
         )
         reaped: trio.Event|None = self._child_reaped.pop(
-            uid,
+            aid,
             None,
         )
         assert (
@@ -399,14 +402,15 @@ class ActorNursery:
         Cancel, join and unregister one nursery-owned child.
 
         '''
-        uid: tuple[str, str] = portal.channel.aid.uid
+        aid: Aid = portal.channel.aid
+        uid: tuple[str, str] = aid.uid
         child_entry = self._children.get(uid)
         if child_entry is None:
             return
 
         subactor, proc, _ = child_entry
-        reap_request: trio.Event = self._child_reap_requests[uid]
-        reaped: trio.Event = self._child_reaped[uid]
+        reap_request: trio.Event = self._child_reap_requests[aid]
+        reaped: trio.Event = self._child_reaped[aid]
 
         with trio.CancelScope(shield=True):
             try:
