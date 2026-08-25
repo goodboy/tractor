@@ -5,17 +5,23 @@ Bindspace declaration, identity and live-capability contracts.
 from __future__ import annotations
 
 from pathlib import Path
+import os
+import sys
 from typing import BinaryIO
 
 import msgspec
 import pytest
+import trio
 
 from tractor.discovery import (
     BindspaceHandle,
     BindspaceIdentity,
     BindspaceOwnership,
     BindspaceSpec,
+    CURRENT_NETNS,
+    attach_netns,
 )
+from tractor.discovery import _bindspace
 from tractor.msg import ProcessLocal
 
 
@@ -182,6 +188,34 @@ def test_bindspace_handle_rejects_mismatched_identity(
             'Unsupported bindspace kind',
             id='identity-rejects-kind',
         ),
+        pytest.param(
+            BindspaceSpec,
+            {
+                'kind': 'netns',
+                'key': '../outside',
+            },
+            'Invalid netns name',
+            id='spec-rejects-path',
+        ),
+        pytest.param(
+            BindspaceSpec,
+            {
+                'kind': 'netns',
+                'key': '',
+            },
+            'BindspaceSpec.key',
+            id='spec-rejects-empty-key',
+        ),
+        pytest.param(
+            BindspaceIdentity,
+            {
+                'kind': 'netns',
+                'key': '',
+                'inode': 1234,
+            },
+            'BindspaceIdentity.key',
+            id='identity-rejects-empty-key',
+        ),
     ),
 )
 def test_bindspace_models_reject_invalid_values(
@@ -199,3 +233,128 @@ def test_bindspace_models_reject_invalid_values(
     '''
     with pytest.raises(ValueError, match=match):
         model(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.skipif(
+    sys.platform != 'linux',
+    reason='Linux netns API',
+)
+def test_attach_current_netns_borrows_and_closes() -> None:
+    '''
+    The unnamed spec must borrow and pin the caller's current netns.
+
+    Open `/proc/self/ns/net`, prove the yielded handle records its
+    stable inode and borrowed ownership, then exit the context and
+    prove the exact descriptor was closed without altering the
+    namespace itself.
+
+    '''
+    async def main() -> int:
+        '''
+        Borrow the current netns and return its descriptor number.
+
+        '''
+        spec: BindspaceSpec = BindspaceSpec(
+            kind='netns',
+        )
+        assert spec.key is CURRENT_NETNS
+        async with attach_netns(spec) as handle:
+            namespace_fd: int|None = handle.namespace_fd
+            assert namespace_fd is not None
+            assert handle.spec is spec
+            assert handle.identity.key is None
+            assert handle.identity.inode == os.fstat(
+                namespace_fd
+            ).st_ino
+            assert handle.ownership == 'borrowed'
+            return namespace_fd
+
+    namespace_fd: int = trio.run(main)
+    with pytest.raises(OSError):
+        os.fstat(namespace_fd)
+
+
+@pytest.mark.skipif(
+    sys.platform != 'linux',
+    reason='Linux netns API',
+)
+def test_attach_named_netns_uses_run_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    '''
+    A named spec must resolve only beneath the configured netns dir.
+
+    Replace the run directory with a temporary stand-in, borrow its
+    named inode, and prove the context neither deletes the existing
+    resource nor leaves its descriptor open after exit.
+
+    '''
+    netns_path: Path = tmp_path / 'tractor-wg0'
+    netns_path.touch()
+    monkeypatch.setattr(
+        _bindspace,
+        '_NETNS_RUN_DIR',
+        tmp_path,
+    )
+
+    async def main() -> int:
+        '''
+        Borrow the named stand-in and return its descriptor number.
+
+        '''
+        spec: BindspaceSpec = BindspaceSpec(
+            kind='netns',
+            key='tractor-wg0',
+        )
+        async with attach_netns(spec) as handle:
+            namespace_fd: int|None = handle.namespace_fd
+            assert namespace_fd is not None
+            assert handle.identity.key == 'tractor-wg0'
+            assert handle.identity.inode == netns_path.stat().st_ino
+            assert handle.ownership == 'borrowed'
+            return namespace_fd
+
+    namespace_fd: int = trio.run(main)
+    assert netns_path.exists()
+    with pytest.raises(OSError):
+        os.fstat(namespace_fd)
+
+
+@pytest.mark.skipif(
+    sys.platform != 'linux',
+    reason='Linux netns API',
+)
+def test_attach_named_netns_never_creates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    '''
+    Borrow-only lookup must fail without creating a missing resource.
+
+    Point the run directory at an empty location, request one named
+    netns, and prove the open error propagates while no path appears.
+
+    '''
+    monkeypatch.setattr(
+        _bindspace,
+        '_NETNS_RUN_DIR',
+        tmp_path,
+    )
+    missing_path: Path = tmp_path / 'missing'
+
+    async def main() -> None:
+        '''
+        Attempt to borrow one absent named netns.
+
+        '''
+        spec: BindspaceSpec = BindspaceSpec(
+            kind='netns',
+            key='missing',
+        )
+        async with attach_netns(spec):
+            raise AssertionError('Missing netns unexpectedly opened')
+
+    with pytest.raises(FileNotFoundError):
+        trio.run(main)
+    assert not missing_path.exists()
