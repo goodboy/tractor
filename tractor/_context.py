@@ -1113,6 +1113,10 @@ class Context:
                 # NOTE: we're telling the far end actor to cancel a task
                 # corresponding to *this actor*. The far end local channel
                 # instance is passed to `Actor._cancel_task()` implicitly.
+                # Use private `Portal._run_from_ns()` because cancellation
+                # needs its internal `cancel_on_startup=False` policy and
+                # the transaction's shared absolute `send_deadline`; public
+                # `run_from_ns()` exposes neither control.
                 await self._portal._run_from_ns(
                     'self',
                     '_cancel_task',
@@ -1955,6 +1959,9 @@ class Context:
         # the sender; the main motivation is that using bp can block the
         # msg handling loop which calls into this method!
         except trio.WouldBlock:
+            # `send_chan.send_nowait(msg)` found the local receive feeder
+            # full. With overruns disabled below, report that primary
+            # local overflow to the far-end sender as `StreamOverrun`.
 
             # XXX: always push an error even if the local receiver
             # is in overrun state - i.e. if an 'error' msg is
@@ -2027,12 +2034,13 @@ class Context:
                     await chan.send(err_msg)
                     return True
 
-                # XXX: the local consumer may have closed its side of
-                # the IPC, in which case context/channel teardown owns
-                # cancellation of the far-end streaming task. The same
-                # shipment can raise `TransportClosed` when either peer
-                # has already closed the shared IPC channel. In both
-                # cases the primary overrun can no longer be reported.
+                # The `StreamOverrun` shipment can fail secondarily when
+                # context/channel teardown has already closed shared IPC.
+                # Local stream closure may surface as
+                # `BrokenResourceError`; either peer closing the transport
+                # can surface as `TransportClosed`. In both cases teardown
+                # owns far-end cancellation and the primary overrun can no
+                # longer be delivered.
                 except (
                     TransportClosed,
                     trio.BrokenResourceError,

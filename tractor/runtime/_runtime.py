@@ -794,8 +794,9 @@ class Actor:
         cancel_on_startup: bool = True,
 
         # Optional absolute deadline for publishing this exact `Start`
-        # frame. Used by actor-wide cancel RPCs whose outer timeout
-        # cannot penetrate complete-frame transport shielding.
+        # frame. Used by bounded actor/context cancel RPCs whose outer
+        # timeout cannot penetrate `Channel.send()` forwarding into the
+        # shield in `MsgpackTransport.send()`.
         send_deadline: float = float('inf'),
 
     ) -> Context:

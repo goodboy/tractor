@@ -33,18 +33,19 @@ def test_cancelled_transport_send_completes_frame():
 
     A cancelled `send_all()` may leave an arbitrary frame prefix on the
     wire. Closing the actor-wide stream avoids decoder corruption but
-    also destroys unrelated contexts using that channel. The fake
-    stream publishes two header bytes and blocks, letting this test
-    cancel the sender inside frame publication. The sender must remain
-    blocked until the complete frame is written, then observe pending
-    cancellation; a second complete frame proves channel reuse remains
-    safe.
+    also destroys unrelated contexts using that channel. On its first
+    call, the fake stream publishes two header bytes and blocks until
+    the parent test releases it. This lets the parent cancel the sender
+    while frame publication is suspended. The sender must remain inside
+    `send_first()` until the complete frame is written, then observe
+    pending cancellation; a second sender proves sibling contexts can
+    safely reuse the still frame-aligned stream.
 
     '''
     class PartialSendStream:
         def __init__(self) -> None:
-            self.send_entered = trio.Event()
-            self.release = trio.Event()
+            self.send_all_entered = trio.Event()
+            self.send_all_release = trio.Event()
             self.closed = False
             self.wire = bytearray()
 
@@ -55,8 +56,8 @@ def test_cancelled_transport_send_completes_frame():
             assert data
             if not self.wire:
                 self.wire.extend(data[:2])
-                self.send_entered.set()
-                await self.release.wait()
+                self.send_all_entered.set()
+                await self.send_all_release.wait()
                 self.wire.extend(data[2:])
             else:
                 self.wire.extend(data)
@@ -115,21 +116,29 @@ def test_cancelled_transport_send_completes_frame():
             tn.start_soon(
                 send_first,
             )
-            await stream.send_entered.wait()
+            await stream.send_all_entered.wait()
             sender_scopes[0].cancel()
             await wait_all_tasks_blocked()
 
             assert not stream.closed
+            # Cancellation is pending, but complete-frame shielding
+            # keeps `send_first()` suspended in `.send_all()`.
             assert not sender_done.is_set()
 
-            stream.release.set()
+            # Let the underlying frame write finish after the parent
+            # has requested sender cancellation.
+            stream.send_all_release.set()
             await sender_done.wait()
 
             assert cancelled_caught
             assert not stream.closed
+            # The initial two-byte prefix was completed into one valid
+            # frame before cancellation reached `send_first()`.
             assert count_frames(stream.wire) == 1
 
             await transport.send(second_msg)
+            # A sibling sender can append and decode another frame only
+            # because the first cancellation preserved stream alignment.
             assert count_frames(stream.wire) == 2
 
             tn.cancel_scope.cancel()
@@ -139,14 +148,15 @@ def test_cancelled_transport_send_completes_frame():
 
 def test_transport_send_deadline_closes_partial_frame():
     '''
-    Bound one shielded frame without exposing a corrupt stream.
+    Destroy a stalled partial frame before another sender can append.
 
     Ordinary cancellation cannot interrupt complete-frame publication.
-    Actor-wide cancellation instead passes its absolute deadline into
-    this operation. The fake stream writes a partial header and stalls;
-    when the send's own deadline fires, the transport must close the
-    stream before releasing its shared send lock and report the channel
-    unusable.
+    Bounded actor/context cancellation instead passes its absolute
+    deadline into this operation. The fake stream writes a partial
+    header and stalls; when the send's own deadline fires, the transport
+    must close the stream before releasing its shared send lock. This
+    prevents the next sender from appending bytes which a decoder would
+    treat as the remainder of the corrupt first frame.
 
     '''
     class StalledStream:
@@ -186,9 +196,9 @@ def test_transport_send_deadline_closes_partial_frame():
                 send_deadline=1,
             )
 
-        assert stream.closed
-        assert len(stream.wire) == 2
-        assert not transport._send_lock.locked()
+        assert stream.closed  # partial-frame timeout destroys stream
+        assert len(stream.wire) == 2  # only a header fragment was sent
+        assert not transport._send_lock.locked()  # cleanup released lock
 
     trio.run(
         main,
@@ -200,30 +210,35 @@ def test_cancelled_transport_send_preserves_cancellation():
     '''
     Prefer sender cancellation when teardown closes the stream.
 
-    `MsgpackTransport.send()` shields frame publication. Before this
-    regression fix, if an outer scope cancelled the sender and actor
-    teardown then made `send_all()` raise `ClosedResourceError`, the
-    transport error escaped instead of the pending cancellation. That
-    defeated `move_on_after()` and failed otherwise orderly teardown.
+    `MsgpackTransport.send()` shields frame publication at
+    `tractor.ipc._transport:MsgpackTransport.send`. Before this fix, an
+    outer `move_on_after()`/cancel scope could cancel `Channel.send()`
+    while actor teardown closed the shared stream. The resulting
+    `ClosedResourceError` escaped from the transport handler instead of
+    its `checkpoint_if_cancelled()` redelivering pending cancellation.
 
     The fake stream blocks inside the shield until the test cancels the
-    sender, then raises the same close error seen on macOS UDS. Observing
-    `CancelScope.cancelled_caught` proves cancellation wins once the
-    shield unwinds.
+    sender. Parent-controlled release then simulates actor teardown
+    closing the socket and raises the `ClosedResourceError` observed on
+    macOS UDS. `CancelScope.cancelled_caught` proves the handler's
+    checkpoint preserved cancellation as the primary outcome instead of
+    leaking that secondary close error.
 
     '''
     class ClosingStream:
         def __init__(self) -> None:
-            self.send_entered = trio.Event()
-            self.release = trio.Event()
+            self.send_all_entered = trio.Event()
+            self.send_all_release = trio.Event()
 
         async def send_all(
             self,
             data: bytes,
         ) -> None:
             assert data
-            self.send_entered.set()
-            await self.release.wait()
+            self.send_all_entered.set()
+            await self.send_all_release.wait()
+            # Model actor teardown closing the shared transport while
+            # this sender is still inside the complete-frame shield.
             raise trio.ClosedResourceError(
                 'this socket was already closed'
             )
@@ -256,12 +271,12 @@ def test_cancelled_transport_send_preserves_cancellation():
 
         async with trio.open_nursery() as tn:
             tn.start_soon(send)
-            await stream.send_entered.wait()
+            await stream.send_all_entered.wait()
             sender_scopes[0].cancel()
             await wait_all_tasks_blocked()
 
             assert not sender_done.is_set()
-            stream.release.set()
+            stream.send_all_release.set()
             await sender_done.wait()
 
         assert cancelled_caught
