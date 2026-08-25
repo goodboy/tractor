@@ -217,7 +217,6 @@ def pub(
 
     .. code:: python
 
-        from functools import partial
         import tractor
 
         async with tractor.open_nursery() as n:
@@ -226,11 +225,9 @@ def pub(
                 enable_modules=[__name__],
             )
             async with portal.open_stream_from(
-                partial(  # func to execute in it
-                    pub_service,
-                    topics=('clicks', 'users'),
-                    task_name='source1',
-                )
+                pub_service,  # func to execute in it
+                topics=('clicks', 'users'),
+                task_name='source1',
             ) as stream:
                 async for value in stream:
                     print(f"Subscriber received {value}")
