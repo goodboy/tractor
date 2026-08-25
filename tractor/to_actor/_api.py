@@ -116,13 +116,14 @@ def _normalize_call(
 
         # `functools.Placeholder` was added in Python 3.14. Drop
         # this `getattr()` guard once 3.14 is the minimum version.
-        placeholder = getattr(
-            functools,
-            'Placeholder',
-            None,
-        )
         if (
-            placeholder is not None
+            (
+                placeholder := getattr(
+                    functools,
+                    'Placeholder',
+                    None,
+                )
+            ) is not None
             and
             any(
                 arg is placeholder
