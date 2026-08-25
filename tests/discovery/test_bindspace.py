@@ -20,6 +20,7 @@ from tractor.discovery import (
     BindspaceSpec,
     CURRENT_NETNS,
     attach_netns,
+    open_bindspace,
     open_netns,
 )
 from tractor.discovery import _bindspace
@@ -39,7 +40,11 @@ def test_bindspace_declarations_roundtrip() -> None:
         BindspaceSpec|BindspaceIdentity,
         ...,
     ] = (
-        BindspaceSpec(kind='netns', key='tractor-wg0'),
+        BindspaceSpec(
+            kind='netns',
+            key='tractor-wg0',
+            lifecycle='open',
+        ),
         BindspaceIdentity(
             kind='netns',
             key='tractor-wg0',
@@ -79,6 +84,7 @@ def test_bindspace_handle_pins_local_capability(
         spec: BindspaceSpec = BindspaceSpec(
             kind='netns',
             key='tractor-wg0',
+            lifecycle='open',
         )
         identity: BindspaceIdentity = BindspaceIdentity(
             kind='netns',
@@ -208,6 +214,16 @@ def test_bindspace_handle_rejects_mismatched_identity(
             id='spec-rejects-empty-key',
         ),
         pytest.param(
+            BindspaceSpec,
+            {
+                'kind': 'netns',
+                'key': 'tractor-wg0',
+                'lifecycle': 'replace',
+            },
+            'Unsupported bindspace lifecycle',
+            id='spec-rejects-lifecycle',
+        ),
+        pytest.param(
             BindspaceIdentity,
             {
                 'kind': 'netns',
@@ -240,7 +256,7 @@ def test_bindspace_models_reject_invalid_values(
     sys.platform != 'linux',
     reason='Linux netns API',
 )
-def test_attach_current_netns_borrows_and_closes() -> None:
+def test_open_bindspace_attaches_current_netns() -> None:
     '''
     The unnamed spec must borrow and pin the caller's current netns.
 
@@ -259,7 +275,7 @@ def test_attach_current_netns_borrows_and_closes() -> None:
             kind='netns',
         )
         assert spec.key is CURRENT_NETNS
-        async with attach_netns(spec) as handle:
+        async with open_bindspace(spec) as handle:
             namespace_fd: int|None = handle.namespace_fd
             assert namespace_fd is not None
             assert handle.spec is spec
@@ -426,8 +442,9 @@ def test_open_netns_owns_lifecycle(
         spec: BindspaceSpec = BindspaceSpec(
             kind='netns',
             key='tractor-wg0',
+            lifecycle='open',
         )
-        async with open_netns(spec) as handle:
+        async with open_bindspace(spec) as handle:
             fd: int|None = handle.namespace_fd
             assert fd is not None
             assert handle.ownership == 'owned'
@@ -503,6 +520,7 @@ def test_open_netns_shields_cancelled_cleanup(
         spec: BindspaceSpec = BindspaceSpec(
             kind='netns',
             key='tractor-wg0',
+            lifecycle='open',
         )
         with trio.CancelScope() as scope:
             async with open_netns(spec):
@@ -529,6 +547,7 @@ def test_open_netns_requires_name() -> None:
     spec: BindspaceSpec = BindspaceSpec(
         kind='netns',
         key=CURRENT_NETNS,
+        lifecycle='open',
     )
 
     async def main() -> None:

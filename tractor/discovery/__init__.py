@@ -28,10 +28,12 @@ from ._bindspace import (
     BindspaceHandle as BindspaceHandle,
     BindspaceIdentity as BindspaceIdentity,
     BindspaceKind as BindspaceKind,
+    BindspaceLifecycle as BindspaceLifecycle,
     BindspaceOwnership as BindspaceOwnership,
     BindspaceSpec as BindspaceSpec,
     CURRENT_NETNS as CURRENT_NETNS,
     attach_netns as attach_netns,
+    open_bindspace as open_bindspace,
     open_netns as open_netns,
 )
 from ._multiaddr import (

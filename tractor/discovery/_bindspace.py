@@ -41,6 +41,10 @@ from ..msg._local import ProcessLocal
 BindspaceKind: TypeAlias = Literal[
     'netns',
 ]
+BindspaceLifecycle: TypeAlias = Literal[
+    'attach',  # borrow one existing platform resource
+    'open',  # create, own and remove one platform resource
+]
 BindspaceOwnership: TypeAlias = Literal[
     'owned',  # manager tears down the resource after final release
     'borrowed',  # manager leaves the pre-existing resource intact
@@ -62,6 +66,19 @@ def _validate_bindspace_kind(
     if kind not in get_args(BindspaceKind):
         raise ValueError(
             f'Unsupported bindspace kind: {kind!r}'
+        )
+
+
+def _validate_bindspace_lifecycle(
+    lifecycle: BindspaceLifecycle,
+) -> None:
+    '''
+    Reject lifecycle policies without an implementation.
+
+    '''
+    if lifecycle not in get_args(BindspaceLifecycle):
+        raise ValueError(
+            f'Unsupported bindspace lifecycle: {lifecycle!r}'
         )
 
 
@@ -112,6 +129,7 @@ class BindspaceSpec(
     '''
     kind: BindspaceKind
     key: str|None = CURRENT_NETNS
+    lifecycle: BindspaceLifecycle = 'attach'
 
     def __post_init__(self) -> None:
         '''
@@ -119,6 +137,7 @@ class BindspaceSpec(
 
         '''
         _validate_bindspace_kind(self.kind)
+        _validate_bindspace_lifecycle(self.lifecycle)
         _validate_bindspace_key(
             self.kind,
             self.key,
@@ -207,6 +226,16 @@ class BindspaceHandle(
             raise ValueError(
                 f'Invalid bindspace ownership: {ownership!r}'
             )
+        expected_ownership: BindspaceOwnership = (
+            'borrowed'
+            if spec.lifecycle == 'attach'
+            else 'owned'
+        )
+        if ownership != expected_ownership:
+            raise ValueError(
+                f'`BindspaceSpec.lifecycle={spec.lifecycle!r}` '
+                f'requires ownership={expected_ownership!r}!'
+            )
         if namespace_fd is not None:
             if (
                 type(namespace_fd) is not int
@@ -237,23 +266,14 @@ class BindspaceHandle(
 
 
 @acm
-async def attach_netns(
+async def _pin_netns(
     spec: BindspaceSpec,
+    ownership: BindspaceOwnership,
 ) -> AsyncIterator[BindspaceHandle]:
     '''
-    Borrow and pin one existing Linux network namespace.
-
-    `BindspaceSpec.key = CURRENT_NETNS` selects the calling process's
-    current netns. A named key resolves beneath the standard iproute2
-    netns run directory. "Attach" pins an existing namespace FD; this
-    context never calls `setns()` or creates/removes a namespace.
+    Pin one existing Linux network namespace with explicit ownership.
 
     '''
-    if sys.platform != 'linux':
-        raise NotImplementedError(
-            'Network namespace bindspaces are Linux-only!'
-        )
-
     key: str|None = spec.key
     namespace_path: Path = (
         _SELF_NETNS
@@ -275,11 +295,39 @@ async def attach_netns(
             spec=spec,
             identity=identity,
             namespace_fd=namespace_fd,
-            ownership='borrowed',
+            ownership=ownership,
         )
         yield handle
     finally:
         os.close(namespace_fd)
+
+
+@acm
+async def attach_netns(
+    spec: BindspaceSpec,
+) -> AsyncIterator[BindspaceHandle]:
+    '''
+    Borrow and pin one existing Linux network namespace.
+
+    `BindspaceSpec.key = CURRENT_NETNS` selects the calling process's
+    current netns. A named key resolves beneath the standard iproute2
+    netns run directory. "Attach" pins an existing namespace FD; this
+    context never calls `setns()` or creates/removes a namespace.
+
+    '''
+    if sys.platform != 'linux':
+        raise NotImplementedError(
+            'Network namespace bindspaces are Linux-only!'
+        )
+    if spec.lifecycle != 'attach':
+        raise ValueError(
+            '`attach_netns()` requires lifecycle=`attach`!'
+        )
+    async with _pin_netns(
+        spec,
+        ownership='borrowed',
+    ) as handle:
+        yield handle
 
 
 def _create_netns(
@@ -332,6 +380,10 @@ async def open_netns(
         raise NotImplementedError(
             'Network namespace bindspaces are Linux-only!'
         )
+    if spec.lifecycle != 'open':
+        raise ValueError(
+            '`open_netns()` requires lifecycle=`open`!'
+        )
 
     key: str|None = spec.key
     if key is CURRENT_NETNS:
@@ -349,13 +401,10 @@ async def open_netns(
             )
             created = True
 
-        async with attach_netns(spec) as borrowed:
-            handle: BindspaceHandle = BindspaceHandle(
-                spec=spec,
-                identity=borrowed.identity,
-                namespace_fd=borrowed.namespace_fd,
-                ownership='owned',
-            )
+        async with _pin_netns(
+            spec,
+            ownership='owned',
+        ) as handle:
             yield handle
     finally:
         if created:
@@ -365,3 +414,22 @@ async def open_netns(
                     key,
                     abandon_on_cancel=False,
                 )
+
+
+@acm
+async def open_bindspace(
+    spec: BindspaceSpec,
+) -> AsyncIterator[BindspaceHandle]:
+    '''
+    Dispatch one declared bindspace lifecycle.
+
+    Lifecycle is explicit serialized policy. It is never inferred
+    from whether the eventual transport role is listen or dial.
+
+    '''
+    if spec.lifecycle == 'attach':
+        async with attach_netns(spec) as handle:
+            yield handle
+    else:
+        async with open_netns(spec) as handle:
+            yield handle
