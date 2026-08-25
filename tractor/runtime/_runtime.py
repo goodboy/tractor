@@ -882,12 +882,15 @@ class Actor:
 
         except BaseException as startup_err:
             with trio.CancelScope(shield=True):
-                # `MsgpackTransport.send()` closes its stream when
-                # cancellation interrupts the length-prefixed write
-                # because an unknown prefix may already be sent. A
-                # connected channel means cancellation happened before
-                # that write or after it completed, so `_cancel_task`
-                # is protocol-safe (and a no-op if `Start` was unsent).
+                # `MsgpackTransport.send()` shields length-prefixed frame
+                # publication until complete, then checkpoints pending
+                # cancellation before returning. Thus `start_published`
+                # can remain false after a complete `Start` reached the
+                # wire. If the send's own deadline catches a partial
+                # frame, it closes the stream. A connected channel means
+                # cancellation happened before the write or after frame
+                # completion, so `_cancel_task` is protocol-safe (and
+                # a no-op when `Start` was unsent).
                 if (
                     cancel_on_startup
                     and

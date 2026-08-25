@@ -123,6 +123,15 @@ class NamespacePath(str):
         ref: type|object,
 
     ) -> NamespacePath:
+        '''
+        Build a path while retaining its process-local object reference.
+
+        The originating process already holds `ref`; caching it prevents
+        `to_tuple()` from immediately importing and resolving the same
+        object again. Serialized paths carry only the `str` value and
+        therefore resolve lazily through `load_ref()` after decoding.
+
+        '''
 
         fqnp: tuple[str, str] = cls._mk_fqnp(ref)
         nsp = cls(':'.join(fqnp))

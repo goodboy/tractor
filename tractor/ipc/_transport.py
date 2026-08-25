@@ -518,9 +518,10 @@ class MsgpackTransport(MsgTransport):
                 # the frame is complete, the explicit checkpoint
                 # immediately delivers any pending cancellation.
                 #
-                # Ordinary sends may delay cancellation while a peer is
-                # not reading. Actor-wide cancel requests pass their own
-                # deadline so this operation can close a stalled stream.
+                # Ordinary sends may delay cancellation while the remote
+                # peer actor is not reading. Bounded actor/context cancel
+                # requests pass an absolute deadline so this operation
+                # can close a stalled stream.
                 with trio.CancelScope(
                     deadline=send_deadline,
                     shield=True,
