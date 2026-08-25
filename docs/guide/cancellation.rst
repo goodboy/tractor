@@ -230,22 +230,23 @@ Graceful first, hard as a last resort
 
    The hard-kill path is *skipped* whenever an actor in the tree
    holds the debug-REPL lock (``debug_mode=True`` flavors):
-   SIGTERM raining down on a tree mid-``pdb`` session would
+   Process signals raining down on a tree mid-``pdb`` session would
    clobber your prompt. See :doc:`/guide/debugging`.
 
-Every process teardown in ``tractor`` walks the same escalation
-ladder, top rung first,
+Owned-child teardown in ``tractor`` begins with the same graceful
+steps, then selects the escalation path used by its supervisor,
 
 1. **graceful cancel request**: a runtime-cancel msg over IPC; the
    target actor cancels its tasks, closes its channels and exits
    its :func:`trio.run` cleanly,
 2. **soft wait**: the parent waits (bounded) for the child process
    to exit on its own,
-3. **SIGTERM**: no ack within the bounded wait (internally an
-   ``ActorTooSlowError``) escalates to ``proc.terminate()``,
-4. **SIGKILL ultimatum**: still alive after the hard-kill timeout
-   (~1.6s)? The runtime logs that the "T-800" has been deployed to
-   collect the zombie and issues ``proc.kill()``. No survivors.
+3. **actor-nursery hard reap**: no cancel ack within the bounded wait
+   (internally an ``ActorTooSlowError``) escalates directly to
+   ``proc.kill()`` before the child monitor joins the process,
+4. **legacy soft-kill path**: older teardown callers may first issue
+   ``proc.terminate()`` and then deploy the "T-800" ``proc.kill()``
+   ultimatum if the process survives that additional bounded wait.
 
 The result is the **no-zombies guarantee**: ``tractor`` tries to
 protect you from zombies, no matter what. Quoting the project

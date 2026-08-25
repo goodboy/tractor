@@ -292,7 +292,7 @@ class Portal:
         - `True`: on bounded-wait expiry, raise `ActorTooSlowError`
           so the caller MUST handle the failure explicitly.
           `ActorNursery.cancel()` opts in so it can escalate via
-          `proc.terminate()` per SC-discipline.
+          direct `proc.kill()` hard-reaping per SC-discipline.
 
         '''
         __runtimeframe__: int = 1  # noqa
