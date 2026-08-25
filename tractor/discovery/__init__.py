@@ -24,6 +24,13 @@ Heavier submodules like ``._addr`` and ``._api`` are NOT imported
 here to avoid circular imports; use direct module paths for those.
 
 '''
+from ._bindspace import (
+    BindspaceHandle as BindspaceHandle,
+    BindspaceIdentity as BindspaceIdentity,
+    BindspaceKind as BindspaceKind,
+    BindspaceOwnership as BindspaceOwnership,
+    BindspaceSpec as BindspaceSpec,
+)
 from ._multiaddr import (
     parse_endpoints as parse_endpoints,
     parse_maddr as parse_maddr,

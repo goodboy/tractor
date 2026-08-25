@@ -413,11 +413,11 @@ class BindspaceSpec(msgspec.Struct, frozen=True):
 class BindspaceIdentity(msgspec.Struct, frozen=True):
     '''Stable identity of the realized platform resource.'''
     kind: str
-    key: str|None
-    inode: int|None           # Linux namespace identity
+    key: str|None             # mutable name, absent after unlink
+    inode: int                # stable Linux namespace identity
 
 
-class BindspaceHandle:
+class BindspaceHandle(ProcessLocal):
     '''Scoped, non-serializable capability for one live bindspace.'''
     spec: BindspaceSpec
     identity: BindspaceIdentity
@@ -437,13 +437,19 @@ async def open_bindspace(
     '''
 ```
 
-The exact field set remains design work; the required split does not:
-`BindspaceSpec` crosses config/spawn serialization, while
-`BindspaceHandle` contains live OS resources (especially an open
-namespace FD), pins identity/lifetime, and must never cross msgpack.
-An FD is a stronger capability than a namespace name: it avoids
-name-resolution TOCTOU, survives rename/unlink, and identifies the
-exact namespace the parent provisioned.
+The initial model limits `BindspaceKind` to `netns` while preserving
+the required lifetime split. `BindspaceSpec` and
+`BindspaceIdentity` are frozen msgspec structs which cross
+config/spawn serialization. `BindspaceHandle` also uses msgspec's
+generic struct storage by inheriting the global
+`tractor.msg.ProcessLocal` marker. Its hidden unsupported sentinel
+blocks direct and nested default msgspec encoding without a recursive
+IPC hot-path scan. The handle validates any supplied FD against
+`BindspaceIdentity.inode`; explicit FD transfer belongs to the
+supervisor bootstrap path. An FD avoids name-resolution TOCTOU,
+survives rename/unlink, and identifies the exact namespace the parent
+provisioned. Extend the kind/field union only when a second platform
+resource is implemented.
 
 `open_bindspace()` is **not** an address factory and does not return a
 `TunnelledAddress`. At the declaration layer, listener allocation can
