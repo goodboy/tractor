@@ -1,3 +1,5 @@
+from functools import partial
+
 import trio
 import tractor
 
@@ -21,26 +23,41 @@ async def breakpoint_forever():
 async def spawn_until(depth=0):
     """"A nested nursery that triggers another ``NameError``.
     """
-    async with tractor.open_nursery() as n:
+    async with (
+        tractor.open_nursery() as an,
+        trio.open_nursery() as tn,
+    ):
         if depth < 1:
 
-            await n.run_in_actor(breakpoint_forever)
-
-            p = await n.run_in_actor(
-                name_error,
-                name='name_error'
+            tn.start_soon(
+                partial(
+                    tractor.to_actor.run,
+                    breakpoint_forever,
+                    an=an,
+                )
             )
+
+            # Let the background one-shot enter `breakpoint_forever()`
+            # before its sibling raises and cancellation propagates.
             await trio.sleep(0.5)
             # rx and propagate error from child
-            await p.result()
+            await tractor.to_actor.run(
+                name_error,
+                an=an,
+                name='name_error',
+            )
 
         else:
             # recusrive call to spawn another process branching layer of
-            # the tree
+            # the tree; blocks (up) each level until the leaf's
+            # `name_error` relays through.
             depth -= 1
-            await n.run_in_actor(
-                spawn_until,
-                depth=depth,
+            await tractor.to_actor.run(
+                partial(
+                    spawn_until,
+                    depth=depth,
+                ),
+                an=an,
                 name=f'spawn_until_{depth}',
             )
 
@@ -65,34 +82,37 @@ async def main():
              └─ python -m tractor._child --uid ('spawn_until_0', 'de918e6d ...)
 
     """
-    async with tractor.open_nursery(
-        debug_mode=True,
-        loglevel='pdb',
-    ) as n:
-
-        # spawn both actors
-        portal = await n.run_in_actor(
-            spawn_until,
-            depth=3,
-            name='spawner0',
+    async with (
+        tractor.open_nursery(
+            debug_mode=True,
+            loglevel='pdb',
+        ) as an,
+        trio.open_nursery() as tn,
+    ):
+        # spawn both spawner trees as concurrent one-shots; the
+        # first tree's (relayed) error cancels the other.
+        tn.start_soon(
+            partial(
+                tractor.to_actor.run,
+                partial(
+                    spawn_until,
+                    depth=3,
+                ),
+                an=an,
+                name='spawner0',
+            )
         )
-        portal1 = await n.run_in_actor(
-            spawn_until,
-            depth=4,
-            name='spawner1',
+        tn.start_soon(
+            partial(
+                tractor.to_actor.run,
+                partial(
+                    spawn_until,
+                    depth=4,
+                ),
+                an=an,
+                name='spawner1',
+            )
         )
-
-        # TODO: test this case as well where the parent don't see
-        # the sub-actor errors by default and instead expect a user
-        # ctrl-c to kill the root.
-        with trio.move_on_after(3):
-            await trio.sleep_forever()
-
-        # gah still an issue here.
-        await portal.result()
-
-        # should never get here
-        await portal1.result()
 
 
 if __name__ == '__main__':

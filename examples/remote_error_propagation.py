@@ -7,19 +7,20 @@ async def assert_err():
 
 
 async def main():
-    async with tractor.open_nursery() as n:
+    async with tractor.open_nursery() as an:
         real_actors = []
         for i in range(3):
-            real_actors.append(await n.start_actor(
+            real_actors.append(await an.start_actor(
                 f'actor_{i}',
                 enable_modules=[__name__],
             ))
 
-        # start one actor that will fail immediately
-        await n.run_in_actor(assert_err)
+        # run one one-shot task actor that will fail immediately;
+        # its error raises right here in the caller's task..
+        await tractor.to_actor.run(assert_err, an=an)
 
-    # should error here with a ``RemoteActorError`` containing
-    # an ``AssertionError`` and all the other actors have been cancelled
+    # ..as a ``RemoteActorError`` containing an ``AssertionError``
+    # and all the other actors have been cancelled
 
 
 if __name__ == '__main__':

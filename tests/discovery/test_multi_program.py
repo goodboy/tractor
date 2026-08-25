@@ -207,7 +207,7 @@ def test_dup_name_cancel_cascade_escalates_to_hard_kill(
 
     Post-fix, `Portal.cancel_actor()` raises `ActorTooSlowError` on
     the bounded-wait timeout, and `ActorNursery.cancel()`'s
-    per-child wrapper escalates to `proc.terminate()` (hard-kill).
+    per-child wrapper escalates directly to `proc.kill()` (hard-reap).
     The full nursery teardown therefore stays bounded even under
     pathological timing.
 
@@ -266,7 +266,7 @@ def test_dup_name_cancel_cascade_escalates_to_hard_kill(
 
         # post-teardown sanity: every child proc must be reaped.
         # If escalation worked, even timed-out cancel-RPCs would
-        # have triggered `proc.terminate()` and the procs are dead.
+        # have triggered `proc.kill()` and the procs are dead.
         for p in portals:
             # `Portal.channel.connected()` -> False once the
             # underlying chan disconnected (clean exit OR

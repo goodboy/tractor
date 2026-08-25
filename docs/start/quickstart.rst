@@ -43,24 +43,21 @@ Run it::
 What's going on here?
 
 - ``trio.run(main)`` starts the **root actor**; the ``tractor``
-  runtime boots *implicitly* inside ``tractor.open_nursery()``
-  whenever it isn't already up. No special entrypoint, no
-  framework takeover - it's just a ``trio`` app,
+  runtime boots *implicitly* inside this ``tractor.to_actor.run()``
+  call because neither ``an=`` nor ``portal=`` was supplied. No
+  special entrypoint, no framework takeover - it's just a ``trio``
+  app,
 - inside ``main()`` a *subactor* is spawned via
-  ``ActorNursery.run_in_actor()`` and told to run exactly one
+  ``tractor.to_actor.run()`` and told to run exactly one
   function: ``cellar_door()``,
-- you get back a ``Portal``: your handle for invoking tasks in
-  the new process's (separate!) memory domain. We lean on it
-  much harder in the next section,
 - the subactor, *some_linguist*, boots a fresh ``trio.run()`` in
-  a **new process** and executes ``cellar_door()`` as its *main
-  task* (note the child proving it is *not* the root with
+  a **new process** and executes ``cellar_door()`` as its linked
+  one-shot task (note the child proving it is *not* the root with
   ``tractor.is_root_process()``), then ships the return value
   back over IPC,
-- the parent grabs that *final result* with
-  ``await portal.wait_for_result()``, much like you'd expect
-  from a "future" - except causality is preserved: the nursery
-  block only exits once the child is *done*, dead, and reaped.
+- the call *blocks* until that final result arrives, then
+  returns it - causality is preserved: your task only proceeds
+  once the child is *done*, dead, and reaped.
 
 .. margin:: Just need a worker pool?
 
@@ -71,17 +68,20 @@ What's going on here?
 
 .. note::
 
-   ``run_in_actor()`` is the *convenience* wrapper: one-shot
-   spawn-run-reap semantics for when a subactor's entire job is
-   a single function call. The core primitives are
-   ``ActorNursery.start_actor()`` (next up) paired with
-   ``Portal.open_context()`` for full, SC-linked cross-actor
-   dialogs - see :doc:`/guide/context`.
+   Without ``portal=``, ``to_actor.run()`` (parlance of
+   ``trio.to_thread`` and friends) is the *convenience* wrapper:
+   one-shot spawn-run-reap semantics for when a subactor's entire
+   job is a single function call. The core primitives are
+   :meth:`~tractor.ActorNursery.start_actor` (next up) — which
+   hands you a ``Portal``, your handle for invoking tasks in the
+   new process's (separate!) memory domain — paired with
+   :meth:`~tractor.Portal.open_context` for full, SC-linked
+   cross-actor dialogs; see :doc:`/guide/context`.
 
 Daemon actors and RPC
 ---------------------
-A ``run_in_actor()``-spawned actor terminates when its main task
-returns. But often you want long-lived *daemon* actors instead:
+A subactor spawned by ``to_actor.run()`` terminates after its lone
+task returns. But often you want long-lived *daemon* actors instead:
 spawned once, then serving (allowlisted) RPC requests until told
 otherwise. That's ``start_actor()``:
 
@@ -91,13 +91,16 @@ otherwise. That's ``start_actor()``:
 
 Two lifetime rules to internalize:
 
-- a ``run_in_actor()`` actor lives exactly as long as its main
-  task; the nursery waits for that function (and thus the
-  process) to complete before unblocking,
+- a subactor spawned and owned by ``to_actor.run()`` is cancelled
+  and reaped before the call returns its result or raises its error,
 - a ``start_actor()`` actor *lives forever* - an RPC daemon the
   nursery will happily wait on **indefinitely** - until some
   task explicitly cancels it via ``Portal.cancel_actor()`` (as
   above), or its parent nursery is cancelled wholesale.
+
+Passing ``portal=`` is different: the call owns only the linked
+remote task. It neither spawns nor reaps the existing actor; the
+portal's owner must end that actor's lifetime.
 
 .. tip::
 
@@ -208,16 +211,20 @@ The script of the scene (runtime ``INFO`` log lines trimmed)::
 
 The new tricks in play:
 
-- two subactors, *donny* and *gretchen*, are each told to run
-  ``say_hello()`` targeting the *other* by name,
+- *donny* and *gretchen* start as daemon actors so each remains alive
+  while the other discovers it and completes its line,
+- a local ``trio`` nursery runs both ``Portal.run(say_hello)`` calls
+  concurrently; starting both actors first avoids either reciprocal
+  dialog racing one-shot process reaping,
 - ``tractor.wait_for_actor()`` blocks until the named peer has
   registered with the tree's *registrar* (every actor announces
   itself at boot), then yields a ``Portal`` connected
   **directly** to that peer,
 - each actor invokes its partner's ``hi()`` over that portal:
-  actor-to-actor RPC with the root merely *directing* - and both
-  final lines flow back to ``main()`` via
-  ``await portal.wait_for_result()``,
+  actor-to-actor RPC with the root merely *directing* - and each
+  ``Portal.run()`` returns its final line directly to ``main()``,
+- the actor nursery explicitly cancels both daemons only after both
+  dialogs complete,
 - ``tractor.log.get_console_log("INFO")`` cranks up runtime
   logging so you can watch the spawn/register/cancel machinery
   narrate itself; remove it for a quiet set.

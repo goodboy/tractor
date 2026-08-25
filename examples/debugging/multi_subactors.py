@@ -17,12 +17,12 @@ async def name_error():
 async def spawn_error():
     """"A nested nursery that triggers another ``NameError``.
     """
-    async with tractor.open_nursery() as n:
-        portal = await n.run_in_actor(
+    async with tractor.open_nursery() as an:
+        return await tractor.to_actor.run(
             name_error,
+            an=an,
             name='name_error_1',
         )
-        return await portal.result()
 
 
 async def main():
@@ -36,17 +36,39 @@ async def main():
     `-python -m tractor._child --uid ('spawn_error', '52ee14a5 ...)
        `-python -m tractor._child --uid ('name_error', '3391222c ...)
     """
+    errors: list[BaseException] = []
+
     async with tractor.open_nursery(
         debug_mode=True,
         # loglevel='runtime',
-    ) as n:
+    ) as an:
 
-        # Spawn both actors, don't bother with collecting results
-        # (would result in a different debugger outcome due to parent's
-        # cancellation).
-        await n.run_in_actor(breakpoint_forever)
-        await n.run_in_actor(name_error)
-        await n.run_in_actor(spawn_error)
+        async def run_and_collect(fn):
+            '''
+            One-shot whose (boxed) error is stashed instead of
+            raised so a sibling's crash never cancels the others
+            before they've had their own debugger sessions (the
+            "collect all errors" the legacy `run_in_actor()` API
+            did implicitly at nursery teardown).
+
+            '''
+            try:
+                await tractor.to_actor.run(fn, an=an)
+            except tractor.RemoteActorError as rae:
+                errors.append(rae)
+
+        # Spawn all one-shot task actors, collecting (vs.
+        # raising) their errors.
+        async with trio.open_nursery() as tn:
+            tn.start_soon(run_and_collect, breakpoint_forever)
+            tn.start_soon(run_and_collect, name_error)
+            tn.start_soon(run_and_collect, spawn_error)
+
+        if errors:
+            raise BaseExceptionGroup(
+                'multi_subactors errored!',
+                errors,
+            )
 
 
 if __name__ == '__main__':

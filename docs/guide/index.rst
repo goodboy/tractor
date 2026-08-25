@@ -9,8 +9,8 @@ docs; what you read is what CI runs).
 Roughly in "first date to long term relationship"
 order,
 
-- :doc:`spawning` — actor nurseries, daemons +
-  one-shot workers, process lifetimes.
+- :doc:`spawning` — actor nurseries, daemons,
+  ``to_actor.run()`` one-shots and process lifetimes.
 - :doc:`rpc` — portals: calling into another
   process like it's a local ``await``.
 - :doc:`context` — the cross-actor task-pair

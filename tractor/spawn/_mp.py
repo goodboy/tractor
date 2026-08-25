@@ -138,12 +138,24 @@ async def mp_proc(
         # daemon=True,
         name=name,
     )
-
-    # `multiprocessing` only (since no async interface):
-    # register the process before start in case we get a cancel
-    # request before the actor has fully spawned - then we can wait
-    # for it to fully come up before sending a cancel request
-    actor_nursery._children[subactor.aid.uid] = (subactor, proc, None)
+    # `multiprocessing` only (since no async interface): publish the
+    # process and its reap coordination before start so cancellation
+    # can own every subsequently started child.
+    # No `Portal` exists until the IPC handshake returns `chan`.
+    # Replace this provisional entry with `Portal(chan)` below.
+    (
+        reap_request,
+        _,
+        cancel_during_registration,
+    ) = actor_nursery._register_child(
+        subactor=subactor,
+        proc=proc,
+        portal=None,
+    )
+    if cancel_during_registration:
+        raise RuntimeError(
+            'Actor registered after its nursery began cancelling'
+        )
 
     proc.start()
     if not proc.is_alive():
@@ -175,8 +187,8 @@ async def mp_proc(
         # unblock parent task
         task_status.started(portal)
 
-        # wait for ``ActorNursery`` block to signal that
-        # subprocesses can be waited upon.
+        # wait for this child or its `ActorNursery` to signal that
+        # the subprocess can be joined.
         # This is required to ensure synchronization
         # with user code that may want to manually await results
         # from nursery spawned sub-actors. We don't want the
@@ -185,7 +197,7 @@ async def mp_proc(
         # nursery block closes do we allow subactor results to be
         # awaited and reported upwards to the supervisor.
         with trio.CancelScope(shield=True):
-            await actor_nursery._join_procs.wait()
+            await reap_request.wait()
 
         async with trio.open_nursery() as nursery:
             if portal in actor_nursery._cancel_after_result_on_exit:

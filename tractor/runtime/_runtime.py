@@ -600,14 +600,21 @@ class Actor:
     # - cancel_rpc_tasks(),
     # - _cancel_task(),
     #
-    def _get_rpc_func(self, ns, funcname):
+    def _get_rpc_func(
+        self,
+        ns: str,
+        funcname: str,
+    ):
         '''
         Try to lookup and return a target RPC func from the
         post-fork enabled module set.
 
         '''
         try:
-            return getattr(self._mods[ns], funcname)
+            return getattr(
+                self._mods[ns],
+                funcname,
+            )
         except KeyError as err:
             mne = ModuleNotExposed(*err.args)
 
@@ -753,6 +760,23 @@ class Actor:
 
         return ctx
 
+    def _drop_context(
+        self,
+        ctx: Context,
+    ) -> Context|None:
+        '''
+        Remove `ctx` from this actor's IPC context registry.
+
+        Teardown paths can converge after normal return, cancellation
+        or startup failure, so registry removal is idempotent.
+
+        '''
+        peer_uid: tuple[str, str] = ctx.chan.aid.uid
+        return self._contexts.pop(
+            (peer_uid, ctx.cid),
+            None,
+        )
+
     async def start_remote_task(
         self,
         chan: Channel,
@@ -767,6 +791,13 @@ class Actor:
         allow_overruns: bool = False,
         load_nsf: bool = False,
         ack_timeout: float = float('inf'),
+        cancel_on_startup: bool = True,
+
+        # Optional absolute deadline for publishing this exact `Start`
+        # frame. Used by bounded actor/context cancel RPCs whose outer
+        # timeout cannot penetrate `Channel.send()` forwarding into the
+        # shield in `MsgpackTransport.send()`.
+        send_deadline: float = float('inf'),
 
     ) -> Context:
         '''
@@ -818,26 +849,75 @@ class Actor:
 
             f'{pretty_struct.pformat(msg)}'
         )
-        await chan.send(msg)
-
-        # NOTE wait on first `StartAck` response msg and validate;
-        # this should be immediate and does not (yet) wait for the
-        # remote child task to sync via `Context.started()`.
-        with trio.fail_after(ack_timeout):
-            first_msg: msgtypes.StartAck = await ctx._rx_chan.receive()
+        start_published: bool = False
         try:
-            functype: str = first_msg.functype
-        except AttributeError:
-            raise unpack_error(first_msg, chan)
+            if send_deadline == float('inf'):
+                await chan.send(msg)
+            else:
+                await chan.send(
+                    msg,
+                    send_deadline=send_deadline,
+                )
+            start_published = True
 
-        if functype not in (
-            'asyncfunc',
-            'asyncgen',
-            'context',
-        ):
-            raise ValueError(
-                f'Invalid `StartAck.functype: str = {first_msg!r}` ??'
-            )
+            # NOTE wait on first `StartAck` response msg and validate;
+            # this should be immediate and does not (yet) wait for the
+            # remote child task to sync via `Context.started()`.
+            with trio.fail_after(ack_timeout):
+                first_msg: msgtypes.StartAck = await ctx._rx_chan.receive()
+
+            try:
+                functype: str = first_msg.functype
+            except AttributeError:
+                raise unpack_error(first_msg, chan)
+
+            if functype not in (
+                'asyncfunc',
+                'asyncgen',
+                'context',
+            ):
+                raise ValueError(
+                    f'Invalid `StartAck.functype: str = '
+                    f'{first_msg!r}` ??'
+                )
+
+        except BaseException as startup_err:
+            with trio.CancelScope(shield=True):
+                # `MsgpackTransport.send()` shields length-prefixed frame
+                # publication until complete, then checkpoints pending
+                # cancellation before returning. Thus `start_published`
+                # can remain false after a complete `Start` reached the
+                # wire. If the send's own deadline catches a partial
+                # frame, it closes the stream. A connected channel means
+                # cancellation happened before the write or after frame
+                # completion, so `_cancel_task` is protocol-safe (and
+                # a no-op when `Start` was unsent).
+                if (
+                    cancel_on_startup
+                    and
+                    (
+                        start_published
+                        or (
+                            isinstance(startup_err, trio.Cancelled)
+                            and
+                            chan.connected()
+                        )
+                    )
+                ):
+                    try:
+                        await ctx.cancel()
+                    except BaseException as cancel_err:
+                        log.warning(
+                            'Failed to cancel RPC task during '
+                            'startup?\n'
+                            f'{cancel_err!r}\n'
+                        )
+
+                self._drop_context(ctx)
+                if not ctx._rx_chan._closed:
+                    await ctx._rx_chan.aclose()
+
+            raise
 
         ctx._remote_func_type = functype
         return ctx

@@ -39,7 +39,6 @@ from tractor.runtime._state import (
     current_actor,
     is_root_process,
     debug_mode,
-    get_runtime_vars,
 )
 from tractor.log import get_logger
 from tractor.discovery._addr import UnwrappedAddress
@@ -131,6 +130,26 @@ async def trio_proc(
                 f' |_{proc}\n'
             )
 
+            # No `Portal` exists until the IPC handshake returns
+            # `chan`. Replace this provisional entry with
+            # `Portal(chan)` below.
+            (
+                reap_request,
+                _,
+                cancel_during_registration,
+            ) = actor_nursery._register_child(
+                subactor=subactor,
+                proc=proc,
+                portal=None,
+            )
+            if cancel_during_registration:
+                cancelled_during_spawn = True
+                proc.kill()
+                raise RuntimeError(
+                    'Actor registered after its nursery began '
+                    'cancelling'
+                )
+
             # wait for actor to spawn and connect back to us
             # channel should have handshake completed by the
             # local actor by the time we get a ref to it
@@ -191,9 +210,10 @@ async def trio_proc(
         # resume caller at next checkpoint now that child is up
         task_status.started(portal)
 
-        # wait for ActorNursery.wait() to be called
+        # wait for this child or its `ActorNursery` to request
+        # process joining.
         with trio.CancelScope(shield=True):
-            await actor_nursery._join_procs.wait()
+            await reap_request.wait()
 
         async with trio.open_nursery() as nursery:
             if portal in actor_nursery._cancel_after_result_on_exit:

@@ -310,6 +310,7 @@ class Channel:
         payload: Any,
 
         hide_tb: bool = False,
+        send_deadline: float = float('inf'),
 
     ) -> None:
         '''
@@ -319,6 +320,9 @@ class Channel:
         normally handled by higher level runtime machinery for the
         expected-graceful cases, normally ephemercal
         (re/dis)connects.
+
+        `send_deadline` is an absolute Trio clock deadline forwarded
+        only to transports that support bounded frame publication.
 
         '''
         __tracebackhide__: bool = hide_tb
@@ -330,10 +334,17 @@ class Channel:
                     f'{pformat(payload)}\n'
                 )
             # assert self._transport  # but why typing?
-            await self._transport.send(
-                payload,
-                hide_tb=hide_tb,
-            )
+            if send_deadline == float('inf'):
+                await self._transport.send(
+                    payload,
+                    hide_tb=hide_tb,
+                )
+            else:
+                await self._transport.send(
+                    payload,
+                    hide_tb=hide_tb,
+                    send_deadline=send_deadline,
+                )
         except (
             BaseException,
             MsgTypeError,

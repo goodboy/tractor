@@ -46,6 +46,7 @@ from ..log import (
     get_logger,
     get_loglevel,
 )
+from ..msg import Aid
 from ._runtime import Actor
 from ._portal import Portal
 from ..trionics import (
@@ -90,7 +91,7 @@ async def _try_cancel_then_kill(
     Sends a graceful actor-runtime cancel-RPC via
     `Portal.cancel_actor(raise_on_timeout=True)`. If the bounded-wait
     expires before the peer ack's, `ActorTooSlowError` is raised and
-    we escalate via `proc.terminate()` (SIGTERM) per SC-discipline:
+    we escalate via `proc.kill()` per SC-discipline:
 
       graceful cancel-req -> bounded wait -> hard-kill
 
@@ -102,11 +103,9 @@ async def _try_cancel_then_kill(
     the wider write-up.
 
     '''
-    # XXX, do NOT escalate to `proc.terminate()` while ANY of
-    # the following are true — SIGTERM-ing a sub would tear
-    # down its sub-tree including any descendant proxying
-    # stdio to/from a REPL-locked actor, clobbering the user's
-    # debug session:
+    # XXX, delay hard-kill escalation while any debugger guard
+    # below is active. Killing the sub immediately would tear down
+    # its tree and clobber an actor proxying a REPL session:
     #
     # - `Lock.ctx_in_debug is not None`: most precise — some
     #   actor in the tree is currently REPL-locked. Set in the
@@ -122,7 +121,7 @@ async def _try_cancel_then_kill(
     #   child.
     #
     # - `debug_mode_active`: this nursery has at least one
-    #   child started with an explicit `debug_mode=` arg
+    #   child started with an explicit `debug_mode=True` arg
     #   (`ActorNursery._at_least_one_child_in_debug`). Catches
     #   the case where root is NOT in debug-mode but a
     #   nursery-direct child opted in.
@@ -132,36 +131,63 @@ async def _try_cancel_then_kill(
     # mutated by per-child `debug_mode=True`). ORing covers
     # every flavor without false-positively skipping
     # legitimate hard-kill paths in non-debug trees.
-    if (
-        debug.Lock.ctx_in_debug is not None
+    def child_in_debug() -> bool:
+        '''
+        Sample child/tree debugger protection state.
+
+        '''
+        return (
+            debug_mode_active
+            or
+            debug.Lock.ctx_in_debug is not None
+        )
+
+    debug_protected: bool = (
+        child_in_debug()
         or
         _state._runtime_vars.get('_debug_mode', False)
-        or
-        debug_mode_active
-    ):
-        await portal.cancel_actor()
-        return
+    )
 
     try:
-        await portal.cancel_actor(raise_on_timeout=True)
+        cancelled: bool = await portal.cancel_actor(
+            raise_on_timeout=not debug_protected,
+        )
+        if not cancelled:
+            if debug_protected:
+                await debug.maybe_wait_for_debugger(
+                    # Re-sample after the cancel-RPC checkpoint.
+                    child_in_debug=child_in_debug(),
+                    header_msg=(
+                        'Delaying subproc hard-reap while '
+                        'debugger locked..\n'
+                    ),
+                )
+
+            peer_id: str = portal.channel.aid.reprol()
+            raise ActorTooSlowError(
+                f'Peer {peer_id} disconnected before '
+                f'acknowledging its `Actor.cancel()` RPC'
+            )
+
     except ActorTooSlowError as too_slow:
         log.error(
             f'Cancel-ack TIMED OUT for sub-actor\n'
             f'  uid: {subactor.aid.reprol()!r}\n'
             f'  reason: {too_slow}\n'
-            f'-> escalating to `proc.terminate()` (hard-kill)\n'
+            f'-> escalating to `proc.kill()` (hard-reap)\n'
         )
         # XXX, the `subint` backend stores an `int` interp-id in the
-        # `proc` slot (not a `Process`), so it has no `.terminate()`.
+        # `proc` slot (not a `Process`), so it has no `.kill()`.
         # Guard here so a cancel-ack timeout doesn't `AttributeError`
         # once that backend lands; its hard-kill path is a TODO.
-        if hasattr(proc, 'terminate'):
-            proc.terminate()
+        if hasattr(proc, 'kill'):
+            if proc.poll() is None:
+                proc.kill()
         else:
             log.error(
                 f'Cannot hard-kill sub-actor — backend proc-handle '
                 f'{proc!r} ({type(proc).__name__!r}) has no '
-                f'`.terminate()`!\n'
+                f'`.kill()`!\n'
                 f'  uid: {subactor.aid.reprol()!r}\n'
                 f'TODO: per-backend cancel-escalation.\n'
             )
@@ -220,6 +246,14 @@ class ActorNursery:
         ] = {}
 
         self._join_procs = trio.Event()
+        self._child_reap_requests: dict[
+            Aid,
+            trio.Event,
+        ] = {}
+        self._child_reaped: dict[
+            Aid,
+            trio.Event,
+        ] = {}
         self._at_least_one_child_in_debug: bool = False
         self.errors = errors
         self._scope_error: BaseException|None = None
@@ -284,6 +318,112 @@ class ActorNursery:
             # self._cancelled_caught
         )
 
+    def _register_child_reap(
+        self,
+        aid: Aid,
+    ) -> tuple[trio.Event, trio.Event]:
+        '''
+        Register a child monitor's process-reap events.
+
+        '''
+        reap_request = trio.Event()
+        reaped = trio.Event()
+        self._child_reap_requests[aid] = reap_request
+        self._child_reaped[aid] = reaped
+        if self._join_procs.is_set():
+            reap_request.set()
+        return reap_request, reaped
+
+    def _register_child(
+        self,
+        subactor: Actor,
+        proc: 'ProcessType',
+        portal: Portal|None,
+    ) -> tuple[trio.Event, trio.Event, bool]:
+        '''
+        Atomically publish one child and its reap coordination.
+
+        '''
+        aid: Aid = subactor.aid
+        uid: tuple[str, str] = aid.uid
+        self._children[uid] = (
+            subactor,
+            proc,
+            portal,
+        )
+        reap_request, reaped = self._register_child_reap(aid)
+        return (
+            reap_request,
+            reaped,
+            self._cancel_called,
+        )
+
+    def _request_reap_all(self) -> None:
+        '''
+        Release every child monitor into its process-join phase.
+
+        '''
+        self._join_procs.set()
+        for reap_request in tuple(
+            self._child_reap_requests.values()
+        ):
+            reap_request.set()
+
+    def _mark_child_reaped(
+        self,
+        aid: Aid,
+    ) -> None:
+        '''
+        Publish completed child-process teardown to its waiter.
+
+        '''
+        uid: tuple[str, str] = aid.uid
+        self._children.pop(uid, None)
+        reap_request: trio.Event|None = (
+            self._child_reap_requests.pop(aid, None)
+        )
+        reaped: trio.Event|None = self._child_reaped.pop(
+            aid,
+            None,
+        )
+        assert (
+            (reap_request is None)
+            ==
+            (reaped is None)
+        )
+        if reaped is not None:
+            reaped.set()
+
+    async def _cancel_and_reap_child(
+        self,
+        portal: Portal,
+    ) -> None:
+        '''
+        Cancel, join and unregister one nursery-owned child.
+
+        '''
+        aid: Aid = portal.channel.aid
+        uid: tuple[str, str] = aid.uid
+        child_entry = self._children.get(uid)
+        if child_entry is None:
+            return
+
+        subactor, proc, _ = child_entry
+        reap_request: trio.Event = self._child_reap_requests[aid]
+        reaped: trio.Event = self._child_reaped[aid]
+
+        with trio.CancelScope(shield=True):
+            try:
+                await _try_cancel_then_kill(
+                    portal,
+                    proc,
+                    subactor,
+                    self._at_least_one_child_in_debug,
+                )
+            finally:
+                reap_request.set()
+                await reaped.wait()
+
     async def start_actor(
         self,
         name: str,
@@ -319,6 +459,12 @@ class ActorNursery:
 
         '''
         __runtimeframe__: int = 1  # noqa
+        if self._cancel_called:
+            raise RuntimeError(
+                'Cannot start an actor in a cancelling '
+                '`ActorNursery`'
+            )
+
         loglevel: str = (
             loglevel
             or self._actor.loglevel
@@ -333,7 +479,7 @@ class ActorNursery:
         # allow setting debug policy per actor
         if debug_mode is not None:
             _rtv['_debug_mode'] = debug_mode
-            self._at_least_one_child_in_debug = True
+            self._at_least_one_child_in_debug |= debug_mode
 
         enable_modules = list(enable_modules or [])
         proc_kwargs = dict(proc_kwargs or {})
@@ -383,12 +529,13 @@ class ActorNursery:
         )
 
     # TODO: DEPRECATE THIS:
-    # -[ ] impl instead as a hilevel wrapper on
-    #   top of a `@context` style invocation.
-    #  |_ dynamic @context decoration on child side
-    #  |_ implicit `Portal.open_context() as (ctx, first):`
-    #    and `return first` on parent side.
-    #  |_ mention how it's similar to `trio-parallel` API?
+    # -[x] impl instead as a hilevel wrapper on top of
+    #   the lower level daemon-spawn + portal APIs
+    #  |_ see `.to_actor.run()` (issue #477) which does
+    #    `.start_actor()` + `Portal.run()` + a one-shot
+    #    reap via `Portal.cancel_actor()`.
+    # -[ ] emit a `DeprecationWarning` here (requires
+    #   migrating all in-repo usage first!)
     # -[ ] use @api_frame on the wrapper
     async def run_in_actor(
         self,
@@ -415,6 +562,11 @@ class ActorNursery:
         Actors spawned using this method are kept alive at nursery teardown
         until the task spawned by executing ``fn`` completes at which point
         the actor is terminated.
+
+        NOTE: prefer the (eventual) replacement API
+        `tractor.to_actor.run()` which delivers the same
+        one-shot semantics decoupled from this nursery's
+        internal spawn machinery; see issue #477.
 
         '''
         __runtimeframe__: int = 1  # noqa
@@ -478,7 +630,7 @@ class ActorNursery:
 
         # TODO: impl a repr for spawn more compact
         # then `._children`..
-        children: dict = self._children
+        children: tuple = tuple(self._children.values())
         child_count: int = len(children)
         msg: str = f'Cancelling actor nursery with {child_count} children\n'
 
@@ -497,7 +649,7 @@ class ActorNursery:
                     subactor,
                     proc,
                     portal,
-                ) in children.values():
+                ) in children:
 
                     # TODO: are we ever even going to use this or
                     # is the spawning backend responsible for such
@@ -517,7 +669,9 @@ class ActorNursery:
                             await event.wait()
 
                             # channel/portal should now be up
-                            _, _, portal = children[subactor.aid.uid]
+                            _, _, portal = self._children[
+                                subactor.aid.uid
+                            ]
 
                             # XXX should be impossible to get here
                             # unless method was called from within
@@ -564,14 +718,14 @@ class ActorNursery:
                 subactor,
                 proc,
                 portal,
-            ) in children.values():
+                ) in children:
                 log.warning(f"Hard killing process {proc}")
                 proc.terminate()
         else:
             self._cancelled_caught
 
         # mark ourselves as having (tried to have) cancelled all subactors
-        self._join_procs.set()
+        self._request_reap_all()
 
 
 @acm
@@ -633,7 +787,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                         'Waiting on subactors to complete:\n'
                         f'>}} {len(an._children)}\n'
                     )
-                    an._join_procs.set()
+                    an._request_reap_all()
 
                 except BaseException as _inner_err:
                     inner_err = _inner_err
@@ -652,7 +806,7 @@ async def _open_and_supervise_one_cancels_all_nursery(
                     # if the caller's scope errored then we activate our
                     # one-cancels-all supervisor strategy (don't
                     # worry more are coming).
-                    an._join_procs.set()
+                    an._request_reap_all()
 
                     # XXX NOTE XXX: hypothetically an error could
                     # be raised and then a cancel signal shows up

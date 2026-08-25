@@ -13,17 +13,24 @@ async def main():
     simultaneously.
 
     '''
-    async with tractor.open_nursery(
-        debug_mode=True,
-        # loglevel='debug'  # ?XXX required?
-    ) as n:
-
-        # spawn both actors
-        portal = await n.run_in_actor(key_error)
+    async with (
+        tractor.open_nursery(
+            debug_mode=True,
+            # loglevel='debug'  # ?XXX required?
+        ) as an,
+        trio.open_nursery() as tn,
+    ):
+        # spawn the actor..
+        portal = await an.start_actor(
+            'key_error',
+            enable_modules=[__name__],
+        )
         print(
             f'Child is up @ {portal.chan.aid.reprol()}'
         )
-
+        # ..then schedule its erroring task in the bg while the
+        # root blocks below.
+        tn.start_soon(portal.run, key_error)
 
         # XXX: originally a bug caused by this is where root would enter
         # the debugger and clobber the tty used by the repl even though

@@ -80,28 +80,56 @@ One special namespace exists: ``'self'`` resolves to the remote
 how internal machinery (cancel requests, registry ops) travels;
 don't build your app on it.
 
-One-shot results: ``wait_for_result()``
----------------------------------------
-A portal returned from
-:meth:`~tractor.ActorNursery.run_in_actor` has exactly one
-"main" task running remotely; that task's ``return`` value is
-delivered as the portal's *final result*:
+One-shot subactors: ``to_actor.run()``
+--------------------------------------
+When the call should own a fresh subactor whose entire job is one
+function call, :func:`tractor.to_actor.run` spawns it, runs the task,
+returns its result and reaps the process — all in one blocking call:
 
 .. code:: python
 
-    portal = await an.run_in_actor(fib, n=10)
-    final = await portal.wait_for_result()
+    from functools import partial
+
+    final = await tractor.to_actor.run(
+        partial(fib, n=10),
+        an=an,
+    )
 
 Semantics worth knowing:
 
 - it blocks until the remote task returns, re-raising any
-  remote error in the usual boxed form.
-- once resolved it's idempotent: later calls return the same
-  cached value.
-- a *daemon* portal (from ``start_actor()``) has no main task,
-  so there's no final result to wait for: you'll get a warning
-  plus a ``NoResult`` sentinel. Results of individual daemon
-  calls come straight back from each ``await portal.run()``.
+  remote error in the usual boxed form right in the calling
+  task.
+- lifetime mode also determines process ownership: ``an=`` spawns and
+  reaps a fresh child in an existing actor nursery, while passing
+  neither does the same in a private call-scoped nursery (booting
+  the runtime if needed). ``portal=`` instead runs one linked task
+  in an existing actor; it neither spawns nor reaps that actor, so
+  the portal's owner remains responsible for its lifetime.
+- concurrency composes the plain ``trio`` way: schedule
+  multiple ``run()`` calls into a local task nursery (see
+  ``examples/parallelism/concurrent_toactor_primes.py``).
+
+A reused actor must expose both the target module and the
+``to_actor`` context trampoline:
+
+.. code:: python
+
+    async with tractor.open_nursery() as an:
+        portal = await an.start_actor(
+            'worker',
+            enable_modules=[
+                __name__,
+                tractor.to_actor.MODULE,
+            ],
+        )
+        try:
+            final = await tractor.to_actor.run(
+                partial(fib, n=10),
+                portal=portal,
+            )
+        finally:
+            await portal.cancel_actor()
 
 Pure RPC daemons: ``run_daemon()``
 ----------------------------------
@@ -147,7 +175,8 @@ call tears down the entire sub-tree — SC, transitively.
 
 When to graduate to ``Context``
 -------------------------------
-``portal.run()`` is great for one-shot, request-response calls.
+The :meth:`~tractor.Portal.run` method is great for one-shot,
+request-response calls.
 Reach for :meth:`~tractor.Portal.open_context` with an
 ``@tractor.context`` endpoint as soon as you want:
 
@@ -160,10 +189,15 @@ Reach for :meth:`~tractor.Portal.open_context` with an
   :meth:`~tractor.Portal.cancel_actor` nukes the **entire**
   remote runtime and its process.
 
-In fact the source plans for ``Portal.run()`` itself to be
-rebuilt on top of ``open_context()`` — contexts *are* the core
-inter-actor protocol. Take the full tour in
-:doc:`/guide/context`.
+:func:`tractor.to_actor.run` already enters the full
+:meth:`~tractor.Portal.open_context` lifecycle. The older
+:meth:`~tractor.Portal.run` path instead uses the ``Context`` returned
+by the lower-level ``Actor.start_remote_task()`` directly, avoiding a
+``Started`` handshake but owning less lifecycle machinery. A follow-up
+should factor their shared linked-task lifecycle without requiring
+``Portal.run()`` to delegate through the public context API or add
+another wire message. Take the full tour in
+:doc:`the context guide </guide/context>`.
 
 .. seealso::
 

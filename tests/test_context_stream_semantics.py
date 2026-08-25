@@ -7,11 +7,17 @@ sync-opening a ``tractor.Context`` beforehand.
 '''
 from itertools import count
 import math
+from pathlib import Path
 import platform
 from pprint import pformat
 import sys
+from types import SimpleNamespace
 from typing import (
     Callable,
+)
+from unittest.mock import (
+    AsyncMock,
+    Mock,
 )
 
 import pytest
@@ -25,12 +31,18 @@ from tractor import (
 from tractor._exceptions import (
     StreamOverrun,
     ContextCancelled,
+    TransportClosed,
 )
 from tractor.runtime._state import current_ipc_ctx
 
 from tractor._testing import (
     tractor_test,
     expect_ctxc,
+)
+
+from ._helpers import (
+    CancellationMarkers,
+    non_registration_contexts,
 )
 
 # ``Context`` semantics are as follows,
@@ -72,7 +84,110 @@ from tractor._testing import (
 #   with implicit stream closure on the cancelling end.
 
 
+def test_overrun_error_send_tolerates_transport_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    Preserve a stream overrun when its error can not be shipped.
+
+    A full local stream buffer makes `Context._deliver_msg()` package
+    `StreamOverrun` for the remote sender. On Darwin, a concurrently
+    closing socket is wrapped as `TransportClosed`; allowing that
+    secondary error to escape replaces the primary overrun and crashes
+    the actor-wide RPC loop. This fake context forces that ordering and
+    proves failed error shipment reports non-delivery without raising.
+
+    '''
+    error_msg = tractor.msg.Error(
+        src_uid=('local', 'test'),
+        src_type_str='StreamOverrun',
+        boxed_type_str='StreamOverrun',
+        relay_path=[],
+        sender=('peer', 'test'),
+        cid='overrun',
+    )
+    packed: dict[str, object] = {}
+
+    # Spy on the generated `StreamOverrun` and return a stable wire
+    # `Error`; the real packer adds traceback/relay details unrelated to
+    # this test's secondary transport-close contract.
+    def pack_overrun(
+        local_err: BaseException,
+        cid: str,
+        **kwargs: object,
+    ) -> tractor.msg.Error:
+        packed['local_err'] = local_err
+        packed['cid'] = cid
+        packed['kwargs'] = kwargs
+        return error_msg
+
+    monkeypatch.setattr(
+        'tractor._context.pack_from_raise',
+        pack_overrun,
+    )
+
+    async def main() -> None:
+        send_chan = Mock()
+        send_chan.send_nowait.side_effect = trio.WouldBlock
+        chan = SimpleNamespace(
+            aid=SimpleNamespace(uid=('peer', 'test')),
+            send=AsyncMock(
+                side_effect=TransportClosed('peer closed'),
+            ),
+        )
+        local_aid = SimpleNamespace(
+            name='local',
+            reprol=lambda: 'local@test',
+        )
+        ctx = SimpleNamespace(
+            cid='overrun',
+            chan=chan,
+            _send_chan=send_chan,
+            _nsf='tests:overrun',
+            side='parent',
+            peer_side='child',
+            _portal=object(),
+            _task=None,
+            repr_api='Context',
+            repr_caller='test',
+            _in_overrun=False,
+            _actor=SimpleNamespace(aid=local_aid),
+            _stream_opened=True,
+            _allow_overruns=False,
+        )
+        msg = tractor.msg.Yield(
+            cid=ctx.cid,
+            pld='payload',
+        )
+
+        delivered: bool = await Context._deliver_msg(ctx, msg)
+
+        assert delivered is False
+        assert isinstance(packed['local_err'], StreamOverrun)
+        assert packed['cid'] == ctx.cid
+        chan.send.assert_awaited_once_with(error_msg)
+
+    trio.run(main)
+
 _state: bool = False
+
+
+@tractor.context
+async def startup_cancel_target(
+    ctx: Context,
+    started_path: str,
+    cancelled_path: str,
+) -> None:
+    with CancellationMarkers(
+        started_path,
+        cancelled_path,
+    ):
+        await ctx.started()
+        await trio.sleep_forever()
+
+
+async def return_one() -> int:
+    return 1
 
 
 @tractor.context
@@ -163,9 +278,182 @@ async def simple_setup_teardown(
         _state = False
 
 
-async def assert_state(value: bool):
+async def assert_state(value: bool) -> None:
     global _state
     assert _state == value
+
+
+@tractor_test
+async def test_cancel_during_context_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    start_method: str,
+    debug_mode: bool,
+) -> None:
+    '''
+    Cancel a context after sending `Start` but before its ack.
+
+    `Portal.open_context()` allocates its caller-side `Context` while
+    entering the async context manager. Cancellation used to strand
+    that local context and leave the remote target running. The patched
+    `Channel.send()` publishes `Start`, then blocks before
+    `Actor.start_remote_task()` can await `StartAck`. Cancelling the
+    caller proves cleanup issues one bounded, non-recursive cancel RPC,
+    stops the target and removes both helper contexts. A subsequent
+    RPC proves the caller-owned actor remains usable.
+
+    '''
+    started_path = tmp_path / 'startup_started'
+    cancelled_path = tmp_path / 'startup_cancelled'
+    start_sent = trio.Event()
+    start_funcs: list[str] = []
+    original_send = tractor.Channel.send
+
+    async def delay_after_start(
+        chan: tractor.Channel,
+        payload: object,
+        hide_tb: bool = False,
+        send_deadline: float = float('inf'),
+    ) -> None:
+        await original_send(
+            chan,
+            payload,
+            hide_tb=hide_tb,
+            send_deadline=send_deadline,
+        )
+        # The patched method keeps `Channel.send()`'s broad message
+        # contract. It sees both the requested endpoint `Start` and the
+        # internal `self._cancel_task` startup RPC used for cleanup.
+        if isinstance(payload, tractor.msg.Start):
+            start_funcs.append(payload.func)
+            if payload.func == 'startup_cancel_target':
+                start_sent.set()
+            await trio.sleep_forever()
+
+    async def open_target(
+        portal: tractor.Portal,
+    ) -> None:
+        async with portal.open_context(
+            startup_cancel_target,
+            started_path=str(started_path),
+            cancelled_path=str(cancelled_path),
+        ):
+            raise AssertionError('context startup should be cancelled')
+
+    async with tractor.open_nursery() as an:
+        actor: Actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'startup_cancel_worker',
+            enable_modules=[__name__],
+        )
+        contexts_before = non_registration_contexts(actor)
+        monkeypatch.setattr(
+            tractor.Channel,
+            'send',
+            delay_after_start,
+        )
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(open_target, portal)
+            with trio.fail_after(5):
+                await start_sent.wait()
+                while not started_path.exists():
+                    await trio.sleep(0.01)
+            tn.cancel_scope.cancel()
+
+        monkeypatch.setattr(
+            tractor.Channel,
+            'send',
+            original_send,
+        )
+        assert cancelled_path.exists()
+        assert non_registration_contexts(actor) == contexts_before
+        assert await portal.run_from_ns(
+            __name__,
+            'return_one',
+        ) == 1
+        assert non_registration_contexts(actor) == contexts_before
+        assert start_funcs == [
+            'startup_cancel_target',
+            '_cancel_task',
+        ]
+        await portal.cancel_actor()
+
+
+@tractor_test
+async def test_start_serialization_error_cleans_context(
+    start_method: str,
+    debug_mode: bool,
+) -> None:
+    '''
+    Deallocate caller state when `Start` can not be serialized.
+
+    `Actor.start_remote_task()` registers its caller-side `Context`
+    before encoding the request. An unsupported argument used to raise
+    `MsgTypeError` before publication while leaking that registry
+    entry. Comparing the context registry around the failed start
+    proves cleanup, and a following valid context proves no bytes
+    reached or damaged the reused portal's transport.
+
+    '''
+    async with tractor.open_nursery() as an:
+        actor: Actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'serialization_error_worker',
+            enable_modules=[__name__],
+        )
+        contexts_before = non_registration_contexts(actor)
+        with pytest.raises(tractor.MsgTypeError):
+            async with portal.open_context(
+                simple_setup_teardown,
+                data=object(),
+            ):
+                raise AssertionError('invalid `Start` was accepted')
+
+        assert non_registration_contexts(actor) == contexts_before
+        async with portal.open_context(
+            simple_setup_teardown,
+            data=1,
+        ) as (ctx, started):
+            assert started == 2
+            assert await ctx.wait_for_result() == 'yo'
+
+        assert non_registration_contexts(actor) == contexts_before
+        await portal.cancel_actor()
+
+
+@tractor_test
+async def test_start_module_error_cleans_context(
+    start_method: str,
+    debug_mode: bool,
+) -> None:
+    '''
+    Deallocate caller state after a remote startup rejection.
+
+    A target actor without this test module rejects the requested
+    context before sending `StartAck`. That remote
+    `ModuleNotExposed` used to escape startup validation while leaving
+    the caller context registered. The boxed error and before/after
+    registry comparison prove the remote failure remains visible and
+    local startup state is released.
+
+    '''
+    async with tractor.open_nursery() as an:
+        actor: Actor = tractor.current_actor()
+        portal: tractor.Portal = await an.start_actor(
+            'module_error_worker',
+        )
+        contexts_before = non_registration_contexts(actor)
+        with pytest.raises(tractor.RemoteActorError) as excinfo:
+            async with portal.open_context(
+                simple_setup_teardown,
+                data=1,
+            ):
+                raise AssertionError('unexposed context was started')
+
+        assert excinfo.value.boxed_type is tractor.ModuleNotExposed
+        assert non_registration_contexts(actor) == contexts_before
+        await portal.cancel_actor()
 
 
 @pytest.mark.parametrize(

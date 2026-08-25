@@ -1,0 +1,3 @@
+Add ``tractor.to_actor.run()`` for Trio-style one-shot async calls in
+new or existing actors, with caller-scoped result/error propagation,
+linked cancellation, and deterministic reaping of call-owned children.

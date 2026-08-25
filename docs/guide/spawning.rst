@@ -91,31 +91,34 @@ somebody-ing:
 
 What's going on here?
 
-- ``start_actor('frank', enable_modules=[__name__])`` forks off
+- :meth:`~tractor.ActorNursery.start_actor` forks off
   a new process, boots a ``tractor`` runtime inside it, and
   allows it to serve functions from the current module (see the
   allowlist section below).
-- each ``await portal.run(...)`` schedules a *new* task in
+- each :meth:`~tractor.Portal.run` call schedules a *new* task in
   frank's task tree and waits on its result — the full RPC story
   lives in :doc:`/guide/rpc`.
 - frank has no main task to complete, so without the final
-  ``await portal.cancel_actor()`` the nursery block would wait
-  on him **forever**. Daemon lifetimes are *yours* to end; that
-  explicitness is the point.
+  :meth:`~tractor.Portal.cancel_actor` call the nursery block would
+  wait on him **forever**. Daemon lifetimes are *yours* to end;
+  that explicitness is the point.
 
-``run_in_actor()``: quick one-shot parallelism
+``to_actor.run()``: quick one-shot parallelism
 ----------------------------------------------
-:meth:`~tractor.ActorNursery.run_in_actor` is the convenience
-wrapper: spawn an actor, run exactly one async function in it,
-then reap the process as soon as the result arrives.
+Without ``portal=``, :func:`tractor.to_actor.run` is the convenience
+wrapper: spawn an actor, run exactly one async function in it, block
+on the result, then reap the process — the distributed sibling of
+``trio.to_thread.run_sync()``.
 
 .. code:: python
 
-    async with tractor.open_nursery() as an:
-        portal = await an.run_in_actor(burn_cpu)
+    async with (
+        tractor.open_nursery() as an,
+        trio.open_nursery() as tn,
+    ):
         # burn rubber in the parent too...
-        await burn_cpu()
-        total = await portal.wait_for_result()
+        tn.start_soon(burn_cpu)
+        total = await tractor.to_actor.run(burn_cpu, an=an)
 
 A few details worth knowing:
 
@@ -123,43 +126,61 @@ A few details worth knowing:
   ``name='something_cuter'``.
 - the function's module is auto-added to the child's
   ``enable_modules`` allowlist.
-- extra ``**kwargs`` are forwarded to the function itself.
-- the child is *auto-cancelled* once its "main" result lands;
-  at nursery exit these run-once children are always reaped
-  first (causality_ is paramount!).
+- targets cross IPC as ``module:name`` references, so portable calls
+  use module-global async functions or ``functools.partial`` objects
+  wrapping them. Nested functions, methods and callable objects do not
+  provide that stable address.
+- target arguments are positional; use ``functools.partial()``
+  to bind target keyword arguments. Keywords passed directly to
+  ``run()`` configure actor placement and spawning.
+- the call blocks until the result (or error) lands and the
+  child is *auto-cancelled* (reaped) right after — so remote
+  errors raise directly in your calling task (causality_ is
+  paramount!).
+- "placement" composes: ``an=`` spawns a call-owned child from an
+  existing actor nursery, while passing neither opens a private
+  call-scoped nursery. ``portal=`` instead reuses an existing actor:
+  the call scopes only its linked remote task, neither spawns nor
+  reaps the actor, and leaves its lifetime with the portal's owner.
+  That actor must expose both the target module and
+  ``tractor.to_actor.MODULE``.
 
 .. note::
 
-   ``run_in_actor()`` is a convenience, **not** the core model.
-   The source literally marks it for an eventual rebuild as
-   a thin "hilevel" wrapper on top of
-   :meth:`~tractor.Portal.open_context` (the modern inter-actor
-   task API). Teach your fingers to use it for quick
-   fire-and-collect parallelism — think a per-function
-   trio-parallel_ style one-shot — and reach for
-   ``start_actor()`` + ``open_context()`` for anything
-   long-lived, stateful or streaming
-   (:doc:`/guide/context`).
+   :func:`tractor.to_actor.run` is a convenience, **not** the core
+   model. For actor-owning placements it combines
+   :meth:`~tractor.ActorNursery.start_actor`, a linked
+   :meth:`~tractor.Portal.open_context` call, and per-child
+   cancellation/reaping. With ``portal=`` it uses only the linked
+   context call and leaves the existing actor's lifetime untouched.
+   Teach your fingers to use it for quick
+   fire-and-collect parallelism — think a per-function trio-parallel_
+   style one-shot — and reach for
+   :meth:`~tractor.ActorNursery.start_actor` plus
+   :meth:`~tractor.Portal.open_context` for anything long-lived,
+   stateful or streaming; see :doc:`/guide/context`.
 
 Actor lifetimes and teardown order
 ----------------------------------
-So we have two lifetime flavors:
+There are two actor-lifetime flavors:
 
-- **run-once** (``run_in_actor()``): lives exactly as long as
-  its single task; reaped the moment its result (or error)
-  arrives.
-- **daemon** (``start_actor()``): lives until *someone* cancels
-  it — an explicit ``await portal.cancel_actor()``, a bulk
-  ``await an.cancel()``, or the one-cancels-all strategy kicking
-  in on error.
+- **call-owned one-shot** (``to_actor.run()`` without ``portal=``):
+  spawned for one task, then cancelled and joined before ``run()``
+  returns its result or raises its error.
+- **caller-owned daemon** (:meth:`~tractor.ActorNursery.start_actor`),
+  including an actor later reused through
+  ``to_actor.run(..., portal=portal)``: lives until *someone*
+  cancels it via an explicit
+  :meth:`~tractor.Portal.cancel_actor`, a bulk
+  :meth:`~tractor.ActorNursery.cancel`, or the one-cancels-all
+  strategy kicking in on error.
 
 On a clean exit of the nursery block the teardown order is:
 
-1. the nursery waits on every run-once actor's final result;
-   any errors from these are raised immediately so your code
-   (acting as supervisor) gets first crack at handling them.
-2. then it waits on daemon actors — **indefinitely**. If you
-   spawned a daemon, you own its lifetime.
+1. call-owned actors do not survive their own ``to_actor.run()``
+   calls; each is reaped before its call returns.
+2. the nursery waits on caller-owned daemon actors
+   **indefinitely**. If you spawned one, you own its lifetime.
 
 When a child *is* cancelled, teardown is graceful-first per SC
 discipline: the runtime sends an IPC cancel request and gives

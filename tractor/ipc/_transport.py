@@ -439,6 +439,7 @@ class MsgpackTransport(MsgTransport):
 
         strict_types: bool = True,
         hide_tb: bool = True,
+        send_deadline: float = float('inf'),
 
     ) -> None:
         '''
@@ -446,6 +447,12 @@ class MsgpackTransport(MsgTransport):
 
         If `strict_types == True` then a `MsgTypeError` will be raised on any
         invalid msg type
+
+        `send_deadline` bounds publication of one complete
+        length-prefixed frame. If it expires after a prefix or payload
+        fragment reaches the wire, a later sender would append bytes the
+        peer decoder treats as the remainder of that corrupt frame. The
+        stream is therefore destroyed before releasing `._send_lock`.
 
         '''
         __tracebackhide__: bool = hide_tb
@@ -498,11 +505,56 @@ class MsgpackTransport(MsgTransport):
             # https://stackoverflow.com/a/54027962
             size: bytes = struct.pack("<I", len(bytes_data))
             try:
-                return await self.stream.send_all(size + bytes_data)
+                # Every IPC msg is length-prefixed and all contexts
+                # on this actor pair share one transport stream. If
+                # the send deadline interrupts `send_all()`, an unknown
+                # frame prefix may already be on the wire; allowing the
+                # next sender to append would corrupt framing.
+                #
+                # The enclosing `async with self._send_lock` retains the
+                # lock through shielded publication and any forced-close
+                # cleanup. Context-manager exit releases it only after a
+                # complete frame or destruction of the corrupt stream.
+                # Ordinary outer cancellation remains shielded until
+                # complete publication; only expiry of `send_deadline`
+                # intentionally closes a partial stream here.
+                #
+                # Ordinary sends may delay cancellation while the remote
+                # peer actor is not reading. Bounded actor/context cancel
+                # requests pass an absolute deadline so this operation
+                # can close a stalled stream.
+                with trio.CancelScope(
+                    deadline=send_deadline,
+                    shield=True,
+                ) as send_cs:
+                    await self.stream.send_all(size + bytes_data)
+
+                if send_cs.cancelled_caught:
+                    # This frame may be partial. Destroy the stream
+                    # before releasing `_send_lock` so no later sender
+                    # can append bytes to a corrupted frame.
+                    await trio.aclose_forcefully(self.stream)
+                    await trio.lowlevel.checkpoint_if_cancelled()
+                    raise TransportClosed(
+                        'IPC frame publication exceeded its '
+                        f'deadline of {send_deadline!r}'
+                    )
+
+                # The frame is complete and still aligned. Redeliver any
+                # pending outer cancellation before normal lock release.
+                await trio.lowlevel.checkpoint_if_cancelled()
+                return None
+
             except (
                 trio.BrokenResourceError,
                 trio.ClosedResourceError,
             ) as _re:
+                # A shielded send can race outer cancellation with
+                # stream teardown. If teardown closes the stream, let
+                # the pending cancellation retain precedence instead
+                # of converting that close into `TransportClosed`.
+                await trio.lowlevel.checkpoint_if_cancelled()
+
                 trans_err = _re
                 tpt_name: str = f'{type(self).__name__!r}'
 

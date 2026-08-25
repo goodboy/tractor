@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import socket
 import stat
+import struct
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -14,10 +15,273 @@ from unittest.mock import Mock
 
 import pytest
 import trio
+from trio.testing import (
+    MockClock,
+    wait_all_tasks_blocked,
+)
 import tractor
 from tractor import Actor
 from tractor.discovery import _addr
+from tractor.ipc._transport import MsgpackTransport
 from tractor.runtime import _state
+
+
+
+def test_cancelled_transport_send_completes_frame():
+    '''
+    Finish an in-flight frame before delivering sender cancellation.
+
+    A cancelled `send_all()` may leave an arbitrary frame prefix on the
+    wire. Closing the actor-wide stream avoids decoder corruption but
+    also destroys unrelated contexts using that channel. On its first
+    call, the fake stream publishes two header bytes and blocks until
+    the parent test releases it. This lets the parent cancel the sender
+    while frame publication is suspended. The sender must remain inside
+    `send_first()` until the complete frame is written, then observe
+    pending cancellation; a second sender proves sibling contexts can
+    safely reuse the still frame-aligned stream.
+
+    '''
+    class PartialSendStream:
+        def __init__(self) -> None:
+            self.send_all_entered = trio.Event()
+            self.send_all_release = trio.Event()
+            self.closed = False
+            self.wire = bytearray()
+
+        async def send_all(
+            self,
+            data: bytes,
+        ) -> None:
+            assert data
+            if not self.wire:
+                self.wire.extend(data[:2])
+                self.send_all_entered.set()
+                await self.send_all_release.wait()
+                self.wire.extend(data[2:])
+            else:
+                self.wire.extend(data)
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    def count_frames(wire: bytearray) -> int:
+        offset: int = 0
+        count: int = 0
+        while offset < len(wire):
+            header_end: int = offset + 4
+            assert header_end <= len(wire)
+            size, = struct.unpack('<I', wire[offset:header_end])
+            offset = header_end + size
+            assert offset <= len(wire)
+            count += 1
+
+        assert offset == len(wire)
+        return count
+
+    async def main() -> None:
+        stream = PartialSendStream()
+        transport = object.__new__(MsgpackTransport)
+        transport.stream = stream
+        transport._send_lock = trio.StrictFIFOLock()
+        sender_done = trio.Event()
+        sender_scopes: list[trio.CancelScope] = []
+        cancelled_caught: bool = False
+
+        first_msg = tractor.msg.Start(
+            ns=__name__,
+            func='add_one',
+            kwargs={'n': 1},
+            uid=('root', 'test'),
+            cid='partial-send',
+        )
+        second_msg = tractor.msg.Start(
+            ns=__name__,
+            func='add_one',
+            kwargs={'n': 2},
+            uid=('root', 'test'),
+            cid='second-send',
+        )
+
+        async def send_first() -> None:
+            nonlocal cancelled_caught
+            with trio.CancelScope() as cs:
+                sender_scopes.append(cs)
+                await transport.send(first_msg)
+
+            cancelled_caught = cs.cancelled_caught
+            sender_done.set()
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(
+                send_first,
+            )
+            await stream.send_all_entered.wait()
+            sender_scopes[0].cancel()
+            await wait_all_tasks_blocked()
+
+            assert not stream.closed
+            # Cancellation is pending, but complete-frame shielding
+            # keeps `send_first()` suspended in `.send_all()`.
+            assert not sender_done.is_set()
+
+            # Let the underlying frame write finish after the parent
+            # has requested sender cancellation.
+            stream.send_all_release.set()
+            await sender_done.wait()
+
+            assert cancelled_caught
+            assert not stream.closed
+            # The initial two-byte prefix was completed into one valid
+            # frame before cancellation reached `send_first()`.
+            assert count_frames(stream.wire) == 1
+
+            await transport.send(second_msg)
+            # A sibling sender can append and decode another frame only
+            # because the first cancellation preserved stream alignment.
+            assert count_frames(stream.wire) == 2
+
+            tn.cancel_scope.cancel()
+
+    trio.run(main)
+
+
+def test_transport_send_deadline_closes_partial_frame():
+    '''
+    Destroy a stalled partial frame before another sender can append.
+
+    Ordinary cancellation cannot interrupt complete-frame publication.
+    Bounded actor/context cancellation instead passes its absolute
+    deadline into this operation. The fake stream writes a partial
+    header and stalls; when the send's own deadline fires, the transport
+    must close the stream before releasing its shared send lock. This
+    prevents the next sender from appending bytes which a decoder would
+    treat as the remainder of the corrupt first frame.
+
+    '''
+    class StalledStream:
+        def __init__(self) -> None:
+            self.closed = False
+            self.wire = bytearray()
+
+        async def send_all(
+            self,
+            data: bytes,
+        ) -> None:
+            self.wire.extend(data[:2])
+            await trio.sleep_forever()
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    async def main() -> None:
+        stream = StalledStream()
+        transport = object.__new__(MsgpackTransport)
+        transport.stream = stream
+        transport._send_lock = trio.StrictFIFOLock()
+        msg = tractor.msg.Start(
+            ns=__name__,
+            func='add_one',
+            kwargs={'n': 1},
+            uid=('root', 'test'),
+            cid='deadline-send',
+        )
+
+        with pytest.raises(
+            tractor.TransportClosed,
+            match='frame publication exceeded',
+        ):
+            await transport.send(
+                msg,
+                send_deadline=1,
+            )
+
+        assert stream.closed  # partial-frame timeout destroys stream
+        assert len(stream.wire) == 2  # only a header fragment was sent
+        assert not transport._send_lock.locked()  # cleanup released lock
+
+    trio.run(
+        main,
+        clock=MockClock(autojump_threshold=0),
+    )
+
+
+def test_cancelled_transport_send_preserves_cancellation():
+    '''
+    Prefer sender cancellation when teardown closes the stream.
+
+    `MsgpackTransport.send()` shields frame publication at
+    `tractor.ipc._transport:MsgpackTransport.send`. Before this fix, an
+    outer `move_on_after()`/cancel scope could cancel `Channel.send()`
+    while actor teardown closed the shared stream. The resulting
+    `ClosedResourceError` escaped from the transport handler instead of
+    its `checkpoint_if_cancelled()` redelivering pending cancellation.
+
+    The fake stream blocks inside the shield until the test cancels the
+    sender. Parent-controlled release then simulates actor teardown
+    closing the socket and raises the `ClosedResourceError` observed on
+    macOS UDS. `CancelScope.cancelled_caught` proves the handler's
+    checkpoint preserved cancellation as the primary outcome instead of
+    leaking that secondary close error.
+
+    '''
+    class ClosingStream:
+        def __init__(self) -> None:
+            self.send_all_entered = trio.Event()
+            self.send_all_release = trio.Event()
+
+        async def send_all(
+            self,
+            data: bytes,
+        ) -> None:
+            assert data
+            self.send_all_entered.set()
+            await self.send_all_release.wait()
+            # Model actor teardown closing the shared transport while
+            # this sender is still inside the complete-frame shield.
+            raise trio.ClosedResourceError(
+                'this socket was already closed'
+            )
+
+    async def main() -> None:
+        stream = ClosingStream()
+        transport = object.__new__(MsgpackTransport)
+        transport.stream = stream
+        transport._send_lock = trio.StrictFIFOLock()
+        sender_done = trio.Event()
+        sender_scopes: list[trio.CancelScope] = []
+        cancelled_caught: bool = False
+
+        msg = tractor.msg.Start(
+            ns=__name__,
+            func='add_one',
+            kwargs={'n': 1},
+            uid=('root', 'test'),
+            cid='close-during-cancelled-send',
+        )
+
+        async def send() -> None:
+            nonlocal cancelled_caught
+            with trio.CancelScope() as cs:
+                sender_scopes.append(cs)
+                await transport.send(msg)
+
+            cancelled_caught = cs.cancelled_caught
+            sender_done.set()
+
+        async with trio.open_nursery() as tn:
+            tn.start_soon(send)
+            await stream.send_all_entered.wait()
+            sender_scopes[0].cancel()
+            await wait_all_tasks_blocked()
+
+            assert not sender_done.is_set()
+            stream.send_all_release.set()
+            await sender_done.wait()
+
+        assert cancelled_caught
+
+    trio.run(main)
 
 
 @pytest.fixture

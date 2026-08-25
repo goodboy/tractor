@@ -1097,7 +1097,12 @@ class Context:
                 )
 
             cid: str = self.cid
-            with trio.move_on_after(timeout) as cs:
+            cancel_deadline: float = (
+                trio.current_time()
+                +
+                timeout
+            )
+            with trio.move_on_at(cancel_deadline) as cs:
                 cs.shield = True
                 log.cancel(
                     header
@@ -1108,10 +1113,16 @@ class Context:
                 # NOTE: we're telling the far end actor to cancel a task
                 # corresponding to *this actor*. The far end local channel
                 # instance is passed to `Actor._cancel_task()` implicitly.
-                await self._portal.run_from_ns(
+                # Use private `Portal._run_from_ns()` because cancellation
+                # needs its internal `cancel_on_startup=False` policy and
+                # the transaction's shared absolute `send_deadline`; public
+                # `run_from_ns()` exposes neither control.
+                await self._portal._run_from_ns(
                     'self',
                     '_cancel_task',
-                    cid=cid,
+                    kwargs={'cid': cid},
+                    cancel_on_startup=False,
+                    send_deadline=cancel_deadline,
                 )
 
             if cs.cancelled_caught:
@@ -1948,6 +1959,9 @@ class Context:
         # the sender; the main motivation is that using bp can block the
         # msg handling loop which calls into this method!
         except trio.WouldBlock:
+            # `send_chan.send_nowait(msg)` found the local receive feeder
+            # full. With overruns disabled below, report that primary
+            # local overflow to the far-end sender as `StreamOverrun`.
 
             # XXX: always push an error even if the local receiver
             # is in overrun state - i.e. if an 'error' msg is
@@ -2020,9 +2034,17 @@ class Context:
                     await chan.send(err_msg)
                     return True
 
-                # XXX: local consumer has closed their side of
-                # the IPC so cancel the far end streaming task
-                except trio.BrokenResourceError:
+                # The `StreamOverrun` shipment can fail secondarily when
+                # context/channel teardown has already closed shared IPC.
+                # Local stream closure may surface as
+                # `BrokenResourceError`; either peer closing the transport
+                # can surface as `TransportClosed`. In both cases teardown
+                # owns far-end cancellation and the primary overrun can no
+                # longer be delivered.
+                except (
+                    TransportClosed,
+                    trio.BrokenResourceError,
+                ):
                     log.warning(
                         'Channel for ctx is already closed?\n'
                         f'|_{chan}\n'
@@ -2625,10 +2647,7 @@ async def open_context_from_portal(
             f'uid: {uid}\n'
             f'cid: {ctx.cid}\n'
         )
-        portal.actor._contexts.pop(
-            (uid, ctx.cid),
-            None,
-        )
+        portal.actor._drop_context(ctx)
 
         # XXX revert to prior IPC-task-ctx scope
         _ctxvar_Context.reset(prior_ctx_tok)
