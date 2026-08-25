@@ -30,6 +30,8 @@ from ._bindspace import (
     BindspaceKind as BindspaceKind,
     BindspaceOwnership as BindspaceOwnership,
     BindspaceSpec as BindspaceSpec,
+    CURRENT_NETNS as CURRENT_NETNS,
+    attach_netns as attach_netns,
 )
 from ._multiaddr import (
     parse_endpoints as parse_endpoints,

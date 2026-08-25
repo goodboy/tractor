@@ -451,6 +451,15 @@ survives rename/unlink, and identifies the exact namespace the parent
 provisioned. Extend the kind/field union only when a second platform
 resource is implemented.
 
+The first lifecycle implementation is deliberately borrow-only:
+`attach_netns()` opens either `/proc/self/ns/net` when
+`BindspaceSpec.key = CURRENT_NETNS`, or a named entry beneath
+`/var/run/netns`. It derives identity from the opened FD, yields
+`ownership='borrowed'`, and closes only that FD on exit. "Attach" does
+not call `setns()`; it never creates, enters or removes a namespace.
+Future `open_netns()` creation and owned teardown remain a separate
+privileged supervisor change.
+
 `open_bindspace()` is **not** an address factory and does not return a
 `TunnelledAddress`. At the declaration layer, listener allocation can
 use the handle to replace an overlay while preserving every tunnel:

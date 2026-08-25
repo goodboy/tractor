@@ -20,8 +20,13 @@ Serializable bindspace declarations and live capability handles.
 '''
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager as acm
 import os
+from pathlib import Path
+import sys
 from typing import (
+    Final,
     get_args,
     Literal,
     TypeAlias,
@@ -40,6 +45,11 @@ BindspaceOwnership: TypeAlias = Literal[
     'borrowed',  # manager leaves the pre-existing resource intact
 ]
 
+_NETNS_RUN_DIR: Path = Path('/var/run/netns')
+_SELF_NETNS: Path = Path('/proc/self/ns/net')
+
+CURRENT_NETNS: Final[None] = None
+
 
 def _validate_bindspace_kind(
     kind: BindspaceKind,
@@ -54,6 +64,40 @@ def _validate_bindspace_kind(
         )
 
 
+def _validate_bindspace_key(
+    kind: BindspaceKind,
+    key: str|None,
+    field: str,
+) -> None:
+    '''
+    Reject empty or path-like platform-resource names.
+
+    `None` is valid. Spell it `CURRENT_NETNS` for
+    `BindspaceSpec.key`; `BindspaceIdentity.key = None` records an
+    unnamed realized netns.
+
+    '''
+    if key == '':
+        raise ValueError(
+            f'`{field}` must be a non-empty name or `None` '
+            f'(`CURRENT_NETNS` for `BindspaceSpec.key`)!'
+        )
+    if (
+        kind == 'netns'
+        and
+        key is not None
+        and
+        (
+            Path(key).name != key
+            or
+            key in ('.', '..')
+        )
+    ):
+        raise ValueError(
+            f'Invalid netns name: {key!r}'
+        )
+
+
 class BindspaceSpec(
     msgspec.Struct,
     frozen=True,
@@ -61,9 +105,12 @@ class BindspaceSpec(
     '''
     Serializable declaration of one requested bindspace.
 
+    For a netns spec, `.key = CURRENT_NETNS` selects the calling
+    process's current namespace without a named-path lookup.
+
     '''
     kind: BindspaceKind
-    key: str|None = None
+    key: str|None = CURRENT_NETNS
 
     def __post_init__(self) -> None:
         '''
@@ -71,10 +118,11 @@ class BindspaceSpec(
 
         '''
         _validate_bindspace_kind(self.kind)
-        if self.key == '':
-            raise ValueError(
-                '`BindspaceSpec.key` must be non-empty or `None`!'
-            )
+        _validate_bindspace_key(
+            self.kind,
+            self.key,
+            'BindspaceSpec.key',
+        )
 
 
 class BindspaceIdentity(
@@ -99,11 +147,11 @@ class BindspaceIdentity(
 
         '''
         _validate_bindspace_kind(self.kind)
-        if self.key == '':
-            raise ValueError(
-                '`BindspaceIdentity.key` must be non-empty '
-                'or `None`!'
-            )
+        _validate_bindspace_key(
+            self.kind,
+            self.key,
+            'BindspaceIdentity.key',
+        )
         if (
             type(self.inode) is not int
             or
@@ -185,3 +233,49 @@ class BindspaceHandle(
             f'ownership={self.ownership!r}, '
             f'namespace_fd={self.namespace_fd!r})'
         )
+
+
+@acm
+async def attach_netns(
+    spec: BindspaceSpec,
+) -> AsyncIterator[BindspaceHandle]:
+    '''
+    Borrow and pin one existing Linux network namespace.
+
+    `BindspaceSpec.key = CURRENT_NETNS` selects the calling process's
+    current netns. A named key resolves beneath the standard iproute2
+    netns run directory. "Attach" pins an existing namespace FD; this
+    context never calls `setns()` or creates/removes a namespace.
+
+    '''
+    if sys.platform != 'linux':
+        raise NotImplementedError(
+            'Network namespace bindspaces are Linux-only!'
+        )
+
+    key: str|None = spec.key
+    namespace_path: Path = (
+        _SELF_NETNS
+        if key is CURRENT_NETNS
+        else _NETNS_RUN_DIR / key
+    )
+    namespace_fd: int = os.open(
+        namespace_path,
+        os.O_RDONLY | os.O_CLOEXEC,
+    )
+    try:
+        inode: int = os.fstat(namespace_fd).st_ino
+        identity: BindspaceIdentity = BindspaceIdentity(
+            kind='netns',
+            key=key,
+            inode=inode,
+        )
+        handle: BindspaceHandle = BindspaceHandle(
+            spec=spec,
+            identity=identity,
+            namespace_fd=namespace_fd,
+            ownership='borrowed',
+        )
+        yield handle
+    finally:
+        os.close(namespace_fd)
