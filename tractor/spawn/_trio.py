@@ -130,14 +130,17 @@ async def trio_proc(
                 f' |_{proc}\n'
             )
 
+            # No `Portal` exists until the IPC handshake returns
+            # `chan`. Replace this provisional entry with
+            # `Portal(chan)` below.
             (
                 reap_request,
                 _,
                 cancel_during_registration,
             ) = actor_nursery._register_child(
-                subactor,
-                proc,
-                None,
+                subactor=subactor,
+                proc=proc,
+                portal=None,
             )
             if cancel_during_registration:
                 cancelled_during_spawn = True

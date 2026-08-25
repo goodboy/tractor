@@ -141,14 +141,16 @@ async def mp_proc(
     # `multiprocessing` only (since no async interface): publish the
     # process and its reap coordination before start so cancellation
     # can own every subsequently started child.
+    # No `Portal` exists until the IPC handshake returns `chan`.
+    # Replace this provisional entry with `Portal(chan)` below.
     (
         reap_request,
         _,
         cancel_during_registration,
     ) = actor_nursery._register_child(
-        subactor,
-        proc,
-        None,
+        subactor=subactor,
+        proc=proc,
+        portal=None,
     )
     if cancel_during_registration:
         raise RuntimeError(

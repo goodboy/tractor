@@ -456,6 +456,24 @@ def test_mp_late_registration_never_starts_process(
 
     process = FakeProcess()
 
+    def register_child(
+        subactor: object,
+        proc: object,
+        portal: object|None,
+    ) -> tuple[trio.Event, trio.Event, bool]:
+        '''
+        Simulate provisional MP registration before child startup.
+
+        '''
+        assert subactor
+        assert proc is process
+        assert portal is None
+        return (
+            trio.Event(),
+            trio.Event(),
+            True,
+        )
+
     class FakeContext:
         def get_start_method(self) -> str:
             return 'spawn'
@@ -465,11 +483,7 @@ def test_mp_late_registration_never_starts_process(
             return process
 
     nursery = SimpleNamespace(
-        _register_child=lambda *args: (
-            trio.Event(),
-            trio.Event(),
-            True,
-        ),
+        _register_child=register_child,
     )
     subactor = SimpleNamespace(
         aid=tractor.msg.Aid(
