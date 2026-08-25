@@ -33,6 +33,7 @@ from typing import (
 )
 
 import msgspec
+import trio
 
 from ..msg._local import ProcessLocal
 
@@ -279,3 +280,88 @@ async def attach_netns(
         yield handle
     finally:
         os.close(namespace_fd)
+
+
+def _create_netns(
+    key: str,
+) -> None:
+    '''
+    Create one named netns through pyroute2's synchronous API.
+
+    '''
+    try:
+        from pyroute2 import netns
+    except ImportError as exc:
+        raise RuntimeError(
+            'Netns creation requires the `tractor[wg]` extra.'
+        ) from exc
+
+    netns.create(key)
+
+
+def _remove_netns(
+    key: str,
+) -> None:
+    '''
+    Remove one named netns through pyroute2's synchronous API.
+
+    '''
+    try:
+        from pyroute2 import netns
+    except ImportError as exc:
+        raise RuntimeError(
+            'Netns removal requires the `tractor[wg]` extra.'
+        ) from exc
+
+    netns.remove(key)
+
+
+@acm
+async def open_netns(
+    spec: BindspaceSpec,
+) -> AsyncIterator[BindspaceHandle]:
+    '''
+    Create, pin and own one named Linux network namespace.
+
+    Creation and removal are shielded synchronous pyroute2 calls in a
+    worker thread. This context never enters the namespace.
+    Spawn-time bootstrap remains responsible for eventual `setns()`.
+
+    '''
+    if sys.platform != 'linux':
+        raise NotImplementedError(
+            'Network namespace bindspaces are Linux-only!'
+        )
+
+    key: str|None = spec.key
+    if key is CURRENT_NETNS:
+        raise ValueError(
+            '`open_netns()` requires a named `BindspaceSpec.key`!'
+        )
+
+    created: bool = False
+    try:
+        with trio.CancelScope(shield=True):
+            await trio.to_thread.run_sync(
+                _create_netns,
+                key,
+                abandon_on_cancel=False,
+            )
+            created = True
+
+        async with attach_netns(spec) as borrowed:
+            handle: BindspaceHandle = BindspaceHandle(
+                spec=spec,
+                identity=borrowed.identity,
+                namespace_fd=borrowed.namespace_fd,
+                ownership='owned',
+            )
+            yield handle
+    finally:
+        if created:
+            with trio.CancelScope(shield=True):
+                await trio.to_thread.run_sync(
+                    _remove_netns,
+                    key,
+                    abandon_on_cancel=False,
+                )

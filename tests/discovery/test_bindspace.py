@@ -20,6 +20,7 @@ from tractor.discovery import (
     BindspaceSpec,
     CURRENT_NETNS,
     attach_netns,
+    open_netns,
 )
 from tractor.discovery import _bindspace
 from tractor.msg import ProcessLocal
@@ -358,3 +359,190 @@ def test_attach_named_netns_never_creates(
     with pytest.raises(FileNotFoundError):
         trio.run(main)
     assert not missing_path.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform != 'linux',
+    reason='Linux netns API',
+)
+def test_open_netns_owns_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    '''
+    Successful creation must yield ownership and remove on exit.
+
+    Fake pyroute2 creation with a named stand-in file, verify the
+    yielded FD and identity while it exists, then prove FD closure
+    precedes resource removal when the context exits.
+
+    '''
+    events: list[str] = []
+    namespace_fds: list[int] = []
+    netns_path: Path = tmp_path / 'tractor-wg0'
+
+    def create(key: str) -> None:
+        '''
+        Create the named stand-in and record lifecycle order.
+
+        '''
+        assert key == 'tractor-wg0'
+        netns_path.touch()
+        events.append('create')
+
+    def remove(key: str) -> None:
+        '''
+        Remove the stand-in after its FD has closed.
+
+        '''
+        assert key == 'tractor-wg0'
+        events.append('fd-closed')
+        with pytest.raises(OSError):
+            os.fstat(namespace_fds[0])
+        netns_path.unlink()
+        events.append('remove')
+
+    monkeypatch.setattr(
+        _bindspace,
+        '_NETNS_RUN_DIR',
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        _bindspace,
+        '_create_netns',
+        create,
+    )
+    monkeypatch.setattr(
+        _bindspace,
+        '_remove_netns',
+        remove,
+    )
+
+    async def main() -> None:
+        '''
+        Open the fake netns and publish its live descriptor number.
+
+        '''
+        spec: BindspaceSpec = BindspaceSpec(
+            kind='netns',
+            key='tractor-wg0',
+        )
+        async with open_netns(spec) as handle:
+            fd: int|None = handle.namespace_fd
+            assert fd is not None
+            assert handle.ownership == 'owned'
+            assert handle.identity.inode == os.fstat(fd).st_ino
+            namespace_fds.append(fd)
+            events.append('yield')
+
+    trio.run(main)
+    assert events == [
+        'create',
+        'yield',
+        'fd-closed',
+        'remove',
+    ]
+    assert not netns_path.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform != 'linux',
+    reason='Linux netns API',
+)
+def test_open_netns_shields_cancelled_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    '''
+    Cancellation after creation must not leak an owned namespace.
+
+    Cancel the caller inside the yielded context and checkpoint.
+    Prove shielded teardown still removes the stand-in before
+    cancellation leaves the enclosing scope.
+
+    '''
+    netns_path: Path = tmp_path / 'tractor-wg0'
+    removed: list[str] = []
+
+    def create(key: str) -> None:
+        '''
+        Create the named stand-in before cancellation.
+
+        '''
+        netns_path.touch()
+
+    def remove(key: str) -> None:
+        '''
+        Remove the stand-in despite caller cancellation.
+
+        '''
+        netns_path.unlink()
+        removed.append(key)
+
+    monkeypatch.setattr(
+        _bindspace,
+        '_NETNS_RUN_DIR',
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        _bindspace,
+        '_create_netns',
+        create,
+    )
+    monkeypatch.setattr(
+        _bindspace,
+        '_remove_netns',
+        remove,
+    )
+
+    async def main() -> None:
+        '''
+        Cancel while borrowing the newly owned namespace.
+
+        '''
+        spec: BindspaceSpec = BindspaceSpec(
+            kind='netns',
+            key='tractor-wg0',
+        )
+        with trio.CancelScope() as scope:
+            async with open_netns(spec):
+                scope.cancel()
+                await trio.sleep_forever()
+
+    trio.run(main)
+    assert removed == ['tractor-wg0']
+    assert not netns_path.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform != 'linux',
+    reason='Linux netns API',
+)
+def test_open_netns_requires_name() -> None:
+    '''
+    Creation cannot target the caller's current netns.
+
+    Pass `CURRENT_NETNS` and prove validation rejects it before any
+    privileged pyroute2 operation can run.
+
+    '''
+    spec: BindspaceSpec = BindspaceSpec(
+        kind='netns',
+        key=CURRENT_NETNS,
+    )
+
+    async def main() -> None:
+        '''
+        Attempt to create the unnamed current namespace.
+
+        '''
+        async with open_netns(spec):
+            raise AssertionError(
+                'Current netns unexpectedly created'
+            )
+
+    with pytest.raises(
+        ValueError,
+        match='requires a named',
+    ):
+        trio.run(main)
