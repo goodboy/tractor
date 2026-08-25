@@ -240,8 +240,8 @@ async def run(
     fn: Callable[[Unpack[ArgsT]], Awaitable[RetT]],
     *args: Unpack[ArgsT],
 
-    # actor "placement": reuse an already-running peer
-    # via its `portal`, spawn a fresh subactor from
+    # actor lifetime management: reuse an already-running peer
+    # via its `portal: Portal`, spawn a fresh subactor from
     # a caller-managed `an: ActorNursery`, or, when
     # neither is provided, open a private actor-nursery
     # (implicitly booting the actor-runtime as needed)
@@ -275,9 +275,10 @@ async def run(
 
     As with Trio's API, target arguments are positional. Use
     `functools.partial()` to bind target keyword arguments; all
-    keyword arguments accepted here configure actor placement or
-    spawning. A caller-supplied `portal` must address an actor started
-    with both `tractor.to_actor.MODULE` and the target function's
+    keyword arguments accepted here configure actor lifetime
+    management, including actor reuse and spawning. A caller-supplied
+    `portal` must address an actor started with both
+    `tractor.to_actor.MODULE` and the target function's
     module in its `enable_modules` list. Calls that spawn their own
     actor add the trampoline module automatically.
 
