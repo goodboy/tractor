@@ -408,6 +408,7 @@ class BindspaceSpec(msgspec.Struct, frozen=True):
     '''Serializable spawn/config declaration.'''
     kind: str                 # `netns`, later `vrf`, ...
     key: str|None             # requested name/key, if any
+    lifecycle: Literal['attach', 'open']
 
 
 class BindspaceIdentity(msgspec.Struct, frozen=True):
@@ -428,8 +429,6 @@ class BindspaceHandle(ProcessLocal):
 @acm
 async def open_bindspace(
     spec: BindspaceSpec,
-    *,
-    role: Literal['listen', 'dial'],
 ) -> AsyncGenerator[BindspaceHandle, None]:
     '''
     Provision/borrow one bindspace and yield its live capability.
@@ -450,6 +449,12 @@ supervisor bootstrap path. An FD avoids name-resolution TOCTOU,
 survives rename/unlink, and identifies the exact namespace the parent
 provisioned. Extend the kind/field union only when a second platform
 resource is implemented.
+
+`BindspaceSpec.lifecycle` is explicit serialized policy:
+`'attach'` borrows an existing resource and `'open'` creates/owns one.
+`open_bindspace()` dispatches that policy by bindspace kind. Never
+infer it from a listen/dial role: either role may use pre-provisioned
+or locally owned networking.
 
 The first lifecycle implementation is deliberately borrow-only:
 `attach_netns()` opens either `/proc/self/ns/net` when
@@ -474,7 +479,6 @@ use the handle to replace an overlay while preserving every tunnel:
 ```python
 async with open_bindspace(
     bindspace_spec,
-    role='listen',
 ) as bindspace:
     listen_decl = declared_addr.get_random(
         bindspace=bindspace,
@@ -499,7 +503,6 @@ tunnel/bindspace layer:
 @acm
 async def open_netns(
     spec: BindspaceSpec,
-    role: Literal['listen', 'dial'],
 ) -> AsyncGenerator[BindspaceHandle, None]: ...
 
 @acm
@@ -518,9 +521,10 @@ its `ParsedEndpoints` values already contain
 stack for the eventual bindspace handler. It carries declarations;
 it does not *enter* their bindspaces.
 
-The caller supplies `role`; do not infer it from maddr shape. The same
-composed maddr can name a server source or client destination, and the
-required local provisioning/ownership differs (§5.4).
+The caller supplies `role` to tunnel-resource contexts such as
+`open_wg_iface()`; do not infer it from maddr shape. Bindspace
+lifecycle remains the independent explicit policy above. The same
+composed maddr can name a server source or client destination (§5.4).
 
 ### 5.3 `Address.namespace`, at last
 
