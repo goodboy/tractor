@@ -86,7 +86,7 @@ from ._helpers import (
 
 def test_overrun_error_send_tolerates_transport_close(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     '''
     Preserve a stream overrun when its error can not be shipped.
 
@@ -108,10 +108,13 @@ def test_overrun_error_send_tolerates_transport_close(
     )
     packed: dict[str, object] = {}
 
+    # Spy on the generated `StreamOverrun` and return a stable wire
+    # `Error`; the real packer adds traceback/relay details unrelated to
+    # this test's secondary transport-close contract.
     def pack_overrun(
         local_err: BaseException,
         cid: str,
-        **kwargs,
+        **kwargs: object,
     ) -> tractor.msg.Error:
         packed['local_err'] = local_err
         packed['cid'] = cid
@@ -275,7 +278,7 @@ async def simple_setup_teardown(
         _state = False
 
 
-async def assert_state(value: bool):
+async def assert_state(value: bool) -> None:
     global _state
     assert _state == value
 
@@ -286,7 +289,7 @@ async def test_cancel_during_context_startup(
     tmp_path: Path,
     start_method: str,
     debug_mode: bool,
-):
+) -> None:
     '''
     Cancel a context after sending `Start` but before its ack.
 
@@ -303,6 +306,7 @@ async def test_cancel_during_context_startup(
     started_path = tmp_path / 'startup_started'
     cancelled_path = tmp_path / 'startup_cancelled'
     start_sent = trio.Event()
+    start_funcs: list[str] = []
     original_send = tractor.Channel.send
 
     async def delay_after_start(
@@ -317,7 +321,11 @@ async def test_cancel_during_context_startup(
             hide_tb=hide_tb,
             send_deadline=send_deadline,
         )
+        # The patched method keeps `Channel.send()`'s broad message
+        # contract. It sees both the requested endpoint `Start` and the
+        # internal `self._cancel_task` startup RPC used for cleanup.
         if isinstance(payload, tractor.msg.Start):
+            start_funcs.append(payload.func)
             if payload.func == 'startup_cancel_target':
                 start_sent.set()
             await trio.sleep_forever()
@@ -333,7 +341,7 @@ async def test_cancel_during_context_startup(
             raise AssertionError('context startup should be cancelled')
 
     async with tractor.open_nursery() as an:
-        actor = tractor.current_actor()
+        actor: Actor = tractor.current_actor()
         portal: tractor.Portal = await an.start_actor(
             'startup_cancel_worker',
             enable_modules=[__name__],
@@ -365,6 +373,10 @@ async def test_cancel_during_context_startup(
             'return_one',
         ) == 1
         assert non_registration_contexts(actor) == contexts_before
+        assert start_funcs == [
+            'startup_cancel_target',
+            '_cancel_task',
+        ]
         await portal.cancel_actor()
 
 
@@ -372,7 +384,7 @@ async def test_cancel_during_context_startup(
 async def test_start_serialization_error_cleans_context(
     start_method: str,
     debug_mode: bool,
-):
+) -> None:
     '''
     Deallocate caller state when `Start` can not be serialized.
 
@@ -385,7 +397,7 @@ async def test_start_serialization_error_cleans_context(
 
     '''
     async with tractor.open_nursery() as an:
-        actor = tractor.current_actor()
+        actor: Actor = tractor.current_actor()
         portal: tractor.Portal = await an.start_actor(
             'serialization_error_worker',
             enable_modules=[__name__],
@@ -414,7 +426,7 @@ async def test_start_serialization_error_cleans_context(
 async def test_start_module_error_cleans_context(
     start_method: str,
     debug_mode: bool,
-):
+) -> None:
     '''
     Deallocate caller state after a remote startup rejection.
 
@@ -427,7 +439,7 @@ async def test_start_module_error_cleans_context(
 
     '''
     async with tractor.open_nursery() as an:
-        actor = tractor.current_actor()
+        actor: Actor = tractor.current_actor()
         portal: tractor.Portal = await an.start_actor(
             'module_error_worker',
         )

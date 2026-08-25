@@ -1359,6 +1359,8 @@ def test_ctxep_pauses_n_maybe_ipc_breaks(
                 expect_prompt=False,
             )
             child.expect(EOF)
+            before += ansi_strip(child.before.decode())
+            assert 'KeyboardInterrupt' in before
             assert child.flag_eof
             assert not child.isalive()
 
