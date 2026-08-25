@@ -212,13 +212,18 @@ async def test_cancel_ack_failure_hard_reaps_child(
     '''
     Escalate a failed cancel acknowledgement and reap the child.
 
-    `Portal.cancel_actor()` can return `False` when its transport is
-    already closed without confirming runtime cancellation. The old
-    one-shot path ignored that result, released the nursery-wide join
-    gate and then waited forever for a still-running process. This
-    test forces that exact result without cancelling the actor, caps
-    the call to detect the former hang and verifies the child monitor
-    removes every `ActorNursery` child/reap entry before returning.
+    `Portal.cancel_actor()` catches `TransportClosed` and returns
+    `False` when it can not confirm runtime cancellation. The mock
+    represents that public post-transport-failure result, so no
+    underlying exception remains to bubble through `to_actor.run()`.
+
+    The old one-shot path ignored `False`, released the nursery-wide
+    join gate and then waited forever for a still-running process.
+    `_cancel_and_reap_child()` must instead hard-kill and join the child.
+    The five-second scope is only a generous CI hang ceiling: normal
+    teardown returns much sooner, while expiry fails the test. Final
+    assertions prove the child monitor removes every `ActorNursery`
+    child/reap entry before returning.
 
     '''
     async def cancel_without_ack(
@@ -229,6 +234,8 @@ async def test_cancel_ack_failure_hard_reaps_child(
         assert raise_on_timeout
         return False
 
+    # Model `Portal.cancel_actor()` after it catches `TransportClosed`;
+    # there is no transport exception left for `run()` to re-raise.
     monkeypatch.setattr(
         tractor.Portal,
         'cancel_actor',
@@ -236,6 +243,8 @@ async def test_cancel_ack_failure_hard_reaps_child(
     )
 
     async with tractor.open_nursery() as an:
+        # Expiry means hard reaping hung; five seconds is not the
+        # expected duration of the successful path.
         with trio.fail_after(5):
             assert await to_actor.run(
                 add_one,
@@ -247,15 +256,20 @@ async def test_cancel_ack_failure_hard_reaps_child(
         assert not an._child_reaped
 
 
-def test_cancel_actor_timeout_closes_blocked_send():
+def test_cancel_actor_shares_request_and_ack_deadline():
     '''
-    Thread one absolute cancel deadline into shielded frame publication.
+    Share one cancel deadline across request publication and ack waiting.
 
     The cancel RPC's outer timeout cannot penetrate a complete-frame
     shield. The fake private RPC applies the forwarded send deadline to
     its own shielded wait, then checkpoints into the outer scope. A
     bounded `ActorTooSlowError` and the recorded absolute deadline prove
     publication and acknowledgement share one timeout budget.
+
+    A real subactor can not deterministically stall the caller's
+    outbound frame at this exact boundary. Actual partial-frame stream
+    closure is covered by
+    `test_transport_send_deadline_closes_partial_frame()`.
 
     '''
     class ConnectedChannel:
@@ -271,6 +285,8 @@ def test_cancel_actor_timeout_closes_blocked_send():
 
     async def main() -> None:
         channel = ConnectedChannel()
+        # `Portal.__init__()` requires live actor-runtime state; this
+        # unit seam needs only its channel and private RPC method.
         portal = object.__new__(tractor.Portal)
         portal._chan = channel
         deadlines: list[float] = []
@@ -308,7 +324,7 @@ def test_cancel_actor_timeout_closes_blocked_send():
     )
 
 
-def test_context_cancel_timeout_closes_blocked_send():
+def test_context_cancel_shares_request_and_ack_deadline():
     '''
     Bound context-cancel publication and acknowledgement together.
 
@@ -322,6 +338,8 @@ def test_context_cancel_timeout_closes_blocked_send():
     blocks under a send-like shield until that deadline. The mock clock
     advances directly to it; completion and the exact recorded value
     prove that publication shares the context's one-second budget.
+    The transport suite separately proves that deadline expiry closes
+    a stream after partial frame publication.
 
     '''
     async def main() -> None:
@@ -349,10 +367,16 @@ def test_context_cancel_timeout_closes_blocked_send():
             name='blocked_peer',
             uuid='test',
         )
+
+        def connected() -> bool:
+            return True
+
+        # `Context.__init__()` requires live actor/channel registration;
+        # this unit seam supplies only state consumed by `.cancel()`.
         ctx = object.__new__(tractor.Context)
         ctx.chan = SimpleNamespace(
             aid=peer_aid,
-            connected=lambda: True,
+            connected=connected,
             transport=SimpleNamespace(maddr='test://blocked'),
         )
         ctx.cid = 'blocked-context'
@@ -392,6 +416,8 @@ def test_late_child_registration_observes_cancel():
 
     '''
     an = _mock_actor_nursery()
+    # `ActorNursery.cancel()` has set its sticky flag after taking the
+    # old `_children` snapshot but before backend registration resumes.
     an._cancel_called = True
     aid = tractor.msg.Aid(
         name='late_child',
@@ -519,6 +545,8 @@ def test_late_child_reap_registration_is_released():
     an._child_reap_requests = {}
     an._child_reaped = {}
 
+    # Nursery teardown publishes its reap request while the child
+    # monitor is checkpointed before per-child event registration.
     an._join_procs.set()
     aid = tractor.msg.Aid(
         name='late_child',
