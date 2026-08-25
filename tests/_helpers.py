@@ -6,11 +6,12 @@ from pathlib import Path
 from types import TracebackType
 
 import tractor
+import trio
 
 
 class CancellationMarkers:
     '''
-    Mark a test endpoint's lifetime without cleanup checkpoints.
+    Mark a test endpoint and require cancellation-driven teardown.
 
     '''
     def __init__(
@@ -30,6 +31,8 @@ class CancellationMarkers:
         exc_value: BaseException|None,
         traceback: TracebackType|None,
     ) -> None:
+        assert exc_type is trio.Cancelled
+        assert isinstance(exc_value, trio.Cancelled)
         Path(self.cancelled_path).touch()
 
 

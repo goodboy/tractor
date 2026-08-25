@@ -77,22 +77,15 @@ async def mark_task_cancellation(
 
 
 async def echo_startup_control(
-    _cancel_on_startup: str,
+    cancel_on_startup: str,
 ) -> str:
-    return _cancel_on_startup
+    return cancel_on_startup
 
 
 async def collect_args(
     *args: object,
 ) -> tuple[object, ...]:
     return args
-
-
-async def collect_call(
-    *args: object,
-    **kwargs: object,
-) -> tuple[tuple[object, ...], dict[str, object]]:
-    return args, kwargs
 
 
 def test_public_module_alias() -> None:
@@ -587,9 +580,12 @@ async def test_reuse_existing_actor_via_portal(
     Pass `portal=` to schedule the one-shot task in an
     already-running actor; no spawn, no implicit reap.
 
-    The low-level `Portal.run_from_ns()` assertion also proves its
-    target kwargs remain separate from the private startup-cancel
-    policy used by context cleanup.
+    The low-level call uses `__name__` to select the remote module and
+    `'echo_startup_control'` to select its function. Public
+    `Portal.run_from_ns()` packages `cancel_on_startup` inside the
+    target `kwargs` passed to private `Portal._run_from_ns()`. Receiving
+    `'target_value'` back proves the value reached the target instead of
+    binding the private Boolean startup-cancellation policy parameter.
 
     '''
     async with tractor.open_nursery() as an:
@@ -612,7 +608,7 @@ async def test_reuse_existing_actor_via_portal(
         assert await portal.run_from_ns(
             __name__,
             'echo_startup_control',
-            _cancel_on_startup='target_value',
+            cancel_on_startup='target_value',
         ) == 'target_value'
         assert non_registration_contexts(actor) == contexts_before
 
@@ -631,6 +627,8 @@ async def test_concurrent_one_shots_from_task_nursery(
     nursery scheduling multiple one-shot calls against
     a shared caller-managed actor-nursery; error
     collection thus lives entirely in caller-code.
+    A proposed distilled task-manager API is tracked in #485:
+    https://github.com/goodboy/tractor/issues/485
 
     '''
     results: dict[int, int] = {}
@@ -658,7 +656,7 @@ async def test_concurrent_one_shots_from_task_nursery(
     }
 
 
-def test_rejects_sync_fn():
+def test_rejects_sync_fn() -> None:
     '''
     Non-async callables error BEFORE any spawn (or even
     runtime-boot) happens.
@@ -667,7 +665,10 @@ def test_rejects_sync_fn():
     def not_async() -> None:
         ...
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError,
+        match='must be a non-streaming async function',
+    ):
         trio.run(
             partial(
                 to_actor.run,
@@ -676,7 +677,7 @@ def test_rejects_sync_fn():
         )
 
 
-def test_rejects_streaming_fn():
+def test_rejects_streaming_fn() -> None:
     '''
     Async-gen (streaming) fns are not one-shot-able,
     same constraint as `Portal.run()`.
@@ -685,7 +686,10 @@ def test_rejects_streaming_fn():
     async def agen():
         yield 1
 
-    with pytest.raises(TypeError):
+    with pytest.raises(
+        TypeError,
+        match='must be a non-streaming async function',
+    ):
         trio.run(
             partial(
                 to_actor.run,
@@ -738,7 +742,7 @@ def test_partial_placeholder_normalization(
         )
 
 
-def test_nested_partial_normalization():
+def test_nested_partial_normalization() -> None:
     '''
     Flatten every retained `functools.partial` layer before RPC.
 
@@ -750,6 +754,12 @@ def test_nested_partial_normalization():
     direct nested-partial call.
 
     '''
+    async def collect_call(
+        *args: object,
+        **kwargs: object,
+    ) -> tuple[tuple[object, ...], dict[str, object]]:
+        return args, kwargs
+
     inner = partial(
         collect_call,
         1,
@@ -771,13 +781,15 @@ def test_nested_partial_normalization():
     assert kwargs == {'label': 'outer'}
 
 
-def test_rejects_portal_and_an_combo():
+def test_rejects_portal_and_an_combo() -> None:
     '''
-    `portal=` and `an=` are mutually exclusive
-    placement options.
+    `portal=` and `an=` are mutually exclusive actor-lifetime handles.
 
     '''
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match='Pass at most ONE of `portal` or `an`',
+    ):
         trio.run(
             partial(
                 to_actor.run,
@@ -790,7 +802,7 @@ def test_rejects_portal_and_an_combo():
 
 
 @pytest.mark.parametrize(
-    'placement',
+    'lifetime_mode',
     ['an', 'portal'],
 )
 @pytest.mark.parametrize(
@@ -801,28 +813,31 @@ def test_rejects_portal_and_an_combo():
     ],
     ids=['empty', 'configured'],
 )
-def test_rejects_runtime_kwargs_with_placement(
-    placement: str,
+def test_rejects_runtime_kwargs_with_lifetime_mode(
+    lifetime_mode: str,
     runtime_kwargs: dict,
-):
+) -> None:
     '''
     `runtime_kwargs` only applies when the call opens
     its own private actor-nursery; passing it alongside
-    a placement opt is an error, never silently
+    an actor-lifetime handle is an error, never silently
     ignored. In particular, an empty dict still means the
     caller provided this mutually exclusive option; testing
-    both placement modes prevents truthiness checks from
+    both lifetime modes prevents truthiness checks from
     accepting it before any actor runtime is started.
 
     '''
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match='`runtime_kwargs` only applies',
+    ):
         trio.run(
             partial(
                 to_actor.run,
                 add_one,
                 1,
                 **{
-                    placement: object(),
+                    lifetime_mode: object(),
                     'runtime_kwargs': runtime_kwargs,
                 },
             )
@@ -880,12 +895,13 @@ async def test_portal_task_cancelled_with_local_caller(
     Couple a reused portal's remote task to its local caller.
 
     The former `Portal.run()` path abandoned its remote task when the
-    local `to_actor.run()` caller was cancelled. The target writes
-    one file after starting and another from its cancellation
-    `finally`. Cancelling the local task nursery and observing the
-    second file proves `Portal.open_context()` propagated
-    cancellation before the caller exited. A subsequent call proves
-    the caller-owned actor was not cancelled with that task.
+    local `to_actor.run()` caller was cancelled. `CancellationMarkers`
+    writes one file after entry and writes the second only after its
+    synchronous exit verifies the remote task received `trio.Cancelled`.
+    Cancelling the local task nursery and observing that marker proves
+    `Portal.open_context()` propagated cancellation before the caller
+    exited. A subsequent call proves the caller-owned actor was not
+    cancelled with that task.
 
     '''
     started_path = tmp_path / 'started'
@@ -918,12 +934,16 @@ async def test_portal_task_cancelled_with_local_caller(
             tn.cancel_scope.cancel()
 
         assert cancelled_path.exists()
+        # Remote-task cancellation must restore the exact application
+        # context snapshot captured before the one-shot call.
         assert non_registration_contexts(actor) == contexts_before
         assert await to_actor.run(
             add_one,
             1,
             portal=portal,
         ) == 2
+        # Reusing the actor for a later successful call must also leave
+        # no local or remote context registry entries behind.
         assert non_registration_contexts(actor) == contexts_before
 
         await portal.cancel_actor()
@@ -958,7 +978,10 @@ async def test_context_trampoline_preserves_module_allowlist(
                 portal=portal,
             )
 
-        assert excinfo.value.boxed_type is tractor.ModuleNotExposed
+        err = excinfo.value
+        assert err.boxed_type is tractor.ModuleNotExposed
+        assert add_one.__module__ in str(err)
+        assert 'Make sure you exposed the target module' in str(err)
         assert non_registration_contexts(actor) == contexts_before
         await portal.cancel_actor()
 
