@@ -33,6 +33,13 @@ from ._helpers import (
 async def add_one(
     n: int,
 ) -> int:
+    '''
+    Increment within an active actor runtime.
+
+    '''
+    assert tractor.current_actor(
+        err_on_no_runtime=False,
+    ) is not None
     return n + 1
 
 
@@ -125,7 +132,9 @@ def test_one_shot_boots_implicit_runtime(
     '''
     Outside any actor-runtime `to_actor.run()` boots one
     implicitly (just like bare `open_nursery()` usage)
-    configured via pass-through `runtime_kwargs`.
+    configured via pass-through `runtime_kwargs`. The remote target
+    asserts its runtime exists; the caller then verifies the private
+    runtime is fully torn down before `to_actor.run()` returns.
 
     '''
     async def main() -> None:
@@ -142,6 +151,9 @@ def test_one_shot_boots_implicit_runtime(
             ),
         )
         assert result == 42
+        assert tractor.current_actor(
+            err_on_no_runtime=False,
+        ) is None
 
     trio.run(main)
 
