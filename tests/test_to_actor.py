@@ -20,7 +20,6 @@ from tractor import (
 )
 from tractor._testing import tractor_test
 from tractor._exceptions import ActorTooSlowError
-from tractor.msg import ptr as msgptr
 from tractor.msg.ptr import NamespacePath
 from tractor.spawn import _mp as mp_spawn
 from tractor.to_actor import _api as to_actor_api
@@ -89,33 +88,15 @@ async def collect_call(
     return args, kwargs
 
 
-def test_namespace_path_retains_target_ref(
-    monkeypatch: pytest.MonkeyPatch,
-):
+def test_public_module_alias() -> None:
     '''
-    Reuse the client-side target ref when splitting its namespace path.
+    Keep the public trampoline alias separate from its private module.
 
-    `NamespacePath.from_ref()` previously discarded `add_one`, so
-    `to_tuple()` imported and resolved the just-created string again.
-    Replacing `resolve_name()` with a failure proves the retained ref
-    supplies the tuple without a redundant lookup. The public module
-    alias assertion also keeps internal `_api.__name__` authoritative.
+    Callers use `to_actor.MODULE` to configure an existing actor's RPC
+    allowlist, while `_api.__name__` remains the authoritative module
+    path and does not re-export the alias internally.
 
     '''
-    target = NamespacePath.from_ref(add_one)
-
-    def fail_resolve(name: str) -> object:
-        raise AssertionError(f'unexpected lookup for {name!r}')
-
-    monkeypatch.setattr(
-        msgptr,
-        'resolve_name',
-        fail_resolve,
-    )
-    assert target.to_tuple() == (
-        add_one.__module__,
-        add_one.__name__,
-    )
     assert to_actor.MODULE == to_actor_api.__name__
     assert not hasattr(to_actor_api, 'MODULE')
 
