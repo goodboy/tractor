@@ -25,6 +25,7 @@ _registry: dict[str, set[tractor.MsgStream]] = {
     'even': set(),
     'odd': set(),
 }
+_publisher_started: bool = False
 
 
 async def publisher(
@@ -33,21 +34,43 @@ async def publisher(
 
 ) -> None:
 
-    global _registry
+    global _publisher_started, _registry
 
     def is_even(i):
         return i % 2 == 0
 
-    for val in itertools.count(seed):
+    _publisher_started = True
+    try:
+        for val in itertools.count(seed):
 
-        sub = 'even' if is_even(val) else 'odd'
+            sub = 'even' if is_even(val) else 'odd'
 
-        for sub_stream in _registry[sub].copy():
-            await sub_stream.send(val)
+            for sub_stream in _registry[sub].copy():
+                await sub_stream.send(val)
 
-        # throttle send rate to ~1kHz
-        # making it readable to a human user
-        await trio.sleep(1/1000)
+            # throttle send rate to ~1kHz
+            # making it readable to a human user
+            await trio.sleep(1/1000)
+
+    finally:
+        _publisher_started = False
+
+
+async def pubsub_active(
+    expected_subs: int,
+) -> bool:
+    '''
+    Report whether the publisher and all subscriber tasks are active.
+
+    Runs as an RPC task in the publisher actor, where `_registry` is
+    mutated by each `subscribe()` context after its consumer sends the
+    first subscription.
+
+    '''
+    return (
+        _publisher_started
+        and sum(map(len, _registry.values())) >= expected_subs
+    )
 
 
 @tractor.context
@@ -270,8 +293,16 @@ def test_dynamic_pub_sub(
                             )
                         )
 
-                        # block until "cancelled by user"
-                        await trio.sleep(3)
+                        expected_subs: int = max(cpus - 2, 0) + 1
+                        async with tractor.wait_for_actor(
+                            'publisher',
+                        ) as portal:
+                            while not await portal.run(
+                                pubsub_active,
+                                expected_subs=expected_subs,
+                            ):
+                                await trio.sleep(0.01)
+
                         test_log.warning(
                             f'Raising user cancel exc: '
                             f'{expect_cancel_exc!r}'
