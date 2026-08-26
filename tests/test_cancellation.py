@@ -250,6 +250,130 @@ def test_multierror(
         assert len(assertion_errors) == 2
 
 
+@pytest.mark.parametrize(
+    'errorer_count',
+    (1, 5, 25),
+    ids='errorers={}'.format,
+)
+def test_concurrent_start_error_reaps_all(
+    reg_addr: tuple[str, int],
+    start_method: str,
+    errorer_count: int,
+    set_fork_aware_capture,
+    fail_after_w_trace: FailAfterWTraceFactory,
+):
+    '''
+    Reap high-fan-out children cancelled during concurrent startup.
+
+    The removed `test_multierror_fast_nursery()` launched 25 legacy
+    one-shots while earlier children could already be failing. Its
+    exact 25-error group depended on deferred nursery-exit result
+    collection, but the startup/cancellation load remains valuable.
+
+    This replacement schedules 25 blocking `to_actor.run()` calls and
+    holds all local caller tasks before any actor process starts.
+    Releasing one barrier makes the flat pool race through
+    `to_actor.run()` together; that API implicitly calls
+    `ActorNursery.start_actor()` for each child. Backend and Trio
+    scheduling then vary which children are spawning, handshaking or
+    running when the first remote error arrives.
+
+    Parameterizing one, five and all 25 errorers covers sparse through
+    saturated failure. Unlike the old nursery-owned deferred result
+    collection, the local Trio task nursery is the OCA supervisor: its
+    first remote error cancels sibling callers, and each
+    `to_actor.run()` shield-reaps any child process it accepted.
+    Bounded completion, only boxed assertion relays and empty
+    child/reap maps prove the entire flat pool remained supervised.
+
+    '''
+    child_count: int = 25
+
+    async def main() -> None:
+        callers_ready: int = 0
+        all_callers_ready = trio.Event()
+
+        async with fail_after_w_trace(40):
+            with pytest.raises((
+                BaseExceptionGroup,
+                tractor.RemoteActorError,
+            )) as excinfo:
+                async with tractor.open_nursery(
+                    registry_addrs=[reg_addr],
+                ) as an:
+                    async def run_child(
+                        i: int,
+                    ) -> None:
+                        nonlocal callers_ready
+
+                        # Hold every local caller before ANY actor
+                        # process starts. Arrival publication through
+                        # `.set()` has no checkpoint; releasing the
+                        # barrier maximizes scheduler/backend variation
+                        # across the implicit `start_actor()` calls.
+                        callers_ready += 1
+                        if callers_ready == child_count:
+                            all_callers_ready.set()
+                        await all_callers_ready.wait()
+
+                        is_errorer: bool = (
+                            i >= child_count - errorer_count
+                        )
+                        fn = (
+                            assert_err
+                            if is_errorer
+                            else sleep_forever
+                        )
+                        name = (
+                            f'errorer_{i}'
+                            if is_errorer
+                            else f'waiter_{i}'
+                        )
+                        await tractor.to_actor.run(
+                            fn,
+                            an=an,
+                            name=name,
+                        )
+
+                    async with trio.open_nursery() as tn:
+                        for i in range(child_count):
+                            tn.start_soon(
+                                run_child,
+                                i,
+                            )
+
+            assert callers_ready == child_count
+            assert all_callers_ready.is_set()
+            assert not an._children
+            assert not an._child_reap_requests
+            assert not an._child_reaped
+
+        def iter_leaves(
+            exc: BaseException,
+        ):
+            if isinstance(exc, BaseExceptionGroup):
+                for subexc in exc.exceptions:
+                    yield from iter_leaves(subexc)
+            else:
+                yield exc
+
+        assertion_errors: list[tractor.RemoteActorError] = []
+        for leaf in iter_leaves(excinfo.value):
+            if isinstance(leaf, (
+                trio.Cancelled,
+                tractor.ContextCancelled,
+            )):
+                continue
+
+            assert isinstance(leaf, tractor.RemoteActorError)
+            assert leaf.boxed_type is AssertionError
+            assertion_errors.append(leaf)
+
+        assert 1 <= len(assertion_errors) <= errorer_count
+
+    trio.run(main)
+
+
 async def do_nothing():
     pass
 
@@ -389,6 +513,18 @@ async def test_some_cancels_all(
     with `collapse_eg()` unwrapping the deterministic
     single-error cases to a bare `RemoteActorError`.
 
+    Supervision and error flow (`RAE` is `RemoteActorError`):
+
+        root actor task
+        `-- ActorNursery an (owns child processes)
+            +-- daemon actor_i
+            |   `-- Portal.run() -------- RAE --+
+            +-- one-shot actor_i                 |
+            |   `-- remote target -- RAE --> run() caller
+            `-- local trio.Nursery tn <----------+
+                `-- first RAE cancels sibling callers
+                    `-- escapes -> an cancels/reaps all children
+
     '''
     (
         num_actors,
@@ -447,7 +583,7 @@ async def test_some_cancels_all(
                                 pytest.fail(
                                     "Daemon call should fail at checkpoint?")
 
-        # should error here with a `RemoteActorError` or a beg of them
+    # should error here with a `RemoteActorError` or a beg of them
 
     except (
         BaseExceptionGroup,

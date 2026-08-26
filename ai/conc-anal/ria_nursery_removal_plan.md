@@ -412,8 +412,11 @@ Semantic deltas (tests loosened accordingly):
   and the runtime's `collapse_eg()` unwraps every single-member
   group at each actor boundary — a fully-raced nested tree
   relays a bare (annotated) `RemoteActorError` chain.
-- `test_multierror_fast_nursery` deleted (pure reap-stress);
-  `test_nested_multierrors` re-purposed as deep-tree
+- `test_multierror_fast_nursery`'s obsolete BEG-of-25 assertion
+  deleted; `test_concurrent_start_error_reaps_all` retains its
+  high-fan-out startup/cancel/reap stress under caller-scoped
+  semantics.
+- `test_nested_multierrors` re-purposed separately as deep-tree
   cancel-cascade stress w/ a race-tolerant shape walk.
 
 Final excision (after zero callers remained): `run_in_actor()`,
