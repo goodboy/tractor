@@ -45,6 +45,7 @@ from ._tunnel import (
     TunnelledAddress as TunnelledAddress,
     TunnelSpec as TunnelSpec,
     WGTunnelSpec as WGTunnelSpec,
+    WGInterfaceConfig as WGInterfaceConfig,
     mb_pubkey as mb_pubkey,
     mk_wg_maddr as mk_wg_maddr,
     parse_wg_maddr as parse_wg_maddr,

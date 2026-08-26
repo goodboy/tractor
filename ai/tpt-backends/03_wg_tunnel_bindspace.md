@@ -508,10 +508,18 @@ async def open_netns(
 @acm
 async def open_wg_iface(
     spec: WGTunnelSpec,
+    config: WGInterfaceConfig,
     bindspace: BindspaceHandle,
     role: Literal['listen', 'dial'],
 ) -> AsyncGenerator[WGTunnelSpec, None]: ...
 ```
+
+`WGInterfaceConfig` is process-local, redacts its private/preshared
+keys and is rejected by the global `ProcessLocal` wire guard. It owns
+local interface addresses, peer allowed CIDRs, listen port and
+persistent keepalive policy. `WGTunnelSpec` remains serializable and
+contains only public maddr-derived identity/endpoint data. This split
+keeps secret material out of address declarations and actor payloads.
 
 and a driver that folds a list of specs into nested contexts
 (`contextlib.AsyncExitStack` for the N-deep case). The
