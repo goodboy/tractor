@@ -80,6 +80,8 @@ import msgspec
 import multibase
 import trio
 
+from ..msg._local import ProcessLocal
+
 if TYPE_CHECKING:
     from multiaddr import Multiaddr
 
@@ -119,9 +121,6 @@ class WGTunnelSpec(
 
     iface: str = 'wg0'
     netns: str|None = None
-
-    # layer-C-only fields, unset in layer A
-    maybe_allowed_ips: tuple[str, ...] = ()
 
     # the `multiaddr` proto name for this tunnel kind
     tunnel_key: ClassVar[str] = 'wg'
@@ -196,6 +195,99 @@ def _wg8_key_str(
     # Reuse `mb_pubkey()`'s strict base64 + 32-byte validation.
     mb_pubkey(key)
     return key
+
+
+class WGInterfaceConfig(
+    ProcessLocal,
+):
+    '''
+    Process-local secrets and routing inputs for one WireGuard iface.
+
+    Public peer identity, endpoint and iface selection remain in
+    `WGTunnelSpec`; private key material and local routing policy do
+    not belong in an maddr-derived serializable declaration.
+
+    '''
+    private_key: str
+    addresses: tuple[str, ...] = ()
+    allowed_ips: tuple[str, ...] = ()
+    listen_port: int|None = None
+    preshared_key: str|None = None
+    persistent_keepalive: int|None = None
+
+    def __post_init__(self) -> None:
+        '''
+        Validate secrets, CIDRs and bounded WireGuard integers.
+
+        '''
+        _wg8_key_str(self.private_key)
+        if self.preshared_key is not None:
+            _wg8_key_str(self.preshared_key)
+
+        # Validate every local CIDR; no entry is selected or consumed.
+        address: str
+        for address in self.addresses:
+            ipaddress.ip_interface(address)
+
+        # Validate every peer route. `strict=False` accepts host bits;
+        # pyroute2 will still receive each original declared string.
+        allowed_ip: str
+        for allowed_ip in self.allowed_ips:
+            ipaddress.ip_network(
+                allowed_ip,
+                strict=False,
+            )
+
+        listen_port: int|None = self.listen_port
+        if (
+            listen_port is not None
+            and
+            (
+                type(listen_port) is not int
+                or
+                not 1 <= listen_port <= 65535
+            )
+        ):
+            raise ValueError(
+                '`WGInterfaceConfig.listen_port` must be in '
+                '`1..65535` or `None`!'
+            )
+
+        keepalive: int|None = self.persistent_keepalive
+        if (
+            keepalive is not None
+            and
+            (
+                type(keepalive) is not int
+                or
+                not 0 <= keepalive <= 65535
+            )
+        ):
+            raise ValueError(
+                '`WGInterfaceConfig.persistent_keepalive` '
+                'must be in '
+                '`0..65535` or `None`!'
+            )
+
+    def __repr__(self) -> str:
+        '''
+        Render non-secret policy while redacting key material.
+
+        '''
+        preshared: str|None = (
+            '<redacted>'
+            if self.preshared_key is not None
+            else None
+        )
+        return (
+            f'{type(self).__name__}('
+            f'private_key=<redacted>, '
+            f'addresses={self.addresses!r}, '
+            f'allowed_ips={self.allowed_ips!r}, '
+            f'listen_port={self.listen_port!r}, '
+            f'preshared_key={preshared!r}, '
+            f'persistent_keepalive={self.persistent_keepalive!r})'
+        )
 
 
 def _sync_read_wg_keys(
