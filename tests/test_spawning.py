@@ -26,49 +26,60 @@ data_to_pass_down = {
 }
 
 
-async def spawn(
+async def run_same_func_in_child(
     should_be_root: bool,
     data: dict,
     reg_addr: tuple[str, int],
 
     debug_mode: bool = False,
 ):
+    '''
+    Invoke this same module-scoped RPC target in a child actor.
+
+    RPC targets cross IPC as `module:name` namespace paths, so this
+    helper must remain import-addressable at module scope instead of
+    being nested inside the test. The root invocation boots a runtime
+    and recursively calls this function as a one-shot child endpoint;
+    the child branch returns the result.
+
+    '''
     await trio.sleep(0.1)
     actor = tractor.current_actor(err_on_no_runtime=False)
 
-    if should_be_root:
-        assert actor is None  # no runtime yet
-        async with (
-            tractor.open_root_actor(
-                registry_addrs=[reg_addr],
-            ),
-            tractor.open_nursery() as an,
-        ):
-            # now runtime exists
-            actor: tractor.Actor = tractor.current_actor()
-            assert actor.is_registrar == should_be_root
-
-            # recursively spawn this same `spawn()` fn as the lone
-            # task of a one-shot child subactor and get its result.
-            result = await tractor.to_actor.run(
-                partial(
-                    spawn,
-                    should_be_root=False,
-                    data=data_to_pass_down,
-                    reg_addr=reg_addr,
-                ),
-                an=an,
-
-                # spawning args
-                name='sub-actor',
-                enable_modules=[__name__],
-
-            )
-            assert result == 10
-            return result
-    else:
+    if not should_be_root:
+        assert actor is not None
         assert actor.is_registrar == should_be_root
         return 10
+
+    assert actor is None  # no runtime yet
+    async with (
+        tractor.open_root_actor(
+            registry_addrs=[reg_addr],
+        ),
+        tractor.open_nursery() as an,
+    ):
+        # now runtime exists
+        actor: tractor.Actor = tractor.current_actor()
+        assert actor.is_registrar == should_be_root
+
+        # recursively spawn this same function as the lone
+        # task of a one-shot child subactor and get its result.
+        result = await tractor.to_actor.run(
+            partial(
+                run_same_func_in_child,
+                should_be_root=False,
+                data=data_to_pass_down,
+                reg_addr=reg_addr,
+            ),
+            an=an,
+
+            # spawning args
+            name='sub-actor',
+            enable_modules=[__name__],
+
+        )
+        assert result == 10
+        return result
 
 
 def test_to_actor_run_same_func_in_child(
@@ -77,7 +88,7 @@ def test_to_actor_run_same_func_in_child(
 ):
     result = trio.run(
         partial(
-            spawn,
+            run_same_func_in_child,
             should_be_root=True,
             data=data_to_pass_down,
             reg_addr=reg_addr,
