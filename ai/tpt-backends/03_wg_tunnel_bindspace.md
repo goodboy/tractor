@@ -514,12 +514,13 @@ async def open_wg_iface(
 ) -> AsyncGenerator[WGTunnelSpec, None]: ...
 ```
 
-`WGInterfaceConfig` is process-local, redacts its private/preshared
-keys and is rejected by the global `ProcessLocal` wire guard. It owns
-local interface addresses, peer allowed CIDRs, listen port and
-persistent keepalive policy. `WGTunnelSpec` remains serializable and
-contains only public maddr-derived identity/endpoint data. This split
-keeps secret material out of address declarations and actor payloads.
+`WGInterfaceConfig` and each `WGPeerConfig` are process-local and
+rejected by the global `ProcessLocal` wire guard. The interface config
+owns its private key, local addresses and listen port; each peer owns
+its public key, allowed CIDRs, optional endpoint, preshared key and
+keepalive. Reprs redact private/preshared keys. `WGTunnelSpec` remains
+serializable public maddr-derived identity/endpoint data. This split
+supports multi-peer listeners without overloading the tunnel maddr.
 
 and a driver that folds a list of specs into nested contexts
 (`contextlib.AsyncExitStack` for the N-deep case). The

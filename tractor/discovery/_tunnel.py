@@ -197,6 +197,86 @@ def _wg8_key_str(
     return key
 
 
+class WGPeerConfig(
+    ProcessLocal,
+):
+    '''
+    Process-local configuration for one WireGuard peer.
+
+    '''
+    public_key: str
+    allowed_ips: tuple[str, ...] = ()
+    endpoint: tuple[str, int]|None = None
+    preshared_key: str|None = None
+    persistent_keepalive: int|None = None
+
+    def __post_init__(self) -> None:
+        '''
+        Validate peer identity, routes, endpoint and secret policy.
+
+        '''
+        _wg8_key_str(self.public_key)
+        if self.preshared_key is not None:
+            _wg8_key_str(self.preshared_key)
+
+        # Validate each route. `strict=False` accepts host bits;
+        # pyroute2 will still receive each original declared string.
+        allowed_ip: str
+        for allowed_ip in self.allowed_ips:
+            ipaddress.ip_network(
+                allowed_ip,
+                strict=False,
+            )
+
+        endpoint: tuple[str, int]|None = self.endpoint
+        if endpoint is not None:
+            host, port = endpoint
+            ipaddress.ip_address(host)
+            if (
+                type(port) is not int
+                or
+                not 1 <= port <= 65535
+            ):
+                raise ValueError(
+                    '`WGPeerConfig.endpoint` port must be in '
+                    '`1..65535`!'
+                )
+
+        keepalive: int|None = self.persistent_keepalive
+        if (
+            keepalive is not None
+            and
+            (
+                type(keepalive) is not int
+                or
+                not 0 <= keepalive <= 65535
+            )
+        ):
+            raise ValueError(
+                '`WGPeerConfig.persistent_keepalive` must be in '
+                '`0..65535` or `None`!'
+            )
+
+    def __repr__(self) -> str:
+        '''
+        Render public peer policy while redacting its preshared key.
+
+        '''
+        preshared: str|None = (
+            '<redacted>'
+            if self.preshared_key is not None
+            else None
+        )
+        return (
+            f'{type(self).__name__}('
+            f'public_key={self.public_key!r}, '
+            f'allowed_ips={self.allowed_ips!r}, '
+            f'endpoint={self.endpoint!r}, '
+            f'preshared_key={preshared!r}, '
+            f'persistent_keepalive={self.persistent_keepalive!r})'
+        )
+
+
 class WGInterfaceConfig(
     ProcessLocal,
 ):
@@ -210,33 +290,20 @@ class WGInterfaceConfig(
     '''
     private_key: str
     addresses: tuple[str, ...] = ()
-    allowed_ips: tuple[str, ...] = ()
     listen_port: int|None = None
-    preshared_key: str|None = None
-    persistent_keepalive: int|None = None
+    peers: tuple[WGPeerConfig, ...] = ()
 
     def __post_init__(self) -> None:
         '''
-        Validate secrets, CIDRs and bounded WireGuard integers.
+        Validate private identity, local CIDRs and peer uniqueness.
 
         '''
         _wg8_key_str(self.private_key)
-        if self.preshared_key is not None:
-            _wg8_key_str(self.preshared_key)
 
-        # Validate every local CIDR; no entry is selected or consumed.
+        # Validate each local CIDR; no address is selected.
         address: str
         for address in self.addresses:
             ipaddress.ip_interface(address)
-
-        # Validate every peer route. `strict=False` accepts host bits;
-        # pyroute2 will still receive each original declared string.
-        allowed_ip: str
-        for allowed_ip in self.allowed_ips:
-            ipaddress.ip_network(
-                allowed_ip,
-                strict=False,
-            )
 
         listen_port: int|None = self.listen_port
         if (
@@ -253,40 +320,31 @@ class WGInterfaceConfig(
                 '`1..65535` or `None`!'
             )
 
-        keepalive: int|None = self.persistent_keepalive
-        if (
-            keepalive is not None
-            and
-            (
-                type(keepalive) is not int
-                or
-                not 0 <= keepalive <= 65535
-            )
-        ):
-            raise ValueError(
-                '`WGInterfaceConfig.persistent_keepalive` '
-                'must be in '
-                '`0..65535` or `None`!'
-            )
+        peer_keys: set[str] = set()
+        peer: WGPeerConfig
+        for peer in self.peers:
+            if not isinstance(peer, WGPeerConfig):
+                raise TypeError(
+                    '`WGInterfaceConfig.peers` must contain '
+                    '`WGPeerConfig` values!'
+                )
+            if peer.public_key in peer_keys:
+                raise ValueError(
+                    f'Duplicate WireGuard peer: {peer.public_key!r}'
+                )
+            peer_keys.add(peer.public_key)
 
     def __repr__(self) -> str:
         '''
         Render non-secret policy while redacting key material.
 
         '''
-        preshared: str|None = (
-            '<redacted>'
-            if self.preshared_key is not None
-            else None
-        )
         return (
             f'{type(self).__name__}('
             f'private_key=<redacted>, '
             f'addresses={self.addresses!r}, '
-            f'allowed_ips={self.allowed_ips!r}, '
             f'listen_port={self.listen_port!r}, '
-            f'preshared_key={preshared!r}, '
-            f'persistent_keepalive={self.persistent_keepalive!r})'
+            f'peers={self.peers!r})'
         )
 
 
