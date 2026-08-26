@@ -522,6 +522,14 @@ keepalive. Reprs redact private/preshared keys. `WGTunnelSpec` remains
 serializable public maddr-derived identity/endpoint data. This split
 supports multi-peer listeners without overloading the tunnel maddr.
 
+The initial `open_wg_iface()` lifecycle is owned and Linux-only. It
+validates role-dependent bearer policy before side effects, creates the
+iface and addresses through `IPRoute`, configures keys/peers through
+`WireGuard`, raises the link, and removes it on every post-creation
+exit. Creation/removal run in shielded Trio worker calls. A listen
+bearer supplies the local listen port; a dial bearer supplies an
+omitted endpoint only for the selected maddr peer.
+
 and a driver that folds a list of specs into nested contexts
 (`contextlib.AsyncExitStack` for the N-deep case). The
 `parse_endpoints()` API (`_multiaddr.py:189`) is the front door:

@@ -67,12 +67,16 @@ Unwrap at the parse or bindspace boundary; see `.overlay` and
 
 '''
 from __future__ import annotations
+from collections.abc import AsyncIterator
 import base64
+from contextlib import asynccontextmanager as acm
 import ipaddress
 import sys
 from typing import (
     Any,
     ClassVar,
+    get_args,
+    Literal,
     TYPE_CHECKING,
 )
 
@@ -89,8 +93,10 @@ if TYPE_CHECKING:
         Address,
         UnwrappedAddress,
     )
+    from ._bindspace import BindspaceHandle
 else:
     Address = Any
+    BindspaceHandle = Any
     Multiaddr = Any
     UnwrappedAddress = Any
 
@@ -230,6 +236,8 @@ class WGPeerConfig(
 
         endpoint: tuple[str, int]|None = self.endpoint
         if endpoint is not None:
+            host: str
+            port: int
             host, port = endpoint
             ipaddress.ip_address(host)
             if (
@@ -239,7 +247,7 @@ class WGPeerConfig(
             ):
                 raise ValueError(
                     '`WGPeerConfig.endpoint` port must be in '
-                    '`1..65535`!'
+                    f'`1..65535`, not {port!r}!'
                 )
 
         keepalive: int|None = self.persistent_keepalive
@@ -254,7 +262,7 @@ class WGPeerConfig(
         ):
             raise ValueError(
                 '`WGPeerConfig.persistent_keepalive` must be in '
-                '`0..65535` or `None`!'
+                f'`0..65535` or `None`, not {keepalive!r}!'
             )
 
     def __repr__(self) -> str:
@@ -317,7 +325,7 @@ class WGInterfaceConfig(
         ):
             raise ValueError(
                 '`WGInterfaceConfig.listen_port` must be in '
-                '`1..65535` or `None`!'
+                f'`1..65535` or `None`, not {listen_port!r}!'
             )
 
         peer_keys: set[str] = set()
@@ -346,6 +354,272 @@ class WGInterfaceConfig(
             f'listen_port={self.listen_port!r}, '
             f'peers={self.peers!r})'
         )
+
+
+WGRole = Literal['listen', 'dial']
+
+
+def _wg_iface_settings(
+    spec: WGTunnelSpec,
+    config: WGInterfaceConfig,
+    role: WGRole,
+) -> tuple[int|None, tuple[dict[str, object], ...]]:
+    '''
+    Validate role policy and build pyroute2 WireGuard settings.
+
+    '''
+    if role not in get_args(WGRole):
+        raise ValueError(
+            f'Unsupported WireGuard role: {role!r}'
+        )
+
+    listen_port: int|None = config.listen_port
+    bearer: tuple[str, int]|None = spec.bearer
+    if (
+        role == 'listen'
+        and
+        bearer is not None
+    ):
+        bearer_port: int = bearer[1]
+        if (
+            listen_port is not None
+            and
+            listen_port != bearer_port
+        ):
+            raise ValueError(
+                f'`WGInterfaceConfig.listen_port={listen_port!r}` '
+                f'conflicts with bearer port {bearer_port!r}!'
+            )
+        listen_port = bearer_port
+
+    selected_peer: bool = False
+    peer_settings: list[dict[str, object]] = []
+    peer: WGPeerConfig
+    for peer in config.peers:
+        endpoint: tuple[str, int]|None = peer.endpoint
+        if (
+            role == 'dial'
+            and
+            peer.public_key == spec.peer_pubkey
+        ):
+            selected_peer = True
+            if (
+                endpoint is not None
+                and
+                bearer is not None
+                and
+                endpoint != bearer
+            ):
+                raise ValueError(
+                    f'`WGPeerConfig.endpoint={endpoint!r}` conflicts '
+                    f'with `WGTunnelSpec.bearer={bearer!r}`!'
+                )
+            endpoint = endpoint or bearer
+
+        values: dict[str, object] = {
+            'public_key': peer.public_key,
+        }
+        if peer.allowed_ips:
+            values['allowed_ips'] = list(peer.allowed_ips)
+            values['replace_allowed_ips'] = True
+        if endpoint is not None:
+            values['endpoint_addr'] = endpoint[0]
+            values['endpoint_port'] = endpoint[1]
+        if peer.preshared_key is not None:
+            values['preshared_key'] = peer.preshared_key
+        if peer.persistent_keepalive is not None:
+            values['persistent_keepalive'] = (
+                peer.persistent_keepalive
+            )
+        peer_settings.append(values)
+
+    if (
+        role == 'dial'
+        and
+        not selected_peer
+    ):
+        configured_keys: tuple[str, ...] = tuple(
+            peer.public_key
+            for peer in config.peers
+        )
+        raise ValueError(
+            f'Dial target {spec.peer_pubkey!r} is not in '
+            f'configured peer keys {configured_keys!r}!'
+        )
+
+    return listen_port, tuple(peer_settings)
+
+
+def _sync_create_wg_iface(
+    spec: WGTunnelSpec,
+    config: WGInterfaceConfig,
+    bindspace: BindspaceHandle,
+    listen_port: int|None,
+    peers: tuple[dict[str, object], ...],
+) -> None:
+    '''
+    Create and configure one WireGuard iface through pyroute2.
+
+    '''
+    try:
+        from pyroute2 import (
+            IPRoute,
+            WireGuard,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            'WireGuard provisioning requires the '
+            '`tractor[wg]` extra.'
+        ) from exc
+
+    namespace_fd: int|None = bindspace.namespace_fd
+    ipr: Any = IPRoute(
+        netns=namespace_fd,
+        flags=0,
+    )
+    created: bool = False
+    try:
+        ipr.link(
+            'add',
+            ifname=spec.iface,
+            kind='wireguard',
+        )
+        created = True
+        indices: list[int] = ipr.link_lookup(
+            ifname=spec.iface,
+        )
+        if len(indices) != 1:
+            raise RuntimeError(
+                f'Expected one index for WG iface {spec.iface!r}, '
+                f'got {indices!r}!'
+            )
+        index: int = indices[0]
+
+        address: str
+        for address in config.addresses:
+            interface: (
+                ipaddress.IPv4Interface
+                | ipaddress.IPv6Interface
+            ) = ipaddress.ip_interface(address)
+            ipr.addr(
+                'add',
+                index=index,
+                address=str(interface.ip),
+                prefixlen=interface.network.prefixlen,
+            )
+
+        wg: Any = WireGuard(
+            netns=namespace_fd,
+            flags=0,
+        )
+        try:
+            wg.set(
+                spec.iface,
+                private_key=config.private_key,
+                listen_port=listen_port,
+            )
+            peer: dict[str, object]
+            for peer in peers:
+                wg.set(
+                    spec.iface,
+                    peer=peer,
+                )
+        finally:
+            wg.close()
+
+        ipr.link(
+            'set',
+            index=index,
+            state='up',
+        )
+    except BaseException:
+        if created:
+            indices = ipr.link_lookup(
+                ifname=spec.iface,
+            )
+            if indices:
+                ipr.link(
+                    'del',
+                    index=indices[0],
+                )
+        raise
+    finally:
+        ipr.close()
+
+
+def _sync_remove_wg_iface(
+    spec: WGTunnelSpec,
+    bindspace: BindspaceHandle,
+) -> None:
+    '''
+    Remove one owned WireGuard iface when it still exists.
+
+    '''
+    try:
+        from pyroute2 import IPRoute
+    except ImportError as exc:
+        raise RuntimeError(
+            'WireGuard teardown requires the `tractor[wg]` extra.'
+        ) from exc
+
+    ipr: Any = IPRoute(
+        netns=bindspace.namespace_fd,
+        flags=0,
+    )
+    try:
+        indices: list[int] = ipr.link_lookup(
+            ifname=spec.iface,
+        )
+        if indices:
+            ipr.link(
+                'del',
+                index=indices[0],
+            )
+    finally:
+        ipr.close()
+
+
+@acm
+async def open_wg_iface(
+    spec: WGTunnelSpec,
+    config: WGInterfaceConfig,
+    bindspace: BindspaceHandle,
+    role: WGRole,
+) -> AsyncIterator[WGTunnelSpec]:
+    '''
+    Create, configure and own one WireGuard interface.
+
+    '''
+    listen_port: int|None
+    peers: tuple[dict[str, object], ...]
+    listen_port, peers = _wg_iface_settings(
+        spec,
+        config,
+        role,
+    )
+    created: bool = False
+    try:
+        with trio.CancelScope(shield=True):
+            await trio.to_thread.run_sync(
+                _sync_create_wg_iface,
+                spec,
+                config,
+                bindspace,
+                listen_port,
+                peers,
+                abandon_on_cancel=False,
+            )
+            created = True
+        yield spec
+    finally:
+        if created:
+            with trio.CancelScope(shield=True):
+                await trio.to_thread.run_sync(
+                    _sync_remove_wg_iface,
+                    spec,
+                    bindspace,
+                    abandon_on_cancel=False,
+                )
 
 
 def _sync_read_wg_keys(
