@@ -194,14 +194,18 @@ def test_multi_actor_subs_arbiter_pub(
                 )
                 name = 'streamer'
 
+            root_uid = tractor.current_actor().aid.uid
+
             # spawn the two subscriber actors as daemons and run
             # `subs()` on each as a background task (was the legacy
             # `run_in_actor()`); keep the portals for the explicit
             # `cancel_actor()` teardown below. Each runner swallows
-            # the teardown error that `cancel_actor()` relays.
+            # only the cancellation relayed after its own teardown
+            # starts; every earlier or unrelated failure propagates.
             async def _run_subs(
                 portal: tractor.Portal,
                 which: list[str],
+                teardown_started: trio.Event,
             ) -> None:
                 try:
                     await portal.run(
@@ -209,11 +213,16 @@ def test_multi_actor_subs_arbiter_pub(
                         which=which,
                         pub_actor_name=name,
                     )
-                except (
-                    tractor.RemoteActorError,
-                    tractor.ContextCancelled,
-                ):
-                    pass  # expected once we `cancel_actor()` below
+                except tractor.ContextCancelled as ctxc:
+                    if not (
+                        teardown_started.is_set()
+                        and
+                        ctxc.canceller == root_uid
+                    ):
+                        raise
+
+            even_teardown_started = trio.Event()
+            odd_teardown_started = trio.Event()
 
             even_portal = await an.start_actor(
                 'evens',
@@ -223,8 +232,18 @@ def test_multi_actor_subs_arbiter_pub(
                 'odds',
                 enable_modules=[__name__],
             )
-            tn.start_soon(_run_subs, even_portal, ['even'])
-            tn.start_soon(_run_subs, odd_portal, ['odd'])
+            tn.start_soon(
+                _run_subs,
+                even_portal,
+                ['even'],
+                even_teardown_started,
+            )
+            tn.start_soon(
+                _run_subs,
+                odd_portal,
+                ['odd'],
+                odd_teardown_started,
+            )
 
             async with tractor.wait_for_actor('evens'):
                 # block until 2nd actor is initialized
@@ -263,12 +282,14 @@ def test_multi_actor_subs_arbiter_pub(
             # await even_portal.result()
 
             await trio.sleep(0.5)
+            even_teardown_started.set()
             await even_portal.cancel_actor()
             await trio.sleep(1)
 
             if pub_actor == 'arbiter':
                 assert 'even' not in get_topics()
 
+            odd_teardown_started.set()
             await odd_portal.cancel_actor()
 
             if pub_actor == 'arbiter':
