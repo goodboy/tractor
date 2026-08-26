@@ -253,6 +253,8 @@ def test_tractor_cancels_aio(
         # CPU-headroom-scaled bc this is an anti-hang guard, not
         # a perf assertion; a wedged ria-reaper once hung this
         # test forever (the `._ria_nursery`-removal regression).
+        # Regression fix: commit `d1fb4a1a`, documented in
+        # `ai/conc-anal/ria_nursery_removal_plan.md`.
         from .conftest import cpu_perf_headroom
         with trio.fail_after(9 * cpu_perf_headroom()):
             async with tractor.open_nursery(
