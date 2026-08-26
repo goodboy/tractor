@@ -94,6 +94,18 @@ async def sleep_forever():
     await trio.sleep_forever()
 
 
+@tractor.context
+async def sleep_forever_ctx(
+    ctx: tractor.Context,
+) -> None:
+    '''
+    Signal task startup before sleeping until context cancellation.
+
+    '''
+    await ctx.started()
+    await sleep_forever()
+
+
 async def do_nuthin():
     # just nick the scheduler
     await trio.sleep(0)
@@ -827,15 +839,25 @@ def test_cancel_via_SIGINT_other_task(
         async with tractor.open_nursery(
             registry_addrs=[reg_addr],
         ) as an:
-            # just keep a set of (daemon) subactors alive for the
-            # SIGINT to cancel (was 3 `run_in_actor(sleep_forever)`
-            # one-shots — a daemon needs no "main" task to idle).
-            for i in range(3):
+            portals = [
                 await an.start_actor(
                     f'namesucka_{i}',
+                    enable_modules=[__name__],
                 )
-            task_status.started()
-            await trio.sleep_forever()
+                for i in range(3)
+            ]
+
+            # Keep one linked RPC task active in every daemon before
+            # reporting startup, preserving the original
+            # `run_in_actor(sleep_forever)` cancellation target.
+            async with gather_contexts(
+                mngrs=[
+                    portal.open_context(sleep_forever_ctx)
+                    for portal in portals
+                ],
+            ):
+                task_status.started()
+                await trio.sleep_forever()
 
     async def main():
         # should never timeout since SIGINT should cancel the current program
