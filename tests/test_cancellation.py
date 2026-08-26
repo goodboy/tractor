@@ -216,8 +216,38 @@ def test_multierror(
     with pytest.raises((
         BaseExceptionGroup,
         tractor.RemoteActorError,
-    )):
+    )) as excinfo:
         trio.run(main)
+
+    exc = excinfo.value
+    if isinstance(exc, tractor.RemoteActorError):
+        assert exc.boxed_type is AssertionError
+        return
+
+    def iter_group_leaves(
+        group: BaseExceptionGroup,
+    ):
+        for subexc in group.exceptions:
+            if isinstance(subexc, BaseExceptionGroup):
+                yield from iter_group_leaves(subexc)
+            else:
+                yield subexc
+
+    assertion_errors: list[tractor.RemoteActorError] = []
+    cancellations: list[BaseException] = []
+    for leaf in iter_group_leaves(exc):
+        if isinstance(leaf, tractor.ContextCancelled):
+            cancellations.append(leaf)
+        elif isinstance(leaf, trio.Cancelled):
+            cancellations.append(leaf)
+        else:
+            assert isinstance(leaf, tractor.RemoteActorError)
+            assert leaf.boxed_type is AssertionError
+            assertion_errors.append(leaf)
+
+    assert len(assertion_errors) in (1, 2)
+    if not cancellations:
+        assert len(assertion_errors) == 2
 
 
 async def do_nothing():
