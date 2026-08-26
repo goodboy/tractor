@@ -1,0 +1,5 @@
+Remove legacy ``ActorNursery.run_in_actor()``,
+``Portal.wait_for_result()`` and ``Portal.result()``. Use
+``tractor.to_actor.run()`` for caller-owned one-shot tasks,
+``Portal.run()`` for daemon RPC results or ``Portal.open_context()``
+for linked task dialogs.
