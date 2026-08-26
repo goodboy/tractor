@@ -667,7 +667,7 @@ def test_basic_interloop_channel_stream(
             async with tractor.open_nursery(
                 registry_addrs=[reg_addr],
             ) as an:
-                # should raise RAE diectly
+                # should raise RAE directly
                 await to_actor.run(
                     partial(
                         stream_from_aio,
@@ -726,7 +726,7 @@ def test_trio_closes_early_causes_aio_checkpoint_raise(
                 # enable_stack_on_sig=True,
                 registry_addrs=[reg_addr],
             ) as an:
-                # should raise RAE diectly
+                # should raise RAE directly
                 print('waiting on final infected subactor result..')
                 res: None = await to_actor.run(
                     partial(
@@ -779,7 +779,7 @@ def test_aio_exits_early_relays_AsyncioTaskExited(
                 debug_mode=debug_mode,
                 # enable_stack_on_sig=True,
             ) as an:
-                # should raise RAE diectly
+                # should raise RAE directly
                 print('waiting on final infected subactor result..')
                 res: None = await to_actor.run(
                     partial(

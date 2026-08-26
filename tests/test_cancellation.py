@@ -436,7 +436,7 @@ async def test_some_cancels_all(
 
                         except tractor.RemoteActorError as err:
                             assert err.boxed_type == err_type
-                            # we only expect this first error to propogate
+                            # we only expect this first error to propagate
                             # (all other daemons are cancelled before they
                             # can be scheduled)
                             num_actors = 1
@@ -445,7 +445,7 @@ async def test_some_cancels_all(
                         else:
                             if expect_error:
                                 pytest.fail(
-                                    "Deamon call should fail at checkpoint?")
+                                    "Daemon call should fail at checkpoint?")
 
         # should error here with a `RemoteActorError` or a beg of them
 
