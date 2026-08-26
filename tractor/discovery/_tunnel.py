@@ -67,9 +67,16 @@ Unwrap at the parse or bindspace boundary; see `.overlay` and
 
 '''
 from __future__ import annotations
-from collections.abc import AsyncIterator
+
+from collections.abc import (
+    AsyncIterator,
+    Sequence,
+)
 import base64
-from contextlib import asynccontextmanager as acm
+from contextlib import (
+    AsyncExitStack,
+    asynccontextmanager as acm,
+)
 import ipaddress
 import sys
 from typing import (
@@ -85,6 +92,11 @@ import multibase
 import trio
 
 from ..msg._local import ProcessLocal
+from ._bindspace import (
+    BindspaceHandle,
+    BindspaceSpec,
+    open_bindspace,
+)
 
 if TYPE_CHECKING:
     from multiaddr import Multiaddr
@@ -93,10 +105,8 @@ if TYPE_CHECKING:
         Address,
         UnwrappedAddress,
     )
-    from ._bindspace import BindspaceHandle
 else:
     Address = Any
-    BindspaceHandle = Any
     Multiaddr = Any
     UnwrappedAddress = Any
 
@@ -620,6 +630,59 @@ async def open_wg_iface(
                     bindspace,
                     abandon_on_cancel=False,
                 )
+
+
+@acm
+async def open_wg_bindspace(
+    bindspace_spec: BindspaceSpec,
+    layers: Sequence[tuple[WGTunnelSpec, WGInterfaceConfig]],
+    role: WGRole,
+) -> AsyncIterator[BindspaceHandle]:
+    '''
+    Open one bindspace and its ordered WireGuard interface stack.
+
+    `layers` is an interface stack declared outermost first:
+
+        application scope
+               |
+        layers[-1]         <- last entered, first exited
+               |
+              ...
+               |
+        layers[0]          <- first entered, last exited
+               |
+        bindspace
+
+    `AsyncExitStack` builds it bottom-up in declaration order and
+    unwinds it top-down before the bindspace closes.
+
+    '''
+    layer_stack: tuple[
+        tuple[WGTunnelSpec, WGInterfaceConfig],
+        ...,
+    ] = tuple(layers)
+    async with AsyncExitStack() as stack:
+        bindspace: BindspaceHandle = await (
+            stack.enter_async_context(
+                open_bindspace(bindspace_spec)
+            )
+        )
+
+        layer: tuple[WGTunnelSpec, WGInterfaceConfig]
+        for layer in layer_stack:
+            tunnel_spec: WGTunnelSpec
+            config: WGInterfaceConfig
+            tunnel_spec, config = layer
+            await stack.enter_async_context(
+                open_wg_iface(
+                    tunnel_spec,
+                    config,
+                    bindspace,
+                    role,
+                )
+            )
+
+        yield bindspace
 
 
 def _sync_read_wg_keys(

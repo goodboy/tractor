@@ -4,6 +4,8 @@ WireGuard interface policy and owned lifecycle contracts.
 '''
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager as acm
 import os
 from pathlib import Path
 from typing import BinaryIO
@@ -18,6 +20,7 @@ from tractor.discovery import (
     WGInterfaceConfig,
     WGPeerConfig,
     WGTunnelSpec,
+    open_wg_bindspace,
     open_wg_iface,
 )
 from tractor.discovery import _tunnel
@@ -237,3 +240,139 @@ def test_open_wg_iface_shields_cancelled_cleanup(
         trio.run(main)
 
     assert events == ['create', 'yield', 'remove']
+
+
+def test_open_wg_bindspace_nests_resource_lifetimes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    Nested WG interfaces must exit before their bindspace capability.
+
+    Fake two interface layers over one bindspace. Clear the caller's
+    mutable layer list at bindspace entry, then cancel from inside the
+    yielded application scope and checkpoint. The trace proves the
+    stack snapshots its declaration before entry, layers enter
+    outermost-first, cancellation exits them inside-out, and the live
+    bindspace remains available through every interface exit.
+
+    '''
+    events: list[str] = []
+    calls: list[
+        tuple[
+            WGTunnelSpec,
+            WGInterfaceConfig,
+            BindspaceHandle,
+            _tunnel.WGRole,
+        ]
+    ] = []
+    bindspace_spec: BindspaceSpec = BindspaceSpec(
+        kind='netns',
+    )
+    bindspace: BindspaceHandle = BindspaceHandle(
+        spec=bindspace_spec,
+        identity=BindspaceIdentity(
+            kind='netns',
+            key=None,
+            inode=1,
+        ),
+        namespace_fd=None,
+        ownership='borrowed',
+    )
+    outer_spec: WGTunnelSpec = WGTunnelSpec(
+        peer_pubkey=_PEER_KEY,
+        iface='wg-outer',
+    )
+    inner_spec: WGTunnelSpec = WGTunnelSpec(
+        peer_pubkey=_LOCAL_KEY,
+        iface='wg-inner',
+    )
+    outer_config: WGInterfaceConfig = WGInterfaceConfig(
+        private_key=_LOCAL_KEY,
+    )
+    inner_config: WGInterfaceConfig = WGInterfaceConfig(
+        private_key=_PEER_KEY,
+    )
+    layers: list[
+        tuple[WGTunnelSpec, WGInterfaceConfig]
+    ] = [
+        (outer_spec, outer_config),
+        (inner_spec, inner_config),
+    ]
+
+    @acm
+    async def fake_open_bindspace(
+        spec: BindspaceSpec,
+    ) -> AsyncIterator[BindspaceHandle]:
+        '''
+        Yield the stand-in bindspace and record its full lifetime.
+
+        '''
+        assert spec is bindspace_spec
+        events.append('bindspace-enter')
+        layers.clear()
+        try:
+            yield bindspace
+        finally:
+            events.append('bindspace-exit')
+
+    @acm
+    async def fake_open_wg_iface(
+        spec: WGTunnelSpec,
+        config: WGInterfaceConfig,
+        handle: BindspaceHandle,
+        role: _tunnel.WGRole,
+    ) -> AsyncIterator[WGTunnelSpec]:
+        '''
+        Record one interface's arguments and nested lifetime.
+
+        '''
+        calls.append((spec, config, handle, role))
+        events.append(f'{spec.iface}-enter')
+        try:
+            yield spec
+        finally:
+            assert handle is bindspace
+            events.append(f'{spec.iface}-exit')
+
+    monkeypatch.setattr(
+        _tunnel,
+        'open_bindspace',
+        fake_open_bindspace,
+    )
+    monkeypatch.setattr(
+        _tunnel,
+        'open_wg_iface',
+        fake_open_wg_iface,
+    )
+
+    async def main() -> None:
+        '''
+        Cancel while both interface layers are live.
+
+        '''
+        with trio.CancelScope() as scope:
+            async with open_wg_bindspace(
+                bindspace_spec,
+                layers,
+                'dial',
+            ) as handle:
+                assert handle is bindspace
+                events.append('yield')
+                scope.cancel()
+                await trio.sleep_forever()
+
+    trio.run(main)
+
+    assert calls == [
+        (outer_spec, outer_config, bindspace, 'dial'),
+        (inner_spec, inner_config, bindspace, 'dial'),
+    ]
+    assert events == [
+        'bindspace-enter',
+        'wg-outer-enter',
+        'wg-inner-enter',
+        'yield',
+        'wg-inner-exit',
+        'wg-outer-exit',
+        'bindspace-exit',
+    ]
