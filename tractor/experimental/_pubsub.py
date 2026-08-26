@@ -224,13 +224,16 @@ def pub(
                 'publisher',  # actor name
                 enable_modules=[__name__],
             )
-            async with portal.open_stream_from(
-                pub_service,  # func to execute in it
-                topics=('clicks', 'users'),
-                task_name='source1',
-            ) as stream:
-                async for value in stream:
-                    print(f"Subscriber received {value}")
+            try:
+                async with portal.open_stream_from(
+                    pub_service,  # func to execute in it
+                    topics=('clicks', 'users'),
+                    task_name='source1',
+                ) as stream:
+                    async for value in stream:
+                        print(f"Subscriber received {value}")
+            finally:
+                await portal.cancel_actor()
 
 
     Here, you don't need to provide the ``ctx`` argument since the
