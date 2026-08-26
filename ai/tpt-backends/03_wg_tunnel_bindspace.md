@@ -530,13 +530,21 @@ exit. Creation/removal run in shielded Trio worker calls. A listen
 bearer supplies the local listen port; a dial bearer supplies an
 omitted endpoint only for the selected maddr peer.
 
-and a driver that folds a list of specs into nested contexts
-(`contextlib.AsyncExitStack` for the N-deep case). The
+The composition driver folds a list of specs into nested contexts with
+`contextlib.AsyncExitStack` for the N-deep case. The
 `parse_endpoints()` API (`_multiaddr.py:189`) is the front door:
 its `ParsedEndpoints` values already contain
 `Address|TunnelledAddress` declarations and preserve each tunnel
 stack for the eventual bindspace handler. It carries declarations;
 it does not *enter* their bindspaces.
+
+`open_wg_bindspace()` is the initial driver for one bindspace and an
+ordered sequence of `(WGTunnelSpec, WGInterfaceConfig)` layers. It
+opens the bindspace first, enters WG interfaces outermost-first through
+`AsyncExitStack`, and yields the live `BindspaceHandle` for endpoint
+allocation. Exit is inside-out, so every interface is removed while the
+namespace FD remains pinned; only then can an owned namespace be
+removed. Endpoint/channel lifetimes belong inside the yielded scope.
 
 The caller supplies `role` to tunnel-resource contexts such as
 `open_wg_iface()`; do not infer it from maddr shape. Bindspace

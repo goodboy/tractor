@@ -50,6 +50,7 @@ from ._tunnel import (
     WGRole as WGRole,
     mb_pubkey as mb_pubkey,
     mk_wg_maddr as mk_wg_maddr,
+    open_wg_bindspace as open_wg_bindspace,
     open_wg_iface as open_wg_iface,
     parse_wg_maddr as parse_wg_maddr,
     read_wg_peers as read_wg_peers,
