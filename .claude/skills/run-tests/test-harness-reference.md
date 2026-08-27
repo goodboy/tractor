@@ -1,8 +1,20 @@
 # Tractor Test Harness Reference
 
-This repository-local file supplements the canonical `/run-tests` skill.
+This repository-local file supplements the canonical [`/run-tests` skill][1]
+from the [`ai.skillz` repository][2]. Its deployer links the shared `SKILL.md`
+into both
+`.claude/skills/run-tests/` and `.opencode/skills/run-tests/` while preserving
+this project-owned reference:
+
+```text
+bash /path/to/ai.skillz/scripts/deploy.sh run-tests /path/to/tractor --provider all --method symlink
+```
+
 Keep shared environment permission, process-signal safety, target selection,
-failure inspection, and result reporting policy in the canonical `SKILL.md`.
+failure inspection, and result reporting policy in the deployed `SKILL.md`.
+
+[1]: https://github.com/baudco/ai.skillz/blob/2d4896ca7e38fe2cb3090cdefc7245be4241a6d2/skills/run-tests/SKILL.md
+[2]: https://github.com/baudco/ai.skillz
 
 ## Project And Environment
 
