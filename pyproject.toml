@@ -100,6 +100,9 @@ testing = [
   # cleanup utility (xplatform `Process.memory_maps`,
   # `Process.open_files`).
   "psutil>=7.0.0",
+  # rerun timing-sensitive macOS CI nodes without hiding a
+  # deterministic failure after the final attempt.
+  "pytest-rerunfailures>=16.6,<17",
 ]
 repl = [
   "pyperclip>=1.9.0",
