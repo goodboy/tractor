@@ -14,8 +14,8 @@ import pytest
 import trio
 
 from tractor.discovery import (
-    BindspaceHandle,
-    BindspaceIdentity,
+    Bindspace,
+    BindspaceRef,
     BindspaceSpec,
     WGInterfaceConfig,
     WGPeerConfig,
@@ -159,7 +159,7 @@ def test_open_wg_iface_shields_cancelled_cleanup(
     def create(
         spec: WGTunnelSpec,
         config: WGInterfaceConfig,
-        bindspace: BindspaceHandle,
+        bindspace: Bindspace,
         listen_port: int|None,
         peers: tuple[dict[str, object], ...],
     ) -> None:
@@ -174,7 +174,7 @@ def test_open_wg_iface_shields_cancelled_cleanup(
 
     def remove(
         spec: WGTunnelSpec,
-        bindspace: BindspaceHandle,
+        bindspace: Bindspace,
     ) -> None:
         '''
         Record shielded removal after cancellation.
@@ -200,9 +200,9 @@ def test_open_wg_iface_shields_cancelled_cleanup(
             kind='netns',
             key='tractor-wg0',
         )
-        bindspace: BindspaceHandle = BindspaceHandle(
+        bindspace: Bindspace = Bindspace(
             spec=bindspace_spec,
-            identity=BindspaceIdentity(
+            ref=BindspaceRef(
                 kind='netns',
                 key='tractor-wg0',
                 inode=os.fstat(namespace_fd).st_ino,
@@ -249,8 +249,8 @@ def test_open_wg_bindspace_nests_resource_lifetimes(
     Nested WG interfaces must exit before their bindspace capability.
 
     Fake two interface layers over one bindspace. Clear the caller's
-    mutable layer list at bindspace entry, then cancel from inside the
-    yielded application scope and checkpoint. The trace proves the
+    mutable layer list at bindspace entry, then cancel from inside
+    the yielded application scope and checkpoint. The trace proves
     stack snapshots its declaration before entry, layers enter
     outermost-first, cancellation exits them inside-out, and the live
     bindspace remains available through every interface exit.
@@ -261,16 +261,16 @@ def test_open_wg_bindspace_nests_resource_lifetimes(
         tuple[
             WGTunnelSpec,
             WGInterfaceConfig,
-            BindspaceHandle,
+            Bindspace,
             _tunnel.WGRole,
         ]
     ] = []
     bindspace_spec: BindspaceSpec = BindspaceSpec(
         kind='netns',
     )
-    bindspace: BindspaceHandle = BindspaceHandle(
+    bindspace: Bindspace = Bindspace(
         spec=bindspace_spec,
-        identity=BindspaceIdentity(
+        ref=BindspaceRef(
             kind='netns',
             key=None,
             inode=1,
@@ -302,7 +302,7 @@ def test_open_wg_bindspace_nests_resource_lifetimes(
     @acm
     async def fake_open_bindspace(
         spec: BindspaceSpec,
-    ) -> AsyncIterator[BindspaceHandle]:
+    ) -> AsyncIterator[Bindspace]:
         '''
         Yield the stand-in bindspace and record its full lifetime.
 
@@ -319,19 +319,19 @@ def test_open_wg_bindspace_nests_resource_lifetimes(
     async def fake_open_wg_iface(
         spec: WGTunnelSpec,
         config: WGInterfaceConfig,
-        handle: BindspaceHandle,
+        bindspace_arg: Bindspace,
         role: _tunnel.WGRole,
     ) -> AsyncIterator[WGTunnelSpec]:
         '''
         Record one interface's arguments and nested lifetime.
 
         '''
-        calls.append((spec, config, handle, role))
+        calls.append((spec, config, bindspace_arg, role))
         events.append(f'{spec.iface}-enter')
         try:
             yield spec
         finally:
-            assert handle is bindspace
+            assert bindspace_arg is bindspace
             events.append(f'{spec.iface}-exit')
 
     monkeypatch.setattr(
@@ -355,8 +355,8 @@ def test_open_wg_bindspace_nests_resource_lifetimes(
                 bindspace_spec,
                 layers,
                 'dial',
-            ) as handle:
-                assert handle is bindspace
+            ) as opened_bindspace:
+                assert opened_bindspace is bindspace
                 events.append('yield')
                 scope.cancel()
                 await trio.sleep_forever()

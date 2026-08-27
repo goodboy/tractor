@@ -25,11 +25,11 @@ here to avoid circular imports; use direct module paths for those.
 
 '''
 from ._bindspace import (
-    BindspaceHandle as BindspaceHandle,
-    BindspaceIdentity as BindspaceIdentity,
+    Bindspace as Bindspace,
     BindspaceKind as BindspaceKind,
     BindspaceLifecycle as BindspaceLifecycle,
     BindspaceOwnership as BindspaceOwnership,
+    BindspaceRef as BindspaceRef,
     BindspaceSpec as BindspaceSpec,
     CURRENT_NETNS as CURRENT_NETNS,
     attach_netns as attach_netns,
