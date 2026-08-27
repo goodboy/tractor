@@ -144,9 +144,16 @@ Trio-safe timeout replacement.
 For live task-tree diagnosis:
 
 ```text
+uv run --frozen --no-sync python -c 'import stackscope'
 uv run --frozen --no-sync pytest <node> --enable-stackscope --capture=sys
-kill -USR1 <pytest-or-subactor-pid>
+kill -USR1 <pytest-pid>
 ```
+
+The import check and pytest command must use the same environment. Do not send
+SIGUSR1 if the import fails or setup warns that stackscope or SIGUSR1 is
+unavailable: without the installed handler, SIGUSR1 normally terminates the
+target process. Signal a subactor only after separately confirming that it
+installed the same handler.
 
 Stackscope appends dumps to `/tmp/tractor-stackscope-<pid>.log`, including when
 pytest capture hides terminal output. SIGUSR1 stackscope is unavailable on
@@ -172,6 +179,9 @@ classification as proof of orphanhood or run concurrent live Tractor sessions
 against the same UDS bindspace.
 
 Use the CLI in inspection-only mode first:
+
+`--shm` and `--shm-only` are Linux/FreeBSD-only and raise
+`NotImplementedError` elsewhere. On other platforms, use the UDS-only command.
 
 ```text
 uv run --frozen --no-sync scripts/tractor-reap -n
