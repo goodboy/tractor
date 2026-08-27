@@ -217,20 +217,23 @@ def pub(
 
     .. code:: python
 
-        from functools import partial
         import tractor
 
         async with tractor.open_nursery() as n:
-            portal = n.run_in_actor(
+            portal = await n.start_actor(
                 'publisher',  # actor name
-                partial(      # func to execute in it
-                    pub_service,
+                enable_modules=[__name__],
+            )
+            try:
+                async with portal.open_stream_from(
+                    pub_service,  # func to execute in it
                     topics=('clicks', 'users'),
                     task_name='source1',
-                )
-            )
-            async for value in await portal.result():
-                print(f"Subscriber received {value}")
+                ) as stream:
+                    async for value in stream:
+                        print(f"Subscriber received {value}")
+            finally:
+                await portal.cancel_actor()
 
 
     Here, you don't need to provide the ``ctx`` argument since the

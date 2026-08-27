@@ -4,6 +4,7 @@ related API and error checks.
 
 '''
 import itertools
+from functools import partial
 from unittest.mock import (
     AsyncMock,
     Mock,
@@ -234,23 +235,26 @@ def test_rpc_errors(
             # do that if actually debugging subactor but keep it
             # disabled for the test.
             # debug_mode=True,
-        ) as n:
+        ) as an:
 
             actor = tractor.current_actor()
             assert actor.is_registrar
-            await n.run_in_actor(
-                sleep_back_actor,
-                actor_name=subactor_requests_to,
+            await tractor.to_actor.run(
+                partial(
+                    sleep_back_actor,
+                    actor_name=subactor_requests_to,
+                    func_name=funcname,
+                    func_defined=bool(func_defined),
+                    exposed_mods=exposed_mods,
+                    reg_addr=reg_addr,
+                ),
+                an=an,
 
                 name='subactor',
 
-                # function from the local exposed module space
-                # the subactor will invoke when it RPCs back to this actor
-                func_name=funcname,
-                exposed_mods=exposed_mods,
-                func_defined=True if func_defined else False,
+                # Function from the local exposed module space the
+                # subactor invokes when it RPCs back to this actor.
                 enable_modules=subactor_exposed_mods,
-                reg_addr=reg_addr,
             )
 
     def run():

@@ -156,8 +156,8 @@ def test_actor_managed_trio_nursery_task_error_cancels_aio(
     async def main():
 
         # cancel the nursery shortly after boot
-        async with tractor.open_nursery() as n:
-            p = await n.start_actor(
+        async with tractor.open_nursery() as an:
+            p = await an.start_actor(
                 'nursery_mngr',
                 infect_asyncio=asyncio_mode,  # TODO, is this enabling debug mode?
                 enable_modules=[__name__],
