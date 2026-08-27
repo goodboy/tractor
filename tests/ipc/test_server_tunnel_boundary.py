@@ -7,6 +7,7 @@ from __future__ import annotations
 import trio
 
 from tractor.discovery import (
+    BindspaceRef,
     TunnelledAddress,
     WGTunnelSpec,
     tunnels_of,
@@ -25,8 +26,9 @@ def test_server_peels_before_endpoint_construction() -> None:
     instead of the TCP backend. Start a real listener from the
     wrapper, assert the resulting `Endpoint` contains only a resolved
     `TCPAddress`. Prove `Endpoint.declared_addr` still retains the
-    original tunnel namespace for diagnostics and the future
-    bindspace lifecycle.
+    original declaration and realized bindspace ref for
+    diagnostics. This retained metadata does not claim the listener
+    process entered that namespace.
 
     '''
     overlay = TCPAddress('127.0.0.1', 0)
@@ -38,11 +40,19 @@ def test_server_peels_before_endpoint_construction() -> None:
             netns='actor-net',
         ),
     )
+    ref: BindspaceRef = BindspaceRef(
+        kind='netns',
+        key='actor-net',
+        inode=1234,
+    )
+    declared: TunnelledAddress = tunnelled.with_bindspace_ref(
+        ref,
+    )
 
     async def main() -> None:
         async with open_ipc_server() as server:
             eps = await server.listen_on(
-                accept_addrs=[tunnelled],
+                accept_addrs=[declared],
             )
             assert len(eps) == 1
             endpoint = eps[0]
@@ -51,9 +61,9 @@ def test_server_peels_before_endpoint_construction() -> None:
             _, host, port = endpoint.addr.unwrap()
             assert host == overlay.unwrap()[1]
             assert port > 0
-            assert endpoint.addr is not tunnelled
-            assert endpoint.declared_addr is tunnelled
-            namespace: tuple[str, str] = ('netns', 'actor-net')
+            assert endpoint.addr is not declared
+            assert endpoint.declared_addr is declared
+            namespace: tuple[str, int] = ('netns', 1234)
             assert endpoint.namespace == namespace
             endpoint_repr: str = endpoint.pformat()
             server_repr: str = server.pformat()
@@ -61,9 +71,9 @@ def test_server_peels_before_endpoint_construction() -> None:
             assert expected_namespace in endpoint_repr
             assert ' |_namespaces:' in server_repr
             assert 'netns' in server_repr
-            assert 'actor-net' in server_repr
-            assert tunnels_of(tunnelled) == (
-                tunnelled.tunnel,
+            assert '1234' in server_repr
+            assert tunnels_of(declared) == (
+                declared.tunnel,
             )
 
             server.cancel()
