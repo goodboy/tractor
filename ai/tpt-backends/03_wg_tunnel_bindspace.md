@@ -556,8 +556,12 @@ composed maddr can name a server source or client destination (§5.4).
 
 ### 5.3 `Address.namespace`, at last
 
-- `TunnelledAddress.namespace` → `(kind, id)` e.g.
-  `('netns', 'tractor-wg0')`.
+- an unrealized `TunnelledAddress.namespace` reports its declared name
+  as `(kind, key)`, e.g. `('netns', 'tractor-wg0')`;
+- `TunnelledAddress.with_bindspace_ref()` returns a frozen declaration
+  annotated with `bindspace.ref`, never the FD-bearing `Bindspace`.
+  Its `.namespace` reports `(kind, inode)` so the
+  realized ref remains stable across rename or unlink;
 - existing plain backends implement it explicitly as `None`, so the
   Protocol does not lie and tunnel delegation needs no `getattr()`
   fallback.

@@ -94,6 +94,7 @@ import trio
 from ..msg._local import ProcessLocal
 from ._bindspace import (
     Bindspace,
+    BindspaceRef,
     BindspaceSpec,
     open_bindspace,
 )
@@ -864,6 +865,7 @@ def _wg_proto_code() -> int:
 class TunnelledAddress(
     msgspec.Struct,
     frozen=True,
+    omit_defaults=True,
 ):
     '''
     An `Address` annotated with the tunnel it must be reached
@@ -878,6 +880,32 @@ class TunnelledAddress(
     '''
     overlay: Address|TunnelledAddress
     tunnel: TunnelSpec
+    bindspace_ref: BindspaceRef|None = None
+
+    def __post_init__(self) -> None:
+        '''
+        Validate the retained ref against the tunnel declaration.
+
+        '''
+        ref: BindspaceRef|None = self.bindspace_ref
+        if ref is None:
+            return
+        if not isinstance(ref, BindspaceRef):
+            raise TypeError(
+                '`TunnelledAddress.bindspace_ref` must be a '
+                '`BindspaceRef` or `None`!'
+            )
+
+        declared_netns: str|None = self.tunnel.netns
+        if (
+            declared_netns is not None
+            and
+            ref.key != declared_netns
+        ):
+            raise ValueError(
+                f'Declared netns {declared_netns!r} does not match '
+                f'realized bindspace key {ref.key!r}!'
+            )
 
     # ---- delegated, so the runtime can't tell the difference ----
 
@@ -917,13 +945,34 @@ class TunnelledAddress(
     @property
     def namespace(self) -> tuple[str, str|int]|None:
         '''
-        The tunnel's netns, when it declares one.
+        Return the realized ref or declared tunnel netns.
 
         '''
+        ref: BindspaceRef|None = self.bindspace_ref
+        if ref is not None:
+            return (
+                ref.kind,
+                ref.inode,
+            )
+
         if (netns := self.tunnel.netns) is None:
             return self.overlay.namespace
 
         return ('netns', netns)
+
+    def with_bindspace_ref(
+        self,
+        ref: BindspaceRef,
+    ) -> TunnelledAddress:
+        '''
+        Return a copy retaining one realized bindspace ref.
+
+        '''
+        realized: TunnelledAddress = msgspec.structs.replace(
+            self,
+            bindspace_ref=ref,
+        )
+        return realized
 
     def __repr__(self) -> str:
         return (
