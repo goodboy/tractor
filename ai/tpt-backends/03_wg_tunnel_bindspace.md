@@ -570,6 +570,13 @@ composed maddr can name a server source or client destination (§5.4).
   `Server.pformat()` expose that value as the cheapest proof the layer
   is wired.
 
+Deferred follow-ups:
+
+- add native tagged encoding for the complete `TunnelledAddress` graph,
+  including its concrete overlay-address union, tunnel-spec union and
+  optional `BindspaceRef`. Once that codec exists, tests should perform
+  typed roundtrips instead of inspecting an untyped decoded payload.
+
 Use `github/ns_aware@e4688cad` as prototype evidence, not code to
 cherry-pick unchanged. Its `/proc/<pid>/ns/<type>` inode reader and
 `ip netns identify` probe establish the useful `(key, inode)` reference
