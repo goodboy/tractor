@@ -1,5 +1,5 @@
 '''
-Bindspace declaration, identity and live-capability contracts.
+Bindspace declaration, reference and live-capability contracts.
 
 '''
 from __future__ import annotations
@@ -14,9 +14,9 @@ import pytest
 import trio
 
 from tractor.discovery import (
-    BindspaceHandle,
-    BindspaceIdentity,
+    Bindspace,
     BindspaceOwnership,
+    BindspaceRef,
     BindspaceSpec,
     CURRENT_NETNS,
     attach_netns,
@@ -29,15 +29,15 @@ from tractor.msg import ProcessLocal
 
 def test_bindspace_declarations_roundtrip() -> None:
     '''
-    Spawn configuration and realized identity must cross actor IPC.
+    Spawn configuration and realized refs must cross actor IPC.
 
     Encode both frozen structs through msgpack and decode with their
-    concrete types, proving names and stable inode identity survive
+    concrete types, proving names and stable inode refs survive
     without carrying any process-local capability state.
 
     '''
     values: tuple[
-        BindspaceSpec|BindspaceIdentity,
+        BindspaceSpec|BindspaceRef,
         ...,
     ] = (
         BindspaceSpec(
@@ -45,16 +45,16 @@ def test_bindspace_declarations_roundtrip() -> None:
             key='tractor-wg0',
             lifecycle='open',
         ),
-        BindspaceIdentity(
+        BindspaceRef(
             kind='netns',
             key='tractor-wg0',
             inode=1234,
         ),
     )
-    value: BindspaceSpec|BindspaceIdentity
+    value: BindspaceSpec|BindspaceRef
     for value in values:
         encoded: bytes = msgspec.msgpack.encode(value)
-        decoded: BindspaceSpec|BindspaceIdentity = (
+        decoded: BindspaceSpec|BindspaceRef = (
             msgspec.msgpack.decode(
                 encoded,
                 type=type(value),
@@ -63,16 +63,17 @@ def test_bindspace_declarations_roundtrip() -> None:
         assert decoded == value
 
 
-def test_bindspace_handle_pins_local_capability(
+def test_bindspace_pins_local_capability(
     tmp_path: Path,
 ) -> None:
     '''
-    A live handle pins one exact FD and realized identity.
+    A live bindspace pins one exact FD and realized ref.
 
-    Open a stand-in platform handle, record its inode in the realized
-    identity and construct an owned capability. Prove the generic
+    Open a stand-in platform FD, record its inode in the realized
+    ref and construct an owned capability. Prove the generic
     msgspec struct retains that exact local state. Its ability to
-    encode ordinary fields is not authority to transfer the handle.
+    encode ordinary fields is not authority to transfer the
+    bindspace.
 
     '''
     token_path: Path = tmp_path / 'bindspace'
@@ -86,36 +87,36 @@ def test_bindspace_handle_pins_local_capability(
             key='tractor-wg0',
             lifecycle='open',
         )
-        identity: BindspaceIdentity = BindspaceIdentity(
+        ref: BindspaceRef = BindspaceRef(
             kind='netns',
             key='tractor-wg0',
             inode=inode,
         )
-        handle: BindspaceHandle = BindspaceHandle(
+        bindspace: Bindspace = Bindspace(
             spec=spec,
-            identity=identity,
+            ref=ref,
             namespace_fd=namespace_fd,
             ownership='owned',
         )
 
-        assert handle.spec is spec
-        assert handle.identity is identity
-        assert handle.namespace_fd == namespace_file.fileno()
-        assert handle.ownership == 'owned'
-        assert isinstance(handle, msgspec.Struct)
-        assert isinstance(handle, ProcessLocal)
+        assert bindspace.spec is spec
+        assert bindspace.ref is ref
+        assert bindspace.namespace_fd == namespace_file.fileno()
+        assert bindspace.ownership == 'owned'
+        assert isinstance(bindspace, msgspec.Struct)
+        assert isinstance(bindspace, ProcessLocal)
         with pytest.raises(
             TypeError,
             match='_ProcessLocalToken.*unsupported',
         ):
-            msgspec.msgpack.encode(handle)
+            msgspec.msgpack.encode(bindspace)
 
 
-def test_bindspace_handle_rejects_mismatched_identity(
+def test_bindspace_rejects_mismatched_ref(
     tmp_path: Path,
 ) -> None:
     '''
-    A name or inode mismatch would make a handle stale authority.
+    A name or inode mismatch would make a bindspace stale authority.
 
     Construct a requested named spec, then prove both a different
     realized name and an inode not belonging to the supplied FD are
@@ -128,39 +129,39 @@ def test_bindspace_handle_rejects_mismatched_identity(
         kind='netns',
         key='tractor-wg0',
     )
-    # Keep ownership and FD fixed so only identity changes below.
+    # Keep ownership and FD fixed so only the ref changes below.
     ownership: BindspaceOwnership = 'borrowed'
     namespace_file: BinaryIO
     with token_path.open('rb') as namespace_file:
         namespace_fd: int = namespace_file.fileno()
-        wrong_name: BindspaceIdentity = BindspaceIdentity(
+        wrong_name: BindspaceRef = BindspaceRef(
             kind='netns',
             key='other-wg',
             inode=token_path.stat().st_ino,
         )
         with pytest.raises(
             ValueError,
-            match='Spec.key.*Identity.key',
+            match='Spec.key.*Ref.key',
         ):
-            BindspaceHandle(
+            Bindspace(
                 spec=spec,
-                identity=wrong_name,
+                ref=wrong_name,
                 namespace_fd=namespace_fd,
                 ownership=ownership,
             )
 
-        wrong_inode: BindspaceIdentity = BindspaceIdentity(
+        wrong_inode: BindspaceRef = BindspaceRef(
             kind='netns',
             key='tractor-wg0',
             inode=token_path.stat().st_ino + 1,
         )
         with pytest.raises(
             ValueError,
-            match='FD inode.*identity inode',
+            match='FD inode.*reference inode',
         ):
-            BindspaceHandle(
+            Bindspace(
                 spec=spec,
-                identity=wrong_inode,
+                ref=wrong_inode,
                 namespace_fd=namespace_fd,
                 ownership=ownership,
             )
@@ -170,14 +171,14 @@ def test_bindspace_handle_rejects_mismatched_identity(
     ('model', 'kwargs', 'match'),
     (
         pytest.param(
-            BindspaceIdentity,
+            BindspaceRef,
             {
                 'kind': 'netns',
                 'key': None,
                 'inode': None,
             },
             'must be a positive `int`',
-            id='identity-requires-inode',
+            id='ref-requires-inode',
         ),
         pytest.param(
             BindspaceSpec,
@@ -186,14 +187,14 @@ def test_bindspace_handle_rejects_mismatched_identity(
             id='spec-rejects-kind',
         ),
         pytest.param(
-            BindspaceIdentity,
+            BindspaceRef,
             {
                 'kind': 'vrf',
                 'key': 'blue',
                 'inode': 1234,
             },
             'Unsupported bindspace kind',
-            id='identity-rejects-kind',
+            id='ref-rejects-kind',
         ),
         pytest.param(
             BindspaceSpec,
@@ -224,19 +225,19 @@ def test_bindspace_handle_rejects_mismatched_identity(
             id='spec-rejects-lifecycle',
         ),
         pytest.param(
-            BindspaceIdentity,
+            BindspaceRef,
             {
                 'kind': 'netns',
                 'key': '',
                 'inode': 1234,
             },
-            'BindspaceIdentity.key',
-            id='identity-rejects-empty-key',
+            'BindspaceRef.key',
+            id='ref-rejects-empty-key',
         ),
     ),
 )
 def test_bindspace_models_reject_invalid_values(
-    model: type[BindspaceSpec]|type[BindspaceIdentity],
+    model: type[BindspaceSpec]|type[BindspaceRef],
     kwargs: dict[str, object],
     match: str,
 ) -> None:
@@ -245,7 +246,7 @@ def test_bindspace_models_reject_invalid_values(
 
     Parameterize the missing stable inode and future, unimplemented
     kinds. Prove neither serializable model can carry invalid
-    identity or provisioning instructions into spawn configuration.
+    refs or provisioning instructions into spawn configuration.
 
     '''
     with pytest.raises(ValueError, match=match):
@@ -260,7 +261,7 @@ def test_open_bindspace_attaches_current_netns() -> None:
     '''
     The unnamed spec must borrow and pin the caller's current netns.
 
-    Open `/proc/self/ns/net`, prove the yielded handle records its
+    Open `/proc/self/ns/net`, prove the yielded bindspace records its
     stable inode and borrowed ownership, then exit the context and
     prove the exact descriptor was closed without altering the
     namespace itself.
@@ -275,15 +276,15 @@ def test_open_bindspace_attaches_current_netns() -> None:
             kind='netns',
         )
         assert spec.key is CURRENT_NETNS
-        async with open_bindspace(spec) as handle:
-            namespace_fd: int|None = handle.namespace_fd
+        async with open_bindspace(spec) as bindspace:
+            namespace_fd: int|None = bindspace.namespace_fd
             assert namespace_fd is not None
-            assert handle.spec is spec
-            assert handle.identity.key is None
-            assert handle.identity.inode == os.fstat(
+            assert bindspace.spec is spec
+            assert bindspace.ref.key is None
+            assert bindspace.ref.inode == os.fstat(
                 namespace_fd
             ).st_ino
-            assert handle.ownership == 'borrowed'
+            assert bindspace.ownership == 'borrowed'
             return namespace_fd
 
     namespace_fd: int = trio.run(main)
@@ -324,12 +325,12 @@ def test_attach_named_netns_uses_run_directory(
             kind='netns',
             key='tractor-wg0',
         )
-        async with attach_netns(spec) as handle:
-            namespace_fd: int|None = handle.namespace_fd
+        async with attach_netns(spec) as bindspace:
+            namespace_fd: int|None = bindspace.namespace_fd
             assert namespace_fd is not None
-            assert handle.identity.key == 'tractor-wg0'
-            assert handle.identity.inode == netns_path.stat().st_ino
-            assert handle.ownership == 'borrowed'
+            assert bindspace.ref.key == 'tractor-wg0'
+            assert bindspace.ref.inode == netns_path.stat().st_ino
+            assert bindspace.ownership == 'borrowed'
             return namespace_fd
 
     namespace_fd: int = trio.run(main)
@@ -389,7 +390,7 @@ def test_open_netns_owns_lifecycle(
     Successful creation must yield ownership and remove on exit.
 
     Fake pyroute2 creation with a named stand-in file, verify the
-    yielded FD and identity while it exists, then prove FD closure
+    yielded FD and ref while it exists, then prove FD closure
     precedes resource removal when the context exits.
 
     '''
@@ -444,11 +445,11 @@ def test_open_netns_owns_lifecycle(
             key='tractor-wg0',
             lifecycle='open',
         )
-        async with open_bindspace(spec) as handle:
-            fd: int|None = handle.namespace_fd
+        async with open_bindspace(spec) as bindspace:
+            fd: int|None = bindspace.namespace_fd
             assert fd is not None
-            assert handle.ownership == 'owned'
-            assert handle.identity.inode == os.fstat(fd).st_ino
+            assert bindspace.ownership == 'owned'
+            assert bindspace.ref.inode == os.fstat(fd).st_ino
             namespace_fds.append(fd)
             events.append('yield')
 

@@ -141,9 +141,10 @@ Hard constraints learned from the existing two:
   *ALPN + relay/discovery realm* (plan 02). Do not overload this
   transport-level bind selector with process namespace lifecycle.
   Plan 03 augments an maddr/address declaration with a serializable
-  `BindspaceSpec` and a scoped, non-serializable `BindspaceHandle`;
-  the latter owns namespace identity/FD/lifetime and is consumed at
-  spawn bootstrap before a concrete address reaches transport bind.
+  `BindspaceSpec` request and host-local `BindspaceRef`. A scoped,
+  non-serializable `Bindspace` carries that ref and owns the FD/lifetime
+  used during spawn bootstrap before a concrete address reaches
+  transport bind.
   `Address.namespace` is already spec'd in the Protocol as
   "the if-available OS-specific network namespace key" and is
   currently unimplemented by both backends — plan 03 is the

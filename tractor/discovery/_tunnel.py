@@ -93,7 +93,7 @@ import trio
 
 from ..msg._local import ProcessLocal
 from ._bindspace import (
-    BindspaceHandle,
+    Bindspace,
     BindspaceSpec,
     open_bindspace,
 )
@@ -463,7 +463,7 @@ def _wg_iface_settings(
 def _sync_create_wg_iface(
     spec: WGTunnelSpec,
     config: WGInterfaceConfig,
-    bindspace: BindspaceHandle,
+    bindspace: Bindspace,
     listen_port: int|None,
     peers: tuple[dict[str, object], ...],
 ) -> None:
@@ -559,7 +559,7 @@ def _sync_create_wg_iface(
 
 def _sync_remove_wg_iface(
     spec: WGTunnelSpec,
-    bindspace: BindspaceHandle,
+    bindspace: Bindspace,
 ) -> None:
     '''
     Remove one owned WireGuard iface when it still exists.
@@ -593,7 +593,7 @@ def _sync_remove_wg_iface(
 async def open_wg_iface(
     spec: WGTunnelSpec,
     config: WGInterfaceConfig,
-    bindspace: BindspaceHandle,
+    bindspace: Bindspace,
     role: WGRole,
 ) -> AsyncIterator[WGTunnelSpec]:
     '''
@@ -637,7 +637,7 @@ async def open_wg_bindspace(
     bindspace_spec: BindspaceSpec,
     layers: Sequence[tuple[WGTunnelSpec, WGInterfaceConfig]],
     role: WGRole,
-) -> AsyncIterator[BindspaceHandle]:
+) -> AsyncIterator[Bindspace]:
     '''
     Open one bindspace and its ordered WireGuard interface stack.
 
@@ -662,7 +662,7 @@ async def open_wg_bindspace(
         ...,
     ] = tuple(layers)
     async with AsyncExitStack() as stack:
-        bindspace: BindspaceHandle = await (
+        bindspace: Bindspace = await (
             stack.enter_async_context(
                 open_bindspace(bindspace_spec)
             )

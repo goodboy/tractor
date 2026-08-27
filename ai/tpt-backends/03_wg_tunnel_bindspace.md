@@ -378,7 +378,7 @@ Keep the authority surface deliberately small:
 
 The root owns the manager's lifetime. `wgman` must outlive all
 siblings borrowing its tunnels and exit before the root drops the
-underlying namespace/capability handles. A manager crash fails closed:
+underlying namespace capabilities. A manager crash fails closed:
 dependent operations receive an explicit service error; restart, if
 enabled, reconciles declared state idempotently before advertising
 readiness again. Do not silently let siblings fall back to privileged
@@ -400,8 +400,8 @@ select the local instance of that network stack. A netns, VRF,
 interface, user namespace, or equivalent platform resource is
 orthogonal augmentation carried alongside/below the maddr.
 
-Keep two bindspace representations with deliberately different
-lifetimes:
+Keep three bindspace representations with deliberately different roles
+and lifetimes:
 
 ```python
 class BindspaceSpec(msgspec.Struct, frozen=True):
@@ -411,17 +411,17 @@ class BindspaceSpec(msgspec.Struct, frozen=True):
     lifecycle: Literal['attach', 'open']
 
 
-class BindspaceIdentity(msgspec.Struct, frozen=True):
-    '''Stable identity of the realized platform resource.'''
+class BindspaceRef(msgspec.Struct, frozen=True):
+    '''Wire-safe, non-owning ref to the realized resource.'''
     kind: str
     key: str|None             # mutable name, absent after unlink
-    inode: int                # stable Linux namespace identity
+    inode: int                # host-local Linux nsfs fingerprint
 
 
-class BindspaceHandle(ProcessLocal):
+class Bindspace(ProcessLocal):
     '''Scoped, non-serializable capability for one live bindspace.'''
     spec: BindspaceSpec
-    identity: BindspaceIdentity
+    ref: BindspaceRef
     namespace_fd: int|None
     ownership: Literal['owned', 'borrowed']
 
@@ -429,7 +429,7 @@ class BindspaceHandle(ProcessLocal):
 @acm
 async def open_bindspace(
     spec: BindspaceSpec,
-) -> AsyncGenerator[BindspaceHandle, None]:
+) -> AsyncGenerator[Bindspace, None]:
     '''
     Provision/borrow one bindspace and yield its live capability.
 
@@ -437,15 +437,17 @@ async def open_bindspace(
 ```
 
 The initial model limits `BindspaceKind` to `netns` while preserving
-the required lifetime split. `BindspaceSpec` and
-`BindspaceIdentity` are frozen msgspec structs which cross
-config/spawn serialization. `BindspaceHandle` also uses msgspec's
-generic struct storage by inheriting the global
-`tractor.msg.ProcessLocal` marker. Its hidden unsupported sentinel
-blocks direct and nested default msgspec encoding without a recursive
-IPC hot-path scan. The handle validates any supplied FD against
-`BindspaceIdentity.inode`; explicit FD transfer belongs to the
-supervisor bootstrap path. An FD avoids name-resolution TOCTOU,
+the required role split. `BindspaceSpec` is the requested resource and
+lifecycle policy. `BindspaceRef` is a serializable, non-owning,
+host-local record of the resource that was actually opened; it can be
+compared or logged, but cannot reopen, pin or enter that resource.
+`Bindspace` is the live capability and uses msgspec's generic struct
+storage by inheriting the global `tractor.msg.ProcessLocal` marker. Its
+hidden unsupported sentinel blocks direct and nested default msgspec
+encoding without a recursive IPC hot-path scan. The live bindspace
+validates any supplied FD against `BindspaceRef.inode`; explicit FD
+transfer belongs to the supervisor bootstrap path. An FD avoids
+name-resolution TOCTOU,
 survives rename/unlink, and identifies the exact namespace the parent
 provisioned. Extend the kind/field union only when a second platform
 resource is implemented.
@@ -459,7 +461,7 @@ or locally owned networking.
 The first lifecycle implementation is deliberately borrow-only:
 `attach_netns()` opens either `/proc/self/ns/net` when
 `BindspaceSpec.key = CURRENT_NETNS`, or a named entry beneath
-`/var/run/netns`. It derives identity from the opened FD, yields
+`/var/run/netns`. It derives a `BindspaceRef` from the opened FD, yields
 `ownership='borrowed'`, and closes only that FD on exit. "Attach" does
 not call `setns()`; it never creates, enters or removes a namespace.
 Future `open_netns()` creation and owned teardown remain a separate
@@ -474,7 +476,8 @@ spawn/bootstrap operation.
 
 `open_bindspace()` is **not** an address factory and does not return a
 `TunnelledAddress`. At the declaration layer, listener allocation can
-use the handle to replace an overlay while preserving every tunnel:
+use the live bindspace to replace an overlay while preserving every
+tunnel:
 
 ```python
 async with open_bindspace(
@@ -503,13 +506,13 @@ tunnel/bindspace layer:
 @acm
 async def open_netns(
     spec: BindspaceSpec,
-) -> AsyncGenerator[BindspaceHandle, None]: ...
+) -> AsyncGenerator[Bindspace, None]: ...
 
 @acm
 async def open_wg_iface(
     spec: WGTunnelSpec,
     config: WGInterfaceConfig,
-    bindspace: BindspaceHandle,
+    bindspace: Bindspace,
     role: Literal['listen', 'dial'],
 ) -> AsyncGenerator[WGTunnelSpec, None]: ...
 ```
@@ -541,7 +544,7 @@ it does not *enter* their bindspaces.
 `open_wg_bindspace()` is the initial driver for one bindspace and an
 ordered sequence of `(WGTunnelSpec, WGInterfaceConfig)` layers. It
 opens the bindspace first, enters WG interfaces outermost-first through
-`AsyncExitStack`, and yields the live `BindspaceHandle` for endpoint
+`AsyncExitStack`, and yields the live `Bindspace` for endpoint
 allocation. Exit is inside-out, so every interface is removed while the
 namespace FD remains pinned; only then can an owned namespace be
 removed. Endpoint/channel lifetimes belong inside the yielded scope.
@@ -565,10 +568,10 @@ composed maddr can name a server source or client destination (§5.4).
 
 Use `github/ns_aware@e4688cad` as prototype evidence, not code to
 cherry-pick unchanged. Its `/proc/<pid>/ns/<type>` inode reader and
-`ip netns identify` probe establish the useful `(key, inode)` identity
-pair. Layer C should move that shape into `BindspaceIdentity`, avoid a
+`ip netns identify` probe establish the useful `(key, inode)` reference
+record. Layer C should move that shape into `BindspaceRef`, avoid a
 subprocess where netlink/procfs suffices, and hold the namespace FD in
-`BindspaceHandle` to pin the identity.
+`Bindspace` to pin the referenced resource.
 
 ### 5.4 the netns/process reality — read this before designing
 
@@ -611,7 +614,7 @@ server bound in the old namespace.
   - a root/single-actor process follows the same ordering: enter during
     root bootstrap, never after actor runtime startup.
   - iface/route/WG provisioning is genuinely scoped and remains under
-    the parent/supervisor's `BindspaceHandle` context.
+    the parent/supervisor's `Bindspace` context.
   - document the constraint rather than hiding it; a
     `RuntimeError` if namespace entry is attempted after bootstrap.
 - capabilities: iface/route/WG configuration needs `CAP_NET_ADMIN`;
@@ -640,7 +643,7 @@ server bound in the old namespace.
 - teardown follows capability ownership, not just address type:
   - owned listener bindspaces tear down after endpoints/channels and
     the actor process have exited;
-  - borrowed dial/actor-wide bindspaces only release their handle;
+  - borrowed dial/actor-wide bindspaces only release their capability;
   - nested resources exit inside-out, but shared resources remain until
     their owning supervisor drops the final capability.
 - teardown must be idempotent and tolerant: an iface/netns
@@ -713,7 +716,7 @@ consider doing it *first* for exactly that reason.
 | namespace name is renamed/replaced between provision and spawn | pass an open namespace FD; verify `(key, inode)` after child entry |
 | child starts sockets/threads before `setns()` | enter in the spawn bootstrap trampoline before `_runtime.async_main()`; assert inode ordering |
 | ambient capabilities leak into actor app code | split provision/enter authority and drop caps before runtime initialization |
-| dial path tears down a shared actor bindspace | encode ownership in `BindspaceHandle`; borrowed handles never remove resources |
+| dial path tears down a shared actor bindspace | encode ownership in `Bindspace`; borrowed bindspaces never remove resources |
 | py-multiaddr#108 merged but unreleased | PEP 621 direct-revision pin + `_wg_proto_code()` gate; replace with a release floor once published |
 | `TunnelledAddress` leaks into transport reflection/type dispatch | keep wrappers through declaration/bindspace handling, call `strip_tunnels()` at channel/endpoint boundaries, and retain the boundary regressions |
 | privileged ops in a library | never `sudo`; explicit cap probe + actionable error; pre-provisioned is the default |

@@ -15,7 +15,7 @@
 # License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 '''
-Serializable bindspace declarations and live capability handles.
+Serializable bindspace declarations and live capabilities.
 
 '''
 from __future__ import annotations
@@ -91,7 +91,7 @@ def _validate_bindspace_key(
     Reject empty or path-like platform-resource names.
 
     `None` is valid. Spell it `CURRENT_NETNS` for
-    `BindspaceSpec.key`; `BindspaceIdentity.key = None` records an
+    `BindspaceSpec.key`; `BindspaceRef.key = None` records an
     unnamed realized netns.
 
     '''
@@ -145,16 +145,17 @@ class BindspaceSpec(
         )
 
 
-class BindspaceIdentity(
+class BindspaceRef(
     msgspec.Struct,
     frozen=True,
 ):
     '''
-    Serializable stable identity of one realized bindspace.
+    Serializable, non-owning ref to one realized bindspace.
 
-    `.key` is an optional, mutable namespace name. `.inode` is the
-    required kernel identity which remains stable after rename or
-    unlink.
+    `.key` is an optional mutable namespace locator. `.inode` is a
+    host-local kernel fingerprint which remains stable while the
+    resource exists or a live `Bindspace` pins it. This ref grants no
+    authority and cannot reopen the resource by itself.
 
     '''
     kind: BindspaceKind
@@ -163,14 +164,14 @@ class BindspaceIdentity(
 
     def __post_init__(self) -> None:
         '''
-        Require a stable platform identity and an optional name.
+        Require a host-local resource inode and an optional locator.
 
         '''
         _validate_bindspace_kind(self.kind)
         _validate_bindspace_key(
             self.kind,
             self.key,
-            'BindspaceIdentity.key',
+            'BindspaceRef.key',
         )
         if (
             type(self.inode) is not int
@@ -178,23 +179,23 @@ class BindspaceIdentity(
             self.inode <= 0
         ):
             raise ValueError(
-                '`BindspaceIdentity.inode` must be a positive `int`!'
+                '`BindspaceRef.inode` must be a positive `int`!'
             )
 
 
-class BindspaceHandle(
+class Bindspace(
     ProcessLocal,
 ):
     '''
     Process-local capability for one live realized bindspace.
 
     `ProcessLocal` provides compact typed storage plus a default
-    wire-encoding guard. Explicit FD transfer and handle construction
-    belong to the supervisor's spawn/bootstrap path.
+    wire-encoding guard. `Bindspace` construction and explicit FD
+    transfer belong to the supervisor's spawn/bootstrap path.
 
     '''
     spec: BindspaceSpec
-    identity: BindspaceIdentity
+    ref: BindspaceRef
     namespace_fd: int|None
     ownership: BindspaceOwnership
 
@@ -204,23 +205,23 @@ class BindspaceHandle(
 
         '''
         spec: BindspaceSpec = self.spec
-        identity: BindspaceIdentity = self.identity
+        ref: BindspaceRef = self.ref
         namespace_fd: int|None = self.namespace_fd
         ownership: BindspaceOwnership = self.ownership
 
-        if spec.kind != identity.kind:
+        if spec.kind != ref.kind:
             raise ValueError(
                 '`BindspaceSpec.kind` does not match '
-                '`BindspaceIdentity.kind`!'
+                '`BindspaceRef.kind`!'
             )
         if (
             spec.key is not None
             and
-            spec.key != identity.key
+            spec.key != ref.key
         ):
             raise ValueError(
                 '`BindspaceSpec.key` does not match '
-                '`BindspaceIdentity.key`!'
+                '`BindspaceRef.key`!'
             )
         if ownership not in get_args(BindspaceOwnership):
             raise ValueError(
@@ -246,20 +247,20 @@ class BindspaceHandle(
                     '`namespace_fd` must be non-negative or `None`!'
                 )
             fd_inode: int = os.fstat(namespace_fd).st_ino
-            if identity.inode != fd_inode:
+            if ref.inode != fd_inode:
                 raise ValueError(
                     f'Namespace FD inode {fd_inode} does not match '
-                    f'identity inode {identity.inode}!'
+                    f'reference inode {ref.inode}!'
                 )
 
     def __repr__(self) -> str:
         '''
-        Render capability identity without dereferencing its FD.
+        Render the capability ref without dereferencing its FD.
 
         '''
         return (
             f'{type(self).__name__}('
-            f'identity={self.identity!r}, '
+            f'ref={self.ref!r}, '
             f'ownership={self.ownership!r}, '
             f'namespace_fd={self.namespace_fd!r})'
         )
@@ -269,7 +270,7 @@ class BindspaceHandle(
 async def _pin_netns(
     spec: BindspaceSpec,
     ownership: BindspaceOwnership,
-) -> AsyncIterator[BindspaceHandle]:
+) -> AsyncIterator[Bindspace]:
     '''
     Pin one existing Linux network namespace with explicit ownership.
 
@@ -286,18 +287,18 @@ async def _pin_netns(
     )
     try:
         inode: int = os.fstat(namespace_fd).st_ino
-        identity: BindspaceIdentity = BindspaceIdentity(
+        ref: BindspaceRef = BindspaceRef(
             kind='netns',
             key=key,
             inode=inode,
         )
-        handle: BindspaceHandle = BindspaceHandle(
+        bindspace: Bindspace = Bindspace(
             spec=spec,
-            identity=identity,
+            ref=ref,
             namespace_fd=namespace_fd,
             ownership=ownership,
         )
-        yield handle
+        yield bindspace
     finally:
         os.close(namespace_fd)
 
@@ -305,7 +306,7 @@ async def _pin_netns(
 @acm
 async def attach_netns(
     spec: BindspaceSpec,
-) -> AsyncIterator[BindspaceHandle]:
+) -> AsyncIterator[Bindspace]:
     '''
     Borrow and pin one existing Linux network namespace.
 
@@ -326,8 +327,8 @@ async def attach_netns(
     async with _pin_netns(
         spec,
         ownership='borrowed',
-    ) as handle:
-        yield handle
+    ) as bindspace:
+        yield bindspace
 
 
 def _create_netns(
@@ -367,7 +368,7 @@ def _remove_netns(
 @acm
 async def open_netns(
     spec: BindspaceSpec,
-) -> AsyncIterator[BindspaceHandle]:
+) -> AsyncIterator[Bindspace]:
     '''
     Create, pin and own one named Linux network namespace.
 
@@ -404,8 +405,8 @@ async def open_netns(
         async with _pin_netns(
             spec,
             ownership='owned',
-        ) as handle:
-            yield handle
+        ) as bindspace:
+            yield bindspace
     finally:
         if created:
             with trio.CancelScope(shield=True):
@@ -419,7 +420,7 @@ async def open_netns(
 @acm
 async def open_bindspace(
     spec: BindspaceSpec,
-) -> AsyncIterator[BindspaceHandle]:
+) -> AsyncIterator[Bindspace]:
     '''
     Dispatch one declared bindspace lifecycle.
 
@@ -428,8 +429,8 @@ async def open_bindspace(
 
     '''
     if spec.lifecycle == 'attach':
-        async with attach_netns(spec) as handle:
-            yield handle
+        async with attach_netns(spec) as bindspace:
+            yield bindspace
     else:
-        async with open_netns(spec) as handle:
-            yield handle
+        async with open_netns(spec) as bindspace:
+            yield bindspace
