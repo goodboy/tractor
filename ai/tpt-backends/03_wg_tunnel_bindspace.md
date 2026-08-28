@@ -620,6 +620,12 @@ server bound in the old namespace.
   - the child spawn/bootstrap trampoline calls `setns()` **before**
     `_runtime.async_main()`, `IPCServer.listen_on()`, parent-channel
     connection, or creation of any worker thread/socket.
+  - `spawn._netns.enter_netns()` is the first private bootstrap
+    primitive: it checks the inherited FD against the expected inode,
+    calls `setns(fd, CLONE_NEWNET)`, and verifies
+    `/proc/self/ns/net` before returning. It deliberately does not own
+    or close the FD; spawn propagation and status reporting remain the
+    caller's next integration boundary.
   - only after successful entry does the child drop namespace-entry
     privileges and initialize the actor runtime.
   - a root/single-actor process follows the same ordering: enter during
