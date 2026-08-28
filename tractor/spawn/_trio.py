@@ -51,6 +51,7 @@ from tractor.msg import (
 from ._spawn import (
     hard_kill,
     soft_kill,
+    wait_for_peer_or_proc_death,
 )
 
 
@@ -81,23 +82,24 @@ async def trio_proc(
 
 ) -> None:
     '''
-    Create a new ``Process`` using a "spawn method" as (configured using
-    ``try_set_start_method()``).
+    Create a new ``Process`` using a "spawn method" as (configured
+    using ``try_set_start_method()``).
 
-    This routine should be started in a actor runtime task and the logic
-    here is to be considered the core supervision strategy.
+    This routine should be started in a actor runtime task and the
+    logic here is to be considered the core supervision strategy.
 
     '''
     spawn_cmd = [
         sys.executable,
         "-m",
-        # Hardcode this (instead of using ``_child.__name__`` to avoid a
-        # double import warning: https://stackoverflow.com/a/45070583
+        # Hardcode this (instead of using ``_child.__name__`` to
+        # avoid a double import warning:
+        # https://stackoverflow.com/a/45070583
         "tractor._child",
         # We provide the child's unique identifier on this exec/spawn
-        # line for debugging purposes when viewing the process tree from
-        # the OS; it otherwise can be passed via the parent channel if
-        # we prefer in the future (for privacy).
+        # line for debugging purposes when viewing the process tree
+        # from the OS; it otherwise can be passed via the parent
+        # channel if we prefer in the future (for privacy).
         "--uid",
         # TODO, how to pass this over "wire" encodings like
         # cmdline args?
@@ -115,18 +117,32 @@ async def trio_proc(
         ]
     # Tell child to run in guest mode on top of ``asyncio`` loop
     if infect_asyncio:
-        spawn_cmd.append("--asyncio")
+        spawn_cmd.append('--asyncio')
 
     cancelled_during_spawn: bool = False
     proc: trio.Process|None = None
     ipc_server: _server.Server = actor_nursery._actor.ipc_server
+    peer_event: trio.Event|None = None
     try:
         try:
-            proc: trio.Process = await trio.lowlevel.open_process(spawn_cmd, **proc_kwargs)
+            proc: trio.Process = await trio.lowlevel.open_process(
+                spawn_cmd,
+                **proc_kwargs,
+            )
             log.runtime(
                 f'Started new child subproc\n'
                 f'(>\n'
                 f' |_{proc}\n'
+            )
+
+            # `ActorNursery.cancel()` may inspect this event as soon
+            # as the provisional child is published below. Register
+            # the event synchronously before
+            # `wait_for_peer_or_proc_death()` opens its nursery and
+            # checkpoints.
+            peer_event = ipc_server._peer_connected.setdefault(
+                subactor.aid.uid,
+                trio.Event(),
             )
 
             # No `Portal` exists until the IPC handshake returns
@@ -152,8 +168,11 @@ async def trio_proc(
             # wait for actor to spawn and connect back to us
             # channel should have handshake completed by the
             # local actor by the time we get a ref to it
-            event, chan = await ipc_server.wait_for_peer(
-                subactor.aid.uid
+            event, chan = await wait_for_peer_or_proc_death(
+                ipc_server=ipc_server,
+                uid=subactor.aid.uid,
+                proc_wait=proc.wait,
+                proc_repr=proc,
             )
 
         except trio.Cancelled:
@@ -269,21 +288,21 @@ async def trio_proc(
                 # to hold off on relaying SIGINT until that child
                 # is complete.
                 # https://github.com/goodboy/tractor/issues/320
-                # -[ ] we need to handle non-root parent-actors specially
-                # by somehow determining if a child is in debug and then
-                # avoiding cancel/kill of said child by this
-                # (intermediary) parent until such a time as the root says
-                # the pdb lock is released and we are good to tear down
-                # (our children)..
+                # -[ ] we need to handle non-root parent-actors
+                # specially by somehow determining if a child is in
+                # debug and then avoiding cancel/kill of said child
+                # by this (intermediary) parent until such a time as
+                # the root says the pdb lock is released and we are
+                # good to tear down (our children)..
                 #
                 # -[ ] so maybe something like this where we try to
-                #     acquire the lock and get notified of who has it,
-                #     check that uid against our known children?
+                #     acquire the lock and get notified of who has
+                #     it, check that uid against our known children?
                 # this_uid: tuple[str, str] = current_actor().uid
                 # await debug.acquire_debug_lock(this_uid)
 
                 if proc.poll() is None:
-                    log.cancel(f"Attempting to hard kill {proc}")
+                    log.cancel(f'Attempting to hard kill {proc}')
                     await hard_kill(
                         proc,
                         # NOTE, pass through so post-SIGKILL we
@@ -302,9 +321,18 @@ async def trio_proc(
                         subactor=subactor,
                     )
 
-                log.debug(f"Joined {proc}")
+                log.debug(f'Joined {proc}')
         else:
             log.warning('Nursery cancelled before sub-proc started')
+
+        if (
+            peer_event is not None
+            and
+            ipc_server._peer_connected.get(
+                subactor.aid.uid,
+            ) is peer_event
+        ):
+            ipc_server._peer_connected.pop(subactor.aid.uid)
 
         if not cancelled_during_spawn:
             # pop child entry to indicate we no longer managing this
