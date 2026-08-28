@@ -40,6 +40,9 @@ Broadcast fan-out
 .. autoexception:: Lagged
    :show-inheritance:
 
+.. autoexception:: BroadcastReceiveError
+   :show-inheritance:
+
 A single-producer, many-consumer broadcast layer over any
 ``trio``-style receive channel: non-lossy for the *fastest*
 consumer while slower consumers raise :class:`Lagged` (a
@@ -47,6 +50,13 @@ consumer while slower consumers raise :class:`Lagged` (a
 internal ring. This is exactly the machinery behind
 :meth:`tractor.MsgStream.subscribe` — see
 ``examples/streaming_broadcast_fanout.py``.
+
+If the shared underlying receiver raises an ordinary exception, the
+subscriber which owned that receive gets the original failure.
+Waiting peers drain their retained values and then raise
+:class:`BroadcastReceiveError`, with the original failure available
+as ``__cause__``. Later subscribers observe the same terminal state
+without retrying the failed underlying receiver.
 
 ExceptionGroup helpers
 ----------------------

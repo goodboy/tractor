@@ -171,6 +171,20 @@ keeps pace with the *fastest* subscriber; a task falling more
 than the buffered window behind has its next receive raise
 ``tractor.trionics.Lagged`` to say it lost data.
 
+Each ``BroadcastReceiver`` is one logical subscription cursor, so
+give every concurrent consumer task its own receiver. Overlapping
+``receive()`` calls on the same handle raise
+``trio.BusyResourceError`` instead of racing that cursor. In strict
+mode values are never skipped silently: the consumer either reads
+each retained value in sequence or receives an explicit ``Lagged``
+error after exceeding the buffer window.
+
+Pass ``raise_on_lag=False`` when a consumer may drop old values and
+resume from the oldest retained item instead. The receiver logs the
+overrun rather than raising. Each child subscription chooses its own
+policy; the first call also fixes the policy of the stream's root
+receive handle because broadcaster allocation is irreversible.
+
 The broadcast handle stays duplex btw: it proxies ``send()``
 through to the underlying stream, so each subscriber task can
 keep talking upstream while consuming its fan-out copy.
