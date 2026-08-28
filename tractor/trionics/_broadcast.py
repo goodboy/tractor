@@ -184,12 +184,18 @@ class BroadcastState(Struct):
 
 class BroadcastReceiver(ReceiveChannel):
     '''
-    A memory receive channel broadcaster which is non-lossy for
-    the fastest consumer.
+    One logical subscriber to a shared receive-channel broadcast.
 
-    Additional consumer tasks can receive all produced values by
-    registering with ``.subscribe()`` and receiving from the new
-    instance it delivers.
+    Each instance owns one sequence cursor. Additional consumer tasks
+    must call `.subscribe()` and receive through the new instance it
+    yields. Overlapping `.receive()` calls on the same instance raise
+    `trio.BusyResourceError` rather than racing that cursor or the
+    receiver's close-cancellation state.
+
+    A strict subscriber reads each retained value in sequence. Falling
+    behind the retention window raises `Lagged` instead of silently
+    losing values; `raise_on_lag=False` explicitly opts into dropping
+    displaced values.
 
     '''
     def __init__(
@@ -219,6 +225,7 @@ class BroadcastReceiver(ReceiveChannel):
         self._closed: bool = False
         self._raise_on_lag = raise_on_lag
         self._wait_scope: trio.CancelScope|None = None
+        self._receive_task: trio.lowlevel.Task|None = None
 
     def receive_nowait(
         self,
@@ -434,6 +441,30 @@ class BroadcastReceiver(ReceiveChannel):
             state.recv_scope = None
 
     async def receive(self) -> ReceiveType:
+        '''
+        Receive the next value for this subscriber's sequence cursor.
+
+        Only one task may receive through this instance at a time. Use
+        `.subscribe()` to give each concurrent consumer its own cursor
+        and loss/lag policy. `trio.BusyResourceError` identifies the
+        task which owns an already-active receive.
+
+        '''
+        if receive_task := self._receive_task:
+            raise trio.BusyResourceError(
+                'another task is already receiving from this '
+                '`BroadcastReceiver`\n'
+                f'active receive task: {receive_task.name!r}\n'
+                f'{receive_task!r}'
+            )
+
+        self._receive_task = trio.lowlevel.current_task()
+        try:
+            return await self._receive()
+        finally:
+            self._receive_task = None
+
+    async def _receive(self) -> ReceiveType:
         key = self.key
         state = self._state
 
@@ -518,11 +549,12 @@ class BroadcastReceiver(ReceiveChannel):
 
     ) -> AsyncIterator[BroadcastReceiver]:
         '''
-        Subscribe for values from this broadcast receiver.
+        Create a receiver with its own logical subscription cursor.
 
-        Returns a new ``BroadCastReceiver`` which is registered for and
-        pulls data from a clone of the original
-        ``trio.abc.ReceiveChannel`` provided at creation.
+        The new `BroadcastReceiver` is registered against the shared
+        source and receives every retained value in sequence. Give each
+        concurrent consumer task its own receiver instead of sharing
+        one instance across overlapping `.receive()` calls.
 
         '''
         if self._closed:

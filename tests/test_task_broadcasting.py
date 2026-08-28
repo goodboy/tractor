@@ -1018,6 +1018,52 @@ def test_closing_non_owner_preserves_source_wait() -> None:
     trio.run(main)
 
 
+def test_concurrent_receive_raises_busy() -> None:
+    '''
+    Reject concurrent receives on one broadcast handle.
+
+    A receiver stores one private peer-wait cancellation scope. If two
+    tasks receive through the same handle, the second task can replace
+    that scope and prevent `BroadcastReceiver.aclose()` from waking the
+    first task. Block one task in the shared source receive, then prove
+    a second call raises `BusyResourceError` before it can mutate any
+    per-receiver wait state. Releasing the source proves the original
+    receive remains usable.
+
+    '''
+    async def main() -> None:
+        tx, rx = trio.open_memory_channel(1)
+        brx = broadcast_receiver(rx, 1)
+        values: list[int] = []
+
+        async def receive() -> None:
+            values.append(await brx.receive())
+
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(
+                receive,
+                name='first broadcast consumer',
+            )
+
+            # Synchronize with the background task after it blocks in
+            # the shared source `.receive()`, ensuring the next call is
+            # concurrent with an already-active receive on this handle.
+            while brx._state.recv_ready is None:
+                await trio.lowlevel.checkpoint()
+
+            with pytest.raises(
+                trio.BusyResourceError,
+                match='first broadcast consumer',
+            ):
+                await brx.receive()
+
+            await tx.send(1)
+
+        assert values == [1]
+
+    trio.run(main)
+
+
 @pytest.mark.parametrize(
     'first_outcome',
     [
