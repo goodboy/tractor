@@ -34,6 +34,7 @@ from typing import (
 import trio
 from trio import TaskStatus
 
+from .._exceptions import ActorFailure
 from ..devx import debug
 from tractor.runtime._state import (
     _runtime_vars,
@@ -50,6 +51,7 @@ from tractor.msg import types as msgtypes
 
 if TYPE_CHECKING:
     from tractor.ipc import (
+        _server,
         Channel,
     )
     from tractor.runtime._supervise import ActorNursery
@@ -79,6 +81,101 @@ else:
 
     async def proc_waiter(proc: mp.Process) -> None:
         await trio.lowlevel.wait_readable(proc.sentinel)
+
+
+async def wait_for_peer_or_proc_death(
+    ipc_server: _server.Server,
+    uid: tuple[str, str],
+    proc_wait: Callable[[], Awaitable[int]],
+    proc_repr: object = '',
+) -> tuple[trio.Event, Channel]:
+    '''
+    Race a child handshake against process death during bootstrap.
+
+    A child can exit before connecting to its parent. Waiting only on
+    `IPCServer.wait_for_peer()` would then park its spawning task and
+    leave the dead process unreaped. Run both waits in one nursery and
+    let either completed result cancel its sibling.
+
+    Return the normal peer event and channel when the handshake wins.
+    Raise `ActorFailure` with the process status when death wins.
+
+    Adapted from goodboy's Claude Code-assisted implementation in
+    commit `3b0724eba85b4014170ed95773e1e41a60d5c513`.
+
+    '''
+    handshake: tuple[trio.Event, Channel]|None = None
+    handshake_error: BaseException|None = None
+    returncode: int|None = None
+    death_error: BaseException|None = None
+
+    async def wait_for_handshake() -> None:
+        '''
+        Publish a connected peer before cancelling the death waiter.
+
+        '''
+        nonlocal handshake
+        nonlocal handshake_error
+        try:
+            handshake = await ipc_server.wait_for_peer(uid)
+        except trio.Cancelled:
+            if (
+                returncode is not None
+                or
+                death_error is not None
+            ):
+                log.debug(
+                    'Peer-handshake waiter cancelled after '
+                    f'process wait completed for {uid!r}'
+                )
+            raise
+        except BaseException as exc:
+            handshake_error = exc
+        nursery.cancel_scope.cancel()
+
+    async def wait_for_death() -> None:
+        '''
+        Publish child exit before cancelling the handshake waiter.
+
+        '''
+        nonlocal returncode
+        nonlocal death_error
+        try:
+            returncode = await proc_wait()
+        except trio.Cancelled:
+            if (
+                handshake is not None
+                or
+                handshake_error is not None
+            ):
+                log.debug(
+                    'Process-death waiter cancelled after '
+                    f'peer wait completed for {uid!r}'
+                )
+            raise
+        except BaseException as exc:
+            death_error = exc
+        nursery.cancel_scope.cancel()
+
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(wait_for_handshake)
+        nursery.start_soon(wait_for_death)
+
+    if handshake_error is not None:
+        raise handshake_error
+    if death_error is not None:
+        raise death_error
+
+    if returncode is not None:
+        raise ActorFailure(
+            f'Sub-actor {uid!r} died during boot '
+            f'(rc={returncode!r}) before completing '
+            f'parent-handshake.\n'
+            f'  proc: {proc_repr}'
+        )
+
+    assert handshake is not None
+    return handshake
 
 
 def try_set_start_method(
