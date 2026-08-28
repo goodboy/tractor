@@ -26,7 +26,10 @@ from ast import literal_eval
 from typing import TYPE_CHECKING
 
 from .runtime._runtime import Actor
-from .spawn._entry import _trio_main
+from .spawn._entry import (
+    _consume_netns_bootstrap,
+    _trio_main,
+)
 
 if TYPE_CHECKING:
     from .discovery._addr import UnwrappedAddress
@@ -52,6 +55,7 @@ def _actor_child_main(
     parent_addr: UnwrappedAddress | None,
     infect_asyncio: bool,
     spawn_method: SpawnMethodKey = 'trio',
+    netns_bootstrap: tuple[int, int]|None = None,
 
 ) -> None:
     '''
@@ -62,7 +66,13 @@ def _actor_child_main(
     invokes this from inside a fresh `concurrent.interpreters`
     sub-interpreter via `Interpreter.call()`.
 
+    Consume `netns_bootstrap` before Trio patching, actor construction,
+    process-title setup, or actor-runtime entry. The spawn backend must
+    supply an exclusively child-owned FD duplicate.
+
     '''
+    _consume_netns_bootstrap(netns_bootstrap)
+
     # Apply defensive monkey-patches for upstream `trio`
     # bugs we've encountered while running tractor — see
     # `tractor.trionics.patches` for the catalog +
