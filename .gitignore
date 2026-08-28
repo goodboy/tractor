@@ -168,3 +168,267 @@ gh/
 
 # LLM conversations that should remain private
 docs/conversations/
+
+# BEGIN ai.skillz: direct:symlink:claude:run-tests
+/.claude/skills/run-tests/SKILL.md
+# END ai.skillz: direct:symlink:claude:run-tests
+
+# BEGIN ai.skillz: direct:symlink:opencode:run-tests
+/.opencode/skills/run-tests/SKILL.md
+# END ai.skillz: direct:symlink:opencode:run-tests
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:run-tests
+/.opencode/commands/run-tests.md
+# END ai.skillz: direct:symlink:opencode:command:run-tests
+
+# BEGIN ai.skillz: direct:symlink:claude:gish
+/.claude/skills/gish
+# END ai.skillz: direct:symlink:claude:gish
+
+# BEGIN ai.skillz: direct:symlink:opencode:gish
+/.opencode/skills/gish
+# END ai.skillz: direct:symlink:opencode:gish
+
+# BEGIN ai.skillz: direct:symlink:claude:resolve-conflicts
+/.claude/skills/resolve-conflicts
+# END ai.skillz: direct:symlink:claude:resolve-conflicts
+
+# BEGIN ai.skillz: direct:symlink:opencode:resolve-conflicts
+/.opencode/skills/resolve-conflicts
+# END ai.skillz: direct:symlink:opencode:resolve-conflicts
+
+# BEGIN ai.skillz: direct:symlink:claude:git-mgmt
+/.claude/skills/git-mgmt
+# END ai.skillz: direct:symlink:claude:git-mgmt
+
+# BEGIN ai.skillz: direct:symlink:opencode:git-mgmt
+/.opencode/skills/git-mgmt
+# END ai.skillz: direct:symlink:opencode:git-mgmt
+
+# BEGIN ai.skillz: runtime:open-wkt
+/wkts/
+# END ai.skillz: runtime:open-wkt
+
+# BEGIN ai.skillz: direct:symlink:claude:open-wkt
+/.claude/skills/open-wkt
+# END ai.skillz: direct:symlink:claude:open-wkt
+
+# BEGIN ai.skillz: direct:symlink:opencode:open-wkt
+/.opencode/skills/open-wkt
+# END ai.skillz: direct:symlink:opencode:open-wkt
+
+# BEGIN ai.skillz: direct:symlink:claude:close-wkt
+/.claude/skills/close-wkt
+# END ai.skillz: direct:symlink:claude:close-wkt
+
+# BEGIN ai.skillz: direct:symlink:opencode:close-wkt
+/.opencode/skills/close-wkt
+# END ai.skillz: direct:symlink:opencode:close-wkt
+
+# BEGIN ai.skillz: runtime:code-review
+.ai/code-review/reports/
+# END ai.skillz: runtime:code-review
+
+# BEGIN ai.skillz: direct:symlink:claude:code-review
+/.claude/skills/code-review
+# END ai.skillz: direct:symlink:claude:code-review
+
+# BEGIN ai.skillz: direct:symlink:opencode:code-review
+/.opencode/skills/code-review
+# END ai.skillz: direct:symlink:opencode:code-review
+
+# BEGIN ai.skillz: direct:symlink:claude:code-nav-refs
+/.claude/skills/code-nav-refs
+# END ai.skillz: direct:symlink:claude:code-nav-refs
+
+# BEGIN ai.skillz: direct:symlink:opencode:code-nav-refs
+/.opencode/skills/code-nav-refs
+# END ai.skillz: direct:symlink:opencode:code-nav-refs
+
+# BEGIN ai.skillz: runtime:code-review-changes
+.claude/review_context.md
+.claude/review_regression.md
+.claude/review_replies/
+# END ai.skillz: runtime:code-review-changes
+
+# BEGIN ai.skillz: direct:symlink:claude:code-review-changes
+/.claude/skills/code-review-changes
+# END ai.skillz: direct:symlink:claude:code-review-changes
+
+# BEGIN ai.skillz: direct:symlink:opencode:code-review-changes
+/.opencode/skills/code-review-changes
+# END ai.skillz: direct:symlink:opencode:code-review-changes
+
+# BEGIN ai.skillz: runtime:commit-msg
+.claude/skills/commit-msg/msgs/
+.claude/git_commit_msg_LATEST.md
+# END ai.skillz: runtime:commit-msg
+
+# BEGIN ai.skillz: direct:symlink:claude:commit-msg
+/.claude/skills/commit-msg/SKILL.md
+# END ai.skillz: direct:symlink:claude:commit-msg
+
+# BEGIN ai.skillz: direct:symlink:opencode:commit-msg
+/.opencode/skills/commit-msg/SKILL.md
+# END ai.skillz: direct:symlink:opencode:commit-msg
+
+# BEGIN ai.skillz: direct:symlink:claude:commit-plan
+/.claude/skills/commit-plan
+# END ai.skillz: direct:symlink:claude:commit-plan
+
+# BEGIN ai.skillz: direct:symlink:opencode:commit-plan
+/.opencode/skills/commit-plan
+# END ai.skillz: direct:symlink:opencode:commit-plan
+
+# BEGIN ai.skillz: direct:symlink:claude:dep-supersede-scan
+/.claude/skills/dep-supersede-scan
+# END ai.skillz: direct:symlink:claude:dep-supersede-scan
+
+# BEGIN ai.skillz: direct:symlink:opencode:dep-supersede-scan
+/.opencode/skills/dep-supersede-scan
+# END ai.skillz: direct:symlink:opencode:dep-supersede-scan
+
+# BEGIN ai.skillz: direct:symlink:claude:harness-perf
+/.claude/skills/harness-perf
+# END ai.skillz: direct:symlink:claude:harness-perf
+
+# BEGIN ai.skillz: direct:symlink:opencode:harness-perf
+/.opencode/skills/harness-perf
+# END ai.skillz: direct:symlink:opencode:harness-perf
+
+# BEGIN ai.skillz: direct:symlink:claude:inter-skill-review
+/.claude/skills/inter-skill-review
+# END ai.skillz: direct:symlink:claude:inter-skill-review
+
+# BEGIN ai.skillz: direct:symlink:opencode:inter-skill-review
+/.opencode/skills/inter-skill-review
+# END ai.skillz: direct:symlink:opencode:inter-skill-review
+
+# BEGIN ai.skillz: direct:symlink:claude:opencode-cleaning
+/.claude/skills/opencode-cleaning
+# END ai.skillz: direct:symlink:claude:opencode-cleaning
+
+# BEGIN ai.skillz: direct:symlink:opencode:opencode-cleaning
+/.opencode/skills/opencode-cleaning
+# END ai.skillz: direct:symlink:opencode:opencode-cleaning
+
+# BEGIN ai.skillz: direct:symlink:claude:plan-io
+/.claude/skills/plan-io
+# END ai.skillz: direct:symlink:claude:plan-io
+
+# BEGIN ai.skillz: direct:symlink:opencode:plan-io
+/.opencode/skills/plan-io
+# END ai.skillz: direct:symlink:opencode:plan-io
+
+# BEGIN ai.skillz: runtime:pr-msg
+.claude/skills/pr-msg/msgs/
+.claude/skills/pr-msg/pr_msg_LATEST.md
+# END ai.skillz: runtime:pr-msg
+
+# BEGIN ai.skillz: direct:symlink:claude:pr-msg
+/.claude/skills/pr-msg/SKILL.md
+/.claude/skills/pr-msg/references
+/.claude/skills/pr-msg/scripts
+# END ai.skillz: direct:symlink:claude:pr-msg
+
+# BEGIN ai.skillz: direct:symlink:opencode:pr-msg
+/.opencode/skills/pr-msg/SKILL.md
+/.opencode/skills/pr-msg/references
+/.opencode/skills/pr-msg/scripts
+# END ai.skillz: direct:symlink:opencode:pr-msg
+
+# BEGIN ai.skillz: direct:symlink:claude:prompt-io
+/.claude/skills/prompt-io
+# END ai.skillz: direct:symlink:claude:prompt-io
+
+# BEGIN ai.skillz: direct:symlink:opencode:prompt-io
+/.opencode/skills/prompt-io
+# END ai.skillz: direct:symlink:opencode:prompt-io
+
+# BEGIN ai.skillz: direct:symlink:claude:py-codestyle
+/.claude/skills/py-codestyle
+# END ai.skillz: direct:symlink:claude:py-codestyle
+
+# BEGIN ai.skillz: direct:symlink:opencode:py-codestyle
+/.opencode/skills/py-codestyle
+# END ai.skillz: direct:symlink:opencode:py-codestyle
+
+# BEGIN ai.skillz: runtime:taken-export
+.ai/taken/exports/
+# END ai.skillz: runtime:taken-export
+
+# BEGIN ai.skillz: direct:symlink:claude:taken-export
+/.claude/skills/taken-export
+# END ai.skillz: direct:symlink:claude:taken-export
+
+# BEGIN ai.skillz: direct:symlink:opencode:taken-export
+/.opencode/skills/taken-export
+# END ai.skillz: direct:symlink:opencode:taken-export
+
+# BEGIN ai.skillz: direct:symlink:claude:yt-url-lookup
+/.claude/skills/yt-url-lookup
+# END ai.skillz: direct:symlink:claude:yt-url-lookup
+
+# BEGIN ai.skillz: direct:symlink:opencode:yt-url-lookup
+/.opencode/skills/yt-url-lookup
+# END ai.skillz: direct:symlink:opencode:yt-url-lookup
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:gish
+/.opencode/commands/gish.md
+# END ai.skillz: direct:symlink:opencode:command:gish
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:resolve-conflicts
+/.opencode/commands/resolve-conflicts.md
+# END ai.skillz: direct:symlink:opencode:command:resolve-conflicts
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:git-mgmt
+/.opencode/commands/git-mgmt.md
+# END ai.skillz: direct:symlink:opencode:command:git-mgmt
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:open-wkt
+/.opencode/commands/open-wkt.md
+# END ai.skillz: direct:symlink:opencode:command:open-wkt
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:close-wkt
+/.opencode/commands/close-wkt.md
+# END ai.skillz: direct:symlink:opencode:command:close-wkt
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:code-review
+/.opencode/commands/code-review.md
+# END ai.skillz: direct:symlink:opencode:command:code-review
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:code-review-changes
+/.opencode/commands/code-review-changes.md
+# END ai.skillz: direct:symlink:opencode:command:code-review-changes
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:commit-msg
+/.opencode/commands/commit-msg.md
+# END ai.skillz: direct:symlink:opencode:command:commit-msg
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:commit-plan
+/.opencode/commands/commit-plan.md
+# END ai.skillz: direct:symlink:opencode:command:commit-plan
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:dep-supersede-scan
+/.opencode/commands/dep-supersede-scan.md
+# END ai.skillz: direct:symlink:opencode:command:dep-supersede-scan
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:harness-perf
+/.opencode/commands/harness-perf.md
+# END ai.skillz: direct:symlink:opencode:command:harness-perf
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:opencode-cleaning
+/.opencode/commands/opencode-cleaning.md
+# END ai.skillz: direct:symlink:opencode:command:opencode-cleaning
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:pr-msg
+/.opencode/commands/pr-msg.md
+# END ai.skillz: direct:symlink:opencode:command:pr-msg
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:taken-export
+/.opencode/commands/taken-export.md
+# END ai.skillz: direct:symlink:opencode:command:taken-export
+
+# BEGIN ai.skillz: direct:symlink:opencode:command:yt-url-lookup
+/.opencode/commands/yt-url-lookup.md
+# END ai.skillz: direct:symlink:opencode:command:yt-url-lookup
