@@ -21,6 +21,7 @@ Sub-process entry points.
 from __future__ import annotations
 from functools import partial
 import multiprocessing as mp
+import os
 from typing import (
     Any,
     TYPE_CHECKING,
@@ -48,12 +49,61 @@ from ..runtime._runtime import (
     async_main,
     Actor,
 )
+from ._netns import enter_netns
 
 if TYPE_CHECKING:
     from ._spawn import SpawnMethodKey
 
 
 log = get_logger()
+
+
+def _consume_netns_bootstrap(
+    netns_bootstrap: tuple[int, int]|None,
+) -> int|None:
+    '''
+    Enter and release one child-owned network namespace capability.
+
+    The FD must be an exclusively child-owned backend duplicate. It is
+    closed whether namespace entry succeeds or fails, before any actor
+    runtime setup can continue.
+
+    '''
+    if netns_bootstrap is None:
+        return None
+
+    namespace_fd: int
+    expected_inode: int
+    namespace_fd, expected_inode = netns_bootstrap
+    if (
+        type(namespace_fd) is not int
+        or
+        namespace_fd < 0
+    ):
+        # Let `enter_netns()` report its precise validation error, but
+        # never pass bool/non-int/negative values to `os.close()`.
+        return enter_netns(
+            namespace_fd,
+            expected_inode,
+        )
+
+    try:
+        entered_inode: int = enter_netns(
+            namespace_fd,
+            expected_inode,
+        )
+    except BaseException as entry_error:
+        try:
+            os.close(namespace_fd)
+        except Exception as close_error:
+            entry_error.add_note(
+                f'Also failed to close inherited namespace FD '
+                f'{namespace_fd}: {close_error!r}'
+            )
+        raise
+    else:
+        os.close(namespace_fd)
+        return entered_inode
 
 
 def _mp_main(
@@ -64,12 +114,18 @@ def _mp_main(
     start_method: SpawnMethodKey,
     parent_addr: UnwrappedAddress | None = None,
     infect_asyncio: bool = False,
+    netns_bootstrap: tuple[int, int]|None = None,
 
 ) -> None:
     '''
     The routine called *after fork* which invokes a fresh `trio.run()`
 
+    Consume `netns_bootstrap` before multiprocessing or actor-runtime
+    setup. The spawn backend must supply a child-owned FD duplicate.
+
     '''
+    _consume_netns_bootstrap(netns_bootstrap)
+
     actor._forkserver_info = forkserver_info
     from ._spawn import try_set_start_method
     spawn_ctx: mp.context.BaseContext = try_set_start_method(start_method)
