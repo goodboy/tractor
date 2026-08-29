@@ -3,6 +3,10 @@ import tractor
 
 
 async def main() -> None:
+    '''
+    Raise an assertion error from the debug-enabled root actor.
+
+    '''
     async with tractor.open_root_actor(
         debug_mode=True,
     ):

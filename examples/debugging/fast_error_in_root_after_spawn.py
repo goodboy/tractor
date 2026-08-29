@@ -13,7 +13,11 @@ import tractor
 @tractor.context
 async def sleep(
     ctx: tractor.Context,
-):
+) -> None:
+    '''
+    Start a context after a brief initialization delay.
+
+    '''
     await trio.sleep(0.5)
     await ctx.started()
     await trio.sleep_forever()
@@ -21,10 +25,13 @@ async def sleep(
 
 async def open_ctx(
     n: tractor.runtime._supervise.ActorNursery
-):
+) -> None:
+    '''
+    Spawn a sleeper and open a context with it.
 
+    '''
     # spawn both actors
-    portal = await n.start_actor(
+    portal: tractor.Portal = await n.start_actor(
         name='sleeper',
         enable_modules=[__name__],
     )
@@ -36,7 +43,10 @@ async def open_ctx(
 
 
 async def main() -> None:
+    '''
+    Fail the root while a subactor context is still starting.
 
+    '''
     async with tractor.open_nursery(
         debug_mode=True,
         loglevel='runtime',

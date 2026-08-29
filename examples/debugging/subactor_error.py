@@ -2,11 +2,19 @@ import trio
 import tractor
 
 
-async def name_error():
+async def name_error() -> None:
+    '''
+    Deliberately raise a ``NameError`` in a subactor.
+
+    '''
     getattr(doggypants)  # noqa (on purpose)
 
 
 async def main() -> None:
+    '''
+    Surface a subactor `NameError` at the waiting root task.
+
+    '''
     async with tractor.open_nursery(
         debug_mode=True,
     ) as an:

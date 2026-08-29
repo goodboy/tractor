@@ -1,22 +1,32 @@
+from collections.abc import Awaitable, Callable
+
 import tractor
 import trio
 
 
-async def breakpoint_forever():
-    "Indefinitely re-enter debugger in child actor."
+async def breakpoint_forever() -> None:
+    '''
+    Indefinitely re-enter debugger in child actor.
+
+    '''
     while True:
         await trio.sleep(0.1)
         await tractor.pause()
 
 
-async def name_error():
-    "Raise a ``NameError``"
+async def name_error() -> None:
+    '''
+    Raise a ``NameError``.
+
+    '''
     getattr(doggypants)  # noqa
 
 
-async def spawn_error():
-    """"A nested nursery that triggers another ``NameError``.
-    """
+async def spawn_error() -> None:
+    '''
+    A nested nursery that triggers another ``NameError``.
+
+    '''
     async with tractor.open_nursery() as an:
         return await tractor.to_actor.run(
             name_error,
@@ -26,7 +36,8 @@ async def spawn_error():
 
 
 async def main() -> None:
-    """The main ``tractor`` routine.
+    '''
+    The main ``tractor`` routine.
 
     The process tree should look as approximately as follows:
 
@@ -35,7 +46,8 @@ async def main() -> None:
     |-python -m tractor._child --uid ('bp_forever', '1f787a7e ...)
     `-python -m tractor._child --uid ('spawn_error', '52ee14a5 ...)
        `-python -m tractor._child --uid ('name_error', '3391222c ...)
-    """
+
+    '''
     errors: list[BaseException] = []
 
     async with tractor.open_nursery(
@@ -43,12 +55,14 @@ async def main() -> None:
         # loglevel='runtime',
     ) as an:
 
-        async def run_and_collect(fn):
+        async def run_and_collect(
+            fn: Callable[[], Awaitable[object]],
+        ) -> None:
             '''
             One-shot whose (boxed) error is stashed instead of
             raised so a sibling's crash never cancels the others
             before they've had their own debugger sessions (the
-            "collect all errors" the legacy `run_in_actor()` API
+            'collect all errors' the legacy `run_in_actor()` API
             did implicitly at nursery teardown).
 
             '''

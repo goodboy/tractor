@@ -2,8 +2,11 @@ import trio
 import tractor
 
 
-async def key_error():
-    "Raise a ``NameError``"
+async def key_error() -> None:
+    '''
+    Raise a ``KeyError``.
+
+    '''
     return {}['doggy']
 
 
@@ -21,7 +24,7 @@ async def main() -> None:
         trio.open_nursery() as tn,
     ):
         # spawn the actor..
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'key_error',
             enable_modules=[__name__],
         )
@@ -32,9 +35,9 @@ async def main() -> None:
         # root blocks below.
         tn.start_soon(portal.run, key_error)
 
-        # XXX: originally a bug caused by this is where root would enter
-        # the debugger and clobber the tty used by the repl even though
-        # child should have it locked.
+        # XXX: originally a bug caused by this is where root would
+        # enter the debugger and clobber the tty used by the repl
+        # even though child should have it locked.
         with trio.fail_after(1):
             await trio.Event().wait()
 

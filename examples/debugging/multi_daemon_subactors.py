@@ -1,9 +1,14 @@
+from collections.abc import AsyncIterator
+
 import tractor
 import trio
 
 
-async def breakpoint_forever():
-    "Indefinitely re-enter debugger in child actor."
+async def breakpoint_forever() -> AsyncIterator[str]:
+    '''
+    Indefinitely re-enter debugger in child actor.
+
+    '''
     try:
         while True:
             yield 'yo'
@@ -15,8 +20,11 @@ async def breakpoint_forever():
         raise
 
 
-async def name_error():
-    "Raise a ``NameError``"
+async def name_error() -> None:
+    '''
+    Raise a ``NameError``.
+
+    '''
     getattr(doggypants)  # noqa
 
 
@@ -28,8 +36,14 @@ async def main() -> None:
     async with tractor.open_nursery(
         debug_mode=True,
     ) as an:
-        p0 = await an.start_actor('bp_forever', enable_modules=[__name__])
-        p1 = await an.start_actor('name_error', enable_modules=[__name__])
+        p0: tractor.Portal = await an.start_actor(
+            'bp_forever',
+            enable_modules=[__name__],
+        )
+        p1: tractor.Portal = await an.start_actor(
+            'name_error',
+            enable_modules=[__name__],
+        )
 
         # retreive results
         async with p0.open_stream_from(breakpoint_forever) as stream:
@@ -40,6 +54,7 @@ async def main() -> None:
             except tractor.RemoteActorError as rae:
                 assert rae.boxed_type is NameError
 
+            i: str
             async for i in stream:
 
                 # a second time try the failing subactor and this tie

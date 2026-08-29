@@ -3,6 +3,10 @@ import tractor
 
 
 async def main() -> None:
+    '''
+    Enter shielded debugging after root cancellation, then fail.
+
+    '''
     async with tractor.open_root_actor(
         debug_mode=True,
         loglevel='cancel',
@@ -18,16 +22,19 @@ async def main() -> None:
         try:
             await tractor.pause()
         except trio.Cancelled as _taskc:
-            assert (root_cs := _root._root_tn.cancel_scope).cancel_called
+            root_cs: trio.CancelScope
+            assert (
+                root_cs := _root._root_tn.cancel_scope
+            ).cancel_called
             # NOTE^^ above logic but inside `open_root_actor()` and
             # passed to the `shield=` expression is effectively what
             # we're testing here!
             await tractor.pause(shield=root_cs.cancel_called)
 
-        # XXX, if shield logic *is wrong* inside `open_root_actor()`'s
-        # crash-handler block this should never be interacted,
-        # instead `trio.Cancelled` would be bubbled up: the original
-        # BUG.
+        # XXX, if shield logic *is wrong* inside
+        # `open_root_actor()`'s crash-handler block this should never
+        # be interacted, instead `trio.Cancelled` would be bubbled
+        # up: the original BUG.
         assert 0
 
 

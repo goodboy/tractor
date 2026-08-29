@@ -3,8 +3,15 @@ import tractor
 
 
 async def cancellable_pause_loop(
-    task_status: trio.TaskStatus[trio.CancelScope] = trio.TASK_STATUS_IGNORED
-):
+    task_status: trio.TaskStatus[
+        trio.CancelScope
+    ] = trio.TASK_STATUS_IGNORED,
+) -> None:
+    '''
+    Exercise shielded debugger pauses under cancellation.
+
+    '''
+    cs: trio.CancelScope
     with trio.CancelScope() as cs:
         task_status.started(cs)
         for _ in range(3):
@@ -30,7 +37,11 @@ async def cancellable_pause_loop(
             await trio.lowlevel.checkpoint()
 
 
-async def pm_on_cancelled():
+async def pm_on_cancelled() -> None:
+    '''
+    Compare shielded and unshielded post-mortem entry.
+
+    '''
     async with trio.open_nursery() as tn:
         tn.cancel_scope.cancel()
         try:
@@ -56,7 +67,7 @@ async def pm_on_cancelled():
 
 
 async def cancelled_before_pause(
-):
+) -> None:
     '''
     Verify that using a shielded pause works despite surrounding
     cancellation called state in the calling task.
@@ -72,6 +83,10 @@ async def cancelled_before_pause(
 
 
 async def main() -> None:
+    '''
+    Exercise shielded debugger entry in subactor and root tasks.
+
+    '''
     async with tractor.open_nursery(
         debug_mode=True,
     ) as an:

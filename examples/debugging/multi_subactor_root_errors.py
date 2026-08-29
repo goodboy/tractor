@@ -7,14 +7,19 @@ import trio
 import tractor
 
 
-async def name_error():
-    "Raise a ``NameError``"
+async def name_error() -> None:
+    '''
+    Raise a ``NameError``.
+
+    '''
     getattr(doggypants)  # noqa
 
 
-async def spawn_error():
-    """"A nested nursery that triggers another ``NameError``.
-    """
+async def spawn_error() -> None:
+    '''
+    A nested nursery that triggers another ``NameError``.
+
+    '''
     async with tractor.open_nursery() as an:
         return await tractor.to_actor.run(
             name_error,
@@ -24,7 +29,8 @@ async def spawn_error():
 
 
 async def main() -> None:
-    """The main ``tractor`` routine.
+    '''
+    The main ``tractor`` routine.
 
     The process tree should look as approximately as follows:
 
@@ -37,7 +43,8 @@ async def main() -> None:
         - nested name_error sub-sub-actor
         - root actor should then fail on assert
         - program termination
-    """
+
+    '''
     async with (
         tractor.open_nursery(
             debug_mode=True,
@@ -46,11 +53,11 @@ async def main() -> None:
         trio.open_nursery() as tn,
     ):
         # spawn both actors..
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'name_error',
             enable_modules=[__name__],
         )
-        portal1 = await an.start_actor(
+        portal1: tractor.Portal = await an.start_actor(
             'spawn_error',
             enable_modules=[__name__],
         )
