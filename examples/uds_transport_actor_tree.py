@@ -21,13 +21,17 @@ async def report_addr() -> str:
     Return this actor's own accept (bind) addr + pid.
 
     '''
-    actor = tractor.current_actor()
-    addr: tuple = actor.accept_addr
+    actor: tractor.Actor = tractor.current_actor()
+    addr: tuple[str, str] = actor.accept_addr
     pid: int = os.getpid()
     return f'{actor.name}@{addr} pid={pid}'
 
 
 async def main() -> None:
+    '''
+    Run a child actor over the UDS transport.
+
+    '''
     an: tractor.ActorNursery
     async with tractor.open_nursery(
         enable_transports=['uds'],
@@ -52,7 +56,8 @@ async def main() -> None:
         )
         # ask the child for its OWN distinct bind addr: another
         # socket-file path under the runtime dir.
-        print(f'child says: {await portal.run(report_addr)}')
+        child_report: str = await portal.run(report_addr)
+        print(f'child says: {child_report}')
         await portal.cancel_actor()
 
 

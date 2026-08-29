@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from contextlib import (
     contextmanager as cm,
     # TODO, any diff in async case(s)??
@@ -17,7 +18,7 @@ log = tractor.log.get_logger(
 @cm
 def teardown_on_exc(
     raise_from_handler: bool = False,
-):
+) -> Iterator[None]:
     '''
     You could also have a teardown handler which catches any exc and
     does some required teardown. In this case the problem is
@@ -30,7 +31,7 @@ def teardown_on_exc(
     except BaseException as _berr:
         berr = _berr
         log.exception(
-            f'Handling termination teardown in child due to,\n'
+            'Handling termination teardown in child due to,\n'
             f'{berr!r}\n'
         )
         if raise_from_handler:
@@ -54,14 +55,18 @@ def teardown_on_exc(
 
 
 async def finite_stream_to_rent(
-    tx: trio.abc.SendChannel,
+    tx: trio.abc.SendChannel[int],
     child_errors_mid_stream: bool,
     raise_unmasked: bool,
 
     task_status: trio.TaskStatus[
-        trio.CancelScope,
+        trio.CancelScope|None,
     ] = trio.TASK_STATUS_IGNORED,
-):
+) -> None:
+    '''
+    Stream values while reproducing exception masking on close.
+
+    '''
     async with (
         # XXX without this unmasker the mid-streaming RTE is never
         # reported since it is masked by the `tx.aclose()`
@@ -135,18 +140,25 @@ async def main(
     raise_unmasked: bool = False,
     loglevel: str = 'info',
 ) -> None:
+    '''
+    Reproduce cancellation masking a child-stream failure.
+
+    '''
     tractor.log.get_console_log(level=loglevel)
 
     # the `.aclose()` being checkpoints on these
     # is the source of the problem..
+    tx: trio.MemorySendChannel[int]
+    rx: trio.MemoryReceiveChannel[int]
     tx, rx = trio.open_memory_channel(1)
 
+    tn: trio.Nursery
     async with (
         tractor.trionics.collapse_eg(),
         trio.open_nursery() as tn,
         rx as rx,
     ):
-        _child_cs = await tn.start(
+        _child_cs: trio.CancelScope|None = await tn.start(
             partial(
                 finite_stream_to_rent,
                 child_errors_mid_stream=child_errors_mid_stream,
@@ -154,6 +166,7 @@ async def main(
                 tx=tx,
             )
         )
+        msg: int
         async for msg in rx:
             log.debug(
                 f'Rent rx {msg!r}\n'
@@ -162,12 +175,13 @@ async def main(
             # simulate some external cancellation
             # request **JUST BEFORE** the child errors.
             if msg == 65:
-                log.cancel(
-                    f'Cancelling parent on,\n'
-                    f'msg={msg}\n'
-                    f'\n'
-                    f'Simulates OOB cancel request!\n'
-                )
+                cancel_msg: str = (
+                    'Cancelling parent on,\n'
+                    'msg={msg}\n'
+                    '\n'
+                    'Simulates OOB cancel request!\n'
+                ).format(msg=msg)
+                log.cancel(cancel_msg)
                 tn.cancel_scope.cancel()
 
 
@@ -176,8 +190,8 @@ if __name__ == '__main__':
     tractor.log.get_console_log(level='info')
     for case in [True, False]:
         log.info(
-            f'\n'
-            f'------ RUNNING SCRIPT TRIAL ------\n'
+            '\n'
+            '------ RUNNING SCRIPT TRIAL ------\n'
             f'child_errors_midstream: {case!r}\n'
         )
         try:

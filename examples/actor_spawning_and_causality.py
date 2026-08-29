@@ -3,13 +3,19 @@ import tractor
 
 
 async def cellar_door() -> str:
+    '''
+    Return a phrase from a spawned actor.
+
+    '''
     assert not tractor.is_root_process()
-    return "Dang that's beautiful"
+    return 'Dang that\'s beautiful'
 
 
 async def main() -> None:
-    """The main ``tractor`` routine.
-    """
+    '''
+    The main ``tractor`` routine.
+
+    '''
     # spawn a subactor, run ``cellar_door()`` as its lone task,
     # block until its result arrives and the subactor is reaped.
     print(

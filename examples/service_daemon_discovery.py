@@ -35,11 +35,13 @@ async def client_task() -> None:
 
     '''
     # a lookup miss yields `None` (not an error).
-    async with tractor.find_actor('no_such_svc') as portal:
-        assert portal is None
+    maybe_portal: tractor.Portal|None
+    async with tractor.find_actor('no_such_svc') as maybe_portal:
+        assert maybe_portal is None
         print('client: "no_such_svc" is not registered')
     # block until the service shows up in the registry,
     # then call into it through the delivered portal.
+    portal: tractor.Portal
     async with tractor.wait_for_actor('quote_svc') as portal:
         quote: float = await portal.run(
             get_quote,
@@ -49,6 +51,10 @@ async def client_task() -> None:
 
 
 async def main() -> None:
+    '''
+    Run a discoverable quote service and its client.
+
+    '''
     an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
         portal: tractor.Portal = await an.start_actor(

@@ -46,7 +46,9 @@ async def point_doubler(
     # now do it right; the parent receives this as the 2nd
     # element of its `.open_context()` entry tuple.
     await ctx.started(Point(x=0, y=0))
+    stream: tractor.MsgStream
     async with ctx.open_stream() as stream:
+        pt: Point
         async for pt in stream:
             # natively decoded to our struct type!
             assert type(pt) is Point
@@ -59,12 +61,19 @@ async def point_doubler(
 
 
 async def main() -> None:
+    '''
+    Exchange typed ``Point`` payloads with a subactor.
+
+    '''
     an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
         portal: tractor.Portal = await an.start_actor(
             'point_doubler',
             enable_modules=[__name__],
         )
+        ctx: tractor.Context
+        first: Point
+        stream: tractor.MsgStream
         async with (
             portal.open_context(
                 point_doubler,
@@ -73,6 +82,7 @@ async def main() -> None:
         ):
             # the (validated) started-value from the child
             assert first == Point(x=0, y=0)
+            i: int
             for i in range(3):
                 await stream.send(Point(x=i, y=i))
                 doubled: Point = await stream.receive()

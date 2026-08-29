@@ -1,18 +1,23 @@
-"""
+'''
 Demonstration of the prime number detector example from the
 ``concurrent.futures`` docs:
 
-https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor-example
+https://docs.python.org/3/library/concurrent.futures.html\
+#processpoolexecutor-example
 
 This uses no extra threads, fancy semaphores or futures; all we need
 is ``tractor``'s channels.
 
-"""
+'''
 from contextlib import (
     asynccontextmanager as acm,
     aclosing,
 )
-from typing import Callable
+from typing import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+)
 import itertools
 import math
 import time
@@ -21,7 +26,12 @@ import tractor
 import trio
 
 
-PRIMES = [
+type ActorMap = Callable[
+    [Callable[[int], Awaitable[bool]], list[int]],
+    AsyncIterator[tuple[int, bool]],
+]
+
+PRIMES: list[int] = [
     112272535095293,
     112582705942171,
     112272535095293,
@@ -32,6 +42,10 @@ PRIMES = [
 
 
 async def is_prime(n: int) -> bool:
+    '''
+    Return whether ``n`` is prime.
+
+    '''
     if n < 2:
         return False
     if n == 2:
@@ -47,23 +61,32 @@ async def is_prime(n: int) -> bool:
 
 
 @acm
-async def worker_pool(workers: int = 4):
-    """Though it's a trivial special case for ``tractor``, the well
+async def worker_pool(
+    workers: int = 4,
+) -> AsyncIterator[ActorMap]:
+    '''
+    Though it's a trivial special case for ``tractor``, the well
     known "worker pool" seems to be the defacto "but, I want this
     process pattern!" for most parallelism pilgrims.
 
     Yes, the workers stay alive (and ready for work) until you close
     the context.
-    """
+
+    '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
 
         portals: list[tractor.Portal] = []
+        snd_chan: trio.MemorySendChannel[tuple[int, bool]]
+        recv_chan: trio.MemoryReceiveChannel[tuple[int, bool]]
         snd_chan, recv_chan = trio.open_memory_channel(len(PRIMES))
 
+        i: int
         for i in range(workers):
 
-            # this starts a new sub-actor (process + trio runtime) and
-            # stores it's "portal" for later use to "submit jobs" (ugh).
+            # this starts a new sub-actor (process + trio
+            # runtime) and stores it's "portal" for later use to
+            # "submit jobs" (ugh).
             portals.append(
                 await an.start_actor(
                     f'worker_{i}',
@@ -72,22 +95,36 @@ async def worker_pool(workers: int = 4):
             )
 
         async def _map(
-            worker_func: Callable[[int], bool],
-            sequence: list[int]
-        ) -> list[bool]:
+            worker_func: Callable[[int], Awaitable[bool]],
+            sequence: list[int],
+        ) -> AsyncIterator[tuple[int, bool]]:
+            '''
+            Dispatch values across workers and yield their results.
 
-            # define an async (local) task to collect results from workers
+            '''
+            # define an async (local) task to collect results from
+            # workers
             async def send_result(
-                func: Callable,
+                func: Callable[[int], Awaitable[bool]],
                 value: int,
                 portal: tractor.Portal,
-            ):
-                await snd_chan.send((value, await portal.run(func, n=value)))
+            ) -> None:
+                '''
+                Run one remote worker call and send its result.
+
+                '''
+                result: bool = await portal.run(func, n=value)
+                await snd_chan.send((value, result))
 
             tn: trio.Nursery
             async with trio.open_nursery() as tn:
 
-                for value, portal in zip(sequence, itertools.cycle(portals)):
+                value: int
+                portal: tractor.Portal
+                for value, portal in zip(
+                    sequence,
+                    itertools.cycle(portals),
+                ):
                     tn.start_soon(
                         send_result,
                         worker_func,
@@ -107,20 +144,29 @@ async def worker_pool(workers: int = 4):
 
 
 async def main() -> None:
+    '''
+    Report primality results from a pool of actors.
 
+    '''
+    actor_map: ActorMap
     async with worker_pool() as actor_map:
 
-        start = time.time()
+        start: float = time.time()
 
+        results: AsyncIterator[tuple[int, bool]]
         async with aclosing(actor_map(is_prime, PRIMES)) as results:
+            number: int
+            prime: bool
             async for number, prime in results:
 
                 print(f'{number} is prime: {prime}')
 
-        print(f'processing took {time.time() - start} seconds')
+        elapsed: float = time.time() - start
+        print(f'processing took {elapsed} seconds')
 
 
 if __name__ == '__main__':
-    start = time.time()
+    start: float = time.time()
     trio.run(main)
-    print(f'script took {time.time() - start} seconds')
+    elapsed: float = time.time() - start
+    print(f'script took {elapsed} seconds')
