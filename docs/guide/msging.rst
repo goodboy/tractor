@@ -153,14 +153,16 @@ the high-rate stream path.
   never even hits the wire. (You can opt out per-call with
   ``ctx.started(..., validate_pld_spec=False)`` if you measure
   a real cost.)
-- ``Yield`` payloads are **never** checked inside
-  ``MsgStream.send()``; they're validated receiver-side on each
-  ``MsgStream.receive()``. A violation raises a ``MsgTypeError``
-  in the receiver *and* relays an ``Error`` msg back so the
-  offending sender gets one raised too.
-- the remaining control msgs (``Start``, ``Return``) are likewise
-  validated such that violations raise in the **sending** actor,
-  pointing the traceback at the code that actually goofed.
+- ``Yield`` and ``Return`` payloads are not checked before sending;
+  they're decoded against the dialog's spec by the receiver. A
+  violation raises a ``MsgTypeError`` there and terminates that
+  dialog. The peer then observes the resulting protocol teardown;
+  it is not guaranteed to receive the same ``MsgTypeError``.
+- ``Start`` arguments are dispatched through the RPC endpoint's
+  Python signature. They are not payloads covered by the dialog's
+  ``pld_spec``. A planned follow-up will derive a typed ``Start``
+  contract from endpoint annotations and validate arguments
+  sender-side; see `#514`_.
 
 Anatomy of a ``MsgTypeError``
 -----------------------------
@@ -177,21 +179,21 @@ a msg fails to decode against the active spec. The useful bits:
   ``.src_uid``, ``.ipc_msg`` and the fancy ``.pformat()`` tb-box
   rendering.
 
-Practical reading guide: a *sender-side* MTE (``Started``,
-``Return``) points straight at your offending ``await
-ctx.started()`` or ``return`` statement, while a *receiver-side*
-MTE (``Yield``) surfaces from the consumer's ``receive()`` call
-with the relay copy delivered back to the producer. Either way
-the failure is scoped to that one dialog; sibling contexts on the
-same channel keep right on trucking.
+Practical reading guide: a *sender-side* MTE for ``Started`` points
+straight at the offending ``await ctx.started()`` call. A
+*receiver-side* MTE for ``Yield`` or ``Return`` surfaces while the
+peer decodes the payload. Either way the failure is scoped to that
+one dialog; sibling contexts on the same channel keep right on
+trucking.
 
 Custom wire types: ``mk_codec()`` and friends
 ---------------------------------------------
 msgspec covers a wide set of `builtin types`__ natively; for
-anything else you teach the codec via extension hooks. The
-easiest path is per-endpoint: ``@tractor.context()`` accepts
-``enc_hook``/``dec_hook`` params right alongside ``pld_spec``.
-For full control build and apply a codec yourself; encode-side:
+anything else you teach the codec via extension hooks. The complete
+public path currently available is task-scoped encoding:
+``tractor.msg.mk_codec()`` builds a codec with an ``enc_hook``, and
+``tractor.msg.apply_codec()`` installs it for the current task. To
+build and apply that transport codec:
 
 __ https://jcristharif.com/msgspec/supported-types.html
 
@@ -206,8 +208,9 @@ __ https://jcristharif.com/msgspec/supported-types.html
     with apply_codec(codec):        # ContextVar-scoped override
         ...  # msgs sent by this task now encode NSPs
 
-and decode-side, scoped to an open context (note the import from
-``tractor.msg._ops``, not yet re-exported):
+The context manager which temporarily installs payload-decoder
+settings on an open context is separate and still private (note
+the ``tractor.msg._ops`` import):
 
 .. code:: python
 
@@ -220,11 +223,15 @@ and decode-side, scoped to an open context (note the import from
     ):
         ...  # this dialog's payloads decode as NSPs
 
-``apply_codec()`` is ``ContextVar``-scoped: it overrides the
-codec for the current task (and only that task), not the whole
-process. For complete working flows, including hook pairing rules
-and roundtrip cases, see ``tests/msg/test_ext_types_msgspec.py``
-and ``tests/msg/test_pldrx_limiting.py``.
+``apply_codec()`` is ``ContextVar``-scoped: it overrides the codec
+for the current task (and only that task), not the whole process.
+``@tractor.context()`` accepts ``enc_hook`` and ``dec_hook``
+parameters, but their runtime wiring is not yet a symmetric,
+end-to-end public hook pair: the encode hook is not consumed and
+the decode hook is not applied on both peers. For the working flows
+and their current boundaries, see
+``tests/msg/test_ext_types_msgspec.py`` and
+``tests/msg/test_pldrx_limiting.py``.
 
 The runtime dogfoods this pattern with
 :class:`tractor.msg.NamespacePath`: a ``str``-subtype shaped like
@@ -253,13 +260,15 @@ escape hatch. Both are exercised end-to-end in
 ``tests/msg/test_pldrx_limiting.py`` and
 ``tests/msg/test_ext_types_msgspec.py``.
 
-On the codec-hook side, the ``enc_hook``/``dec_hook`` pair is
-today only reachable via ``tractor.msg._ops``; a public *factory*
-API for them is drafted in `#376`_ (from
+The codec constructor and task-scoped override are public; the
+per-dialog decoder override remains private, and the decorator hook
+parameters remain incomplete. `#376`_ (from
 `@guilledk <https://github.com/guilledk>`_, on the
 `auto_codecs <https://github.com/goodboy/tractor/tree/auto_codecs>`_
-branch) — the likely long-term home for custom-type
-(de)serialization.
+branch) instead drafts pair-building factories which derive
+matching ``enc_hook``/``dec_hook`` functions and encoder/decoder
+pairs from a type spec. That automation, not hook availability,
+is the proposed long-term home for custom-type (de)serialization.
 
 If strongly-typed distributed systems get you going, we'd love
 your input on any of the above.
@@ -282,3 +291,4 @@ Where to next?
 .. _#36: https://github.com/goodboy/tractor/issues/36
 .. _#365: https://github.com/goodboy/tractor/issues/365
 .. _#376: https://github.com/goodboy/tractor/pull/376
+.. _#514: https://github.com/goodboy/tractor/issues/514
