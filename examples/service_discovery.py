@@ -22,7 +22,8 @@ async def main(service_name: str) -> None:
         async with tractor.wait_for_actor(
             service_name,
         ) as actor_portal:
-            print(f'my_service is found at {actor_portal}')
+            service_addr = actor_portal.chan.raddr
+            print(f'my_service is found at {service_addr}')
 
         await an.cancel()
 
