@@ -1,3 +1,5 @@
+from typing import AsyncIterator
+
 import trio
 import tractor
 
@@ -5,17 +7,30 @@ import tractor
 log = tractor.log.get_logger('multiportal')
 
 
-async def stream_data(seed=10):
-    log.info("Starting stream task")
+async def stream_data(seed: int = 10) -> AsyncIterator[int]:
+    '''
+    Stream a finite sequence of integers.
 
+    '''
+    log.info('Starting stream task')
+
+    i: int
     for i in range(seed):
         yield i
         await trio.sleep(0)  # trigger scheduler
 
 
-async def stream_from_portal(p, consumed):
+async def stream_from_portal(
+    portal: tractor.Portal,
+    consumed: list[int],
+) -> None:
+    '''
+    Consume one stream and toggle each value in a shared list.
 
-    async with p.open_stream_from(stream_data) as stream:
+    '''
+    stream: tractor.MsgStream
+    async with portal.open_stream_from(stream_data) as stream:
+        item: int
         async for item in stream:
             if item in consumed:
                 consumed.remove(item)
@@ -23,20 +38,33 @@ async def stream_from_portal(p, consumed):
                 consumed.append(item)
 
 
-async def main():
+async def main() -> None:
+    '''
+    Consume two concurrent streams through one portal.
 
+    '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery(loglevel='info') as an:
 
-        p = await an.start_actor('stream_boi', enable_modules=[__name__])
+        portal: tractor.Portal = await an.start_actor(
+            'stream_boi',
+            enable_modules=[__name__],
+        )
 
-        consumed = []
+        consumed: list[int] = []
 
+        n: trio.Nursery
         async with trio.open_nursery() as n:
-            for i in range(2):
-                n.start_soon(stream_from_portal, p, consumed)
+            for _ in range(2):
+                n.start_soon(
+                    stream_from_portal,
+                    portal,
+                    consumed,
+                )
 
-        # both streaming consumer tasks have completed and so we should
-        # have nothing in our list thanks to single threadedness
+        # both streaming consumer tasks have completed and so we
+        # should have nothing in our list thanks to single
+        # threadedness
         assert not consumed
 
         await an.cancel()

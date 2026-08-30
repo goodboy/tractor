@@ -41,6 +41,7 @@ async def fan_out_squares(
     aggregated squares to our parent.
 
     '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
         portals: list[tractor.Portal] = []
         for i in (1, 2):
@@ -52,21 +53,28 @@ async def fan_out_squares(
             )
         # unblock the parent's `.open_context()` entry and
         # report which leaves came up.
-        await ctx.started(
-            [p.chan.aid.name for p in portals]
-        )
+        leaf_names: list[str] = [
+            portal.chan.aid.name
+            for portal in portals
+        ]
+        await ctx.started(leaf_names)
         squares: dict[int, int] = {}
 
         async def run_in_leaf(
             portal: tractor.Portal,
             x: int,
         ) -> None:
+            '''
+            Run one square calculation in a leaf actor.
+
+            '''
             squares[x] = await portal.run(
                 compute_square,
                 x=x,
             )
 
         # fan out one sub-RPC per input val, concurrently.
+        tn: trio.Nursery
         async with trio.open_nursery() as tn:
             for i, x in enumerate(vals):
                 tn.start_soon(
@@ -83,11 +91,18 @@ async def fan_out_squares(
 
 
 async def main() -> None:
+    '''
+    Run the nested actor-tree example.
+
+    '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'supervisor',
             enable_modules=[__name__],
         )
+        ctx: tractor.Context
+        leaf_names: list[str]
         async with portal.open_context(
             fan_out_squares,
             vals=[1, 2, 3, 4],

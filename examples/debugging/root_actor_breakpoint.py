@@ -2,8 +2,11 @@ import trio
 import tractor
 
 
-async def main():
+async def main() -> None:
+    '''
+    Pause in the root actor to exercise its debugger REPL.
 
+    '''
     async with tractor.open_root_actor(
         debug_mode=True,
     ):

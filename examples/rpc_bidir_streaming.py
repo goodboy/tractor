@@ -9,16 +9,19 @@ async def simple_rpc(
     data: int,
 
 ) -> None:
-    '''Test a small ping-pong 2-way streaming server.
+    '''
+    Test a small ping-pong 2-way streaming server.
 
     '''
     # signal to parent that we're up much like
     # ``trio.TaskStatus.started()``
     await ctx.started(data + 1)
 
+    stream: tractor.MsgStream
     async with ctx.open_stream() as stream:
 
-        count = 0
+        count: int = 0
+        msg: str
         async for msg in stream:
 
             assert msg == 'ping'
@@ -30,15 +33,22 @@ async def simple_rpc(
 
 
 async def main() -> None:
+    '''
+    Exercise bidirectional streaming with a remote actor.
 
+    '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
 
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'rpc_server',
             enable_modules=[__name__],
         )
 
         # XXX: syntax requires py3.9
+        ctx: tractor.Context
+        sent: int
+        stream: tractor.MsgStream
         async with (
 
             portal.open_context(
@@ -52,10 +62,11 @@ async def main() -> None:
 
             assert sent == 11
 
-            count = 0
+            count: int = 0
             # receive msgs using async for style
             await stream.send('ping')
 
+            msg: str
             async for msg in stream:
                 assert msg == 'pong'
                 await stream.send('ping')

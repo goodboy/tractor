@@ -1,20 +1,24 @@
-
 import trio
 import tractor
 
 
 async def sleepy_jane() -> None:
-    uid: tuple = tractor.current_actor().uid
+    '''
+    Identify the current actor and sleep forever.
+
+    '''
+    uid: tuple[str, str] = tractor.current_actor().uid
     print(f'Yo i am actor {uid}')
     await trio.sleep_forever()
 
 
-async def main():
+async def main() -> None:
     '''
     Spawn a flat actor cluster, with one process per detected core.
 
     '''
     portal_map: dict[str, tractor.Portal]
+    tn: trio.Nursery
 
     # look at this hip new syntax!
     async with (
@@ -27,7 +31,9 @@ async def main():
         trio.open_nursery() as tn,
     ):
 
-        for (name, portal) in portal_map.items():
+        name: str
+        portal: tractor.Portal
+        for name, portal in portal_map.items():
             tn.start_soon(
                 portal.run,
                 sleepy_jane,

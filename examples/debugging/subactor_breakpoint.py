@@ -2,7 +2,7 @@ import trio
 import tractor
 
 
-async def breakpoint_forever():
+async def breakpoint_forever() -> None:
     '''
     Indefinitely re-enter debugger in child actor.
 
@@ -12,8 +12,11 @@ async def breakpoint_forever():
         await tractor.pause()
 
 
-async def main():
+async def main() -> None:
+    '''
+    Run a subactor that repeatedly pauses in the debugger.
 
+    '''
     async with tractor.open_nursery(
         debug_mode=True,
         loglevel='cancel',

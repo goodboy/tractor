@@ -5,7 +5,7 @@ import tractor
 @tractor.context
 async def name_error(
     ctx: tractor.Context,
-):
+) -> None:
     '''
     Raise a `NameError`, catch it and enter `.post_mortem()`, then
     expect the `._rpc._invoke()` crash handler to also engage.
@@ -18,7 +18,7 @@ async def name_error(
         raise
 
 
-async def main():
+async def main() -> None:
     '''
     Test 3 `PdbREPL` entries:
       - one in the child due to manual `.post_mortem()`,
@@ -49,7 +49,9 @@ async def main():
             await tractor.post_mortem()
             raise
         else:
-            raise RuntimeError('IPC ctx should have remote errored!?')
+            raise RuntimeError(
+                'IPC ctx should have remote errored!?'
+            )
 
 
 if __name__ == '__main__':

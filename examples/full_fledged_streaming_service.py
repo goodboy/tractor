@@ -1,4 +1,6 @@
 import time
+from typing import AsyncIterator
+
 import trio
 import tractor
 from tractor import (
@@ -9,14 +11,19 @@ from tractor import (
 
 
 # this is the first 2 actors, streamer_1 and streamer_2
-async def stream_data(seed):
+async def stream_data(seed: int) -> AsyncIterator[int]:
+    '''
+    Stream integers up to a seed value.
+
+    '''
+    i: int
     for i in range(seed):
         yield i
         await trio.sleep(0.0001)  # trigger scheduler
 
 
 # this is the third actor; the aggregator
-async def aggregate(seed):
+async def aggregate(seed: int) -> AsyncIterator[int]:
     '''
     Ensure that the two streams we receive match but only stream
     a single set of values to the parent.
@@ -25,30 +32,47 @@ async def aggregate(seed):
     an: ActorNursery
     async with tractor.open_nursery() as an:
         portals: list[Portal] = []
+        i: int
         for i in range(1, 3):
 
             # fork/spawn call
-            portal = await an.start_actor(
+            portal: Portal = await an.start_actor(
                 name=f'streamer_{i}',
                 enable_modules=[__name__],
             )
 
             portals.append(portal)
 
+        send_chan: trio.MemorySendChannel[int]
+        recv_chan: trio.MemoryReceiveChannel[int]
         send_chan, recv_chan = trio.open_memory_channel(500)
 
-        async def push_to_chan(portal, send_chan):
+        async def push_to_chan(
+            portal: Portal,
+            send_chan: trio.MemorySendChannel[int],
+        ) -> None:
+            '''
+            Forward one remote stream into a local channel.
 
+            '''
             # TODO: https://github.com/goodboy/tractor/issues/207
             async with send_chan:
-                async with portal.open_stream_from(stream_data, seed=seed) as stream:
+                stream: MsgStream
+                async with portal.open_stream_from(
+                    stream_data,
+                    seed=seed,
+                ) as stream:
+                    value: int
                     async for value in stream:
                         # leverage trio's built-in backpressure
                         await send_chan.send(value)
 
-            print(f"FINISHED ITERATING {portal.channel.uid}")
+            uid: tuple[str, str] = portal.chan.uid
+            print(f'FINISHED ITERATING {uid}')
 
-        # spawn 2 trio tasks to collect streams and push to a local queue
+        # spawn 2 trio tasks to collect streams and push to a local
+        # queue
+        n: trio.Nursery
         async with trio.open_nursery() as n:
 
             for portal in portals:
@@ -61,8 +85,9 @@ async def aggregate(seed):
             # close this local task's reference to send side
             await send_chan.aclose()
 
-            unique_vals = set()
+            unique_vals: set[int] = set()
             async with recv_chan:
+                value: int
                 async for value in recv_chan:
                     if value not in unique_vals:
                         unique_vals.add(value)
@@ -71,11 +96,11 @@ async def aggregate(seed):
 
                 assert value in unique_vals
 
-            print("FINISHED ITERATING in aggregator")
+            print('FINISHED ITERATING in aggregator')
 
         await an.cancel()
-        print("WAITING on `ActorNursery` to finish")
-    print("AGGREGATOR COMPLETE!")
+        print('WAITING on `ActorNursery` to finish')
+    print('AGGREGATOR COMPLETE!')
 
 
 async def main() -> list[int]:
@@ -94,8 +119,8 @@ async def main() -> list[int]:
         # debug_mode=True,
     ) as an:
 
-        seed = int(1e3)
-        pre_start = time.time()
+        seed: int = int(1e3)
+        pre_start: float = time.time()
 
         portal: Portal = await an.start_actor(
             name='aggregator',
@@ -108,23 +133,27 @@ async def main() -> list[int]:
             seed=seed,
         ) as stream:
 
-            start = time.time()
+            start: float = time.time()
             # the portal call returns exactly what you'd expect
-            # as if the remote "aggregate" function was called locally
+            # as if the remote "aggregate" function was called
+            # locally
             result_stream: list[int] = []
+            value: int
             async for value in stream:
                 result_stream.append(value)
 
         cancelled: bool = await portal.cancel_actor()
         assert cancelled
 
+        stream_time: float = time.time() - start
+        total_time: float = time.time() - pre_start
         print(
-            f"STREAM TIME = {time.time() - start}\n"
-            f"STREAM + SPAWN TIME = {time.time() - pre_start}\n"
+            f'STREAM TIME = {stream_time}\n'
+            f'STREAM + SPAWN TIME = {total_time}\n'
         )
         assert result_stream == list(range(seed))
         return result_stream
 
 
 if __name__ == '__main__':
-    final_stream = trio.run(main)
+    final_stream: list[int] = trio.run(main)

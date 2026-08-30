@@ -4,14 +4,21 @@ import trio
 import tractor
 
 
-async def name_error():
-    "Raise a ``NameError``"
+async def name_error() -> None:
+    '''
+    Raise a ``NameError``.
+
+    '''
     getattr(doggypants)  # noqa
 
 
-async def spawn_until(depth=0):
-    """"A nested nursery that triggers another ``NameError``.
-    """
+async def spawn_until(
+    depth: int = 0,
+) -> None:
+    '''
+    A nested nursery that triggers another ``NameError``.
+
+    '''
     async with tractor.open_nursery() as an:
         if depth < 1:
             await tractor.to_actor.run(name_error, an=an)
@@ -27,18 +34,23 @@ async def spawn_until(depth=0):
             )
 
 
-async def main():
+async def main() -> None:
     '''
     The process tree should look as approximately as follows when the
     debugger first engages:
 
     python examples/debugging/multi_nested_subactors_bp_forever.py
-    ├─ python -m tractor._child --uid ('spawner1', '7eab8462 ...)
-    │  └─ python -m tractor._child --uid ('spawn_until_0', '3720602b ...)
-    │     └─ python -m tractor._child --uid ('name_error', '505bf71d ...)
+    ├─ python -m tractor._child --uid
+    │  ('spawner1', '7eab8462 ...')
+    │  └─ python -m tractor._child --uid
+    │     ('spawn_until_0', '3720602b ...')
+    │     └─ python -m tractor._child --uid
+    │        ('name_error', '505bf71d ...')
     │
-    └─ python -m tractor._child --uid ('spawner0', '1d42012b ...)
-       └─ python -m tractor._child --uid ('name_error', '6c2733b8 ...)
+    └─ python -m tractor._child --uid
+       ('spawner0', '1d42012b ...')
+       └─ python -m tractor._child --uid
+          ('name_error', '6c2733b8 ...')
 
     '''
     async with (

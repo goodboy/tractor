@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from contextlib import (
     asynccontextmanager as acm,
 )
@@ -16,7 +17,11 @@ _lock: trio.Lock|None = None
 
 @acm
 async def acquire_singleton_lock(
-) -> None:
+) -> AsyncIterator[trio.Lock]:
+    '''
+    Acquire and yield the process-wide lock.
+
+    '''
     global _lock
     if _lock is None:
         log.info('Allocating LOCK')
@@ -32,8 +37,15 @@ async def acquire_singleton_lock(
 
 
 async def hold_lock_forever(
-    task_status=trio.TASK_STATUS_IGNORED
-):
+    task_status: trio.TaskStatus[
+        trio.Lock,
+    ] = trio.TASK_STATUS_IGNORED,
+) -> None:
+    '''
+    Hold the singleton lock until cancellation.
+
+    '''
+    lock: trio.Lock
     async with (
         tractor.trionics.maybe_raise_from_masking_exc(),
         acquire_singleton_lock() as lock,
@@ -46,7 +58,12 @@ async def main(
     ignore_special_cases: bool,
     loglevel: str = 'info',
     debug_mode: bool = True,
-):
+) -> None:
+    '''
+    Exercise lock acquisition while cancellation is masked.
+
+    '''
+    tn: trio.Nursery
     async with (
         trio.open_nursery() as tn,
 
@@ -58,7 +75,7 @@ async def main(
             from tractor.trionics import _taskc
             _taskc._mask_cases.clear()
 
-        _lock = await tn.start(
+        _held_lock: trio.Lock = await tn.start(
             hold_lock_forever,
         )
         with trio.move_on_after(0.2):
@@ -74,8 +91,8 @@ if __name__ == '__main__':
     tractor.log.get_console_log(level='info')
     for case in [True, False]:
         log.info(
-            f'\n'
-            f'------ RUNNING SCRIPT TRIAL ------\n'
+            '\n'
+            '------ RUNNING SCRIPT TRIAL ------\n'
             f'ignore_special_cases: {case!r}\n'
         )
         trio.run(partial(

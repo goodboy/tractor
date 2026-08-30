@@ -1,28 +1,40 @@
 import trio
 import tractor
 
-_this_module = __name__
-the_line = 'Hi my name is {}'
+_this_module: str = __name__
+the_line: str = 'Hi my name is {}'
 
 
-tractor.log.get_console_log("INFO")
+tractor.log.get_console_log('INFO')
 
 
-async def hi():
+async def hi() -> str:
+    '''
+    Return a greeting naming the current actor.
+
+    '''
     return the_line.format(tractor.current_actor().name)
 
 
-async def say_hello(other_actor):
+async def say_hello(other_actor: str) -> str:
+    '''
+    Ask another actor to return its greeting.
+
+    '''
+    portal: tractor.Portal
     async with tractor.wait_for_actor(other_actor) as portal:
         return await portal.run(hi)
 
 
-async def main():
-    """Main tractor entry point, the "master" process (for now
+async def main() -> None:
+    '''
+    Main tractor entry point, the "master" process (for now
     acts as the "director").
-    """
+
+    '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
-        print("Alright... Action!")
+        print('Alright... Action!')
 
         # both actors wait on (then dial!) the *other*, so each
         # must outlive both hellos: spawn as daemons, run the
@@ -39,6 +51,10 @@ async def main():
             name: str,
             other_actor: str,
         ) -> None:
+            '''
+            Print a greeting fetched through a named actor.
+
+            '''
             print(
                 # RPC through an existing actor's `Portal`.
                 await portals[name].run(
@@ -47,13 +63,14 @@ async def main():
                 )
             )
 
+        tn: trio.Nursery
         async with trio.open_nursery() as tn:
             tn.start_soon(run_and_print, 'donny', 'gretchen')
             tn.start_soon(run_and_print, 'gretchen', 'donny')
 
         await an.cancel()
 
-    print("CUTTTT CUUTT CUT!!! Donny!! You're supposed to say...")
+    print('CUTTTT CUUTT CUT!!! Donny!! You\'re supposed to say...')
 
 
 if __name__ == '__main__':

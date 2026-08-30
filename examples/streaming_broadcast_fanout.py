@@ -28,6 +28,7 @@ async def tick_stream(
         # wait for the go-signal ensuring every parent-side
         # subscriber is attached before any tick is sent.
         assert await stream.receive() == 'go'
+        i: int
         for i in range(count):
             await stream.send(i)
         # falling out gracefully closes our stream side;
@@ -37,15 +38,17 @@ async def tick_stream(
 async def consume(
     name: str,
     stream: tractor.MsgStream,
-    task_status: trio.TaskStatus = trio.TASK_STATUS_IGNORED,
+    task_status: trio.TaskStatus[None] = trio.TASK_STATUS_IGNORED,
 ) -> None:
     '''
     Consume a private broadcast-copy of the IPC stream.
 
     '''
+    bcaster: tractor.trionics.BroadcastReceiver
     async with stream.subscribe() as bcaster:
         task_status.started()
         ticks: list[int] = []
+        tick: int
         async for tick in bcaster:
             print(f'{name}: rx {tick}')
             ticks.append(tick)
@@ -54,11 +57,19 @@ async def consume(
 
 
 async def main() -> None:
+    '''
+    Fan one remote stream out to local subscribers.
+
+    '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
-        portal = await an.start_actor(
+        portal: tractor.Portal = await an.start_actor(
             'ticker',
             enable_modules=[__name__],
         )
+        ctx: tractor.Context
+        first: int
+        stream: tractor.MsgStream
         async with (
             portal.open_context(
                 tick_stream,
@@ -67,9 +78,11 @@ async def main() -> None:
             ctx.open_stream() as stream,
         ):
             assert first == 5
+            tn: trio.Nursery
             async with trio.open_nursery() as tn:
                 # use `.start()` so each consumer is known
                 # to be subscribed before the ticks flow.
+                i: int
                 for i in range(3):
                     await tn.start(
                         consume,

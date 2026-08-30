@@ -1,10 +1,15 @@
 import platform
+from collections.abc import AsyncIterator
 
 import tractor
 import trio
 
 
-async def gen():
+async def gen() -> AsyncIterator[str]:
+    '''
+    Yield values around debugger pauses.
+
+    '''
     yield 'yo'
     await tractor.pause()
     yield 'yo'
@@ -15,11 +20,15 @@ async def gen():
 async def just_bp(
     ctx: tractor.Context,
 ) -> None:
+    '''
+    Pause repeatedly before deliberately breaking the context.
 
+    '''
     await ctx.started()
     await tractor.pause()
 
     # TODO: bps and errors in this call..
+    val: str
     async for val in gen():
         print(val)
 
@@ -34,15 +43,18 @@ async def just_bp(
 
 
 
-async def main():
+async def main() -> None:
+    '''
+    Run the breakpoint context over a supported transport.
 
+    '''
     # !TODO, parametrize the --tpt-proto={key} with osenv vars just
     # like we do for loglevel/spawn-backend!
     # - [ ] run on both tpts for all such debugger tests?
     # - [ ] special skip for macos!
     #
     if platform.system() != 'Darwin':
-        tpt = 'uds'
+        tpt: str = 'uds'
     else:
         # XXX, precisely we can't use pytest's tmp-path generation
         # for tests.. apparently because:
@@ -59,7 +71,7 @@ async def main():
         enable_transports=[tpt],
         loglevel='devx',
     ) as an:
-        p = await an.start_actor(
+        p: tractor.Portal = await an.start_actor(
             'bp_boi',
             enable_modules=[__name__],
         )

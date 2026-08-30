@@ -2,18 +2,30 @@ import trio
 import tractor
 
 
-async def assert_err():
+async def assert_err() -> None:
+    '''
+    Raise an assertion error in the current actor.
+
+    '''
     assert 0
 
 
-async def main():
+async def main() -> None:
+    '''
+    Propagate a failing one-shot task from a subactor.
+
+    '''
+    an: tractor.ActorNursery
     async with tractor.open_nursery() as an:
-        real_actors = []
+        real_actors: list[tractor.Portal] = []
+        i: int
         for i in range(3):
-            real_actors.append(await an.start_actor(
-                f'actor_{i}',
-                enable_modules=[__name__],
-            ))
+            real_actors.append(
+                await an.start_actor(
+                    f'actor_{i}',
+                    enable_modules=[__name__],
+                )
+            )
 
         # run one one-shot task actor that will fail immediately;
         # its error raises right here in the caller's task..
@@ -28,4 +40,4 @@ if __name__ == '__main__':
         # also raises
         trio.run(main)
     except tractor.RemoteActorError:
-        print("Look Maa that actor failed hard, hehhh!")
+        print('Look Maa that actor failed hard, hehhh!')
