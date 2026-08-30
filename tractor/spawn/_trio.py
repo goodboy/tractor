@@ -22,6 +22,7 @@ Spawns sub-actors as fresh OS processes driven by
 
 '''
 from __future__ import annotations
+import os
 import sys
 from typing import (
     Any,
@@ -56,6 +57,7 @@ from ._spawn import (
 
 
 if TYPE_CHECKING:
+    from tractor.discovery._bindspace import Bindspace
     from tractor.ipc import (
         _server,
     )
@@ -76,6 +78,7 @@ async def trio_proc(
     parent_addr: UnwrappedAddress,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
+    bindspace: Bindspace|None = None,
     infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
     proc_kwargs: dict[str, any] = {}
@@ -119,16 +122,61 @@ async def trio_proc(
     if infect_asyncio:
         spawn_cmd.append('--asyncio')
 
+    child_netns_fd: int|None = None
+    if bindspace is not None:
+        if (namespace_fd := bindspace.namespace_fd) is None:
+            raise ValueError(
+                '`bindspace.namespace_fd` is required for '
+                'Trio child transport!'
+            )
+
+        # Snapshot caller-owned process options before duplicating the
+        # live `Bindspace.namespace_fd`. No checkpoint separates this
+        # setup from `open_process()` below.
+        inherited_fds: tuple[int, ...] = tuple(
+            proc_kwargs.get('pass_fds', ())
+        )
+        proc_kwargs = dict(proc_kwargs)
+        child_netns_fd = os.dup(namespace_fd)
+        try:
+            netns_bootstrap: tuple[int, int] = (
+                # FD number retained in the child's descriptor table.
+                child_netns_fd,
+                # Namespace identity checked before the child enters it.
+                bindspace.ref.inode,
+            )
+            spawn_cmd.extend((
+                '--netns_bootstrap',
+                str(netns_bootstrap),
+            ))
+
+            # Keep every descriptor requested by the caller and append
+            # the namespace FD needed during child bootstrap.
+            proc_kwargs['pass_fds'] = (
+                *inherited_fds,
+                child_netns_fd,
+            )
+        except BaseException:
+            os.close(child_netns_fd)
+            raise
+
     cancelled_during_spawn: bool = False
     proc: trio.Process|None = None
     ipc_server: _server.Server = actor_nursery._actor.ipc_server
     peer_event: trio.Event|None = None
+    child_registered: bool = False
     try:
         try:
-            proc: trio.Process = await trio.lowlevel.open_process(
-                spawn_cmd,
-                **proc_kwargs,
-            )
+            try:
+                proc: trio.Process = await trio.lowlevel.open_process(
+                    spawn_cmd,
+                    **proc_kwargs,
+                )
+            finally:
+                if child_netns_fd is not None:
+                    # The child now has its own descriptor-table entry.
+                    # Close the temporary entry in the parent process.
+                    os.close(child_netns_fd)
             log.runtime(
                 f'Started new child subproc\n'
                 f'(>\n'
@@ -157,6 +205,7 @@ async def trio_proc(
                 proc=proc,
                 portal=None,
             )
+            child_registered = True
             if cancel_during_registration:
                 cancelled_during_spawn = True
                 proc.kill()
@@ -334,7 +383,11 @@ async def trio_proc(
         ):
             ipc_server._peer_connected.pop(subactor.aid.uid)
 
-        if not cancelled_during_spawn:
+        if (
+            child_registered
+            and
+            not cancelled_during_spawn
+        ):
             # pop child entry to indicate we no longer managing this
             # subactor
             actor_nursery._children.pop(subactor.aid.uid)

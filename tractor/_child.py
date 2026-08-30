@@ -49,6 +49,34 @@ def parse_ipaddr(arg):
         return arg
 
 
+def parse_netns_bootstrap(arg: str) -> tuple[int, int]:
+    '''
+    Parse one atomic inherited namespace capability.
+
+    Descriptor and inode validation remains in
+    `_consume_netns_bootstrap()` so every valid descriptor-shaped
+    input reaches its exact child-owned cleanup boundary.
+
+    '''
+    try:
+        value: object = literal_eval(arg)
+    except (ValueError, SyntaxError) as exc:
+        raise argparse.ArgumentTypeError(
+            'netns bootstrap must be an `(fd, inode)` tuple'
+        ) from exc
+
+    if (
+        not isinstance(value, tuple)
+        or
+        len(value) != 2
+    ):
+        raise argparse.ArgumentTypeError(
+            'netns bootstrap must be an `(fd, inode)` tuple'
+        )
+
+    return value
+
+
 def _actor_child_main(
     uid: tuple[str, str],
     loglevel: str | None,
@@ -123,7 +151,11 @@ def _actor_child_main(
     )
 
 
-if __name__ == "__main__":
+def main(argv: list[str]|None = None) -> None:
+    '''
+    Parse Trio child-bootstrap arguments and enter actor runtime.
+
+    '''
     __tracebackhide__: bool = True
 
     parser = argparse.ArgumentParser()
@@ -131,7 +163,11 @@ if __name__ == "__main__":
     parser.add_argument("--loglevel", type=str)
     parser.add_argument("--parent_addr", type=parse_ipaddr)
     parser.add_argument("--asyncio", action='store_true')
-    args = parser.parse_args()
+    parser.add_argument(
+        '--netns_bootstrap',
+        type=parse_netns_bootstrap,
+    )
+    args = parser.parse_args(argv)
 
     _actor_child_main(
         uid=args.uid,
@@ -139,4 +175,9 @@ if __name__ == "__main__":
         parent_addr=args.parent_addr,
         infect_asyncio=args.asyncio,
         spawn_method='trio',
+        netns_bootstrap=args.netns_bootstrap,
     )
+
+
+if __name__ == "__main__":
+    main()

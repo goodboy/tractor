@@ -8,6 +8,10 @@ import errno
 from functools import partial
 import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
 from types import SimpleNamespace
 from typing import (
     Any,
@@ -15,15 +19,29 @@ from typing import (
 )
 
 import pytest
+import trio
 
+import tractor
 from tractor import _child
 from tractor.devx import _proctitle
+from tractor.discovery._bindspace import (
+    Bindspace,
+    BindspaceRef,
+    BindspaceSpec,
+)
+from tractor.msg import Aid
 from tractor.spawn import (
     _entry,
+    _mp,
     _netns,
     _spawn,
+    _trio,
 )
 from tractor.trionics import patches
+
+
+_SELF_NETNS_PATH = Path('/proc/self/ns/net')
+_SELF_FD_DIR = Path('/proc/self/fd')
 
 
 def _assert_fd_closed(namespace_fd: int) -> None:
@@ -35,6 +53,162 @@ def _assert_fd_closed(namespace_fd: int) -> None:
         os.fstat(namespace_fd)
 
     assert exc_info.value.errno == errno.EBADF
+
+
+def _fds_referencing(
+    reference_fd: int,
+) -> set[int]:
+    '''
+    Find this process's FDs for the same open kernel object.
+
+    Snapshotting the matching descriptor numbers around a spawn lets
+    the E2E test detect a leaked `os.dup()` entry without replacing
+    `open_process()` or observing the child's descriptor table.
+
+    '''
+    reference_stat: os.stat_result = os.fstat(reference_fd)
+    matching_fds: set[int] = set()
+    fd_path: Path
+    for fd_path in _SELF_FD_DIR.iterdir():
+        try:
+            open_fd: int = int(fd_path.name)
+            open_stat: os.stat_result = os.fstat(open_fd)
+        except (OSError, ValueError):
+            continue
+
+        if (
+            open_stat.st_dev == reference_stat.st_dev
+            and
+            open_stat.st_ino == reference_stat.st_ino
+        ):
+            matching_fds.add(open_fd)
+
+    return matching_fds
+
+
+def _bindspace_for_fd(namespace_fd: int) -> Bindspace:
+    '''
+    Build one borrowed stand-in netns capability around a real FD.
+
+    '''
+    key: str = 'spawn-test-netns'
+    inode: int = os.fstat(namespace_fd).st_ino
+    return Bindspace(
+        spec=BindspaceSpec(
+            kind='netns',
+            key=key,
+        ),
+        ref=BindspaceRef(
+            kind='netns',
+            key=key,
+            inode=inode,
+        ),
+        namespace_fd=namespace_fd,
+        ownership='borrowed',
+    )
+
+
+class _MockIpcServer:
+    '''
+    Provide the peer-event state used by `trio_proc()` tests.
+
+    '''
+    def __init__(self) -> None:
+        self._peer_connected: dict[
+            tuple[str, str],
+            trio.Event,
+        ] = {}
+
+    async def wait_for_peer(
+        self,
+        child_uid: tuple[str, str],
+    ) -> tuple[trio.Event, object]:
+        '''
+        Model a child that dies or fails before its handshake.
+
+        '''
+        await trio.sleep_forever()
+
+
+def _netns_bootstrap_from_cmd(
+    command: list[str],
+) -> tuple[int, int]:
+    '''
+    Parse the namespace tuple that the exec child would receive.
+
+    '''
+    arg_index: int = command.index('--netns_bootstrap')
+    return _child.parse_netns_bootstrap(command[arg_index + 1])
+
+
+class _SpawnTestNursery:
+    '''
+    Track provisional Trio child publication during transport tests.
+
+    '''
+    def __init__(self) -> None:
+        self._actor = SimpleNamespace(
+            ipc_server=_MockIpcServer(),
+        )
+        self._children: dict[
+            tuple[str, str],
+            tuple,
+        ] = {}
+
+    def _register_child(
+        self,
+        subactor: object,
+        proc: object,
+        portal: object|None,
+    ) -> tuple[trio.Event, trio.Event, bool]:
+        '''
+        Publish one provisional child after its peer event exists.
+
+        '''
+        uid: tuple[str, str] = subactor.aid.uid
+        assert uid in self._actor.ipc_server._peer_connected
+        assert portal is None
+        self._children[uid] = (subactor, proc, portal)
+        return (trio.Event(), trio.Event(), False)
+
+
+def _spawn_test_subactor(uid: tuple[str, str]) -> SimpleNamespace:
+    '''
+    Build the actor fields reached before a failed Trio handshake.
+
+    '''
+    return SimpleNamespace(
+        aid=Aid(
+            name=uid[0],
+            uuid=uid[1],
+        ),
+        loglevel=None,
+        pformat=lambda: uid[0],
+    )
+
+
+async def _report_child_netns(
+    inherited_fd: int,
+) -> tuple[int, int]:
+    '''
+    Report namespace and inherited-FD inodes from a spawned actor.
+
+    `_consume_netns_bootstrap()` has already entered the target netns
+    and closed its bootstrap FD before this RPC can run. The unrelated
+    `inherited_fd` must remain open because the caller included it in
+    `proc_kwargs['pass_fds']` before Trio appended the netns FD.
+
+    '''
+    child_netns_fd: int = os.open(
+        _SELF_NETNS_PATH,
+        os.O_RDONLY,
+    )
+    try:
+        child_netns_inode: int = os.fstat(child_netns_fd).st_ino
+        inherited_inode: int = os.fstat(inherited_fd).st_ino
+        return child_netns_inode, inherited_inode
+    finally:
+        os.close(child_netns_fd)
 
 
 def test_enter_netns_rejects_mismatched_inherited_fd(
@@ -266,6 +440,476 @@ def test_netns_entry_error_survives_close_failure(
     assert entry_error.__notes__
     assert 'close inherited namespace FD' in entry_error.__notes__[0]
     assert 'OverflowError' in entry_error.__notes__[0]
+
+
+def test_trio_child_cli_forwards_netns_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    The exec child must retain one atomic FD-and-inode capability.
+
+    Supply the tuple exactly as the Trio parent emits it and replace
+    `_actor_child_main()` before any runtime work. The captured kwargs
+    prove argparse does not split, reorder, or drop either value while
+    forwarding the capability to the child-owned cleanup boundary.
+
+    '''
+    calls: list[dict[str, object]] = []
+    uid: tuple[str, str] = ('cli-netns-child', 'test')
+    parent_addr: tuple[str, int] = ('127.0.0.1', 1616)
+    bootstrap: tuple[int, int] = (12, 3456)
+
+    def fake_actor_child_main(**kwargs: object) -> None:
+        '''
+        Capture parsed child-bootstrap arguments without starting Trio.
+
+        '''
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        _child,
+        '_actor_child_main',
+        fake_actor_child_main,
+    )
+
+    _child.main([
+        '--uid',
+        str(uid),
+        '--parent_addr',
+        str(parent_addr),
+        '--netns_bootstrap',
+        str(bootstrap),
+    ])
+
+    assert calls == [{
+        'uid': uid,
+        'loglevel': None,
+        'parent_addr': parent_addr,
+        'infect_asyncio': False,
+        'spawn_method': 'trio',
+        'netns_bootstrap': bootstrap,
+    }]
+
+
+def test_trio_spawn_requires_live_bindspace_fd() -> None:
+    '''
+    A `BindspaceRef` alone cannot let a child enter its namespace.
+
+    Construct a valid `Bindspace` with its required identity metadata
+    but no open namespace FD. Calling `trio_proc()` must fail before
+    `open_process()` because an inode identifies a namespace but does
+    not provide an open handle that the child can inherit.
+
+    '''
+    key: str = 'missing-spawn-netns'
+    bindspace = Bindspace(
+        spec=BindspaceSpec(
+            kind='netns',
+            key=key,
+        ),
+        # A realized bindspace always retains identity metadata; this
+        # test isolates the missing live-FD condition.
+        ref=BindspaceRef(
+            kind='netns',
+            key=key,
+            inode=1,
+        ),
+        namespace_fd=None,
+        ownership='borrowed',
+    )
+    uid: tuple[str, str] = ('missing-netns-fd', 'test')
+
+    async def main() -> None:
+        '''
+        Reject the ref-only capability before `open_process()`.
+
+        '''
+        with pytest.raises(
+            ValueError,
+            match='bindspace.namespace_fd.*required',
+        ):
+            await _trio.trio_proc(
+                name=uid[0],
+                actor_nursery=_SpawnTestNursery(),
+                subactor=_spawn_test_subactor(uid),
+                errors={},
+                bind_addrs=[],
+                parent_addr=('127.0.0.1', 1616),
+                _runtime_vars={},
+                bindspace=bindspace,
+            )
+
+    trio.run(main)
+
+
+def test_trio_spawn_relays_bindspace_to_child_actor(
+    tmp_path: Path,
+    start_method: str,
+    tpt_proto: str,
+) -> None:
+    '''
+    Move a subactor into the relayed bindspace netns.
+
+    Re-exec this one test inside an unprivileged user/net namespace,
+    then move the nested pytest parent into a second netns. The actor
+    initially inherits the second namespace but receives an FD for the
+    first. UDS keeps the parent handshake reachable across the netns
+    boundary. The child reports its resulting namespace inode and a
+    caller-supplied inherited FD over a real `Portal`, proving the exec
+    CLI, merged `pass_fds`, `setns()`, handshake, and RPC path.
+
+    '''
+    if start_method != 'trio':
+        pytest.skip('bindspace FD relay is implemented by Trio spawn')
+
+    reexec_var: str = 'TRACTOR_TEST_NETNS_E2E_REEXEC'
+    if os.environ.get(reexec_var) != '1':
+        unshare_path: str|None = shutil.which('unshare')
+        if unshare_path is None:
+            pytest.skip('`unshare` is unavailable')
+
+        # Give nested pytest `CAP_SYS_ADMIN` only inside a disposable
+        # user namespace. The first `--net` creates the target netns;
+        # the nested test retains its FD before creating a second netns
+        # for the parent and child to inherit at spawn. Probe separately
+        # so hosts disabling unprivileged user namespaces skip cleanly.
+        probe = subprocess.run(
+            [
+                unshare_path,
+                '--user',
+                '--map-root-user',
+                '--net',
+                'true',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if probe.returncode:
+            reason: str = probe.stderr.strip()
+            pytest.skip(
+                f'unprivileged user/net namespaces unavailable: '
+                f'{reason}'
+            )
+
+        nested_env: dict[str, str] = dict(os.environ)
+        nested_env[reexec_var] = '1'
+        nested_env['VIRTUAL_ENV'] = sys.prefix
+        nested_rt_dir: Path = Path(
+            tempfile.mkdtemp(prefix='tne-')
+        )
+        nested_env['XDG_RUNTIME_DIR'] = str(nested_rt_dir)
+        python_bin: str = str(Path(sys.executable).parent)
+        nested_env['PATH'] = (
+            python_bin
+            + os.pathsep
+            + nested_env['PATH']
+        )
+        test_id: str = (
+            'tests/test_netns_spawn.py::'
+            'test_trio_spawn_relays_bindspace_to_child_actor'
+        )
+        try:
+            subprocess.run(
+                [
+                    unshare_path,
+                    '--user',
+                    '--map-root-user',
+                    '--net',
+                    sys.executable,
+                    '-m',
+                    'pytest',
+                    test_id,
+                    '--spawn-backend=trio',
+                    '--tpt-proto=uds',
+                    '-x',
+                    '--tb=short',
+                    '--no-header',
+                    '--timeout=30',
+                ],
+                env=nested_env,
+                check=True,
+            )
+        finally:
+            shutil.rmtree(nested_rt_dir)
+        return
+
+    assert start_method == 'trio'
+    assert tpt_proto == 'uds'
+
+    # Namespace creation/realization is outside this transport slice:
+    # production spawn accepts an already-open `namespace_fd`. Build
+    # both disposable namespaces directly for this E2E boundary.
+    target_netns_fd: int = os.open(
+        _SELF_NETNS_PATH,
+        os.O_RDONLY,
+    )
+    target_netns_inode: int = os.fstat(target_netns_fd).st_ino
+    initial_target_fds: set[int] = _fds_referencing(
+        target_netns_fd,
+    )
+    assert target_netns_fd in initial_target_fds
+
+    # Move the parent to a second netns after retaining an FD for the
+    # first. The child must use that FD to differ from its parent.
+    os.unshare(os.CLONE_NEWNET)
+    parent_netns_fd: int = os.open(
+        _SELF_NETNS_PATH,
+        os.O_RDONLY,
+    )
+    parent_netns_inode: int = os.fstat(parent_netns_fd).st_ino
+    assert parent_netns_inode != target_netns_inode
+
+    inherited_path: Path = tmp_path / 'caller-pass-fd'
+    inherited_path.touch()
+    inherited_fd: int = os.open(inherited_path, os.O_RDONLY)
+    bindspace: Bindspace = _bindspace_for_fd(target_netns_fd)
+
+    async def main() -> None:
+        '''
+        Start the child and receive its namespace observations by RPC.
+
+        '''
+        async with tractor.open_nursery() as actor_nursery:
+            portal: tractor.Portal = await actor_nursery.start_actor(
+                'netns-bootstrap-child',
+                bindspace=bindspace,
+                enable_modules=[__name__],
+                proc_kwargs={
+                    'pass_fds': (inherited_fd,),
+                },
+            )
+            report: tuple[int, int] = await portal.run(
+                _report_child_netns,
+                inherited_fd=inherited_fd,
+            )
+
+            (
+                child_netns_inode,
+                inherited_inode,
+            ) = report
+            assert child_netns_inode == target_netns_inode
+            assert child_netns_inode != parent_netns_inode
+            assert inherited_inode == inherited_path.stat().st_ino
+            await portal.cancel_actor()
+
+    try:
+        trio.run(main)
+        # Any `os.dup(target_netns_fd)` entry made for child exec must
+        # now be absent from the parent's descriptor table.
+        assert _fds_referencing(target_netns_fd) == initial_target_fds
+        # Both descriptors supplied by this parent remain open after
+        # the child exits; only the temporary `os.dup()` FD is closed.
+        assert os.fstat(target_netns_fd).st_ino == bindspace.ref.inode
+        assert os.fstat(inherited_fd).st_ino == inherited_path.stat().st_ino
+    finally:
+        os.close(parent_netns_fd)
+        os.close(target_netns_fd)
+        os.close(inherited_fd)
+
+
+def test_trio_spawn_failure_closes_child_netns_fd_in_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    A failed exec must close the child netns FD in the parent process.
+
+    Raise one unique error from `open_process()` after capturing and
+    validating the FD made by `os.dup(Bindspace.namespace_fd)`. Since
+    exec fails, no child inherits it. The backend must close that
+    parent descriptor, preserve the original error, leave the original
+    bindspace FD open, and avoid removing a child record that was never
+    added to `ActorNursery._children`.
+
+    '''
+    namespace_path: Path = tmp_path / 'failed-trio-bindspace'
+    namespace_path.touch()
+    namespace_fd: int = os.open(namespace_path, os.O_RDONLY)
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+    uid: tuple[str, str] = ('failed-netns-exec', 'test')
+    child_fds: list[int] = []
+    open_error = OSError('could not exec child')
+
+    async def fail_open_process(
+        command: list[str],
+        **kwargs: object,
+    ) -> trio.Process:
+        '''
+        Fail after checking the child FD in `pass_fds` and the CLI.
+
+        '''
+        child_fd, expected_inode = _netns_bootstrap_from_cmd(command)
+        assert kwargs['pass_fds'] == (child_fd,)
+        assert os.fstat(child_fd).st_ino == expected_inode
+        child_fds.append(child_fd)
+        raise open_error
+
+    monkeypatch.setattr(
+        _trio.trio.lowlevel,
+        'open_process',
+        fail_open_process,
+    )
+    actor_nursery = _SpawnTestNursery()
+
+    async def main() -> None:
+        '''
+        Exercise cleanup before Trio child publication.
+
+        '''
+        with pytest.raises(OSError) as exc_info:
+            await _trio.trio_proc(
+                name=uid[0],
+                actor_nursery=actor_nursery,
+                subactor=_spawn_test_subactor(uid),
+                errors={},
+                bind_addrs=[],
+                parent_addr=('127.0.0.1', 1616),
+                _runtime_vars={},
+                bindspace=bindspace,
+            )
+
+        assert exc_info.value is open_error
+
+    try:
+        trio.run(main)
+        assert len(child_fds) == 1
+        _assert_fd_closed(child_fds[0])
+        assert os.fstat(namespace_fd).st_ino == bindspace.ref.inode
+        assert actor_nursery._children == {}
+    finally:
+        os.close(namespace_fd)
+
+
+def test_trio_spawn_cancel_closes_child_netns_fd_in_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    Cancellation during exec must close the parent-side child netns FD.
+
+    Park `open_process()` after it receives the descriptor made by
+    `os.dup(Bindspace.namespace_fd)`, then cancel the task running
+    `trio_proc()`. The controlled event fixes the cancellation point
+    inside the open call. Cleanup must close that descriptor in the
+    parent while preserving the original bindspace FD; no process or
+    `ActorNursery._children` entry exists to reap at this schedule.
+
+    '''
+    namespace_path: Path = tmp_path / 'cancelled-trio-bindspace'
+    namespace_path.touch()
+    namespace_fd: int = os.open(namespace_path, os.O_RDONLY)
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+    uid: tuple[str, str] = ('cancelled-netns-exec', 'test')
+    open_called = trio.Event()
+    child_fds: list[int] = []
+
+    async def park_open_process(
+        command: list[str],
+        **kwargs: object,
+    ) -> trio.Process:
+        '''
+        Record the child FD, then signal that the open call is parked.
+
+        '''
+        child_fd, expected_inode = _netns_bootstrap_from_cmd(command)
+        assert kwargs['pass_fds'] == (child_fd,)
+        assert os.fstat(child_fd).st_ino == expected_inode
+        child_fds.append(child_fd)
+        open_called.set()
+        try:
+            await trio.sleep_forever()
+        except trio.Cancelled:
+            raise
+
+    monkeypatch.setattr(
+        _trio.trio.lowlevel,
+        'open_process',
+        park_open_process,
+    )
+    actor_nursery = _SpawnTestNursery()
+
+    async def run_spawn() -> None:
+        '''
+        Keep cancellation propagation explicit at the backend task.
+
+        '''
+        try:
+            await _trio.trio_proc(
+                name=uid[0],
+                actor_nursery=actor_nursery,
+                subactor=_spawn_test_subactor(uid),
+                errors={},
+                bind_addrs=[],
+                parent_addr=('127.0.0.1', 1616),
+                _runtime_vars={},
+                bindspace=bindspace,
+            )
+        except trio.Cancelled:
+            raise
+
+    async def main() -> None:
+        '''
+        Cancel only after `open_process()` owns the checkpoint.
+
+        '''
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(run_spawn)
+            await open_called.wait()
+            nursery.cancel_scope.cancel()
+
+    try:
+        trio.run(main)
+        assert len(child_fds) == 1
+        _assert_fd_closed(child_fds[0])
+        assert os.fstat(namespace_fd).st_ino == bindspace.ref.inode
+        assert actor_nursery._children == {}
+    finally:
+        os.close(namespace_fd)
+
+
+def test_mp_spawn_rejects_bindspace_transport(
+    tmp_path: Path,
+) -> None:
+    '''
+    Unimplemented MP FD transfer must fail before process creation.
+
+    Supply one valid live bindspace directly to the multiprocessing
+    backend. Until spawn/forkserver reduction gives the child exclusive
+    descriptor ownership, both variants must raise the same actionable
+    error instead of silently booting an actor in the parent's netns.
+
+    '''
+    namespace_path: Path = tmp_path / 'mp-bindspace'
+    namespace_path.touch()
+    namespace_fd: int = os.open(namespace_path, os.O_RDONLY)
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+
+    async def main() -> None:
+        '''
+        Invoke the backend before any multiprocessing context access.
+
+        '''
+        with pytest.raises(
+            NotImplementedError,
+            match='multiprocessing spawn backends',
+        ):
+            await _mp.mp_proc(
+                name='unsupported-netns-child',
+                actor_nursery=None,  # type: ignore[arg-type]
+                subactor=None,  # type: ignore[arg-type]
+                errors={},
+                bind_addrs=[],
+                parent_addr=('127.0.0.1', 1616),
+                _runtime_vars={},
+                bindspace=bindspace,
+            )
+
+    try:
+        trio.run(main)
+        assert os.fstat(namespace_fd).st_ino == bindspace.ref.inode
+    finally:
+        os.close(namespace_fd)
 
 
 @pytest.mark.parametrize('backend', ('mp', 'trio'))

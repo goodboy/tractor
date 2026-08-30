@@ -61,6 +61,7 @@ from ..runtime._supervise import (
 
 if TYPE_CHECKING:
     from ..discovery._addr import UnwrappedAddress
+    from ..discovery._bindspace import Bindspace
     from ..runtime._portal import Portal
 
 
@@ -254,6 +255,7 @@ async def run(
     # is provided.
     name: str|None = None,
     bind_addrs: list[UnwrappedAddress]|None = None,
+    bindspace: Bindspace|None = None,
     enable_modules: list[str]|None = None,
     loglevel: str|None = None,
     debug_mode: bool|None = None,
@@ -337,6 +339,7 @@ async def run(
             (enable_modules or [])
         ),
         bind_addrs=bind_addrs,
+        bindspace=bindspace,
         loglevel=loglevel,
         debug_mode=debug_mode,
         infect_asyncio=infect_asyncio,
