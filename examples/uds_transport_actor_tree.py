@@ -22,7 +22,7 @@ async def report_addr() -> str:
 
     '''
     actor: tractor.Actor = tractor.current_actor()
-    addr: tuple[str, str] = actor.accept_addr
+    addr: tuple[str, int|str] = actor.accept_addr
     pid: int = os.getpid()
     return f'{actor.name}@{addr} pid={pid}'
 
