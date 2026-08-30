@@ -30,9 +30,9 @@ the registry tracks the live tree as it grows and shrinks.
 
 .. note::
    Actor names are **not** enforced unique — the registry is keyed
-   by the full ``(name, uuid)`` pair. Name-based lookups simply
-   resolve to the *last* registered match, so if you boot five
-   actors all named ``'bob'``, you get the freshest ``'bob'`` B)
+   by the full ``(name, uuid)`` pair. A name lookup returns one
+   matching registration, but the API does not promise which match
+   wins. Use unique service names when selection matters.
 
 First boot: who's the registrar?
 --------------------------------
@@ -69,18 +69,33 @@ A dedicated registrar
 ---------------------
 That second rule — *"if a registrar answers, boot as a plain
 root"* — is all you need to run the registry as its own
-**standalone process**, decoupled from any app tree's root. Boot
-a bare ``tractor.run_daemon([], registry_addrs=[...])`` (a root
-actor that does nothing but hold the registry), point your app
-tree at the same ``registry_addrs``, and every actor discovers
-through that *external* registrar instead of a tree-local one:
+**standalone process**, decoupled from any app tree's root. In the
+daemon process, enter ``open_root_actor()`` with an explicit
+``registry_addrs`` and ``ensure_registry=True``; the latter makes
+startup fail instead of silently joining a registrar that won the
+address. Point each app tree at the address that daemon actually
+bound:
 
-.. literalinclude:: ../../examples/dedicated_registrar.py
-   :caption: examples/dedicated_registrar.py
+.. literalinclude:: ../../examples/discovery/dedicated_registrar.py
+   :caption: examples/discovery/dedicated_registrar.py
    :language: python
 
-This is the "registrar as a subsystem, not the root actor" shape.
-Two caveats today (both tracked as #472 follow-ups):
+The example's selector socket binds but deliberately never listens.
+It owns the kernel-selected local address only long enough to read it,
+then closes so Tractor's actual listener can bind the same address.
+This is not a socket transfer: the close/rebind handoff is non-atomic,
+so the example retries with a fresh candidate only when registrar
+startup reports that another process claimed the released address.
+Retries are bounded, and other startup failures remain visible. It
+publishes the selected address only after the actor context enters.
+It also performs the lookup inside a separate ``client`` actor. The
+service is its sibling, not its child, so the client has no spawn-time
+service channel to satisfy the local-peer fast path. The
+``query_actor()`` assertion verifies that a registrar portal handled
+the lookup before ``find_actor()`` makes the service RPC.
+
+This is the "registrar as a subsystem, not the app root actor"
+shape. Two caveats today (both tracked as #472 follow-ups):
 ``enable_transports`` is single-proto per runtime, so a registrar
 can't yet serve multiple backends at once; and there's no way to
 spawn a registrar as a *sub*-actor of a shared tree (only as its
@@ -114,13 +129,22 @@ Knobs worth knowing:
 - ``registry_addrs=[...]``: query specific (possibly multiple,
   possibly remote) registrars instead of your tree's default,
 
-- ``only_first=False``: deliver a ``list[Portal]`` of *all*
-  matches found across the queried registrars instead of just the
-  first,
+- ``only_first=True``: after all configured registrars are queried
+  concurrently, yield the result in the first ``registry_addrs``
+  position. This is configured order, not first-reachable order, so
+  the result can be ``None`` even when a later registrar returned a
+  portal,
 
-- ``raise_on_none=True``: raise a ``RuntimeError`` instead of
-  yielding ``None`` when no match is found — for when absence is
-  a hard error in your app.
+- ``only_first=False``: when any query succeeds, yield an ordered
+  ``list[Portal | None]`` with one result per ``registry_addrs``
+  position; misses remain ``None`` placeholders. When every query
+  misses, yield ``None`` instead of a list. This does not enumerate
+  every duplicate name in one registrar,
+
+- ``raise_on_none=True``: raise a ``RuntimeError`` when every
+  registrar query returns ``None``. With ``only_first=True`` it does
+  not raise merely because the first ordered result is ``None`` when
+  a later result is a portal.
 
 ``wait_for_actor()``
 ********************
@@ -153,10 +177,11 @@ Yields a portal straight to the registrar actor itself — or a
 Fast paths and address preference
 ---------------------------------
 
-Before doing any RPC to the registrar, every lookup first scans
-the calling actor's *already-connected peers*: if you have a live
-channel to an actor named ``name`` you get a portal over it
-immediately, no registrar round-trip at all.
+Before doing any RPC to the registrar, ``query_actor()``,
+``wait_for_actor()``, and the default ``find_actor()`` lookup first
+scan the calling actor's *already-connected peers*. If the caller
+has a live channel to an actor named ``name``, it gets a portal over
+that channel immediately, with no registrar round-trip.
 
 When a registry entry holds *multiple* addresses (a multihomed
 actor) the "best" one is chosen by locality:
@@ -223,8 +248,8 @@ the existing registrar:
 
 Per the bootstrap rules above, if those addrs are absent this process
 becomes its own registrar root, so the same code works standalone and
-as a tree-joiner. An occupied address that does not complete a Tractor
-registrar handshake fails startup instead of being rebound.
+as a tree-joiner. An occupied address that does not complete a
+Tractor registrar handshake fails startup instead of being rebound.
 
 "Arbiter"? A legacy naming note
 -------------------------------
@@ -248,10 +273,11 @@ Very naive, very honest
 -----------------------
 
 To be clear, this is a **very naive** discovery system: one
-process-tree-local registrar holding a dict, no replication, no
-re-election when it dies, no cross-host propagation. That's
-intentional (for now); it covers the "wire up my services on this
-host" case without dragging in a consensus protocol.
+in-memory registrar holding a dict, no replication, no re-election
+when it dies, and no automatic cross-host propagation. Separate
+programs can use the same reachable registrar, as above, but must be
+configured with its address. That's intentional (for now); it covers
+the "wire up my services" case without a consensus protocol.
 
 On the roadmap (issue `#216`_ tracks a chunk of it):
 
@@ -276,6 +302,7 @@ to hear from you.
      :class:`tractor.Registrar`.
 
 .. _gossip protocol: https://en.wikipedia.org/wiki/Gossip_protocol
-.. _modern protocol: https://en.wikipedia.org/wiki/Rendezvous_protocol
+.. _modern protocol:
+   https://en.wikipedia.org/wiki/Rendezvous_protocol
 .. _discovery: https://zguide.zeromq.org/docs/chapter8/#Discovery
 .. _#216: https://github.com/goodboy/tractor/issues/216
