@@ -50,6 +50,7 @@ from tractor.msg import types as msgtypes
 
 
 if TYPE_CHECKING:
+    from tractor.discovery._bindspace import Bindspace
     from tractor.ipc import (
         _server,
         Channel,
@@ -439,6 +440,7 @@ async def new_proc(
 
     *,
 
+    bindspace: Bindspace|None = None,
     infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
     proc_kwargs: dict[str, any] = {}
@@ -460,6 +462,7 @@ async def new_proc(
             bind_addrs,
             parent_addr,
             _runtime_vars,  # run time vars
+            bindspace=bindspace,
             infect_asyncio=infect_asyncio,
             task_status=task_status,
             proc_kwargs=proc_kwargs
