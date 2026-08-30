@@ -18,6 +18,7 @@
 tractor: structured concurrent ``trio``-"actors".
 
 """
+from types import ModuleType as _ModuleType
 
 from ._clustering import (
     open_actor_cluster as open_actor_cluster,
@@ -82,6 +83,7 @@ __all__: tuple[str, ...] = tuple(
     for name in globals()
     if not name.startswith('_')
 ) + (
+    'net',
     'to_asyncio',
 )
 
@@ -92,21 +94,18 @@ def __dir__() -> list[str]:
 
 def __getattr__(name: str):
     '''
-    PEP 562 lazy sub-module loading, presently only for
-    `.to_asyncio` which (transitively) imports `asyncio`
-    itself: a non-trivial multi-ms chunk of the eager
-    `import tractor` cost (gh #470) unneeded by
-    `trio`-only apps.
+    PEP 562 lazy public sub-package loading.
 
-    Any `tractor.to_asyncio.<attr>` access (or a
-    `from tractor import to_asyncio`) still works, the
-    sub-mod is simply imported on first-access instead
-    of at pkg-import time.
+    `tractor.to_asyncio` transitively imports `asyncio`, while
+    `tractor.net` owns optional network dependencies. Neither is
+    needed by most applications merely importing the root package.
 
     '''
-    if name == 'to_asyncio':
+    if name in ('net', 'to_asyncio'):
         from importlib import import_module
-        return import_module('.to_asyncio', __name__)
+        module: _ModuleType = import_module(f'.{name}', __name__)
+        globals()[name] = module
+        return module
 
     raise AttributeError(
         f'module {__name__!r} has no attribute {name!r}'

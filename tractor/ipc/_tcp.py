@@ -37,7 +37,6 @@ from trio import (
 
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
-from tractor.discovery._multiaddr import mk_maddr
 from tractor.ipc._transport import (
     MsgTransport,
     MsgpackTransport,
@@ -235,6 +234,8 @@ class MsgpackTCPStream(MsgpackTransport):
 
     @property
     def maddr(self) -> Multiaddr:
+        from tractor.net import mk_maddr
+
         return mk_maddr(self.raddr)
 
     def connected(self) -> bool:

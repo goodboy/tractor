@@ -15,48 +15,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 '''
-Discovery (protocols) API for automatic addressing
-and location management of (service) actors.
+Actor discovery and registrar implementation package.
 
-NOTE: this ``__init__`` only eagerly imports the lightweight
-``._multiaddr`` and ``._tunnel`` submodules for public re-exports.
-Heavier submodules like ``._addr`` and ``._api`` are NOT imported
-here to avoid circular imports; use direct module paths for those.
+Network declarations and helpers are public from `tractor.net`.
 
 '''
-from ._bindspace import (
-    Bindspace as Bindspace,
-    BindspaceKind as BindspaceKind,
-    BindspaceLifecycle as BindspaceLifecycle,
-    BindspaceOwnership as BindspaceOwnership,
-    BindspaceRef as BindspaceRef,
-    BindspaceSpec as BindspaceSpec,
-    CURRENT_NETNS as CURRENT_NETNS,
-    attach_netns as attach_netns,
-    open_bindspace as open_bindspace,
-    open_netns as open_netns,
-)
-from ._multiaddr import (
-    parse_endpoints as parse_endpoints,
-    parse_maddr as parse_maddr,
-    mk_maddr as mk_maddr,
-)
-from ._tunnel import (
-    TunnelledAddress as TunnelledAddress,
-    TunnelSpec as TunnelSpec,
-    WGTunnelSpec as WGTunnelSpec,
-    WGInterfaceConfig as WGInterfaceConfig,
-    WGPeerConfig as WGPeerConfig,
-    WGRole as WGRole,
-    mb_pubkey as mb_pubkey,
-    mk_wg_maddr as mk_wg_maddr,
-    open_wg_bindspace as open_wg_bindspace,
-    open_wg_iface as open_wg_iface,
-    parse_wg_maddr as parse_wg_maddr,
-    read_wg_peers as read_wg_peers,
-    read_wg_pubkey as read_wg_pubkey,
-    strip_tunnels as strip_tunnels,
-    tunnels_of as tunnels_of,
-    verify_wg_peer as verify_wg_peer,
-    wg8_pubkey as wg8_pubkey,
-)

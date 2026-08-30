@@ -264,7 +264,7 @@ terminology is retired: it's *registrar*/*registry* everywhere now
 substitute "registrar" and you're up to date.
 
 .. note::
-   Multihoming nerds: ``tractor.discovery`` also ships
+   Multihoming nerds: ``tractor.net`` ships
    libp2p-style *multiaddr* helpers — ``mk_maddr()`` and
    ``parse_maddr()`` — for describing transport endpoints as
    structured strings.

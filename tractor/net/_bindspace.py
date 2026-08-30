@@ -51,7 +51,7 @@ BindspaceOwnership: TypeAlias = Literal[
 ]
 
 _NETNS_RUN_DIR: Path = Path('/var/run/netns')
-_SELF_NETNS: Path = Path('/proc/self/ns/net')
+_THREAD_NETNS: Path = Path('/proc/thread-self/ns/net')
 
 CURRENT_NETNS: Final[None] = None
 
@@ -124,7 +124,7 @@ class BindspaceSpec(
     Serializable declaration of one requested bindspace.
 
     For a netns spec, `.key = CURRENT_NETNS` selects the calling
-    process's current namespace without a named-path lookup.
+    thread's current namespace without a named-path lookup.
 
     '''
     kind: BindspaceKind
@@ -277,7 +277,7 @@ async def _pin_netns(
     '''
     key: str|None = spec.key
     namespace_path: Path = (
-        _SELF_NETNS
+        _THREAD_NETNS
         if key is CURRENT_NETNS
         else _NETNS_RUN_DIR / key
     )

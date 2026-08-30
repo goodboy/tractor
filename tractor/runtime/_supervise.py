@@ -65,7 +65,7 @@ from ..spawn import _spawn
 
 if TYPE_CHECKING:
     import multiprocessing as mp
-    from ..discovery._bindspace import Bindspace
+    from ..net._bindspace import Bindspace
     # from ..ipc._server import IPCServer
     from ..ipc import IPCServer
     from ..spawn._spawn import ProcessType

@@ -1,7 +1,6 @@
 '''
 Multiaddr construction, parsing, and round-trip tests for
-`tractor.discovery._multiaddr.mk_maddr()` and
-`tractor.discovery._multiaddr.parse_maddr()`.
+`tractor.net.mk_maddr()` and `tractor.net.parse_maddr()`.
 
 '''
 from pathlib import Path
@@ -10,20 +9,20 @@ from types import SimpleNamespace
 import pytest
 from multiaddr import Multiaddr
 
-from tractor.discovery import (
+from tractor.net import (
     TunnelledAddress,
     WGTunnelSpec,
     mb_pubkey,
     mk_wg_maddr,
+    mk_maddr,
+    parse_endpoints,
+    parse_maddr,
     parse_wg_maddr,
     tunnels_of,
 )
 from tractor.ipc._tcp import TCPAddress
 from tractor.ipc._uds import UDSAddress
 from tractor.discovery._multiaddr import (
-    mk_maddr,
-    parse_maddr,
-    parse_endpoints,
     _tpt_proto_to_maddr,
     _maddr_to_tpt_proto,
 )

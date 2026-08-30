@@ -53,6 +53,7 @@ Most-used names at a glance:
    core
    context
    discovery
+   net
    errors
    msg
    trionics

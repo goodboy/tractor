@@ -19,7 +19,8 @@ Tunnelled addresses: an `Address` that rides *inside* a tunnel.
 A tunnel (`wg`, and later plain ip-in-udp, `veth`-in-netns, ..) is
 **not** a `MsgTransport`. Its data plane is transparent to the
 application's `socket(2)`, so it never gets its own entry in
-`._addr._address_types` nor a `MsgpackTransport` impl. Instead it
+`tractor.discovery._addr._address_types` nor a `MsgpackTransport`
+impl. Instead it
 *annotates* an existing L4 addr, and this module carries that
 annotation beside it.
 
@@ -102,7 +103,7 @@ from ._bindspace import (
 if TYPE_CHECKING:
     from multiaddr import Multiaddr
 
-    from ._addr import (
+    from ..discovery._addr import (
         Address,
         UnwrappedAddress,
     )
@@ -1055,7 +1056,7 @@ def parse_wg_maddr(
     ]
     match overlay_names:
         case [('ip4' | 'ip6'), 'tcp']:
-            from ._multiaddr import parse_maddr
+            from ..discovery._multiaddr import parse_maddr
             overlay: Address|TunnelledAddress = parse_maddr(
                 str(overlay_ma)
             )
@@ -1161,7 +1162,7 @@ def mk_wg_maddr(
         f'/wg/{mb_pubkey(addr.tunnel.peer_pubkey)}'
     )
 
-    from ._multiaddr import mk_maddr
+    from ..discovery._multiaddr import mk_maddr
     overlay_ma: Multiaddr = mk_maddr(addr.overlay)
     return (
         bearer_ma

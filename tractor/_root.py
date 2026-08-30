@@ -55,7 +55,6 @@ from .discovery._addr import (
     mk_uuid,
     wrap_address,
 )
-from .discovery._tunnel import strip_tunnels
 from .trionics import (
     is_multi_cancelled,
     collapse_eg,
@@ -505,6 +504,8 @@ async def open_root_actor(
             # XXX INSTEAD, bind random addrs using the same tpt
             # proto if not already provided.
             if not tpt_bind_addrs:
+                from .net._tunnel import strip_tunnels
+
                 for addr in ponged_addrs:
                     bindable_addr: Address = strip_tunnels(addr)
                     tpt_bind_addrs.append(

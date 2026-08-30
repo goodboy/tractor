@@ -13,7 +13,7 @@ from typing import BinaryIO
 import pytest
 import trio
 
-from tractor.discovery import (
+from tractor.net import (
     Bindspace,
     BindspaceRef,
     BindspaceSpec,
@@ -23,7 +23,7 @@ from tractor.discovery import (
     open_wg_bindspace,
     open_wg_iface,
 )
-from tractor.discovery import _tunnel
+from tractor.net import _tunnel
 
 
 _LOCAL_KEY: str = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
