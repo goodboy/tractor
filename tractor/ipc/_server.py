@@ -68,7 +68,7 @@ from ._transport import MsgTransport
 
 
 if TYPE_CHECKING:
-    from ..discovery._tunnel import TunnelledAddress
+    from ..net._tunnel import TunnelledAddress
     from ..runtime._runtime import Actor
     from ..runtime._supervise import ActorNursery
 
@@ -1091,7 +1091,7 @@ async def _serve_ipc_eps(
     `.cancel_server()` is called.
 
     '''
-    from ..discovery._tunnel import strip_tunnels
+    from ..net._tunnel import strip_tunnels
 
     try:
         listen_tn: Nursery

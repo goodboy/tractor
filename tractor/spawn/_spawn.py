@@ -50,7 +50,7 @@ from tractor.msg import types as msgtypes
 
 
 if TYPE_CHECKING:
-    from tractor.discovery._bindspace import Bindspace
+    from tractor.net._bindspace import Bindspace
     from tractor.ipc import (
         _server,
         Channel,

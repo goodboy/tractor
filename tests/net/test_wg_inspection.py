@@ -13,13 +13,13 @@ from typing import (
 import pytest
 import trio
 
-from tractor.discovery import (
+from tractor.net import (
     read_wg_peers,
     read_wg_pubkey,
     verify_wg_peer,
     WGTunnelSpec,
 )
-from tractor.discovery import _tunnel
+from tractor.net import _tunnel
 
 pyroute2: Any = pytest.importorskip('pyroute2')
 

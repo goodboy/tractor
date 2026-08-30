@@ -84,6 +84,7 @@ already distributed-system aware.
 .. seealso::
 
    :doc:`/explain/architecture` for the transport/server
-   internals, :doc:`/api/discovery` for how channel addresses
-   get registered and found, and :doc:`/api/msg` for the codec
-   layer every channel speaks.
+   internals, :doc:`/api/net` for network declarations,
+   :doc:`/api/discovery` for how channel addresses get registered
+   and found, and :doc:`/api/msg` for the codec layer every channel
+   speaks.

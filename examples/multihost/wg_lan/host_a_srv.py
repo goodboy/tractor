@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import tractor
 import trio
-from tractor.discovery import (
+from tractor.net import (
     TunnelledAddress,
     mk_maddr,
     parse_wg_maddr,

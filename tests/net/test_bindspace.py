@@ -13,7 +13,7 @@ import msgspec
 import pytest
 import trio
 
-from tractor.discovery import (
+from tractor.net import (
     Bindspace,
     BindspaceOwnership,
     BindspaceRef,
@@ -23,7 +23,7 @@ from tractor.discovery import (
     open_bindspace,
     open_netns,
 )
-from tractor.discovery import _bindspace
+from tractor.net import _bindspace
 from tractor.msg import ProcessLocal
 
 
@@ -261,10 +261,11 @@ def test_open_bindspace_attaches_current_netns() -> None:
     '''
     The unnamed spec must borrow and pin the caller's current netns.
 
-    Open `/proc/self/ns/net`, prove the yielded bindspace records its
-    stable inode and borrowed ownership, then exit the context and
-    prove the exact descriptor was closed without altering the
-    namespace itself.
+    Opening `/proc/self/ns/net` could pin the thread-group leader's
+    namespace when this context runs from another thread. Prove the
+    implementation selects `/proc/thread-self/ns/net`, records the
+    calling thread's stable inode and borrowed ownership, then closes
+    the exact descriptor without altering the namespace itself.
 
     '''
     async def main() -> int:
@@ -276,6 +277,9 @@ def test_open_bindspace_attaches_current_netns() -> None:
             kind='netns',
         )
         assert spec.key is CURRENT_NETNS
+        assert _bindspace._THREAD_NETNS == Path(
+            '/proc/thread-self/ns/net'
+        )
         async with open_bindspace(spec) as bindspace:
             namespace_fd: int|None = bindspace.namespace_fd
             assert namespace_fd is not None

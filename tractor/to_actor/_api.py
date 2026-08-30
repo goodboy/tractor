@@ -61,7 +61,7 @@ from ..runtime._supervise import (
 
 if TYPE_CHECKING:
     from ..discovery._addr import UnwrappedAddress
-    from ..discovery._bindspace import Bindspace
+    from ..net._bindspace import Bindspace
     from ..runtime._portal import Portal
 
 

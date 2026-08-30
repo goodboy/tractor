@@ -135,7 +135,7 @@ examples in gh #482) used a *suffix* form
 `/ip4/10.0.11.1/tcp/1616/wg/u<key>`. That parses, but it is
 semantically inverted: it puts the overlay addr where the bearer
 belongs, `tcp` where wg's `udp` `ListenPort` goes, and declares
-no overlay endpoint at all. `tractor.discovery.parse_wg_maddr()`
+no overlay endpoint at all. `tractor.net.parse_wg_maddr()`
 now rejects it with an actionable error.
 Observed protocol-name lists, for writing the `match`:
 
@@ -203,7 +203,7 @@ Observed protocol-name lists, for writing the `match`:
 ### 3.3 pure parser helpers + explicit verification
 
 The parser/key-codec helpers and async production verifier live in
-`tractor/discovery/_tunnel.py`; parsing remains pure while verification
+`tractor/net/_tunnel.py`; parsing remains pure while verification
 is an explicit, impure caller step:
 
 ```python

@@ -24,7 +24,7 @@ import trio
 import tractor
 from tractor import _child
 from tractor.devx import _proctitle
-from tractor.discovery._bindspace import (
+from tractor.net._bindspace import (
     Bindspace,
     BindspaceRef,
     BindspaceSpec,

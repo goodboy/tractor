@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import trio
 
-from tractor.discovery import (
+from tractor.net import (
     BindspaceRef,
     TunnelledAddress,
     WGTunnelSpec,

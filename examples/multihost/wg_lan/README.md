@@ -120,7 +120,7 @@ ping -c1 10.0.11.1     # from B
 
 ```bash
 python -c "
-from tractor.discovery import mb_pubkey
+from tractor.net import mb_pubkey
 key = open('wg_pub.key').read().strip()
 print(mb_pubkey(key))
 "
@@ -200,7 +200,7 @@ Four corrections, all from
 
 ## next
 
-Layer A's `TunnelledAddress` and native maddr parser plus Layer B's
-explicit pyroute2 verification now live in `tractor.discovery`. Next,
-add `open_bindspace()` `@acm`s which create/tear down the iface and
-netns.
+The `TunnelledAddress`, native maddr parser, bindspace lifecycle, and
+explicit pyroute2 verification APIs live in `tractor.net`. Root actor
+bindspace integration remains future work; callers compose these
+lifecycles explicitly for now.

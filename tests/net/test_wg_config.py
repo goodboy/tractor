@@ -7,7 +7,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from tractor.discovery import (
+from tractor.net import (
     WGInterfaceConfig,
     WGPeerConfig,
 )
