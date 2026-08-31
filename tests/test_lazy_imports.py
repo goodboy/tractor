@@ -12,6 +12,7 @@ from typing import (
     get_type_hints,
 )
 
+import tractor
 from tractor.discovery import (
     _addr,
     _multiaddr,
@@ -280,4 +281,7 @@ def test_lazy_annotation_names_resolve():
     assert get_type_hints(_addr.Address.get_random)[
         'current_actor'
     ] is Any
+    assert get_type_hints(tractor.open_root_actor)[
+        'bindspace'
+    ] == Any|None
     assert _addr.__annotations__['_address_types'].startswith('dict')

@@ -22,7 +22,10 @@ import pytest
 import trio
 
 import tractor
-from tractor import _child
+from tractor import (
+    _child,
+    _root,
+)
 from tractor.devx import _proctitle
 from tractor.net._bindspace import (
     Bindspace,
@@ -40,7 +43,7 @@ from tractor.spawn import (
 from tractor.trionics import patches
 
 
-_SELF_NETNS_PATH = Path('/proc/self/ns/net')
+_SELF_NETNS_PATH = Path('/proc/thread-self/ns/net')
 _SELF_FD_DIR = Path('/proc/self/fd')
 
 
@@ -106,6 +109,87 @@ def _bindspace_for_fd(namespace_fd: int) -> Bindspace:
         namespace_fd=namespace_fd,
         ownership='borrowed',
     )
+
+
+def _run_in_unshared_netns(
+    test_name: str,
+    reexec_var: str,
+) -> bool:
+    '''
+    Re-exec one E2E test with disposable user and net namespaces.
+
+    Return `True` in the outer pytest process after nested pytest
+    succeeds. Return `False` inside that nested process so the caller
+    performs the privileged namespace transitions itself.
+    '''
+    if os.environ.get(reexec_var) == '1':
+        return False
+
+    unshare_path: str|None = shutil.which('unshare')
+    if unshare_path is None:
+        pytest.skip('`unshare` is unavailable')
+
+    # Give nested pytest `CAP_SYS_ADMIN` only inside a disposable
+    # user namespace. Probe separately so hosts disabling
+    # unprivileged user namespaces skip cleanly.
+    probe = subprocess.run(
+        [
+            unshare_path,
+            '--user',
+            '--map-root-user',
+            '--net',
+            'true',
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode:
+        reason: str = probe.stderr.strip()
+        pytest.skip(
+            f'unprivileged user/net namespaces unavailable: '
+            f'{reason}'
+        )
+
+    nested_env: dict[str, str] = dict(os.environ)
+    nested_env[reexec_var] = '1'
+    nested_env['VIRTUAL_ENV'] = sys.prefix
+    nested_rt_dir: Path = Path(
+        tempfile.mkdtemp(prefix='tne-')
+    )
+    nested_env['XDG_RUNTIME_DIR'] = str(nested_rt_dir)
+    python_bin: str = str(Path(sys.executable).parent)
+    nested_env['PATH'] = (
+        python_bin
+        + os.pathsep
+        + nested_env['PATH']
+    )
+    test_id: str = f'tests/test_netns_spawn.py::{test_name}'
+    try:
+        subprocess.run(
+            [
+                unshare_path,
+                '--user',
+                '--map-root-user',
+                '--net',
+                sys.executable,
+                '-m',
+                'pytest',
+                test_id,
+                '--spawn-backend=trio',
+                '--tpt-proto=uds',
+                '-x',
+                '--tb=short',
+                '--no-header',
+                '--timeout=30',
+            ],
+            env=nested_env,
+            check=True,
+        )
+    finally:
+        shutil.rmtree(nested_rt_dir)
+
+    return True
 
 
 class _MockIpcServer:
@@ -211,6 +295,339 @@ async def _report_child_netns(
         os.close(child_netns_fd)
 
 
+def test_root_netns_same_namespace_skips_setns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    Root entry into the current netns must not need privilege.
+
+    Pin the real current namespace and arm `enter_netns()` as a
+    failure sentinel. The context validates through a duplicate,
+    yield the current inode without calling `setns()`, preserve the
+    source capability, and close the duplicates on normal exit.
+    '''
+    namespace_fd: int = os.open(
+        _SELF_NETNS_PATH,
+        os.O_RDONLY,
+    )
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+    initial_fds: set[int] = _fds_referencing(namespace_fd)
+
+    def fail_enter_netns(
+        inherited_fd: int,
+        inode: int,
+    ) -> int:
+        '''
+        Reject a privileged transition for the already-current netns.
+
+        '''
+        raise AssertionError('same-netns entry called `setns()`')
+
+    monkeypatch.setattr(_netns, 'enter_netns', fail_enter_netns)
+    try:
+        with _netns._enter_netns_temporarily(
+            bindspace,
+        ) as entered_inode:
+            assert entered_inode == bindspace.ref.inode
+            assert os.fstat(namespace_fd).st_ino == entered_inode
+            # The target duplicate and original-netns snapshot both
+            # reference the already-current namespace.
+            assert len(_fds_referencing(namespace_fd)) == (
+                len(initial_fds) + 2
+            )
+
+        assert _fds_referencing(namespace_fd) == initial_fds
+    finally:
+        os.close(namespace_fd)
+
+
+def test_root_netns_restores_after_body_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    A root-body failure must restore netns before it escapes.
+
+    Use distinct regular files as deterministic namespace stand-ins,
+    replace only `enter_netns()`, and raise a unique error from the
+    context body. The recorded transitions prove target entry then
+    original restoration. FD snapshots prove neither temporary handle
+    leaks, while the caller-owned target FD remains live.
+    '''
+    original_path: Path = tmp_path / 'original-netns'
+    target_path: Path = tmp_path / 'target-netns'
+    original_path.touch()
+    target_path.touch()
+    namespace_fd: int = os.open(target_path, os.O_RDONLY)
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+    initial_fds: set[int] = _fds_referencing(namespace_fd)
+    transitions: list[int] = []
+    body_error = RuntimeError('root body failed')
+
+    def fake_enter_netns(
+        inherited_fd: int,
+        inode: int,
+    ) -> int:
+        '''
+        Record each verified target or restoration descriptor.
+
+        '''
+        assert os.fstat(inherited_fd).st_ino == inode
+        transitions.append(inode)
+        return inode
+
+    monkeypatch.setattr(_netns, '_SELF_NETNS', original_path)
+    monkeypatch.setattr(_netns, 'enter_netns', fake_enter_netns)
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            with _netns._enter_netns_temporarily(bindspace):
+                raise body_error
+
+        assert exc_info.value is body_error
+        # The fake records target entry before the body, then original
+        # restoration during context exit.
+        assert transitions == [
+            bindspace.ref.inode,
+            original_path.stat().st_ino,
+        ]
+        assert _fds_referencing(namespace_fd) == initial_fds
+        assert os.fstat(namespace_fd).st_ino == bindspace.ref.inode
+    finally:
+        os.close(namespace_fd)
+
+
+def test_root_netns_restores_on_trio_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    Trio cancellation must not interrupt root-netns restoration.
+
+    Use deterministic namespace stand-ins and cancel the task inside
+    `_enter_root_bindspace()` immediately before an explicit Trio
+    checkpoint. The enclosing `CancelScope` catches cancellation only
+    after async-context exit. Two recorded sync transitions and exact
+    FD state then prove restoration and close completed first.
+    '''
+    original_path: Path = tmp_path / 'cancel-original-netns'
+    target_path: Path = tmp_path / 'cancel-target-netns'
+    original_path.touch()
+    target_path.touch()
+    namespace_fd: int = os.open(target_path, os.O_RDONLY)
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+    initial_fds: set[int] = _fds_referencing(namespace_fd)
+    transitions: list[int] = []
+
+    def fake_enter_netns(
+        inherited_fd: int,
+        inode: int,
+    ) -> int:
+        '''
+        Record target entry and original-netns restoration.
+
+        '''
+        assert os.fstat(inherited_fd).st_ino == inode
+        transitions.append(inode)
+        return inode
+
+    monkeypatch.setattr(_netns, '_SELF_NETNS', original_path)
+    monkeypatch.setattr(_netns, 'enter_netns', fake_enter_netns)
+
+    async def main() -> None:
+        '''
+        Deliver cancellation at a checkpoint inside the netns scope.
+
+        '''
+        with trio.CancelScope() as cancel_scope:
+            async with _root._enter_root_bindspace(bindspace):
+                cancel_scope.cancel()
+                await trio.lowlevel.checkpoint()
+
+        assert cancel_scope.cancelled_caught
+
+    try:
+        trio.run(main)
+        # Target entry is recorded first; original-netns restoration
+        # is recorded when `_enter_root_bindspace()` exits.
+        assert transitions == [
+            bindspace.ref.inode,
+            original_path.stat().st_ino,
+        ]
+        assert _fds_referencing(namespace_fd) == initial_fds
+        assert os.fstat(namespace_fd).st_ino == bindspace.ref.inode
+    finally:
+        os.close(namespace_fd)
+
+
+@pytest.mark.parametrize('body_fails', (False, True))
+def test_root_netns_restore_error_precedence(
+    body_fails: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    Netns restoration failure must not hide a root-body failure.
+
+    Model target entry as successful and fail the second transition,
+    which is restoration. The normal-body case must propagate that
+    restoration error. The failing-body case must instead preserve
+    its unique error and attach restoration failure as a note. In both
+    schedules an exact target-FD snapshot proves cleanup still closes
+    the context's duplicates.
+    '''
+    original_path: Path = tmp_path / 'failed-restore-original'
+    target_path: Path = tmp_path / 'failed-restore-target'
+    original_path.touch()
+    target_path.touch()
+    namespace_fd: int = os.open(target_path, os.O_RDONLY)
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+    initial_fds: set[int] = _fds_referencing(namespace_fd)
+    body_error = RuntimeError('root body failed first')
+    restore_error = RuntimeError('root netns restore failed')
+    transitions: int = 0
+
+    def fail_restore(
+        inherited_fd: int,
+        inode: int,
+    ) -> int:
+        '''
+        Enter the target once, then fail original-netns restoration.
+
+        '''
+        nonlocal transitions
+        assert os.fstat(inherited_fd).st_ino == inode
+        transitions += 1
+        if transitions == 2:
+            raise restore_error
+        return inode
+
+    monkeypatch.setattr(_netns, '_SELF_NETNS', original_path)
+    monkeypatch.setattr(_netns, 'enter_netns', fail_restore)
+    expected_error: RuntimeError = (
+        body_error
+        if body_fails
+        else restore_error
+    )
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            with _netns._enter_netns_temporarily(bindspace):
+                if body_fails:
+                    raise body_error
+
+        assert exc_info.value is expected_error
+        assert transitions == 2
+        if body_fails:
+            assert body_error.__notes__
+            assert 'restore the original' in body_error.__notes__[0]
+            assert repr(restore_error) in body_error.__notes__[0]
+        assert _fds_referencing(namespace_fd) == initial_fds
+    finally:
+        os.close(namespace_fd)
+
+
+def test_root_netns_requires_live_bindspace_fd() -> None:
+    '''
+    Root entry cannot use `BindspaceRef.inode` without a live FD.
+
+    Construct a valid ref-only `Bindspace` and enter the real root
+    namespace scope directly. The concrete live-FD error must occur
+    before namespace capture, probes, sockets, or actor runtime work.
+    '''
+    key: str = 'missing-root-netns'
+    bindspace = Bindspace(
+        spec=BindspaceSpec(
+            kind='netns',
+            key=key,
+        ),
+        ref=BindspaceRef(
+            kind='netns',
+            key=key,
+            inode=1,
+        ),
+        # A stored inode cannot authorize namespace entry.
+        namespace_fd=None,
+        ownership='borrowed',
+    )
+
+    with pytest.raises(
+        ValueError,
+        match='bindspace.namespace_fd.*live netns FD',
+    ):
+        # Scope entry must reject the missing live handle.
+        with _netns._enter_netns_temporarily(bindspace):
+            pytest.fail('root scope accepted a ref-only bindspace')
+
+
+def test_root_netns_rejects_closed_bindspace_fd() -> None:
+    '''
+    A stale integer is not a live root-netns capability.
+
+    Construct a `Bindspace` while its real current-netns FD is open,
+    close that caller-owned descriptor, then attempt root entry. The
+    concrete live-FD error proves `os.dup()` validates the descriptor
+    at entry time instead of trusting construction-time metadata.
+    '''
+    namespace_fd: int = os.open(
+        _SELF_NETNS_PATH,
+        os.O_RDONLY,
+    )
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+    os.close(namespace_fd)
+
+    with pytest.raises(
+        ValueError,
+        match='bindspace.namespace_fd.*live FD',
+    ):
+        with _netns._enter_netns_temporarily(bindspace):
+            pytest.fail('root scope accepted a closed bindspace FD')
+
+
+def test_bound_root_rejects_persistent_forkserver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    A persistent multiprocessing forkserver process can retain a
+    previous root's netns.
+
+    Select `mp_forkserver` before opening a later bound root, modeling
+    reuse of the forkserver process which `multiprocessing` creates
+    once and uses for later child starts. The root API must reject that
+    backend before namespace entry or runtime startup, preventing
+    default children from silently inheriting its stale namespace.
+
+    '''
+    namespace_fd: int = os.open(
+        _SELF_NETNS_PATH,
+        os.O_RDONLY,
+    )
+    bindspace: Bindspace = _bindspace_for_fd(namespace_fd)
+    monkeypatch.setattr(
+        _spawn,
+        '_spawn_method',
+        'mp_forkserver',
+    )
+
+    async def main() -> None:
+        '''
+        Reject the unsafe backend at root-context entry.
+
+        '''
+        with pytest.raises(
+            NotImplementedError,
+            match='persistent forkserver',
+        ):
+            async with tractor.open_root_actor(
+                bindspace=bindspace,
+            ):
+                pytest.fail('bound root started under mp_forkserver')
+
+    try:
+        trio.run(main)
+        assert os.fstat(namespace_fd).st_ino == bindspace.ref.inode
+    finally:
+        os.close(namespace_fd)
+
+
 def test_enter_netns_rejects_mismatched_inherited_fd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -252,7 +669,7 @@ def test_enter_netns_verifies_post_entry_inode(
     Successful `setns()` is insufficient without post-entry proof.
 
     Use a real inherited FD and fake only the privileged syscall and
-    `/proc/self/ns/net` observation. The recorded calls prove both
+    `/proc/thread-self/ns/net` observation. The calls prove both
     hooks execute and `CLONE_NEWNET` constrains the namespace type;
     the returned inode proves bootstrap observed the expected netns.
 
@@ -300,7 +717,7 @@ def test_enter_netns_rejects_wrong_post_entry_namespace(
     Bootstrap must stop when the process lands in an unexpected netns.
 
     Let the inherited FD check and fake syscall succeed, then report a
-    different `/proc/self/ns/net` inode. The post-entry guard must raise
+    different `/proc/thread-self/ns/net` inode. The guard must raise
     instead of allowing actor runtime sockets to start in the wrong
     namespace.
 
@@ -562,76 +979,12 @@ def test_trio_spawn_relays_bindspace_to_child_actor(
     if start_method != 'trio':
         pytest.skip('bindspace FD relay is implemented by Trio spawn')
 
-    reexec_var: str = 'TRACTOR_TEST_NETNS_E2E_REEXEC'
-    if os.environ.get(reexec_var) != '1':
-        unshare_path: str|None = shutil.which('unshare')
-        if unshare_path is None:
-            pytest.skip('`unshare` is unavailable')
-
-        # Give nested pytest `CAP_SYS_ADMIN` only inside a disposable
-        # user namespace. The first `--net` creates the target netns;
-        # the nested test retains its FD before creating a second netns
-        # for the parent and child to inherit at spawn. Probe separately
-        # so hosts disabling unprivileged user namespaces skip cleanly.
-        probe = subprocess.run(
-            [
-                unshare_path,
-                '--user',
-                '--map-root-user',
-                '--net',
-                'true',
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if probe.returncode:
-            reason: str = probe.stderr.strip()
-            pytest.skip(
-                f'unprivileged user/net namespaces unavailable: '
-                f'{reason}'
-            )
-
-        nested_env: dict[str, str] = dict(os.environ)
-        nested_env[reexec_var] = '1'
-        nested_env['VIRTUAL_ENV'] = sys.prefix
-        nested_rt_dir: Path = Path(
-            tempfile.mkdtemp(prefix='tne-')
-        )
-        nested_env['XDG_RUNTIME_DIR'] = str(nested_rt_dir)
-        python_bin: str = str(Path(sys.executable).parent)
-        nested_env['PATH'] = (
-            python_bin
-            + os.pathsep
-            + nested_env['PATH']
-        )
-        test_id: str = (
-            'tests/test_netns_spawn.py::'
+    if _run_in_unshared_netns(
+        test_name=(
             'test_trio_spawn_relays_bindspace_to_child_actor'
-        )
-        try:
-            subprocess.run(
-                [
-                    unshare_path,
-                    '--user',
-                    '--map-root-user',
-                    '--net',
-                    sys.executable,
-                    '-m',
-                    'pytest',
-                    test_id,
-                    '--spawn-backend=trio',
-                    '--tpt-proto=uds',
-                    '-x',
-                    '--tb=short',
-                    '--no-header',
-                    '--timeout=30',
-                ],
-                env=nested_env,
-                check=True,
-            )
-        finally:
-            shutil.rmtree(nested_rt_dir)
+        ),
+        reexec_var='TRACTOR_TEST_NETNS_E2E_REEXEC',
+    ):
         return
 
     assert start_method == 'trio'
@@ -706,6 +1059,74 @@ def test_trio_spawn_relays_bindspace_to_child_actor(
         os.close(parent_netns_fd)
         os.close(target_netns_fd)
         os.close(inherited_fd)
+
+
+def test_root_actor_enters_and_restores_bindspace(
+    tpt_proto: str,
+) -> None:
+    '''
+    `open_root_actor()` must enter its supplied networking bindspace.
+
+    Re-exec under an unprivileged user/net namespace, retain that
+    first netns as the target, then move nested pytest into a second.
+    A real UDS root actor must run its body in the target inode and
+    keep the source capability open. After full actor teardown, exact
+    FD and inode assertions prove its duplicate did not leak and the
+    caller thread returned to the second/original netns.
+    '''
+    if _run_in_unshared_netns(
+        test_name='test_root_actor_enters_and_restores_bindspace',
+        reexec_var='TRACTOR_TEST_ROOT_NETNS_E2E_REEXEC',
+    ):
+        return
+
+    assert tpt_proto == 'uds'
+    target_netns_fd: int = os.open(
+        _SELF_NETNS_PATH,
+        os.O_RDONLY,
+    )
+    target_netns_inode: int = os.fstat(target_netns_fd).st_ino
+    reffed_tgt_fds: set[int] = _fds_referencing(
+        target_netns_fd,
+    )
+    bindspace: Bindspace = _bindspace_for_fd(target_netns_fd)
+
+    # Pin the first disposable netns through `target_netns_fd`, then
+    # move the caller into a distinct second netns. This gives the root
+    # one real target to enter and one real caller netns to restore.
+    os.unshare(os.CLONE_NEWNET)
+    original_netns_fd: int = os.open(
+        _SELF_NETNS_PATH,
+        os.O_RDONLY,
+    )
+    original_netns_inode: int = os.fstat(original_netns_fd).st_ino
+    assert original_netns_inode != target_netns_inode
+
+    async def main() -> None:
+        '''
+        Inspect the real root runtime inside the target netns.
+
+        '''
+        async with tractor.open_root_actor(
+            bindspace=bindspace,
+            enable_transports=['uds'],
+        ):
+            body_netns_inode: int = _SELF_NETNS_PATH.stat().st_ino
+            assert body_netns_inode == target_netns_inode
+            assert os.fstat(target_netns_fd).st_ino == (
+                target_netns_inode
+            )
+
+    try:
+        trio.run(main)
+        assert _SELF_NETNS_PATH.stat().st_ino == original_netns_inode
+        assert _fds_referencing(
+            target_netns_fd,
+        ) == reffed_tgt_fds
+        assert os.fstat(target_netns_fd).st_ino == target_netns_inode
+    finally:
+        os.close(original_netns_fd)
+        os.close(target_netns_fd)
 
 
 def test_trio_spawn_failure_closes_child_netns_fd_in_parent(
