@@ -7,9 +7,9 @@ different model/provider) without design or lib-selection drift.
 **Read [`00_shared_backend_contract.md`](./00_shared_backend_contract.md)
 first** — it is the normative description of what a `tractor`
 transport backend *is* as of `main@83b34884` (the backend
-duck-type, the 10-item registration checklist, the test-harness
-plumbing, the code-style rules). The three plans assume it and
-document only their own deltas.
+duck-type, registration and address-selection wiring, the
+test-harness plumbing, the code-style rules). The three plans
+assume it and document only their own deltas.
 
 | plan | issue | dep | size | lands |
 | --- | --- | --- | --- | --- |
@@ -23,10 +23,12 @@ Headline conclusions:
   `trio.SocketListener` are address-family agnostic (only
   `SOCK_STREAM` + a trio socket), and CPython ships `AF_TIPC` +
   23 `TIPC_*` constants. So the backend is ~one module of
-  contract boilerplate, zero new deps, and it buys
-  *kernel-native* service discovery: `bind()` publishes,
-  `connect()`-by-name resolves — no registrar in the loop.
-  (`modprobe tipc` is required; hard-gate everything.)
+  contract boilerplate, zero new deps, and it buys kernel-native
+  service primitives: `bind()` publishes, known-address
+  `connect()` resolves, and topology events report publication
+  changes. Actor-name lookup, registrar state and split-brain-safe
+  election remain separate work. (`modprobe tipc` is required;
+  hard-gate everything.)
 - **QUIC's cost is entirely in two adapters**, not in QUIC. The
   `iroh` python bindings are `uniffi`-generated asyncio, but the
   asyncio dependency is confined to *one* future-poll callback —

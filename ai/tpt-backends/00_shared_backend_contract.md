@@ -33,19 +33,35 @@ doc in the same PR.
 
 ## 1. The backend duck-type (empirical, from `_tcp.py`/`_uds.py`)
 
-A transport backend is **one module** under `tractor/ipc/`
-exposing exactly four things. There is no ABC to subclass and no
-plugin entrypoint; wiring is by explicit table registration
-(§2) plus one piece of reflection (§1.3).
+A transport backend is **one module** under `tractor/ipc/`.
+There is no ABC to subclass and no plugin entrypoint; wiring is by
+explicit table registration (§2) plus one piece of reflection
+(§1.3).
+
+Keep two contracts distinct:
+
+- `tractor.discovery._addr.Address` is a static `Protocol`. It
+  declares address-wrapper members including `namespace`,
+  `open_listener()` and `close_listener()`.
+- the runtime's empirical contract is what `_tcp.py`, `_uds.py`
+  and `_server.py` actually call. The current address classes do
+  not implement every declared `Address` member: listener
+  lifecycle is module-level, `def_bindspace` is used despite not
+  being declared by the `Protocol`, and `namespace` remains
+  aspirational.
+
+Until those surfaces are deliberately reconciled, implement the
+empirical module contract below and update the static `Protocol`
+only when the runtime really consumes the new member. Do not claim
+that structural conformance alone defines a backend.
 
 ### 1.1 `class <Proto>Address(msgspec.Struct, frozen=True)`
 
-Structurally conforms to the `Address` `Protocol` in
-`tractor/discovery/_addr.py:82`. Required surface:
+The runtime-consumed address-wrapper surface is:
 
 | member | kind | notes |
 | --- | --- | --- |
-| `proto_key` | `ClassVar[str]` | the wire/registry key, e.g. `'tcp'`, `'uds'` |
+| `proto_key` | `ClassVar[str]` | internal transport key, e.g. `'tcp'`, `'uds'` |
 | `unwrapped_type` | `ClassVar[type]` | the primitive tuple shape |
 | `def_bindspace` | `ClassVar` | default bindspace value |
 | `is_valid` | `@property -> bool` | "is this a *dialable/bindable* addr" |
@@ -81,22 +97,32 @@ Hard constraints learned from the existing two:
   paper over it at best.
 
   **The fix, and the recommended prerequisite for all three
-  backends: make the unwrapped form carry an explicit
-  proto-key, using the `multiaddr` protocol name as the
-  canonical spelling** — `('tcp', host, port)`,
-  `('unix', path)`, `('udp', ...)`, `('tipc', stype, inst,
-  scope)`. Then `wrap_address()` collapses from an
-  order-sensitive `match` to `_address_types[addr[0]]`, and the
-  whole collision class stops existing. Note this *also* aligns
-  the on-wire form with `mk_maddr()`/`parse_maddr()`, so the two
-  representations stop being independent inventions.
+  backends: make the unwrapped form carry an explicit internal
+  proto-key** — `('tcp', host, port)`,
+  `('uds', filedir, filename)`, `('tipc', stype, inst, scope)`.
+  The tag must be a `TransportProtocolKey`/registry key. In
+  particular it is **`'uds'`, not the external multiaddr spelling
+  `'unix'`**. If a wire or display format uses a different name,
+  name that translation explicitly; today `_multiaddr.py` maps
+  internal `uds` to external `/unix/`. Then `wrap_address()` can
+  dispatch through `_address_types[addr[0]]` without an
+  order-sensitive shape match.
 
   Two consequences to plan for:
-  - it's a **wire-format change** (`SpawnSpec`,
-    `_root_mailbox`, `_registry_addrs`) plus every test fixture
-    and downstream config (`piker`'s `[network]` table). It
-    wants its **own migration commit, landed before any new
-    backend**, not smuggled into one.
+  - it's a **wire-format change**. Widen and keep synchronized
+    `discovery._addr.UnwrappedAddress` and the duplicate wire
+    alias in `msg.types`; change `SpawnSpec.reg_addrs` and
+    `.bind_addrs`, not only `_root_mailbox` and
+    `_registry_addrs`. Audit the related `RuntimeVars`
+    `_root_mailbox`/`_root_addrs` annotations, `Actor.reg_addrs`
+    and accept-address annotations, channel/spawn signatures,
+    fixtures, and downstream config (`piker`'s `[network]`
+    table). `msgspec` rejects a union containing multiple
+    array-like tuple shapes, so #493 used
+    `tuple[str|int, ...]` as the truthful transitional wire type;
+    the complete proto-key migration can restore per-proto
+    validation. This wants its **own migration commit, landed
+    before any new backend**, not smuggled into one.
   - it's the moment to **stop handing raw unwrapped tuples to
     users at all.** The long-term shape is: `Address` subtypes
     are the public currency and `UnwrappedAddress` becomes an
@@ -104,8 +130,8 @@ Hard constraints learned from the existing two:
     `ipaddress` uses (you pass `IPv4Address`, not a 4-tuple).
     Public API should accept `Address|maddr-str` and treat bare
     tuples as legacy-tolerated input, ideally deprecated.
-- **`.get_random()` must be collision-free without a live
-  runtime.** See the `UDSAddress.get_random()` uuid-token
+- **`.get_random()` must not deterministically alias without a
+  live runtime.** See the `UDSAddress.get_random()` uuid-token
   comment (`_uds.py:207-220`): with no `current_actor()` the
   sockname degenerates to a pure fn of `(prefix, pid)` and two
   calls in one proc alias. Mix in a `uuid4().hex[:8]` token.
@@ -162,10 +188,11 @@ if (unwrapped := lstnr.socket.getsockname()) != self.addr.unwrap():
 ```
 
 i.e. it assumes `lstnr.socket.getsockname()` exists and that its
-return value is a valid `from_addr()` input. This is fine for
-TIPC (§3 of plan 01) and **is the main integration hazard for
-iroh** (§3 of plan 02) — plans that break it must say so
-explicitly and propose the upstream `_server.py` patch.
+return value is a valid `from_addr()` input. That is false for
+TIPC, whose listener sockname is an undialable port ID, and for
+non-socket iroh. Both plans must use the explicit backend rebind
+policy added at this integration point rather than pretending a
+sockname is always an address replacement.
 
 ### 1.4 `class Msgpack<Proto>Stream(MsgpackTransport)`
 
@@ -224,20 +251,26 @@ path.** This is why plan 01 is small and plan 02 is not.
 
 ---
 
-## 2. Registration tables (the full wiring checklist)
+## 2. Registration and policy wiring
 
-Adding a backend touches these and only these:
+Adding a backend requires this complete audit. Not every item
+changes for every backend, but none may be assumed from the others:
 
 1. `tractor/runtime/_state.py:46`
    `TransportProtocolKey = Literal['tcp', 'uds', ...]` — add the
-   key. This `Literal` is the canonical set; `_testing/pytest.py`
-   drives `--tpt-proto` validation off `_addr._address_types`,
-   and the spawn-backend fixture already models the
-   "drive-the-set-from-the-Literal" pattern
-   (`pytest.py:870-880`) — do the same rather than hardcoding.
-2. `tractor/discovery/_addr.py:173` `_address_types: bidict` —
-   `{'<key>': <Proto>Address}`. Note it is a **`bidict`**, so
-   the mapping must stay 1:1.
+   internal key. This `Literal` is the **declared protocol-key
+   set**, not proof that a backend is usable on this host.
+2. `tractor/discovery/_addr.py` `_address_protos` and
+   `_address_types: dict[str, Type[Address]]` — register
+   `'<key>': <Proto>Address`. `_address_types` is a plain
+   **`dict`, not a `bidict`**, and represents the backends this
+   build registers for import and dispatch. UDS is conditional on
+   `HAS_UDS`, while TIPC can remain registered on a host where its
+   kernel support is unavailable. An importable backend with a
+   runtime capability requirement therefore needs a separate
+   availability check. Never conflate this dispatch registry with
+   either host usability or the declared `TransportProtocolKey`
+   universe.
 3. `tractor/discovery/_addr.py:181` `_default_lo_addrs` —
    `'<key>': <Proto>Address.get_root().unwrap()`.
    ⚠️ this dict is built at **import time**, so
@@ -250,7 +283,7 @@ Adding a backend touches these and only these:
    add a case iff your `unwrapped_type` isn't already uniquely
    matched. **Preferably do the proto-key migration in §1.1
    first**, after which this step becomes a one-line
-   `_address_types` entry instead of an order-sensitive `case`.
+    `_address_types` lookup instead of an order-sensitive `case`.
 5. `tractor/ipc/_types.py` — `Address` union alias,
    `_msg_transports` list, `_key_to_transport[('msgpack', key)]`,
    `_addr_to_transport[<Proto>Address]`.
@@ -262,9 +295,17 @@ Adding a backend touches these and only these:
    `parse_maddr()`.
 8. `tractor/ipc/__init__.py` — re-export if the backend has a
    public surface.
-9. `tractor/_testing/addr.py::get_rando_addr()` — per-proto
-   branch so the whole suite can run under `--tpt-proto <key>`.
-10. `pyproject.toml` — new deps go in an **optional extra**, never
+9. `tractor/discovery/_api.py::_is_local_addr()` and
+   `prefer_addr()` — define and test the backend's locality and
+   selection tier. The current order is UDS, local TCP, then
+   remote. A new backend must not silently fall into `remote` by
+   accident: for example TIPC node scope is local, cluster scope
+   is not known-local, and an observed address with unknown scope
+   must not be promoted. Preserve the last-registered tie-break
+   unless intentionally changing policy.
+10. `tractor/_testing/addr.py::get_rando_addr()` — per-proto
+    branch so the whole suite can run under `--tpt-proto <key>`.
+11. `pyproject.toml` — new deps go in an **optional extra**, never
     in `[project].dependencies`. See §5.
 
 ## 3. Where the `trio.SocketListener` assumption is load-bearing
@@ -339,7 +380,10 @@ dep-free, or make that table lazy.
   `_state._def_tpt_proto` + `_runtime_vars['_enable_tpts']`
   (`pytest.py:807-835`). Adding the key to `_address_types` is
   what makes `--tpt-proto <key>` legal (`pytest.py:795-800`
-  asserts the lookup).
+  asserts the lookup). Thus CLI acceptance follows the
+   build-registered `_address_types`, while type-level declarations
+   follow `TransportProtocolKey` and host usability follows each
+   backend's capability probe; test all three layers separately.
 - The **acceptance bar** for every backend is: the *entire*
   existing suite passes under `--tpt-proto <key>`, unmodified.
   That is the whole point of the abstraction. Backend-specific
@@ -353,8 +397,11 @@ dep-free, or make that table lazy.
   `OSError(97, 'Address family not supported by protocol')`
   because the `tipc` module isn't loaded. Put the predicate in
   the backend module (so apps can use it too), not in the test.
-- New pytest marks must be registered in `pyproject.toml`, per
-  the project's fix-warnings-at-source rule (gh #469).
+- New pytest marks must be registered in
+  `_testing/pytest.py::pytest_configure()` with
+  `config.addinivalue_line()`, alongside the existing custom
+  marks. The repo has no `pyproject.toml` marker table. This is
+  still part of the fix-warnings-at-source rule (gh #469).
 
 ## 7. Code style (non-negotiable, matches the repo)
 
