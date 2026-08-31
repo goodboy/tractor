@@ -45,6 +45,10 @@ from tractor.trionics import patches
 
 _SELF_NETNS_PATH = Path('/proc/thread-self/ns/net')
 _SELF_FD_DIR = Path('/proc/self/fd')
+_linux_netns_only = pytest.mark.skipif(
+    sys.platform != 'linux',
+    reason='Linux network namespace API',
+)
 
 
 def _assert_fd_closed(namespace_fd: int) -> None:
@@ -295,6 +299,7 @@ async def _report_child_netns(
         os.close(child_netns_fd)
 
 
+@_linux_netns_only
 def test_root_netns_same_namespace_skips_setns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -341,6 +346,7 @@ def test_root_netns_same_namespace_skips_setns(
         os.close(namespace_fd)
 
 
+@_linux_netns_only
 def test_root_netns_restores_after_body_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -396,6 +402,7 @@ def test_root_netns_restores_after_body_error(
         os.close(namespace_fd)
 
 
+@_linux_netns_only
 def test_root_netns_restores_on_trio_cancellation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -459,6 +466,7 @@ def test_root_netns_restores_on_trio_cancellation(
         os.close(namespace_fd)
 
 
+@_linux_netns_only
 @pytest.mark.parametrize('body_fails', (False, True))
 def test_root_netns_restore_error_precedence(
     body_fails: bool,
@@ -525,6 +533,7 @@ def test_root_netns_restore_error_precedence(
         os.close(namespace_fd)
 
 
+@_linux_netns_only
 def test_root_netns_requires_live_bindspace_fd() -> None:
     '''
     Root entry cannot use `BindspaceRef.inode` without a live FD.
@@ -558,6 +567,7 @@ def test_root_netns_requires_live_bindspace_fd() -> None:
             pytest.fail('root scope accepted a ref-only bindspace')
 
 
+@_linux_netns_only
 def test_root_netns_rejects_closed_bindspace_fd() -> None:
     '''
     A stale integer is not a live root-netns capability.
@@ -582,6 +592,7 @@ def test_root_netns_rejects_closed_bindspace_fd() -> None:
             pytest.fail('root scope accepted a closed bindspace FD')
 
 
+@_linux_netns_only
 def test_bound_root_rejects_persistent_forkserver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -628,6 +639,7 @@ def test_bound_root_rejects_persistent_forkserver(
         os.close(namespace_fd)
 
 
+@_linux_netns_only
 def test_enter_netns_rejects_mismatched_inherited_fd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -661,6 +673,7 @@ def test_enter_netns_rejects_mismatched_inherited_fd(
             )
 
 
+@_linux_netns_only
 def test_enter_netns_verifies_post_entry_inode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -709,6 +722,7 @@ def test_enter_netns_verifies_post_entry_inode(
     assert entered_inode == inode
 
 
+@_linux_netns_only
 def test_enter_netns_rejects_wrong_post_entry_namespace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
