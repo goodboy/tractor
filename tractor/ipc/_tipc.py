@@ -59,6 +59,7 @@ from socket import (
 import struct
 import sys
 from typing import (
+    Any,
     AsyncGenerator,
     Callable,
     ClassVar,
@@ -75,7 +76,6 @@ from trio import (
     SocketListener,
 )
 
-from multiaddr import Multiaddr
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
 from tractor.discovery._multiaddr import mk_maddr
@@ -88,7 +88,12 @@ from tractor.runtime._state import (
 )
 
 if TYPE_CHECKING:
+    # ONLY type-annots, the eager import costs
+    # `import tractor` wall-time (gh #470).
+    from multiaddr import Multiaddr
     from tractor.runtime._runtime import Actor
+else:
+    Multiaddr = Any
 
 
 log = get_logger()

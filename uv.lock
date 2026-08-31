@@ -518,7 +518,7 @@ wheels = [
 [[package]]
 name = "multiaddr"
 version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/multiformats/py-multiaddr.git?rev=f86519daaa21699023d0037c58cdff600313dd09#f86519daaa21699023d0037c58cdff600313dd09" }
 dependencies = [
     { name = "base58" },
     { name = "dnspython" },
@@ -532,10 +532,6 @@ dependencies = [
     { name = "trio" },
     { name = "trio-typing" },
     { name = "varint" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/10/4e26a8577cfce1c0febc8d83087e1373e93c695c6e73ad010546fb67e229/multiaddr-0.2.0.tar.gz", hash = "sha256:acb6b25c332ec1b2f1f8fef8d03a8c63385d34a87d690df0f4bba43cdf6efe8d", size = 58356, upload-time = "2026-03-17T21:51:00.274Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b5/13/56e503d01218d1ca27ea9fda862045a4b400cae5e756f47315f5aaba0eee/multiaddr-0.2.0-py3-none-any.whl", hash = "sha256:bcff7bf3d7de3d6da0b865b25423bcb411de1d20d70cc6abfacf75170d17866c", size = 40424, upload-time = "2026-03-17T21:50:58.833Z" },
 ]
 
 [[package]]
@@ -1193,7 +1189,7 @@ requires-dist = [
     { name = "bidict", specifier = ">=0.23.1" },
     { name = "colorlog", specifier = ">=6.8.2,<7" },
     { name = "msgspec", specifier = ">=0.20.0" },
-    { name = "multiaddr", specifier = ">=0.2.0" },
+    { name = "multiaddr", git = "https://github.com/multiformats/py-multiaddr.git?rev=f86519daaa21699023d0037c58cdff600313dd09" },
     { name = "pdbp", specifier = ">=1.8.2,<2" },
     { name = "platformdirs", specifier = ">=4.4.0" },
     { name = "setproctitle", specifier = ">=1.3,<2" },
