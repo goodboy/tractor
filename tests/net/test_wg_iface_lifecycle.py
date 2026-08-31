@@ -8,11 +8,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager as acm
 import os
 from pathlib import Path
+import sys
 from typing import BinaryIO
 
 import pytest
 import trio
 
+import tractor
 from tractor.net import (
     Bindspace,
     BindspaceRef,
@@ -375,4 +377,100 @@ def test_open_wg_bindspace_nests_resource_lifetimes(
         'wg-inner-exit',
         'wg-outer-exit',
         'bindspace-exit',
+    ]
+
+
+@pytest.mark.skipif(
+    sys.platform != 'linux',
+    reason='network namespaces are Linux-only',
+)
+def test_public_wg_bindspace_scopes_root_actor(
+    monkeypatch: pytest.MonkeyPatch,
+    tpt_proto: str,
+) -> None:
+    '''
+    Public network contexts must fully enclose the root runtime.
+
+    Attach the real current netns through `tractor.net`, fake only WG
+    interface provisioning, and open a real root actor with the yielded
+    `Bindspace`. The trace and inode checks prove interface setup wraps
+    actor startup, the runtime occupies the realized bindspace, and root
+    restoration finishes before network-resource teardown.
+
+    '''
+    events: list[str] = []
+    bindspace_spec: BindspaceSpec = BindspaceSpec(
+        kind='netns',
+        lifecycle='attach',
+    )
+    tunnel_spec: WGTunnelSpec = WGTunnelSpec(
+        peer_pubkey=_PEER_KEY,
+        iface='wg-root',
+    )
+    config: WGInterfaceConfig = WGInterfaceConfig(
+        private_key=_LOCAL_KEY,
+    )
+
+    @acm
+    async def fake_open_wg_iface(
+        spec: WGTunnelSpec,
+        iface_config: WGInterfaceConfig,
+        bindspace: Bindspace,
+        role: _tunnel.WGRole,
+    ) -> AsyncIterator[WGTunnelSpec]:
+        '''
+        Trace one WG layer around the real root actor lifetime.
+
+        '''
+        assert spec is tunnel_spec
+        assert iface_config is config
+        assert role == 'listen'
+        assert bindspace.namespace_fd is not None
+        events.append('wg-enter')
+        try:
+            yield spec
+        finally:
+            events.append('wg-exit')
+
+    monkeypatch.setattr(
+        _tunnel,
+        'open_wg_iface',
+        fake_open_wg_iface,
+    )
+
+    async def main() -> None:
+        '''
+        Compose the public network and root actor context managers.
+
+        '''
+        async with tractor.net.open_wg_bindspace(
+            bindspace_spec=bindspace_spec,
+            layers=((tunnel_spec, config),),
+            role='listen',
+        ) as bindspace:
+            events.append('bindspace-open')
+            async with tractor.open_root_actor(
+                bindspace=bindspace,
+                enable_transports=[tpt_proto],
+            ):
+                events.append('root-open')
+                assert bindspace.namespace_fd is not None
+                assert os.fstat(
+                    bindspace.namespace_fd,
+                ).st_ino == bindspace.ref.inode
+                assert Path(
+                    '/proc/thread-self/ns/net'
+                ).stat().st_ino == bindspace.ref.inode
+            events.append('root-closed')
+
+        events.append('bindspace-closed')
+
+    trio.run(main)
+    assert events == [
+        'wg-enter',
+        'bindspace-open',
+        'root-open',
+        'root-closed',
+        'wg-exit',
+        'bindspace-closed',
     ]

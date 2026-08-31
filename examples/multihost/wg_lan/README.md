@@ -198,9 +198,23 @@ Four corrections, all from
    `_addr_to_transport` wants a `MsgTransport` per addr-type,
    which `wg` doesn't have.
 
-## next
+## root composition
 
 The `TunnelledAddress`, native maddr parser, bindspace lifecycle, and
-explicit pyroute2 verification APIs live in `tractor.net`. Root actor
-bindspace integration remains future work; callers compose these
-lifecycles explicitly for now.
+explicit pyroute2 verification APIs live in `tractor.net`. Keep the
+owning bindspace context outside the root actor so its namespace FD
+remains live through complete actor teardown:
+
+```python
+async with tractor.net.open_wg_bindspace(
+    bindspace_spec,
+    layers,
+    role='listen',
+) as bindspace:
+    async with tractor.open_root_actor(bindspace=bindspace):
+        ...
+```
+
+The root actor enters before registry or IPC setup and restores the
+calling thread's original namespace before the outer bindspace context
+removes owned WireGuard and netns resources.
