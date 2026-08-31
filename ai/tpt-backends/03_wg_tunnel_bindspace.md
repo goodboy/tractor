@@ -33,7 +33,7 @@ onto `trio` as the library's sans-io layer allows.
   by multiformats/py-multiaddr#107 and gh #483.
 - so **today's deployable story is declarative**: run `wg-quick`
   out-of-band, parse the maddr, strip to the overlay
-  `(host, port)`, verify the pubkey against the live tunnel,
+  `(host, port)`, verify the pubkey in its host-specific role,
   hand the overlay addr to `registry_addrs=`/`tpt_bind_addrs=`.
   #482 already contains working example code for exactly this.
 - `Address.namespace` exists in the Protocol
@@ -82,9 +82,10 @@ does not create a new address type.** Two candidate encodings;
   the tunnel spec. The wrapper is stripped (`→ .overlay`) at the
   moment of bind/connect.
   - ⚠️ `is_wrapped_addr()` (`_addr.py:194`) tests
-    `type(addr) in _address_types.values()` — a `bidict` of
-    proto_key→type. `TunnelledAddress` isn't in it and must not
-    be (it's not 1:1 with a proto). So either add an explicit
+    `type(addr) in _address_types.values()` — the build-registered
+    protocol-key-to-address-type registry. `TunnelledAddress`
+    isn't in it and must not be (it has no transport of its own).
+    So either add an explicit
     `isinstance(addr, TunnelledAddress)` clause there, or give
     the wrapper a marker and test structurally. Do the former;
     it's two lines and honest.
@@ -103,7 +104,7 @@ class WGTunnelSpec(
     msgspec.Struct,
     frozen=True,
 ):
-    peer_pubkey: str          # std-base64 `wg(8)` form
+    pubkey: str               # std-base64 `wg(8)` form
     iface: str = 'wg0'
     netns: str|None = None
     # layer-C-only fields, unset in layer A
@@ -191,9 +192,10 @@ Observed protocol-name lists, for writing the `match`:
   ...))` w/ the bearer recorded in the spec.
 - keep the existing 2-proto cases byte-identical; add the new
   case *after* them.
-- nesting (wg-in-wg) falls out of `.decapsulate_code()` cutting
-  at the *last* occurrence — peel repeatedly rather than
-  recursing through a bespoke splitter.
+- layer A rejects more than one `/wg/` segment. Its wrapper stores
+  one bearer, key, and overlay, so accepting wg-in-wg would
+  silently misrepresent the maddr. Nested tunnel support needs a
+  different data shape and belongs in a later layer.
 - `mk_maddr()` inverse for `TunnelledAddress` is just
   `.encapsulate()` composition; don't rebuild `str`s by hand.
 - **pending an upstream release**: py-multiaddr#108 is merged, so
@@ -215,12 +217,21 @@ Port #482 §2's helpers into `tractor/discovery/_tunnel.py` as
 ```python
 def parse_wg_maddr(maddr: str) -> TunnelledAddress: ...   # pure
 def wg8_pubkey(multibase_key: str) -> str: ...            # pure
-def verify_wg_peer(spec: WGTunnelSpec) -> bool: ...       # impure probe
+async def verify_wg_key(
+    spec: WGTunnelSpec,
+    role: Literal['local', 'peer'],
+    inspection: str|None = None,
+) -> bool: ...  # impure probe
 ```
 
-In layer A `verify_wg_peer()` may shell out (`wg show <if>
-peers`), but it must be a *single* function so layer B swaps
-only its body. Never call it implicitly from
+In layer A `verify_wg_key()` may shell out to role-specific
+`wg show <if> public-key|peers` queries, but it must be a *single*
+async, time-bounded function so it never blocks trio's run thread
+and layer B swaps only its body. It verifies key presence only,
+not `Endpoint`, `AllowedIPs`, handshake state, or routing. Never
+run `tractor` as root: privileged inspection stays a separate
+step whose public-key output can be passed as `inspection`. Never
+call it implicitly from
 `wrap_address()`/`parse_maddr()` — parsing must stay pure and
 side-effect-free; verification is the *caller's* explicit step
 (and later, the bindspace `@acm`'s).
@@ -281,7 +292,7 @@ Three integration options, in increasing trio-nativeness:
 - (3) reimplement the codecs. Never.
 
 **Recommended split**: ship (1) first so layer B is a small,
-reviewable, behaviour-preserving swap of `verify_wg_peer()`'s
+reviewable, behaviour-preserving swap of `verify_wg_key()`'s
 body; then land (2) as a follow-up commit for the read path
 (`wg get`, `link get`) where the sans-io surface is smallest,
 and keep (1) for the privileged mutating ops. Measure before
@@ -306,7 +317,7 @@ async def read_wg_peers(
 async def read_wg_pubkey(iface: str = 'wg0', ...) -> str: ...
 ```
 
-and `verify_wg_peer()` becomes a thin composition over the two.
+and `verify_wg_key()` becomes a thin composition over the two.
 Note the pure-getter rule: no `read_wg_peers(..., create=True)`.
 
 ---

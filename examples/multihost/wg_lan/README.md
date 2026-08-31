@@ -49,11 +49,9 @@ uv sync
 ```
 
 gets you a `wg`-aware `multiaddr`. That pin goes away once a
-release carries the codec. You also need `multibase`:
-
-```bash
-uv pip install multibase
-```
+release carries the codec. Its `py-multibase` dependency provides
+the imported `multibase` module; no separate install command is
+needed.
 
 Without the codec `parse_wg_maddr()` raises immediately with an
 actionable message — there is deliberately **no** degraded
@@ -64,8 +62,9 @@ tunnel API (`.decapsulate_code()`, `.split()`, `.join()`,
 `.encapsulate()`, `.value_for_protocol()`) rather than any
 bespoke segment slicing — see its README "En/decapsulate" and
 "Tunneling" sections. gh #429 was about *dropping* our NIH
-parser, and that applies to peeling a tunnel stack just as much
-as to decoding one proto.
+parser, and that applies to peeling this composed maddr just as
+much as to decoding one proto. This example rejects multiple
+`/wg/` segments because `WGTunnelledAddr` stores one tunnel.
 
 ## 0. tunnel setup (out-of-band, both hosts)
 
@@ -106,8 +105,11 @@ AllowedIPs = 10.0.11.1/32
 PersistentKeepalive = 25
 ```
 
-Note how `ListenPort` and `Endpoint` are exactly the maddr's
-bearer segment, and `[Interface] Address` is its overlay host.
+This example configures host A's `ListenPort` and host B's
+`Endpoint` from the maddr bearer, and configures host A's
+`[Interface] Address` from its overlay host. The verification
+step below checks keys only; it does not inspect those fields or
+either peer's `AllowedIPs`.
 
 ```bash
 sudo wg-quick up wg0   # both hosts
@@ -118,16 +120,40 @@ ping -c1 10.0.11.1     # from B
 
 ```bash
 python -c "
-import base64, multibase
+from wg_maddr import mb_pubkey
 key = open('wg_pub.key').read().strip()
-print(multibase.encode('base64url', base64.b64decode(key)).decode())
+print(mb_pubkey(key))
 "
 ```
 
 Paste the `u...` output into `WG_MADDR` in both scripts (they use
 the same string — A's bearer, A's key, A's overlay ep).
 
-## 2. run
+## 2. verify the keys
+
+Interface inspection commonly needs `CAP_NET_ADMIN`. Keep that
+privileged operation separate from the `tractor` processes:
+
+```bash
+# host A: output must equal the maddr's A_pub key
+export WG_KEY_INSPECTION="$(sudo wg show wg0 public-key)"
+
+# host B: output must contain the maddr's A_pub key
+export WG_KEY_INSPECTION="$(sudo wg show wg0 peers)"
+```
+
+These checks establish only that host A uses the declared local
+key and host B has that key as a configured peer. They do not
+verify `Endpoint`, `AllowedIPs`, a recent handshake, or routing.
+The exported text contains public keys only. Each script passes it
+to `verify_wg_key()` with its host-specific role before starting
+`tractor`. Callers that already have permission to inspect the
+interface may omit that argument; the helper's direct query is
+async and requests cancellation after five seconds. Trio's
+subprocess termination escalation can make final process cleanup
+take longer than that cancellation deadline.
+
+## 3. run
 
 ```bash
 # host A
@@ -136,6 +162,17 @@ python host_a_srv.py
 # host B
 python host_b_client.py
 ```
+
+Run both `tractor` programs as the normal application account,
+not as root. Privilege is needed only for tunnel setup and the
+separate inspection above. If using that preflight, keep the
+host-specific `WG_KEY_INSPECTION` value exported in each
+program's shell.
+
+The client binds its own actor listener to `10.0.11.2:0`, while
+the service actor binds to host A's `10.0.11.1` overlay host with
+a random port. Keep `LOCAL_OVERLAY_BIND` aligned with host B's
+WireGuard interface address if adapting this example.
 
 `host_a_srv.py` must be importable on host B too, since
 `portal.run()` refs the fn by module path — standard `tractor`
@@ -153,19 +190,19 @@ Four corrections, all from
    all. `parse_wg_maddr()` now rejects it with an actionable
    error.
 2. **parsing is pure.** #482's helper had the key-check adjacent
-   to the parse; `verify_wg_peer()` is now a separate, explicitly
-   composed step that the caller invokes. A parser that shells
-   out is a nasty surprise.
+   to the parse; `verify_wg_key()` is now a separate, explicitly
+   composed step for inspection-capable callers. A parser that
+   shells out is a nasty surprise.
 3. **no `sudo`.** #482 ran `sudo wg show`; a library/example must
-   never escalate. `wg show` works unprivileged for read on most
-   setups; if yours needs root, run the script as root rather
-   than embedding `sudo`.
+   never escalate or run `tractor` as root. Privileged tunnel
+   setup and key inspection are separate shell steps.
 4. **no new `Address` proto-type.** The tunnel rides *beside* the
    overlay addr in a frozen `WGTunnelledAddr`, and only `.overlay`
    crosses into `open_nursery()`. #482 §6 floated a `WGAddress`
-   registered in `_address_types` — that table is a `bidict`
-   (1:1 proto-key↔type) and `_addr_to_transport` wants a
-   `MsgTransport` per addr-type, which `wg` doesn't have.
+   registered in `_address_types` — that registry maps available
+   transport keys to concrete address types, and
+   `_addr_to_transport` wants a `MsgTransport` per addr-type,
+   which `wg` doesn't have.
 
 ## next
 
