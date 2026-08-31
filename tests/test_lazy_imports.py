@@ -19,6 +19,7 @@ from tractor.discovery import (
 )
 from tractor.ipc import (
     _tcp,
+    _tipc,
     _uds,
 )
 
@@ -271,11 +272,14 @@ def test_lazy_annotation_names_resolve():
     introspection.
 
     '''
-    assert get_type_hints(_multiaddr.mk_maddr)['return'] is Any
+    assert get_type_hints(_multiaddr.mk_maddr)['return'] == Any|str
     assert get_type_hints(_tcp.MsgpackTCPStream.maddr.fget)[
         'return'
     ] is Any
     assert get_type_hints(_uds.MsgpackUDSStream.maddr.fget)[
+        'return'
+    ] == Any|str
+    assert get_type_hints(_tipc.MsgpackTIPCStream.maddr.fget)[
         'return'
     ] == Any|str
     assert get_type_hints(_addr.Address.get_random)[
