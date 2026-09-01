@@ -65,6 +65,7 @@ from ..spawn import _spawn
 
 if TYPE_CHECKING:
     import multiprocessing as mp
+    from ..net._bindspace import Bindspace
     # from ..ipc._server import IPCServer
     from ..ipc import IPCServer
     from ..spawn._spawn import ProcessType
@@ -419,6 +420,7 @@ class ActorNursery:
         *,
 
         bind_addrs: list[UnwrappedAddress]|None = None,
+        bindspace: 'Bindspace|None' = None,
         rpc_module_paths: list[str]|None = None,
         enable_transports: list[str] = [_state._def_tpt_proto],
         enable_modules: list[str]|None = None,
@@ -504,6 +506,7 @@ class ActorNursery:
                 bind_addrs,
                 parent_addr,
                 _rtv,  # run time vars
+                bindspace=bindspace,
                 infect_asyncio=infect_asyncio,
                 proc_kwargs=proc_kwargs
             )

@@ -63,7 +63,6 @@ from trio._highlevel_open_unix_stream import (
 
 from tractor.msg import MsgCodec
 from tractor.log import get_logger
-from tractor.discovery._multiaddr import mk_maddr
 from tractor.ipc._transport import (
     MsgpackTransport,
 )
@@ -164,6 +163,14 @@ class UDSAddress(
             or
             self.def_bindspace
         )
+
+    @property
+    def namespace(self) -> None:
+        '''
+        Report that plain UDS uses the process's current namespace.
+
+        '''
+        return None
 
     @property
     def sockpath(self) -> Path:
@@ -603,6 +610,8 @@ class MsgpackUDSStream(MsgpackTransport):
 
     @property
     def maddr(self) -> Multiaddr|str:
+        from tractor.net import mk_maddr
+
         if not self.raddr:
             return '<unknown-peer>'
 

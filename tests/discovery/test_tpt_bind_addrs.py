@@ -24,7 +24,7 @@ from tractor.discovery import _api
 from tractor.discovery._addr import (
     wrap_address,
 )
-from tractor.discovery._multiaddr import mk_maddr
+from tractor.net import mk_maddr
 from tractor.ipc import _connect_chan
 from tractor._testing.addr import get_rando_addr
 

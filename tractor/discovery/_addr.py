@@ -42,7 +42,7 @@ from ..ipc._uds import (
 if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs ~4.5ms
     # of `import tractor` wall-time (gh #470).
-    from ._tunnel import (
+    from tractor.net._tunnel import (
         TunnelledAddress,
     )
     from ..runtime._runtime import Actor
@@ -237,8 +237,9 @@ def is_wrapped_addr(addr: any) -> bool:
     # XXX NOTE, a `TunnelledAddress` is genuinely "wrapped" but is
     # deliberately NOT in `_address_types`: it has no
     # `MsgTransport` of its own (a tunnel is transparent to
-    # `socket(2)`), so it gets no proto-key entry. See `._tunnel`.
-    from ._tunnel import TunnelledAddress
+    # `socket(2)`), so it gets no proto-key entry. See
+    # `tractor.net._tunnel`.
+    from tractor.net._tunnel import TunnelledAddress
     return (
         type(addr) in _address_types.values()
         or
@@ -333,7 +334,7 @@ def wrap_address(
         # multiaddr-format string, e.g.
         # '/ip4/127.0.0.1/tcp/1616'
         case str() if addr.startswith('/'):
-            from tractor.discovery._multiaddr import (
+            from tractor.net import (
                 parse_maddr,
             )
             return parse_maddr(addr)

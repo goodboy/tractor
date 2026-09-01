@@ -10,20 +10,420 @@ API design.
 
 """
 from functools import partial
+from types import SimpleNamespace
 from typing import (
     Any,
+)
+from unittest.mock import (
+    AsyncMock,
+    MagicMock,
 )
 
 import pytest
 import trio
 import tractor
 
+from tractor._exceptions import ActorFailure
 from tractor._testing import tractor_test
+from tractor.spawn import (
+    _spawn,
+    _trio,
+)
 
 data_to_pass_down = {
     'doggy': 10,
     'kitty': 4,
 }
+
+
+def test_peer_handshake_wins_child_boot_race() -> None:
+    '''
+    A connected child must cancel process-death monitoring cleanly.
+
+    Start the death waiter first and hold it at a checkpoint. Let the
+    fake server then return one peer event and channel. The helper must
+    preserve the normal handshake result and cancel the losing process
+    waiter before its nursery exits. The fake explicitly catches and
+    re-raises `trio.Cancelled` to prove cancellation caused its exit.
+
+    '''
+    async def main() -> None:
+        '''
+        Control the handshake-first schedule with Trio events.
+
+        '''
+        uid: tuple[str, str] = ('handshake-child', 'test')
+        death_started = trio.Event()
+        death_cancelled = trio.Event()
+        peer_event = trio.Event()
+        channel = object()
+
+        async def wait_for_peer(
+            child_uid: tuple[str, str],
+        ) -> tuple[trio.Event, object]:
+            '''
+            Return the peer only after death monitoring is active.
+
+            '''
+            assert child_uid == uid
+            await death_started.wait()
+            return (peer_event, channel)
+
+        async def wait_for_death() -> int:
+            '''
+            Block until the winning handshake cancels this waiter.
+
+            '''
+            death_started.set()
+            try:
+                await trio.sleep_forever()
+            except trio.Cancelled:
+                death_cancelled.set()
+                raise
+
+        result = await _spawn.wait_for_peer_or_proc_death(
+            ipc_server=SimpleNamespace(
+                wait_for_peer=wait_for_peer,
+            ),
+            uid=uid,
+            proc_wait=wait_for_death,
+            proc_repr='handshake-proc',
+        )
+
+        assert result == (peer_event, channel)
+        assert death_cancelled.is_set()
+
+    trio.run(main)
+
+
+def test_child_death_wins_peer_handshake_race() -> None:
+    '''
+    Pre-handshake child death must fail startup instead of hanging.
+
+    Start the peer waiter first and leave it parked like
+    `IPCServer.wait_for_peer()` on an unset event. Return a distinctive
+    process status from the competing waiter, then prove the helper
+    cancels the handshake and raises `ActorFailure` with child identity,
+    status, and process diagnostics.
+
+    '''
+    async def main() -> None:
+        '''
+        Control the death-first schedule with Trio events.
+
+        '''
+        uid: tuple[str, str] = ('dead-child', 'test')
+        handshake_started = trio.Event()
+        handshake_cancelled = trio.Event()
+
+        async def wait_for_peer(
+            child_uid: tuple[str, str],
+        ) -> tuple[trio.Event, object]:
+            '''
+            Park until process death cancels this handshake waiter.
+
+            '''
+            assert child_uid == uid
+            handshake_started.set()
+            try:
+                await trio.sleep_forever()
+            except trio.Cancelled:
+                handshake_cancelled.set()
+                raise
+
+        async def wait_for_death() -> int:
+            '''
+            Report child death after handshake monitoring is active.
+
+            '''
+            await handshake_started.wait()
+            return 23
+
+        with pytest.raises(ActorFailure) as exc_info:
+            await _spawn.wait_for_peer_or_proc_death(
+                ipc_server=SimpleNamespace(
+                    wait_for_peer=wait_for_peer,
+                ),
+                uid=uid,
+                proc_wait=wait_for_death,
+                proc_repr='dead-proc',
+            )
+
+        message: str = str(exc_info.value)
+        assert repr(uid) in message
+        assert 'died during boot' in message
+        assert '(rc=23)' in message
+        assert 'parent-handshake' in message
+        assert 'dead-proc' in message
+        assert handshake_cancelled.is_set()
+
+    trio.run(main)
+
+
+def test_child_death_wins_simultaneous_boot_results() -> None:
+    '''
+    Observed process death must outrank a simultaneous handshake.
+
+    Hold both fake waits behind one barrier with cancellation shielding,
+    then release them together so both publish a committed result before
+    sibling cancellation takes effect. Because the child has exited
+    before receiving its `SpawnSpec`, bootstrap must raise `ActorFailure`
+    rather than return its briefly established channel.
+
+    '''
+    async def main() -> None:
+        '''
+        Release both boot outcomes from one controlled barrier.
+
+        '''
+        uid: tuple[str, str] = ('simultaneous-child', 'test')
+        handshake_ready = trio.Event()
+        death_ready = trio.Event()
+        release = trio.Event()
+        peer_event = trio.Event()
+
+        async def wait_for_peer(
+            child_uid: tuple[str, str],
+        ) -> tuple[trio.Event, object]:
+            '''
+            Publish a handshake despite sibling cancellation.
+
+            '''
+            assert child_uid == uid
+            handshake_ready.set()
+            with trio.CancelScope(shield=True):
+                await release.wait()
+            return (peer_event, object())
+
+        async def wait_for_death() -> int:
+            '''
+            Publish process death despite sibling cancellation.
+
+            '''
+            death_ready.set()
+            with trio.CancelScope(shield=True):
+                await release.wait()
+            return 0
+
+        async def release_both() -> None:
+            '''
+            Open the barrier only after both waiters are parked.
+
+            '''
+            await handshake_ready.wait()
+            await death_ready.wait()
+            release.set()
+
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(release_both)
+            with pytest.raises(
+                ActorFailure,
+                match=r'simultaneous-child.*rc=0',
+            ):
+                await _spawn.wait_for_peer_or_proc_death(
+                    ipc_server=SimpleNamespace(
+                        wait_for_peer=wait_for_peer,
+                    ),
+                    uid=uid,
+                    proc_wait=wait_for_death,
+                )
+
+    trio.run(main)
+
+
+@pytest.mark.parametrize('failing_waiter', ('handshake', 'death'))
+def test_child_boot_race_preserves_waiter_error(
+    failing_waiter: str,
+) -> None:
+    '''
+    Waiter failures must retain their original exception identity.
+
+    Park the non-failing sibling and raise one unique error from either
+    the peer or process waiter. The helper's internal nursery must
+    cancel the sibling and re-raise that exact exception instead of
+    wrapping it in an `ExceptionGroup`.
+
+    '''
+    async def main() -> None:
+        '''
+        Trigger one selected waiter after its sibling starts.
+
+        '''
+        uid: tuple[str, str] = ('errored-child', 'test')
+        sibling_started = trio.Event()
+        wait_error = RuntimeError(f'{failing_waiter} failed')
+
+        async def wait_for_peer(
+            child_uid: tuple[str, str],
+        ) -> tuple[trio.Event, object]:
+            '''
+            Raise or park according to the selected peer schedule.
+
+            '''
+            assert child_uid == uid
+            if failing_waiter == 'handshake':
+                await sibling_started.wait()
+                raise wait_error
+
+            sibling_started.set()
+            await trio.sleep_forever()
+
+        async def wait_for_death() -> int:
+            '''
+            Raise or park according to the selected process schedule.
+
+            '''
+            if failing_waiter == 'death':
+                await sibling_started.wait()
+                raise wait_error
+
+            sibling_started.set()
+            await trio.sleep_forever()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await _spawn.wait_for_peer_or_proc_death(
+                ipc_server=SimpleNamespace(
+                    wait_for_peer=wait_for_peer,
+                ),
+                uid=uid,
+                proc_wait=wait_for_death,
+            )
+
+        assert exc_info.value is wait_error
+
+    trio.run(main)
+
+
+def test_trio_proc_cleans_failed_child_peer_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''
+    Death-first Trio startup must release provisional peer state.
+
+    Return one already-dead fake process while its server handshake
+    parks forever. The fake nursery proves the peer event exists before
+    provisional child publication. After `ActorFailure`, both that
+    exact event and the provisional child record must be gone so repeated
+    failed spawns cannot leak server state.
+
+    '''
+    uid: tuple[str, str] = ('dead-trio-child', 'test')
+    proc: trio.Process = MagicMock(spec=trio.Process)
+    proc.pid = 1234
+    proc.wait = AsyncMock(return_value=23)
+    proc.poll.return_value = 23
+    proc.__str__.return_value = 'dead-trio-proc'
+
+    class FakeServer:
+        '''
+        Hold the peer registry used during Trio child startup.
+
+        '''
+        def __init__(self) -> None:
+            self._peer_connected: dict[
+                tuple[str, str],
+                trio.Event,
+            ] = {}
+
+        async def wait_for_peer(
+            self,
+            child_uid: tuple[str, str],
+        ) -> tuple[trio.Event, object]:
+            '''
+            Park like a child that never reaches its handshake.
+
+            '''
+            assert child_uid == uid
+            await trio.sleep_forever()
+
+    server = FakeServer()
+
+    class FakeNursery:
+        '''
+        Track provisional child publication and cleanup.
+
+        '''
+        def __init__(self) -> None:
+            self._actor = SimpleNamespace(ipc_server=server)
+            self._children: dict[tuple[str, str], tuple] = {}
+
+        def _register_child(
+            self,
+            subactor: object,
+            proc: object,
+            portal: object|None,
+        ) -> tuple[trio.Event, trio.Event, bool]:
+            '''
+            Require peer-event registration before child publication.
+
+            '''
+            assert uid in server._peer_connected
+            assert portal is None
+            self._children[uid] = (subactor, proc, portal)
+            return (trio.Event(), trio.Event(), False)
+
+    async def fake_open_process(
+        command: list[str],
+        **kwargs: object,
+    ) -> trio.Process:
+        '''
+        Return a process whose death wins the bootstrap race.
+
+        '''
+        assert command
+        return proc
+
+    async def fake_wait_for_debugger(**kwargs: object) -> None:
+        '''
+        Keep hard-reap cleanup deterministic and non-interactive.
+
+        '''
+        return None
+
+    monkeypatch.setattr(
+        _trio.trio.lowlevel,
+        'open_process',
+        fake_open_process,
+    )
+    monkeypatch.setattr(
+        _trio.debug,
+        'maybe_wait_for_debugger',
+        fake_wait_for_debugger,
+    )
+
+    nursery = FakeNursery()
+    subactor = SimpleNamespace(
+        aid=tractor.msg.Aid(
+            name=uid[0],
+            uuid=uid[1],
+        ),
+        loglevel=None,
+        pformat=lambda: 'dead-trio-child',
+    )
+
+    async def main() -> None:
+        '''
+        Run the full Trio backend through death-first cleanup.
+
+        '''
+        with pytest.raises(
+            ActorFailure,
+            match=r'dead-trio-child.*rc=23',
+        ):
+            await _trio.trio_proc(
+                name=uid[0],
+                actor_nursery=nursery,
+                subactor=subactor,
+                errors={},
+                bind_addrs=[],
+                parent_addr=('127.0.0.1', 1616),
+                _runtime_vars={},
+            )
+
+    trio.run(main)
+
+    assert server._peer_connected == {}
+    assert nursery._children == {}
 
 
 async def run_same_func_in_child(

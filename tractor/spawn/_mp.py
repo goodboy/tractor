@@ -54,6 +54,7 @@ from ._spawn import (
 
 
 if TYPE_CHECKING:
+    from tractor.net._bindspace import Bindspace
     from tractor.ipc import (
         _server,
     )
@@ -73,11 +74,18 @@ async def mp_proc(
     parent_addr: UnwrappedAddress,
     _runtime_vars: dict[str, Any],  # serialized and sent to _child
     *,
+    bindspace: Bindspace|None = None,
     infect_asyncio: bool = False,
     task_status: TaskStatus[Portal] = trio.TASK_STATUS_IGNORED,
     proc_kwargs: dict[str, any] = {}
 
 ) -> None:
+
+    if bindspace is not None:
+        raise NotImplementedError(
+            'Network namespace bindspace transport is not yet '
+            'supported by multiprocessing spawn backends!'
+        )
 
     # uggh zone
     try:

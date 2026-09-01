@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 import trio
 
-from tractor.discovery import (
+from tractor.net import (
     TunnelledAddress,
     WGTunnelSpec,
     tunnels_of,

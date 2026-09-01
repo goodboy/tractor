@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     # `import tractor` path (gh #470).
     from multiaddr import Multiaddr
     from tractor.discovery._addr import Address
-    from tractor.discovery._tunnel import (
+    from tractor.net._tunnel import (
         TunnelledAddress,
     )
 else:
@@ -71,7 +71,7 @@ def mk_maddr(
     '''
     from multiaddr import Multiaddr
 
-    from ._tunnel import (
+    from tractor.net._tunnel import (
         TunnelledAddress,
         mk_wg_maddr,
     )
@@ -130,7 +130,7 @@ def parse_maddr(
         # fails. Pre-checking the raw string would misclassify valid
         # values such as `/unix/tmp/wg/service.sock`.
         if '/wg/' in maddr_str:
-            from ._tunnel import _wg_proto_code
+            from tractor.net._tunnel import _wg_proto_code
             _wg_proto_code()
         raise
     proto_names: list[str] = [
@@ -156,7 +156,7 @@ def parse_maddr(
             )
 
         case _ if 'wg' in proto_names:
-            from ._tunnel import parse_wg_maddr
+            from tractor.net._tunnel import parse_wg_maddr
             return parse_wg_maddr(maddr)
 
         case _:

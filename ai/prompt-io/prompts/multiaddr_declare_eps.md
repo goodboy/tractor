@@ -47,7 +47,7 @@ Here is a small example from piker,
 We should take whatever common API is needed to support this and
 distill it into a
 ```python
-tractor.discovery.parse_endpoints(
+tractor.net.parse_endpoints(
 ) -> dict[
   str,
   list[Address]
