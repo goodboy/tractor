@@ -104,17 +104,24 @@ msg-spec *is* the protocol, which is exactly what lets payloads
 be type-limited per-context (see ``pld_spec`` in
 :doc:`/guide/context`).
 
-Addresses come in two spellings:
+Address declarations and serialized values have distinct spellings:
 
-- *unwrapped*: the plain-tuple form you pass to user APIs —
-  ``('127.0.0.1', 1616)`` for tcp, or a
+- *legacy declarations*: the plain tuples accepted from existing
+  callers — ``('127.0.0.1', 1616)`` for tcp, or a
   ``(<filedir>, <filename>)`` path-pair for uds;
+- *canonical serialized values*: protocol-tagged tuples emitted by
+  address objects — ``('tcp', '127.0.0.1', 1616)`` and
+  ``('unix', <path>)``;
 - *wrapped*: the internal ``TCPAddress``/``UDSAddress`` struct
   types (plus libp2p-style multiaddr helpers over in
   ``tractor.discovery``).
 
-You only ever need the tuple form; the runtime wraps and
-unwraps at the boundaries.
+The runtime accepts either declaration spelling, wraps it at the
+boundary and emits the canonical tagged form.
+
+Actors sharing a registrar are expected to run the same Tractor
+version; the runtime does not negotiate address formats between
+versions.
 
 TCP: the boring default
 ***********************
