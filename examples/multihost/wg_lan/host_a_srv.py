@@ -58,10 +58,10 @@ async def main():
         registry_addrs=[addr.overlay],
         enable_transports=[addr.overlay.proto_key],
     ) as an:
-        overlay_host, _ = addr.unwrap()
+        _, overlay_host, _ = addr.unwrap()
         await an.start_actor(
             'echo_srv',
-            bind_addrs=[(overlay_host, 0)],
+            bind_addrs=[('tcp', overlay_host, 0)],
             enable_transports=[addr.overlay.proto_key],
             enable_modules=['host_a_srv'],
         )
