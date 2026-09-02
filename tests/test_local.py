@@ -8,6 +8,7 @@ import trio
 import tractor
 
 from tractor._testing import tractor_test
+from tractor.discovery._addr import wrap_address
 
 
 def test_no_runtime():
@@ -48,7 +49,7 @@ async def test_self_is_registered_localportal(reg_addr):
         with trio.fail_after(0.2):
             sockaddr = await portal.run_from_ns(
                     'self', 'wait_for_actor', name='root')
-            assert sockaddr[0] == reg_addr
+            assert sockaddr[0] == wrap_address(reg_addr).unwrap()
 
 
 def test_local_actor_async_func(reg_addr):

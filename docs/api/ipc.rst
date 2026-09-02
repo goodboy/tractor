@@ -14,10 +14,11 @@ transport may currently be enabled per actor.
    :margin:
    :alt: layered runtime stack from app code down to transports
 
-Addresses are "unwrapped" tuples at the API edges:
-``('host', port)`` for TCP, filesystem-path pairs for UDS. For
-the full layering story — transport protocols, the IPC server,
-address types and the msg loop — see
+Address declarations still accept the legacy ``(host, port)``
+TCP pair and ``(directory, filename)`` UDS pair. Wrapped addresses
+emit canonical, protocol-tagged tuples: ``('tcp', host, port)``
+and ``('unix', path)``. For the full layering story — transport
+protocols, the IPC server, address types and the msg loop — see
 :doc:`/explain/architecture`.
 
 .. currentmodule:: tractor

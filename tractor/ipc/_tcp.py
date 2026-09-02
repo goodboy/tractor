@@ -47,8 +47,10 @@ if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs
     # `import tractor` wall-time (gh #470).
     from multiaddr import Multiaddr
+    from tractor.discovery._addr import TaggedTCPAddress
 else:
     Multiaddr = Any
+    TaggedTCPAddress = Any
 
 
 log = get_logger()
@@ -70,7 +72,7 @@ class TCPAddress(
             ) from valerr
 
     proto_key: ClassVar[str] = 'tcp'
-    unwrapped_type: ClassVar[type] = tuple[str, int]
+    unwrapped_type: ClassVar[type] = tuple
     def_bindspace: ClassVar[str] = '127.0.0.1'
 
     # ?TODO, actually validate ipv4/6 with stdlib's `ipaddress`
@@ -112,19 +114,35 @@ class TCPAddress(
     @classmethod
     def from_addr(
         cls,
-        addr: tuple[str, int]
+        addr: tuple|list,
     ) -> TCPAddress:
         match addr:
-            case (str(), int()):
-                return TCPAddress(addr[0], addr[1])
+            case (
+                ('tcp', str() as host, int() as port)
+                |
+                ['tcp', str() as host, int() as port]
+                |
+                (str() as host, int() as port)
+                |
+                [str() as host, int() as port]
+                |
+                (
+                    str() as host,
+                    int() as port,
+                    int(),
+                    int(),
+                )
+            ):
+                return TCPAddress(host, port)
             case _:
                 raise ValueError(
                     f'Invalid unwrapped address for {cls}\n'
                     f'{addr}\n'
                 )
 
-    def unwrap(self) -> tuple[str, int]:
+    def unwrap(self) -> TaggedTCPAddress:
         return (
+            self.proto_key,
             self._host,
             self._port,
         )
@@ -223,7 +241,8 @@ class MsgpackTCPStream(MsgpackTransport):
         **kwargs
     ) -> MsgpackTCPStream:
         stream = await trio.open_tcp_stream(
-            *destaddr.unwrap(),
+            destaddr._host,
+            destaddr._port,
             **kwargs
         )
         return MsgpackTCPStream(

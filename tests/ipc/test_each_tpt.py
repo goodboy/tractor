@@ -703,17 +703,20 @@ def test_uds_bindspace_created_implicitly(
 
             root: Actor = tractor.current_actor()
             assert root.is_registrar
+            canonical_addr = _addr.wrap_address(
+                registry_addr,
+            ).unwrap()
 
-            assert registry_addr in root.reg_addrs
+            assert canonical_addr in root.reg_addrs
             assert (
-                registry_addr
+                canonical_addr
                 in
                 _state._runtime_vars['_registry_addrs']
             )
             assert (
-                _addr.wrap_address(registry_addr)
+                canonical_addr
                 in
-                root.registry_addrs
+                [addr.unwrap() for addr in root.registry_addrs]
             )
 
     trio.run(main)

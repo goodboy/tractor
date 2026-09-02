@@ -6,19 +6,19 @@ Binds `tractor`'s registrar + an `echo_srv` sub-actor on the
 tunnel's *overlay* addr, declared as a single `wg` maddr.
 
 '''
-
 from __future__ import annotations
 
 import os
 
 import tractor
 import trio
-
-from wg_maddr import (
+from tractor.discovery import (
+    TunnelledAddress,
+    mk_maddr,
     parse_wg_maddr,
-    verify_wg_key,
-    WGTunnelledAddr,
 )
+
+from wg_maddr import verify_wg_key
 
 # bearer = host A's underlay `(ip, wg ListenPort)`
 # key    = host A's OWN tunnel pubkey
@@ -36,7 +36,7 @@ async def echo(msg: str) -> str:
 
 
 async def main():
-    addr: WGTunnelledAddr = parse_wg_maddr(WG_MADDR)
+    addr: TunnelledAddress = parse_wg_maddr(WG_MADDR)
     inspection: str | None = os.environ.get('WG_KEY_INSPECTION')
     if not await verify_wg_key(
         addr,
@@ -46,25 +46,26 @@ async def main():
         raise RuntimeError(
             f'Maddr key is not wg0 local public key!\n'
             f'maddr: {WG_MADDR}\n'
-            f'key: {addr.wg_pubkey}\n'
+            f'key: {addr.tunnel.peer_pubkey}\n'
         )
     print(
-        f'wg bearer (kernel-owned): {addr.bearer}\n'
+        f'wg bearer (kernel-owned): {addr.tunnel.bearer}\n'
         f'tractor overlay ep: {addr.overlay}\n'
     )
     async with tractor.open_nursery(
         # XXX only `.overlay` crosses into the runtime; the bearer
-        # + key are iface-layer concerns `tractor` never binds.
+        # + key are bindspace metadata, never `Endpoint` addrs.
         registry_addrs=[addr.overlay],
-        enable_transports=[addr.overlay_proto],
+        enable_transports=[addr.overlay.proto_key],
     ) as an:
+        _, overlay_host, _ = addr.unwrap()
         await an.start_actor(
             'echo_srv',
-            bind_addrs=[(addr.overlay[0], 0)],
-            enable_transports=[addr.overlay_proto],
+            bind_addrs=[('tcp', overlay_host, 0)],
+            enable_transports=[addr.overlay.proto_key],
             enable_modules=['host_a_srv'],
         )
-        print(f'echo_srv up on\n  {addr.maddr}\n')
+        print(f'echo_srv up on\n  {mk_maddr(addr)}\n')
         await trio.sleep_forever()
 
 
