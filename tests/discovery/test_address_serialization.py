@@ -3,10 +3,13 @@ Canonical tagged-address decoding and legacy input compatibility.
 
 '''
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import trio
 
 from tractor.discovery._addr import wrap_address
+from tractor.discovery._registry import Registrar
 from tractor.ipc._tcp import TCPAddress
 from tractor.ipc._uds import UDSAddress
 
@@ -98,3 +101,59 @@ def test_tcp_from_native_ipv6_sockname():
     )
 
     assert addr.unwrap() == ('tcp', '::1', 1616)
+
+
+@pytest.mark.parametrize(
+    'legacy, canonical',
+    [
+        (
+            ('127.0.0.1', 1616),
+            ('tcp', '127.0.0.1', 1616),
+        ),
+        (
+            ('/tmp/tractor', 'registry.sock'),
+            ('unix', '/tmp/tractor/registry.sock'),
+        ),
+    ],
+)
+def test_registrar_stores_canonical_addresses(
+    legacy: tuple,
+    canonical: tuple,
+):
+    '''
+    Normalize registrar entries before stale-address eviction.
+
+    During the tagged-address migration an older actor can register
+    an untagged address before a newer actor reuses that endpoint with
+    its canonical tag. Store the first declaration canonically, then
+    register the tagged spelling under another uid. The old uid must
+    be evicted and the registry must retain exactly one canonical
+    address for the replacement actor.
+
+    '''
+    registrar = SimpleNamespace(
+        _registry={},
+        _waiters={},
+    )
+    old_uid = ('old', 'old-uid')
+    new_uid = ('new', 'new-uid')
+
+    async def register_both():
+        await Registrar.register_actor(
+            registrar,
+            old_uid,
+            legacy,
+        )
+        assert registrar._registry[old_uid] == [canonical]
+
+        await Registrar.register_actor(
+            registrar,
+            new_uid,
+            canonical,
+        )
+
+    trio.run(register_both)
+
+    assert registrar._registry == {
+        new_uid: [canonical],
+    }

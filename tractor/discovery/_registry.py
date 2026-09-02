@@ -184,7 +184,7 @@ class Registrar(Actor):
             # should never be 0-dynamic-os-alloc
             await debug.pause()
 
-        addr_tup: tuple = tuple(addr)
+        addr_tup: tuple = waddr.unwrap()
 
         # Evict stale entries: if a *different* uid claims
         # this addr (e.g. after unclean shutdown or
