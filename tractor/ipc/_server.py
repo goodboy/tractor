@@ -989,10 +989,10 @@ class Server(Struct):
                 _state._def_tpt_proto
             ])
 
-        else:
-            accept_addrs: list[Address] = [
-                wrap_address(a) for a in accept_addrs
-            ]
+        accept_addrs = [
+            wrap_address(addr)
+            for addr in accept_addrs
+        ]
 
         if self._shutdown is None:
             self._shutdown = trio.Event()
