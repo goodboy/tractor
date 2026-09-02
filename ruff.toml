@@ -31,8 +31,8 @@ exclude = [
     "venv",
 ]
 
-# Same as Black.
-line-length = 88
+# Project source style limit.
+line-length = 69
 indent-width = 4
 
 # assume latest minor cpython
@@ -42,10 +42,14 @@ target-version = "py313"
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
 # Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
 # McCabe complexity (`C901`) by default.
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "E501", "F"]
 ignore = [
   'E402',  # https://docs.astral.sh/ruff/rules/module-import-not-at-top-of-file/
 ]
+
+# TODO: add a changed-line token/AST checker for py-codestyle rules
+# Ruff cannot express: boolean layout, local annotation placement,
+# docstring quoting/rationale, and symbol-qualified technical prose.
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
