@@ -479,7 +479,7 @@ def _sync_create_wg_iface(
             '`tractor[wg]` extra.'
         ) from exc
 
-    namespace_fd: int|None = bindspace.namespace_fd
+    namespace_fd: int = bindspace.namespace_fd
     ipr: Any = IPRoute(
         netns=namespace_fd,
         flags=0,

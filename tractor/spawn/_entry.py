@@ -59,7 +59,7 @@ log = get_logger()
 
 
 def _consume_netns_bootstrap(
-    netns_bootstrap: tuple[int, int]|None,
+    netns_bootstrap: tuple[int, int, int]|None,
 ) -> int|None:
     '''
     Enter and release one child-owned network namespace capability.
@@ -73,8 +73,9 @@ def _consume_netns_bootstrap(
         return None
 
     namespace_fd: int
+    expected_device: int
     expected_inode: int
-    namespace_fd, expected_inode = netns_bootstrap
+    namespace_fd, expected_device, expected_inode = netns_bootstrap
     if (
         type(namespace_fd) is not int
         or
@@ -84,12 +85,14 @@ def _consume_netns_bootstrap(
         # never pass bool/non-int/negative values to `os.close()`.
         return enter_netns(
             namespace_fd,
+            expected_device,
             expected_inode,
         )
 
     try:
         entered_inode: int = enter_netns(
             namespace_fd,
+            expected_device,
             expected_inode,
         )
     except BaseException as entry_error:
@@ -114,7 +117,7 @@ def _mp_main(
     start_method: SpawnMethodKey,
     parent_addr: UnwrappedAddress | None = None,
     infect_asyncio: bool = False,
-    netns_bootstrap: tuple[int, int]|None = None,
+    netns_bootstrap: tuple[int, int, int]|None = None,
 
 ) -> None:
     '''

@@ -196,7 +196,7 @@ class Bindspace(
     '''
     spec: BindspaceSpec
     ref: BindspaceRef
-    namespace_fd: int|None
+    namespace_fd: int
     ownership: BindspaceOwnership
 
     def __post_init__(self) -> None:
@@ -206,7 +206,7 @@ class Bindspace(
         '''
         spec: BindspaceSpec = self.spec
         ref: BindspaceRef = self.ref
-        namespace_fd: int|None = self.namespace_fd
+        namespace_fd: int = self.namespace_fd
         ownership: BindspaceOwnership = self.ownership
 
         if spec.kind != ref.kind:
@@ -237,21 +237,20 @@ class Bindspace(
                 f'`BindspaceSpec.lifecycle={spec.lifecycle!r}` '
                 f'requires ownership={expected_ownership!r}!'
             )
-        if namespace_fd is not None:
-            if (
-                type(namespace_fd) is not int
-                or
-                namespace_fd < 0
-            ):
-                raise ValueError(
-                    '`namespace_fd` must be non-negative or `None`!'
-                )
-            fd_inode: int = os.fstat(namespace_fd).st_ino
-            if ref.inode != fd_inode:
-                raise ValueError(
-                    f'Namespace FD inode {fd_inode} does not match '
-                    f'reference inode {ref.inode}!'
-                )
+        if (
+            type(namespace_fd) is not int
+            or
+            namespace_fd < 0
+        ):
+            raise ValueError(
+                '`namespace_fd` must be a non-negative `int`!'
+            )
+        fd_inode: int = os.fstat(namespace_fd).st_ino
+        if ref.inode != fd_inode:
+            raise ValueError(
+                f'Namespace FD inode {fd_inode} does not match '
+                f'reference inode {ref.inode}!'
+            )
 
     def __repr__(self) -> str:
         '''

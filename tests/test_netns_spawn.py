@@ -24,7 +24,6 @@ import trio
 import tractor
 from tractor import (
     _child,
-    _root,
 )
 from tractor.devx import _proctitle
 from tractor.net._bindspace import (
@@ -185,6 +184,7 @@ def _run_in_unshared_netns(
                 '-x',
                 '--tb=short',
                 '--no-header',
+                '--show-capture=all',
                 '--timeout=30',
             ],
             env=nested_env,
@@ -220,7 +220,7 @@ class _MockIpcServer:
 
 def _netns_bootstrap_from_cmd(
     command: list[str],
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     '''
     Parse the namespace tuple that the exec child would receive.
 
@@ -320,6 +320,7 @@ def test_root_netns_same_namespace_skips_setns(
 
     def fail_enter_netns(
         inherited_fd: int,
+        device: int,
         inode: int,
     ) -> int:
         '''
@@ -372,6 +373,7 @@ def test_root_netns_restores_after_body_error(
 
     def fake_enter_netns(
         inherited_fd: int,
+        device: int,
         inode: int,
     ) -> int:
         '''
@@ -411,10 +413,10 @@ def test_root_netns_restores_on_trio_cancellation(
     Trio cancellation must not interrupt root-netns restoration.
 
     Use deterministic namespace stand-ins and cancel the task inside
-    `_enter_root_bindspace()` immediately before an explicit Trio
+    `_enter_netns_temporarily()` immediately before an explicit Trio
     checkpoint. The enclosing `CancelScope` catches cancellation only
-    after async-context exit. Two recorded sync transitions and exact
-    FD state then prove restoration and close completed first.
+    after the fake synchronous scope exits. Two recorded transitions
+    and exact FD state prove restoration and close completed first.
     '''
     original_path: Path = tmp_path / 'cancel-original-netns'
     target_path: Path = tmp_path / 'cancel-target-netns'
@@ -427,6 +429,7 @@ def test_root_netns_restores_on_trio_cancellation(
 
     def fake_enter_netns(
         inherited_fd: int,
+        device: int,
         inode: int,
     ) -> int:
         '''
@@ -446,7 +449,7 @@ def test_root_netns_restores_on_trio_cancellation(
 
         '''
         with trio.CancelScope() as cancel_scope:
-            async with _root._enter_root_bindspace(bindspace):
+            with _netns._enter_netns_temporarily(bindspace):
                 cancel_scope.cancel()
                 await trio.lowlevel.checkpoint()
 
@@ -456,6 +459,7 @@ def test_root_netns_restores_on_trio_cancellation(
         trio.run(main)
         # Target entry is recorded first; original-netns restoration
         # is recorded when `_enter_root_bindspace()` exits.
+        # The removed adapter is now exercised through its sync primitive.
         assert transitions == [
             bindspace.ref.inode,
             original_path.stat().st_ino,
@@ -496,6 +500,7 @@ def test_root_netns_restore_error_precedence(
 
     def fail_restore(
         inherited_fd: int,
+        device: int,
         inode: int,
     ) -> int:
         '''
@@ -538,33 +543,26 @@ def test_root_netns_requires_live_bindspace_fd() -> None:
     '''
     Root entry cannot use `BindspaceRef.inode` without a live FD.
 
-    Construct a valid ref-only `Bindspace` and enter the real root
-    namespace scope directly. The concrete live-FD error must occur
-    before namespace capture, probes, sockets, or actor runtime work.
+    Reject a ref-only `Bindspace` at construction, before namespace
+    capture, probes, sockets, or actor runtime work.
     '''
     key: str = 'missing-root-netns'
-    bindspace = Bindspace(
-        spec=BindspaceSpec(
-            kind='netns',
-            key=key,
-        ),
-        ref=BindspaceRef(
-            kind='netns',
-            key=key,
-            inode=1,
-        ),
-        # A stored inode cannot authorize namespace entry.
-        namespace_fd=None,
-        ownership='borrowed',
-    )
-
-    with pytest.raises(
-        ValueError,
-        match='bindspace.namespace_fd.*live netns FD',
-    ):
+    with pytest.raises(ValueError, match='namespace_fd.*non-negative'):
+        Bindspace(
+            spec=BindspaceSpec(
+                kind='netns',
+                key=key,
+            ),
+            ref=BindspaceRef(
+                kind='netns',
+                key=key,
+                inode=1,
+            ),
+            # A stored inode cannot authorize namespace entry.
+            namespace_fd=None,
+            ownership='borrowed',
+        )
         # Scope entry must reject the missing live handle.
-        with _netns._enter_netns_temporarily(bindspace):
-            pytest.fail('root scope accepted a ref-only bindspace')
 
 
 @_linux_netns_only
@@ -624,8 +622,8 @@ def test_bound_root_rejects_persistent_forkserver(
 
         '''
         with pytest.raises(
-            NotImplementedError,
-            match='persistent forkserver',
+            TypeError,
+            match='unexpected keyword argument.*bindspace',
         ):
             async with tractor.open_root_actor(
                 bindspace=bindspace,
@@ -668,6 +666,7 @@ def test_enter_netns_rejects_mismatched_inherited_fd(
         ):
             _netns.enter_netns(
                 namespace_file.fileno(),
+                os.fstat(namespace_file.fileno()).st_dev,
                 # Deliberately differ from `token_path`'s inode.
                 inode + 1,
             )
@@ -697,7 +696,10 @@ def test_enter_netns_verifies_post_entry_inode(
 
     def fake_stat(path: Path) -> SimpleNamespace:
         stat_calls.append(path)
-        return SimpleNamespace(st_ino=inode)
+        return SimpleNamespace(
+            st_dev=os.fstat(namespace_fd).st_dev,
+            st_ino=inode if len(stat_calls) > 1 else inode + 1,
+        )
 
     namespace_file: BinaryIO
     with token_path.open('rb') as namespace_file:
@@ -712,13 +714,14 @@ def test_enter_netns_verifies_post_entry_inode(
 
         entered_inode: int = _netns.enter_netns(
             namespace_fd,
+            os.fstat(namespace_fd).st_dev,
             inode,
         )
 
     assert setns_calls == [
         (namespace_fd, _netns.os.CLONE_NEWNET),
     ]
-    assert stat_calls == [_netns._SELF_NETNS]
+    assert stat_calls == [_netns._SELF_NETNS, _netns._SELF_NETNS]
     assert entered_inode == inode
 
 
@@ -753,7 +756,10 @@ def test_enter_netns_rejects_wrong_post_entry_namespace(
         inode: int = token_path.stat().st_ino
 
         def fake_stat(path: Path) -> SimpleNamespace:
-            return SimpleNamespace(st_ino=inode + 1)
+            return SimpleNamespace(
+                st_dev=os.fstat(namespace_file.fileno()).st_dev,
+                st_ino=inode + 1,
+            )
 
         monkeypatch.setattr(
             type(_netns._SELF_NETNS),
@@ -766,6 +772,7 @@ def test_enter_netns_rejects_wrong_post_entry_namespace(
         ):
             _netns.enter_netns(
                 namespace_file.fileno(),
+                os.fstat(namespace_file.fileno()).st_dev,
                 # Deliberately differ from `fake_stat()`'s inode + 1.
                 inode,
             )
@@ -782,7 +789,7 @@ def test_empty_netns_bootstrap_is_a_noop(
     syscall or descriptor ownership work for existing spawn callers.
 
     '''
-    def fail_enter_netns(namespace_fd: int, inode: int) -> int:
+    def fail_enter_netns(namespace_fd: int, device: int, inode: int) -> int:
         '''
         Reject namespace entry without an explicit capability.
 
@@ -810,7 +817,7 @@ def test_invalid_netns_fd_is_never_closed(
     '''
     entry_error = ValueError('invalid netns capability')
 
-    def fail_enter_netns(namespace_fd: int, inode: int) -> int:
+    def fail_enter_netns(namespace_fd: int, device: int, inode: int) -> int:
         '''
         Raise the primary namespace bootstrap error.
 
@@ -833,7 +840,7 @@ def test_invalid_netns_fd_is_never_closed(
 
     with pytest.raises(ValueError) as exc_info:
         _entry._consume_netns_bootstrap(
-            (namespace_fd, 1),  # type: ignore[arg-type]
+            (namespace_fd, 0, 1),  # type: ignore[arg-type]
         )
 
     assert exc_info.value is entry_error
@@ -854,7 +861,7 @@ def test_netns_entry_error_survives_close_failure(
     namespace_fd: int = 1 << 100
     entry_error = ValueError('invalid netns capability')
 
-    def fail_enter_netns(inherited_fd: int, inode: int) -> int:
+    def fail_enter_netns(inherited_fd: int, device: int, inode: int) -> int:
         '''
         Raise the primary namespace bootstrap error.
 
@@ -865,7 +872,7 @@ def test_netns_entry_error_survives_close_failure(
     monkeypatch.setattr(_entry, 'enter_netns', fail_enter_netns)
 
     with pytest.raises(ValueError) as exc_info:
-        _entry._consume_netns_bootstrap((namespace_fd, 1))
+        _entry._consume_netns_bootstrap((namespace_fd, 0, 1))
 
     assert exc_info.value is entry_error
     assert entry_error.__notes__
@@ -888,7 +895,7 @@ def test_trio_child_cli_forwards_netns_bootstrap(
     calls: list[dict[str, object]] = []
     uid: tuple[str, str] = ('cli-netns-child', 'test')
     parent_addr: tuple[str, int] = ('127.0.0.1', 1616)
-    bootstrap: tuple[int, int] = (12, 3456)
+    bootstrap: tuple[int, int, int] = (12, 7, 3456)
 
     def fake_actor_child_main(**kwargs: object) -> None:
         '''
@@ -926,51 +933,28 @@ def test_trio_spawn_requires_live_bindspace_fd() -> None:
     '''
     A `BindspaceRef` alone cannot let a child enter its namespace.
 
-    Construct a valid `Bindspace` with its required identity metadata
-    but no open namespace FD. Calling `trio_proc()` must fail before
-    `open_process()` because an inode identifies a namespace but does
-    not provide an open handle that the child can inherit.
+    Attempt construction with identity metadata but no open namespace
+    FD. An inode identifies a namespace; construction must reject the
+    missing capability before the spawn backend can receive it.
 
     '''
     key: str = 'missing-spawn-netns'
-    bindspace = Bindspace(
-        spec=BindspaceSpec(
-            kind='netns',
-            key=key,
-        ),
-        # A realized bindspace always retains identity metadata; this
-        # test isolates the missing live-FD condition.
-        ref=BindspaceRef(
-            kind='netns',
-            key=key,
-            inode=1,
-        ),
-        namespace_fd=None,
-        ownership='borrowed',
-    )
-    uid: tuple[str, str] = ('missing-netns-fd', 'test')
-
-    async def main() -> None:
-        '''
-        Reject the ref-only capability before `open_process()`.
-
-        '''
-        with pytest.raises(
-            ValueError,
-            match='bindspace.namespace_fd.*required',
-        ):
-            await _trio.trio_proc(
-                name=uid[0],
-                actor_nursery=_SpawnTestNursery(),
-                subactor=_spawn_test_subactor(uid),
-                errors={},
-                bind_addrs=[],
-                parent_addr=('127.0.0.1', 1616),
-                _runtime_vars={},
-                bindspace=bindspace,
-            )
-
-    trio.run(main)
+    with pytest.raises(ValueError, match='namespace_fd.*non-negative'):
+        Bindspace(
+            spec=BindspaceSpec(
+                kind='netns',
+                key=key,
+            ),
+            # A realized bindspace always retains identity metadata; this
+            # test isolates the missing live-FD condition.
+            ref=BindspaceRef(
+                kind='netns',
+                key=key,
+                inode=1,
+            ),
+            namespace_fd=None,
+            ownership='borrowed',
+        )
 
 
 def test_trio_spawn_relays_bindspace_to_child_actor(
@@ -1040,6 +1024,8 @@ def test_trio_spawn_relays_bindspace_to_child_actor(
         async with tractor.open_nursery() as actor_nursery:
             portal: tractor.Portal = await actor_nursery.start_actor(
                 'netns-bootstrap-child',
+                parent_addr=tractor.current_actor().accept_addr,
+                registry_addrs=tractor.current_actor().reg_addrs,
                 bindspace=bindspace,
                 enable_modules=[__name__],
                 proc_kwargs={
@@ -1075,72 +1061,14 @@ def test_trio_spawn_relays_bindspace_to_child_actor(
         os.close(inherited_fd)
 
 
-def test_root_actor_enters_and_restores_bindspace(
-    tpt_proto: str,
-) -> None:
+@pytest.mark.parametrize('backend', ('trio', 'mp_spawn', 'mp_forkserver'))
+def test_root_actor_rejects_async_bindspace(backend: str) -> None:
     '''
-    `open_root_actor()` must enter its supplied networking bindspace.
+    Root networking cannot be changed around an async runtime scope.
 
-    Re-exec under an unprivileged user/net namespace, retain that
-    first netns as the target, then move nested pytest into a second.
-    A real UDS root actor must run its body in the target inode and
-    keep the source capability open. After full actor teardown, exact
-    FD and inode assertions prove its duplicate did not leak and the
-    caller thread returned to the second/original netns.
     '''
-    if _run_in_unshared_netns(
-        test_name='test_root_actor_enters_and_restores_bindspace',
-        reexec_var='TRACTOR_TEST_ROOT_NETNS_E2E_REEXEC',
-    ):
-        return
-
-    assert tpt_proto == 'uds'
-    target_netns_fd: int = os.open(
-        _SELF_NETNS_PATH,
-        os.O_RDONLY,
-    )
-    target_netns_inode: int = os.fstat(target_netns_fd).st_ino
-    reffed_tgt_fds: set[int] = _fds_referencing(
-        target_netns_fd,
-    )
-    bindspace: Bindspace = _bindspace_for_fd(target_netns_fd)
-
-    # Pin the first disposable netns through `target_netns_fd`, then
-    # move the caller into a distinct second netns. This gives the root
-    # one real target to enter and one real caller netns to restore.
-    os.unshare(os.CLONE_NEWNET)
-    original_netns_fd: int = os.open(
-        _SELF_NETNS_PATH,
-        os.O_RDONLY,
-    )
-    original_netns_inode: int = os.fstat(original_netns_fd).st_ino
-    assert original_netns_inode != target_netns_inode
-
-    async def main() -> None:
-        '''
-        Inspect the real root runtime inside the target netns.
-
-        '''
-        async with tractor.open_root_actor(
-            bindspace=bindspace,
-            enable_transports=['uds'],
-        ):
-            body_netns_inode: int = _SELF_NETNS_PATH.stat().st_ino
-            assert body_netns_inode == target_netns_inode
-            assert os.fstat(target_netns_fd).st_ino == (
-                target_netns_inode
-            )
-
-    try:
-        trio.run(main)
-        assert _SELF_NETNS_PATH.stat().st_ino == original_netns_inode
-        assert _fds_referencing(
-            target_netns_fd,
-        ) == reffed_tgt_fds
-        assert os.fstat(target_netns_fd).st_ino == target_netns_inode
-    finally:
-        os.close(original_netns_fd)
-        os.close(target_netns_fd)
+    with pytest.raises(TypeError, match='unexpected keyword argument.*bindspace'):
+        tractor.open_root_actor(bindspace=None, start_method=backend)
 
 
 def test_trio_spawn_failure_closes_child_netns_fd_in_parent(
@@ -1174,8 +1102,9 @@ def test_trio_spawn_failure_closes_child_netns_fd_in_parent(
         Fail after checking the child FD in `pass_fds` and the CLI.
 
         '''
-        child_fd, expected_inode = _netns_bootstrap_from_cmd(command)
+        child_fd, expected_device, expected_inode = _netns_bootstrap_from_cmd(command)
         assert kwargs['pass_fds'] == (child_fd,)
+        assert os.fstat(child_fd).st_dev == expected_device
         assert os.fstat(child_fd).st_ino == expected_inode
         child_fds.append(child_fd)
         raise open_error
@@ -1247,8 +1176,9 @@ def test_trio_spawn_cancel_closes_child_netns_fd_in_parent(
         Record the child FD, then signal that the open call is parked.
 
         '''
-        child_fd, expected_inode = _netns_bootstrap_from_cmd(command)
+        child_fd, expected_device, expected_inode = _netns_bootstrap_from_cmd(command)
         assert kwargs['pass_fds'] == (child_fd,)
+        assert os.fstat(child_fd).st_dev == expected_device
         assert os.fstat(child_fd).st_ino == expected_inode
         child_fds.append(child_fd)
         open_called.set()
@@ -1372,6 +1302,7 @@ def test_child_entry_consumes_netns_before_runtime(
 
     def fake_enter_netns(
         inherited_fd: int,
+        device: int,
         inode: int,
     ) -> int:
         '''
@@ -1504,8 +1435,9 @@ def test_child_entry_consumes_netns_before_runtime(
     )
 
     actor: Any = ActorSpy()
-    bootstrap: tuple[int, int] = (
+    bootstrap: tuple[int, int, int] = (
         namespace_fd,
+        os.fstat(namespace_fd).st_dev,
         expected_inode,
     )
     if backend == 'mp':
@@ -1562,6 +1494,7 @@ def test_child_entry_failure_closes_netns_fd_before_runtime(
 
     def fail_enter_netns(
         inherited_fd: int,
+        device: int,
         inode: int,
     ) -> int:
         '''
@@ -1631,8 +1564,9 @@ def test_child_entry_failure_closes_netns_fd_before_runtime(
     )
 
     actor: Any = ActorSpy()
-    bootstrap: tuple[int, int] = (
+    bootstrap: tuple[int, int, int] = (
         namespace_fd,
+        os.fstat(namespace_fd).st_dev,
         expected_inode,
     )
     with pytest.raises(RuntimeError) as exc_info:
@@ -1656,3 +1590,325 @@ def test_child_entry_failure_closes_netns_fd_before_runtime(
     assert exc_info.value is entry_error
     assert events == ['enter-netns']
     _assert_fd_closed(namespace_fd)
+
+
+@_linux_netns_only
+def test_child_same_netns_needs_no_setns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''Validate and consume an already-current namespace without privilege.'''
+    fd = os.open(_SELF_NETNS_PATH, os.O_RDONLY)
+    target = os.fstat(fd)
+    # A Python build without setns support can still inherit its netns.
+    monkeypatch.delattr(_netns.os, 'setns', raising=False)
+    assert _entry._consume_netns_bootstrap(
+        (fd, target.st_dev, target.st_ino),
+    ) == target.st_ino
+    _assert_fd_closed(fd)
+
+
+@_linux_netns_only
+@pytest.mark.parametrize('field', ('device', 'inode'))
+def test_child_rejects_identity_mismatch_and_closes_fd(
+    field: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''Neither identity component may disagree with the transferred FD.'''
+    fd = os.open(_SELF_NETNS_PATH, os.O_RDONLY)
+    target = os.fstat(fd)
+
+    def fail_setns(*args: object) -> None:
+        pytest.fail('identity mismatch reached setns')
+
+    monkeypatch.setattr(_netns.os, 'setns', fail_setns, raising=False)
+    with pytest.raises(ValueError, match='Inherited namespace FD identity'):
+        _entry._consume_netns_bootstrap((
+            fd,
+            target.st_dev + (field == 'device'),
+            target.st_ino + (field == 'inode'),
+        ))
+    _assert_fd_closed(fd)
+
+
+async def _report_spawn_scope() -> dict:
+    '''Observe actual child runtime state after registration and entry.'''
+    from tractor.runtime import _state
+
+    actor = tractor.current_actor()
+    ns = _SELF_NETNS_PATH.stat()
+    return {
+        'identity': (ns.st_dev, ns.st_ino),
+        'registrars': actor.reg_addrs,
+        'runtime_registrars': _state._runtime_vars['_registry_addrs'],
+        'parent': actor._parent_chan.raddr.unwrap(),
+        'source': tractor.__file__,
+    }
+
+
+@_linux_netns_only
+def test_concurrent_children_share_fd_and_isolate_registrars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''Real children borrow one capability with independent spawn routing.'''
+    from tractor.runtime import _state
+
+    async def main() -> None:
+        with _netns.pin_current_netns() as bindspace:
+            fd = bindspace.namespace_fd
+            initial_fds = _fds_referencing(fd)
+            target = os.fstat(fd)
+            addresses = [('unix', str(tmp_path / f'r{i}.sock')) for i in range(3)]
+            async with tractor.open_root_actor(
+                registry_addrs=addresses,
+                enable_transports=['uds'],
+                start_method='trio',
+            ) as actor:
+                original_regs = list(actor.reg_addrs)
+                original_runtime = list(_state._runtime_vars['_registry_addrs'])
+                original_regs_obj = actor.reg_addrs
+                original_runtime_obj = _state._runtime_vars['_registry_addrs']
+                selected_parent = next(
+                    addr for addr in actor.accept_addrs
+                    if addr != actor.accept_addr
+                )
+                selections = [[addresses[0]], [addresses[1], addresses[2]]]
+                reports = []
+                caller_tasks = []
+                pin_tasks = []
+                real_open = os.open
+
+                def record_open(path, flags, *args, **kwargs):
+                    result = real_open(path, flags, *args, **kwargs)
+                    if path == _netns._SELF_NETNS:
+                        pin_tasks.append(trio.lowlevel.current_task())
+                    return result
+
+                async with tractor.open_nursery() as nursery:
+                    async def start(index: int) -> None:
+                        portal = await nursery.start_actor(
+                            f'shared-{index}',
+                            bindspace=bindspace,
+                            parent_addr=selected_parent,
+                            registry_addrs=selections[index],
+                            enable_modules=[__name__],
+                        )
+                        report = await portal.run(_report_spawn_scope)
+                        assert list(map(tuple, report['registrars'])) == selections[index]
+                        assert list(map(tuple, report['runtime_registrars'])) == selections[index]
+                        assert tuple(report['parent']) == selected_parent
+                        assert tuple(report['identity']) == (target.st_dev, target.st_ino)
+                        assert report['source'] == tractor.__file__
+                        reports.append(report)
+
+                    async with trio.open_nursery() as tn:
+                        for index in range(2):
+                            tn.start_soon(start, index)
+                    assert len(reports) == 2
+                    assert actor.reg_addrs is original_regs_obj
+                    assert actor.reg_addrs == original_regs
+                    assert _state._runtime_vars['_registry_addrs'] is original_runtime_obj
+                    assert _state._runtime_vars['_registry_addrs'] == original_runtime
+                    assert _fds_referencing(fd) == initial_fds
+
+                    # Default inheritance pins on this task before dispatch.
+                    monkeypatch.setattr(_netns.os, 'open', record_open)
+                    caller_tasks.append(trio.lowlevel.current_task())
+                    sibling = await nursery.start_actor(
+                        'default-sibling',
+                        enable_modules=[__name__],
+                    )
+                    monkeypatch.setattr(_netns.os, 'open', real_open)
+                    assert pin_tasks == caller_tasks
+                    report = await sibling.run(_report_spawn_scope)
+                    assert list(map(tuple, report['registrars'])) == original_regs
+                    assert list(map(tuple, report['runtime_registrars'])) == original_runtime
+                    assert tuple(report['parent']) == actor.accept_addr
+                    assert tuple(report['identity']) == (target.st_dev, target.st_ino)
+                    await nursery.cancel()
+            assert _fds_referencing(fd) == initial_fds
+
+    trio.run(main)
+
+
+@pytest.mark.parametrize('option,value', [
+    ('parent_addr', ('127.0.0.1', 1616)),
+    ('parent_addr', ['unix', '/tmp/legacy.sock']),
+    ('parent_addr', ('uds', '/tmp/alias.sock')),
+    ('parent_addr', ('unix', '/tmp/not-a-listener.sock')),
+    ('registry_addrs', []),
+    ('registry_addrs', (('tcp', '127.0.0.1', 1616),)),
+    ('registry_addrs', [('127.0.0.1', 1616)]),
+    ('registry_addrs', [('uds', '/tmp/alias.sock')]),
+    ('registry_addrs', [('tcp', '127.0.0.1', True)]),
+    ('registry_addrs', [('tcp', '127.0.0.1', 65536)]),
+    ('registry_addrs', [('tcp', 'invalid-host', 1616)]),
+    ('registry_addrs', [('unix', '')]),
+])
+def test_start_actor_rejects_invalid_routing(option: str, value: object) -> None:
+    '''Invalid routing must fail before spawning or publishing child state.'''
+    from tractor.runtime import _state
+
+    async def main() -> None:
+        async with tractor.open_nursery() as nursery:
+            original = dict(_state._runtime_vars)
+            with pytest.raises(ValueError):
+                await nursery.start_actor('invalid-routing', **{option: value})
+            assert _state._runtime_vars == original
+            assert not nursery._children
+
+    trio.run(main)
+
+
+@_linux_netns_only
+@pytest.mark.parametrize('cancel', (False, True))
+def test_default_capture_closes_on_failed_start(
+    cancel: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''The caller pin and backend duplicate unwind on failure or cancellation.'''
+    opened = []
+    real_open = os.open
+    opened_process = trio.Event()
+    spawn_error = OSError('exec failed before child creation')
+
+    def record_open(path, flags, *args, **kwargs):
+        result = real_open(path, flags, *args, **kwargs)
+        if path == _netns._SELF_NETNS:
+            opened.append(result)
+        return result
+
+    async def fail_process(command, **kwargs):
+        fd, dev, ino = _netns_bootstrap_from_cmd(command)
+        assert (os.fstat(fd).st_dev, os.fstat(fd).st_ino) == (dev, ino)
+        opened.append(fd)
+        opened_process.set()
+        if cancel:
+            await trio.sleep_forever()
+        raise spawn_error
+
+    async def main() -> None:
+        async with tractor.open_root_actor(start_method='trio'):
+            async with tractor.open_nursery() as nursery:
+                monkeypatch.setattr(_netns.os, 'open', record_open)
+                monkeypatch.setattr(trio.lowlevel, 'open_process', fail_process)
+                if cancel:
+                    async with trio.open_nursery() as tn:
+                        tn.start_soon(nursery.start_actor, 'cancelled-default')
+                        await opened_process.wait()
+                        tn.cancel_scope.cancel()
+                else:
+                    with pytest.raises(OSError) as caught:
+                        await nursery.start_actor('failed-default')
+                    assert caught.value is spawn_error
+                assert not nursery._children
+                assert len(opened) == 2
+                for fd in opened:
+                    _assert_fd_closed(fd)
+
+    trio.run(main)
+
+
+def test_default_child_ignores_stale_subprocess_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    '''An omitted bindspace follows the calling task, not a reused worker.'''
+    if _run_in_unshared_netns(
+        test_name='test_default_child_ignores_stale_subprocess_worker',
+        reexec_var='TRACTOR_TEST_STALE_WORKER_REEXEC',
+    ):
+        return
+
+    target_netns_fd = os.open(_SELF_NETNS_PATH, os.O_RDONLY)
+    target_netns_inode = os.fstat(target_netns_fd).st_ino
+    # Pin the first disposable netns through `target_netns_fd`, then
+    # move the caller into a distinct second netns. This gives the root
+    # one real target to enter and one real caller netns to restore.
+    # Only the subprocess worker enters that first namespace now.
+    os.unshare(os.CLONE_NEWNET)
+    original_netns_inode = _SELF_NETNS_PATH.stat().st_ino
+    assert original_netns_inode != target_netns_inode
+    worker_inodes = []
+    real_popen = subprocess.Popen
+
+    def observe_popen(*args, **kwargs):
+        worker_inodes.append(_SELF_NETNS_PATH.stat().st_ino)
+        return real_popen(*args, **kwargs)
+
+    async def main() -> None:
+        async with tractor.open_root_actor(
+            enable_transports=['uds'],
+            start_method='trio',
+        ):
+            # Reuse the worker after it has legitimately changed its
+            # thread-local netns. No event-loop thread transition occurs.
+            await trio.to_thread.run_sync(
+                os.setns, target_netns_fd, os.CLONE_NEWNET,
+            )
+            monkeypatch.setattr(subprocess, 'Popen', observe_popen)
+            async with tractor.open_nursery() as nursery:
+                portal = await nursery.start_actor(
+                    'inherits-task-netns', enable_modules=[__name__],
+                )
+                report = await portal.run(_report_spawn_scope)
+                assert report['identity'][1] == original_netns_inode
+                assert worker_inodes == [target_netns_inode]
+                assert _SELF_NETNS_PATH.stat().st_ino == original_netns_inode
+                await nursery.cancel()
+
+    try:
+        trio.run(main)
+        assert os.fstat(target_netns_fd).st_ino == target_netns_inode
+    finally:
+        os.close(target_netns_fd)
+
+
+def test_cross_netns_inherited_loopback_registrar_fails(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    '''A reachable UDS parent cannot make a host-loopback registrar reachable.'''
+    if _run_in_unshared_netns(
+        test_name='test_cross_netns_inherited_loopback_registrar_fails',
+        reexec_var='TRACTOR_TEST_UNREACHABLE_REG_REEXEC',
+    ):
+        return
+
+    ip = shutil.which('ip')
+    if ip is None:
+        pytest.skip('iproute2 ip command is needed to enable disposable loopback')
+    fd = os.open(_SELF_NETNS_PATH, os.O_RDONLY)
+    bindspace = _bindspace_for_fd(fd)
+    os.unshare(os.CLONE_NEWNET)
+    subprocess.run([ip, 'link', 'set', 'lo', 'up'], check=True)
+
+    async def main() -> None:
+        with tempfile.TemporaryDirectory(prefix='tnr-') as directory:
+            parent_addr = ('unix', str(Path(directory) / 'parent.sock'))
+            async with tractor.open_root_actor(
+                registry_addrs=[('tcp', '127.0.0.1', 1616)],
+                tpt_bind_addrs=[parent_addr],
+                enable_transports=['tcp'],
+                start_method='trio',
+            ):
+                with trio.fail_after(10):
+                    async with tractor.open_nursery() as nursery:
+                        portal = await nursery.start_actor(
+                            'unreachable-registrar',
+                            bindspace=bindspace,
+                            parent_addr=parent_addr,
+                        )
+                        _, proc, _ = nursery._children[portal.channel.aid.uid]
+                        # Join the failing runtime: the bootstrap handshake
+                        # precedes registrar connection and RPC readiness.
+
+                assert proc.returncode == 1
+                assert not nursery._children
+                assert os.fstat(fd).st_ino == bindspace.ref.inode
+
+    try:
+        trio.run(main)
+        error_output = capfd.readouterr().err
+        assert 'Network is unreachable' in error_output
+        assert '127.0.0.1:1616' in error_output
+    finally:
+        os.close(fd)

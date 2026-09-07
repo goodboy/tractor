@@ -20,7 +20,6 @@ Root actor runtime ignition(s).
 '''
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from contextlib import (
     asynccontextmanager as acm,
 )
@@ -34,7 +33,6 @@ import sys
 from typing import (
     Any,
     Callable,
-    TYPE_CHECKING,
 )
 import warnings
 
@@ -69,9 +67,6 @@ from .trionics import (
 from ._exceptions import (
     RuntimeFailure,
 )
-
-if TYPE_CHECKING:
-    from .net._bindspace import Bindspace
 
 
 logger = log.get_logger('tractor')
@@ -164,28 +159,12 @@ async def maybe_block_bp(
 
 
 @acm
-async def _enter_root_bindspace(
-    bindspace: Bindspace|None,
-) -> AsyncIterator[None]:
-    '''
-    Adapt synchronous root netns entry to the outer async lifecycle.
-
-    The wrapped context has no checkpoints, so `trio` cancellation
-    cannot interrupt thread-local namespace restoration.
-
-    '''
-    from .spawn._netns import _enter_netns_temporarily
-
-    with _enter_netns_temporarily(bindspace):
-        yield
-
-
-@acm
 async def open_root_actor(
     *,
     # Low-level realized scope. A future tunnelled-address bootstrap
     # may open and supply this capability internally.
-    bindspace: Bindspace|None = None,
+    # Root netns entry is deferred to a pre-Trio launcher; the async
+    # root API cannot safely switch the process networking scope.
 
     tpt_bind_addrs: list[
         Address  # concrete transport address case
@@ -250,9 +229,9 @@ async def open_root_actor(
     All (disjoint) actor-process-trees-as-programs are created via
     this entrypoint.
 
-    When `bindspace` is provided, enter its network namespace before
-    any registry or IPC activity and restore the calling thread's
-    original namespace after complete actor teardown.
+    To supervise a network-scoped child, open its bindspace outside
+    an ActorNursery and pass it to `start_actor()`. Root namespace
+    entry must happen before `trio.run()` and worker-thread creation.
 
     '''
     # XXX NEVER allow nested actor-trees!
@@ -274,25 +253,8 @@ async def open_root_actor(
             f'_registry_addrs: {registry_addrs!r}\n'
         )
 
-    effective_start_method: str = (
-        os.environ.get('TRACTOR_SPAWN_METHOD')
-        or start_method
-        or _spawn._spawn_method
-    )
-    if (
-        bindspace is not None
-        and
-        effective_start_method == 'mp_forkserver'
-    ):
-        raise NotImplementedError(
-            'Root actor bindspaces are not supported by the '
-            '`mp_forkserver` spawn backend because a persistent '
-            'forkserver may retain its original network namespace!'
-        )
-
     # debug.mk_pdb().set_trace()
     async with (
-        _enter_root_bindspace(bindspace),
         maybe_block_bp(
             debug_mode=debug_mode,
             maybe_enable_greenback=maybe_enable_greenback,

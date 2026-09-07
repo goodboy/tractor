@@ -18,12 +18,16 @@
 ``trio`` inspired apis and helpers
 
 """
-from contextlib import asynccontextmanager as acm
+from contextlib import (
+    asynccontextmanager as acm,
+    ExitStack,
+)
 from functools import partial
 from typing import (
     TYPE_CHECKING,
 )
 import typing
+import sys
 import warnings
 
 import trio
@@ -36,6 +40,7 @@ from ..devx import (
 from ..discovery._addr import (
     UnwrappedAddress,
     mk_uuid,
+    wrap_address,
 )
 from ._state import (
     current_actor,
@@ -72,6 +77,22 @@ if TYPE_CHECKING:
 
 
 log = get_logger()
+
+
+def _validate_spawn_address(addr: UnwrappedAddress) -> None:
+    '''
+    Require the canonical tagged address boundary for spawn routing.
+
+    '''
+    valid = False
+    if type(addr) is tuple:
+        match addr:
+            case ('tcp', str() as host, port):
+                valid = bool(host) and type(port) is int and 0 < port < 65536
+            case ('unix', str() as path):
+                valid = bool(path) and '\0' not in path
+    if not valid or wrap_address(addr).unwrap() != addr:
+        raise ValueError(f'Expected a canonical UnwrappedAddress, got {addr!r}')
 
 
 async def _try_cancel_then_kill(
@@ -421,6 +442,8 @@ class ActorNursery:
 
         bind_addrs: list[UnwrappedAddress]|None = None,
         bindspace: 'Bindspace|None' = None,
+        parent_addr: UnwrappedAddress|None = None,
+        registry_addrs: list[UnwrappedAddress]|None = None,
         rpc_module_paths: list[str]|None = None,
         enable_transports: list[str] = [_state._def_tpt_proto],
         enable_modules: list[str]|None = None,
@@ -434,6 +457,12 @@ class ActorNursery:
         '''
         Start a (daemon) actor: an process that has no designated
         "main task" besides the runtime.
+
+        `parent_addr` selects one canonical live supervisor listener;
+        `registry_addrs` replaces registrar inheritance for this child.
+        Both must remain reachable from the child's target netns. A
+        filesystem UDS is the usual cross-netns bootstrap transport.
+        Omitted `bindspace` on Linux/Trio pins the calling task's netns.
 
         Pass ``inherit_parent_main=False`` to keep this child on its
         own bootstrap module for the trio spawn backend instead of
@@ -478,6 +507,27 @@ class ActorNursery:
             )
             enable_modules.extend(rpc_module_paths)
 
+        if parent_addr is None:
+            parent_addr = self._actor.accept_addr
+        else:
+            _validate_spawn_address(parent_addr)
+            if parent_addr not in self._actor.accept_addrs:
+                raise ValueError(
+                    f'parent_addr {parent_addr!r} must name a live '
+                    'supervisor listener'
+                )
+        assert parent_addr
+
+        if registry_addrs is None:
+            selected_reg_addrs = list(current_actor().reg_addrs)
+        else:
+            if type(registry_addrs) is not list or not registry_addrs:
+                raise ValueError('registry_addrs must be a non-empty list')
+            for addr in registry_addrs:
+                _validate_spawn_address(addr)
+            selected_reg_addrs = list(registry_addrs)
+        _rtv['_registry_addrs'] = list(selected_reg_addrs)
+
         subactor = Actor(
             name=name,
             uuid=mk_uuid(),
@@ -488,29 +538,41 @@ class ActorNursery:
             inherit_parent_main=inherit_parent_main,
 
             # verbatim relay this actor's registrar addresses
-            registry_addrs=current_actor().registry_addrs,
+            # Populate child-local state below: Actor construction with
+            # registry_addrs publishes into this process's runtime vars.
         )
-        parent_addr: UnwrappedAddress = self._actor.accept_addr
-        assert parent_addr
+        subactor.reg_addrs = selected_reg_addrs
 
         # start a task to spawn a process
         # blocks until process has been started and a portal setup
         # XXX: the type ignore is actually due to a `mypy` bug
-        return await self._da_nursery.start(  # type: ignore
-            partial(
-                _spawn.new_proc,
-                name,
-                self,
-                subactor,
-                self.errors,
-                bind_addrs,
-                parent_addr,
-                _rtv,  # run time vars
-                bindspace=bindspace,
-                infect_asyncio=infect_asyncio,
-                proc_kwargs=proc_kwargs
+        with ExitStack() as scope:
+            if (
+                bindspace is None
+                and sys.platform == 'linux'
+                and _spawn._spawn_method == 'trio'
+            ):
+                from ..spawn._netns import pin_current_netns
+
+                # Capture on the calling actor task before nursery.start()
+                # checkpoints or any subprocess worker can choose a netns.
+                bindspace = scope.enter_context(pin_current_netns())
+
+            return await self._da_nursery.start(  # type: ignore
+                partial(
+                    _spawn.new_proc,
+                    name,
+                    self,
+                    subactor,
+                    self.errors,
+                    bind_addrs,
+                    parent_addr,
+                    _rtv,  # run time vars
+                    bindspace=bindspace,
+                    infect_asyncio=infect_asyncio,
+                    proc_kwargs=proc_kwargs
+                )
             )
-        )
 
     # @api_frame
     async def cancel(

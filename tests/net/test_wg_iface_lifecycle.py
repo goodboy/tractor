@@ -245,6 +245,8 @@ def test_open_wg_iface_shields_cancelled_cleanup(
 
 
 def test_open_wg_bindspace_nests_resource_lifetimes(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     '''
@@ -270,14 +272,16 @@ def test_open_wg_bindspace_nests_resource_lifetimes(
     bindspace_spec: BindspaceSpec = BindspaceSpec(
         kind='netns',
     )
+    token = (tmp_path / 'netns').open('w+b')
+    request.addfinalizer(token.close)
     bindspace: Bindspace = Bindspace(
         spec=bindspace_spec,
         ref=BindspaceRef(
             kind='netns',
             key=None,
-            inode=1,
+            inode=os.fstat(token.fileno()).st_ino,
         ),
-        namespace_fd=None,
+        namespace_fd=token.fileno(),
         ownership='borrowed',
     )
     outer_spec: WGTunnelSpec = WGTunnelSpec(
@@ -384,18 +388,16 @@ def test_open_wg_bindspace_nests_resource_lifetimes(
     sys.platform != 'linux',
     reason='network namespaces are Linux-only',
 )
-def test_public_wg_bindspace_scopes_root_actor(
+def test_public_wg_bindspace_scopes_child_actor(
     monkeypatch: pytest.MonkeyPatch,
     tpt_proto: str,
 ) -> None:
     '''
-    Public network contexts must fully enclose the root runtime.
+    Public network contexts must fully enclose supervised children.
 
     Attach the real current netns through `tractor.net`, fake only WG
-    interface provisioning, and open a real root actor with the yielded
-    `Bindspace`. The trace and inode checks prove interface setup wraps
-    actor startup, the runtime occupies the realized bindspace, and root
-    restoration finishes before network-resource teardown.
+    interface provisioning, and supervise a child in the yielded
+    `Bindspace`. The nursery reaps it before network-resource teardown.
 
     '''
     events: list[str] = []
@@ -450,10 +452,18 @@ def test_public_wg_bindspace_scopes_root_actor(
         ) as bindspace:
             events.append('bindspace-open')
             async with tractor.open_root_actor(
-                bindspace=bindspace,
+                start_method='trio',
                 enable_transports=[tpt_proto],
             ):
                 events.append('root-open')
+                async with tractor.open_nursery() as nursery:
+                    portal = await nursery.start_actor(
+                        'scoped-worker',
+                        bindspace=bindspace,
+                        parent_addr=tractor.current_actor().accept_addr,
+                        registry_addrs=tractor.current_actor().reg_addrs,
+                    )
+                    await portal.cancel_actor()
                 assert bindspace.namespace_fd is not None
                 assert os.fstat(
                     bindspace.namespace_fd,

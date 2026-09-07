@@ -47,6 +47,7 @@ _SELF_NETNS: Path = Path('/proc/thread-self/ns/net')
 
 def enter_netns(
     namespace_fd: int,
+    expected_device: int,
     expected_inode: int,
 ) -> int:
     '''
@@ -76,6 +77,22 @@ def enter_netns(
             '`expected_inode` must be a positive `int`!'
         )
 
+    if type(expected_device) is not int or expected_device < 0:
+        raise ValueError('`expected_device` must be a non-negative `int`!')
+
+    target = os.fstat(namespace_fd)
+    expected = (expected_device, expected_inode)
+    if (target.st_dev, target.st_ino) != expected:
+        raise ValueError(
+            f'Inherited namespace FD identity '
+            f'{(target.st_dev, target.st_ino)} does not '
+            f'match expected identity {expected}!'
+        )
+
+    current = _SELF_NETNS.stat()
+    if (current.st_dev, current.st_ino) == expected:
+        return expected_inode
+
     setns: Callable[[int, int], None]|None = getattr(
         os,
         'setns',
@@ -95,13 +112,6 @@ def enter_netns(
             'Python has no Linux network namespace entry support!'
         )
 
-    inherited_inode: int = os.fstat(namespace_fd).st_ino
-    if inherited_inode != expected_inode:
-        raise ValueError(
-            f'Inherited namespace FD inode {inherited_inode} does not '
-            f'match expected inode {expected_inode}!'
-        )
-
     try:
         setns(namespace_fd, clone_newnet)
     except OSError as exc:
@@ -110,11 +120,13 @@ def enter_netns(
             f'{expected_inode}!'
         ) from exc
 
-    entered_inode: int = _SELF_NETNS.stat().st_ino
-    if entered_inode != expected_inode:
+    entered = _SELF_NETNS.stat()
+    entered_inode: int = entered.st_ino
+    if (entered.st_dev, entered_inode) != expected:
         raise RuntimeError(
-            f'Entered network namespace inode {entered_inode} does not '
-            f'match expected inode {expected_inode}!'
+            f'Entered network namespace identity '
+            f'{(entered.st_dev, entered_inode)} does not '
+            f'match expected identity {expected}!'
         )
 
     return entered_inode
@@ -181,8 +193,9 @@ def _enter_netns_temporarily(
     '''
     Enter a root bindspace and restore the caller thread's netns.
 
-    `_root._enter_root_bindspace()` adapts this synchronous scope to
-    the root actor's async lifecycle.
+    Internal synchronous primitive only. Never surround a Trio
+    checkpoint with this scope: entry changes only the calling thread.
+    The former async root adapter has been removed.
 
     Only descriptors opened or duplicated by this context are used
     for validation, entry and restoration. Since `setns()` is
@@ -199,12 +212,7 @@ def _enter_netns_temporarily(
             'Network namespace entry is Linux-only!'
         )
 
-    namespace_fd: int|None = bindspace.namespace_fd
-    if namespace_fd is None:
-        raise ValueError(
-            '`bindspace.namespace_fd` must be a live netns FD for '
-            'root actor entry!'
-        )
+    namespace_fd: int = bindspace.namespace_fd
     if (
         type(namespace_fd) is not int
         or
@@ -250,6 +258,7 @@ def _enter_netns_temporarily(
                 if restore_needed:
                     enter_netns(
                         tgt_fd,
+                        tgt_stat.st_dev,
                         tgt_inode,
                     )
 
@@ -260,6 +269,7 @@ def _enter_netns_temporarily(
                     try:
                         enter_netns(
                             orig_fd,
+                            orig_stat.st_dev,
                             orig_inode,
                         )
                     except BaseException as restore_error:
@@ -274,6 +284,7 @@ def _enter_netns_temporarily(
                 try:
                     enter_netns(
                         orig_fd,
+                        orig_stat.st_dev,
                         orig_inode,
                     )
                 except BaseException as restore_error:
@@ -282,3 +293,25 @@ def _enter_netns_temporarily(
                         'namespace during root netns cleanup.'
                     )
                     raise restore_error
+
+
+@cm
+def pin_current_netns() -> Iterator[Bindspace]:
+    '''
+    Pin the calling task's netns synchronously, without entering it.
+
+    '''
+    from ..net._bindspace import Bindspace, BindspaceRef, BindspaceSpec
+
+    namespace_fd = os.open(_SELF_NETNS, os.O_RDONLY | os.O_CLOEXEC)
+    with close_fd(namespace_fd, 'calling task'):
+        yield Bindspace(
+            spec=BindspaceSpec(kind='netns'),
+            ref=BindspaceRef(
+                kind='netns',
+                key=None,
+                inode=os.fstat(namespace_fd).st_ino,
+            ),
+            namespace_fd=namespace_fd,
+            ownership='borrowed',
+        )

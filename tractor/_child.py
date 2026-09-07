@@ -49,11 +49,11 @@ def parse_ipaddr(arg):
         return arg
 
 
-def parse_netns_bootstrap(arg: str) -> tuple[int, int]:
+def parse_netns_bootstrap(arg: str) -> tuple[int, int, int]:
     '''
     Parse one atomic inherited namespace capability.
 
-    Descriptor and inode validation remains in
+    Descriptor and device/inode validation remains in
     `_consume_netns_bootstrap()` so every valid descriptor-shaped
     input reaches its exact child-owned cleanup boundary.
 
@@ -62,16 +62,16 @@ def parse_netns_bootstrap(arg: str) -> tuple[int, int]:
         value: object = literal_eval(arg)
     except (ValueError, SyntaxError) as exc:
         raise argparse.ArgumentTypeError(
-            'netns bootstrap must be an `(fd, inode)` tuple'
+            'netns bootstrap must be an `(fd, device, inode)` tuple'
         ) from exc
 
     if (
         not isinstance(value, tuple)
         or
-        len(value) != 2
+        len(value) != 3
     ):
         raise argparse.ArgumentTypeError(
-            'netns bootstrap must be an `(fd, inode)` tuple'
+            'netns bootstrap must be an `(fd, device, inode)` tuple'
         )
 
     return value
@@ -83,7 +83,7 @@ def _actor_child_main(
     parent_addr: UnwrappedAddress | None,
     infect_asyncio: bool,
     spawn_method: SpawnMethodKey = 'trio',
-    netns_bootstrap: tuple[int, int]|None = None,
+    netns_bootstrap: tuple[int, int, int]|None = None,
 
 ) -> None:
     '''

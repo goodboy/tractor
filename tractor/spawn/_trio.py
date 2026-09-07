@@ -124,11 +124,7 @@ async def trio_proc(
 
     child_netns_fd: int|None = None
     if bindspace is not None:
-        if (namespace_fd := bindspace.namespace_fd) is None:
-            raise ValueError(
-                '`bindspace.namespace_fd` is required for '
-                'Trio child transport!'
-            )
+        namespace_fd: int = bindspace.namespace_fd
 
         # Snapshot caller-owned process options before duplicating the
         # live `Bindspace.namespace_fd`. No checkpoint separates this
@@ -139,10 +135,12 @@ async def trio_proc(
         proc_kwargs = dict(proc_kwargs)
         child_netns_fd = os.dup(namespace_fd)
         try:
-            netns_bootstrap: tuple[int, int] = (
+            target_stat = os.fstat(child_netns_fd)
+            netns_bootstrap: tuple[int, int, int] = (
                 # FD number retained in the child's descriptor table.
                 child_netns_fd,
                 # Namespace identity checked before the child enters it.
+                target_stat.st_dev,
                 bindspace.ref.inode,
             )
             spawn_cmd.extend((
