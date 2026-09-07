@@ -60,7 +60,6 @@ import sys
 from typing import (
     Any,
     Callable,
-    Type,
     TYPE_CHECKING,
 )
 import uuid
@@ -1684,10 +1683,10 @@ async def async_main(
                     [_state._def_tpt_proto]
                 )
                 for transport_key in enable_transports:
-                    transport_cls: Type[Address] = get_address_cls(
+                    address_type = get_address_cls(
                         transport_key
                     )
-                    addr: Address = transport_cls.get_random()
+                    addr: Address = address_type.get_random()
                     accept_addrs.append(addr.unwrap())
 
         # XXX, either passed in by caller or delivered

@@ -15,19 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from __future__ import annotations
 from uuid import uuid4
-from typing import (
-    Any,
-    Protocol,
-    ClassVar,
-    Literal,
-    Type,
-    TypeAlias,
-    TYPE_CHECKING,
-)
-
-from trio import (
-    SocketListener,
-)
+from typing import TypeAlias
 
 from ..log import get_logger
 from ..runtime._state import (
@@ -38,70 +26,19 @@ from ..ipc._uds import (
     UDSAddress,
     HAS_UDS,
 )
-
-if TYPE_CHECKING:
-    # ONLY type-annots, the eager import costs ~4.5ms
-    # of `import tractor` wall-time (gh #470).
-    from tractor.net._tunnel import (
-        TunnelledAddress,
-    )
-    from ..runtime._runtime import Actor
-else:
-    Actor = Any
-    TunnelledAddress = Any
+from .types import (
+    Address as Address,
+    AddressDeclaration,
+    LegacyUnwrappedAddress,
+    TaggedAddress,
+    TaggedUDSAlias,
+    UnwrappedAddress,
+)
 
 log = get_logger()
 
-# TODO, maybe breakout the netns key to a struct?
-# class NetNs(Struct)[str, int]:
-#     ...
+_AddressType: TypeAlias = type[TCPAddress]|type[UDSAddress]
 
-# TODO, can't we just use a type alias
-# for this? namely just some `tuple[str, int, str, str]`?
-#
-# -[ ] would also just be simpler to keep this as SockAddr[tuple]
-#     or something, implying it's just a simple pair of values which can
-#     presumably be mapped to all transports?
-# -[ ] `pydoc socket.socket.getsockname()` delivers a 4-tuple for
-#     ipv6 `(hostaddr, port, flowinfo, scope_id)`.. so how should we
-#     handle that?
-# -[ ] as a further alternative to this wrap()/unwrap() approach we
-#     could just implement `enc/dec_hook()`s for the `Address`-types
-#     and just deal with our internal objs directly and always and
-#     leave it to the codec layer to figure out marshalling?
-#    |_ would mean only one spot to do the `.unwrap()` (which we may
-#       end up needing to call from the hook()s anyway?)
-# -[x] rename to `UnwrappedAddress[Descriptor]` ??
-#    seems like the right name as per,
-#    https://www.geeksforgeeks.org/introduction-to-address-descriptor/
-#
-TaggedTCPAddress: TypeAlias = tuple[
-    Literal['tcp'],
-    str,
-    int,
-]
-TaggedUnixAddress: TypeAlias = tuple[
-    Literal['unix'],
-    str,
-]
-TaggedUDSAlias: TypeAlias = tuple[
-    Literal['uds'],
-    str,
-]
-TaggedAddress: TypeAlias = (
-    TaggedTCPAddress
-    |TaggedUnixAddress
-)
-
-# Input-only compatibility forms retained for older callers and
-# serialized payloads.
-LegacyTCPAddress: TypeAlias = tuple[str, int]
-LegacyUDSAddress: TypeAlias = tuple[str, str]
-LegacyUnwrappedAddress: TypeAlias = (
-    LegacyTCPAddress
-    |LegacyUDSAddress
-)
-UnwrappedAddress = TaggedAddress
 # ?TODO? should we also include another 2 fields from our `Aid` msg
 # such that we include the runtime `Actor.uid` of `.name` and `.uuid`?
 # - would ensure uniqueness across entire net?
@@ -109,106 +46,14 @@ UnwrappedAddress = TaggedAddress
 #   name"
 
 
-# TODO, maybe rename to `SocketAddress`?
-class Address(Protocol):
-    proto_key: ClassVar[str]
-    unwrapped_type: ClassVar[type]
-
-    # TODO, i feel like an `.is_bound()` is a better thing to
-    # support?
-    # Lke, what use does this have besides a noop and if it's not
-    # valid why aren't we erroring on creation/use?
-    @property
-    def is_valid(self) -> bool:
-        ...
-
-    # TODO, maybe `.netns` is a better name?
-    @property
-    def namespace(self) -> tuple[str, str|int]|None:
-        '''
-        The if-available, OS-specific "network namespace" key.
-
-        '''
-        ...
-
-    @property
-    def bindspace(self) -> str:
-        '''
-        Deliver the socket address' "bindable space" from
-        a `socket.socket.bind()` and thus from the perspective of
-        specific transport protocol domain.
-
-        I.e. for most (layer-4) network-socket protocols this is
-        normally the ipv4/6 address, for UDS this is normally
-        a filesystem (sub-directory).
-
-        For (distributed) network protocols this is normally the routing
-        layer's domain/(ip-)address, though it might also include a "network namespace"
-        key different then the default.
-
-        For local-host-only transports this is either an explicit
-        namespace (with types defined by the OS: netns, Cgroup, IPC,
-        pid, etc. on linux) or failing that the sub-directory in the
-        filesys in which socket/shm files are located *under*.
-
-        '''
-        ...
-
-    @classmethod
-    def from_addr(cls, addr: UnwrappedAddress) -> Address:
-        ...
-
-    def unwrap(self) -> UnwrappedAddress:
-        '''
-        Deliver the underying minimum field set in
-        a primitive python data type-structure.
-        '''
-        ...
-
-    @classmethod
-    def get_random(
-        cls,
-        current_actor: Actor,
-        bindspace: str|None = None,
-    ) -> Address:
-        ...
-
-    # TODO, this should be something like a `.get_def_registar_addr()`
-    # or similar since,
-    # - it should be a **host singleton** (not root/tree singleton)
-    # - we **only need this value** when one isn't provided to the
-    #   runtime at boot and we want to implicitly provide a host-wide
-    #   registrar.
-    # - each rooted-actor-tree should likely have its own
-    #   micro-registry (likely the root being it), also see
-    @classmethod
-    def get_root(cls) -> Address:
-        ...
-
-    def __repr__(self) -> str:
-        ...
-
-    def __eq__(self, other) -> bool:
-        ...
-
-    async def open_listener(
-        self,
-        **kwargs,
-    ) -> SocketListener:
-        ...
-
-    async def close_listener(self):
-        ...
-
-
 # the address types available on this host: TCP always, UDS only
 # where usable (`HAS_UDS`). Both registries derive from this single
 # list via each type's `proto_key`.
-_address_protos: list[Type[Address]] = [TCPAddress]
+_address_protos: list[_AddressType] = [TCPAddress]
 if HAS_UDS:
     _address_protos.append(UDSAddress)
 
-_address_types: dict[str, Type[Address]] = {
+_address_types: dict[str, _AddressType] = {
     cls.proto_key: cls
     for cls in _address_protos
 }
@@ -216,13 +61,22 @@ _address_types: dict[str, Type[Address]] = {
 
 # TODO! really these are discovery sys default addrs ONLY useful for
 # when none is provided to a root actor on first boot.
+#
+# TODO, this should be something like a `.get_def_registar_addr()`
+# or similar since,
+# - it should be a **host singleton** (not root/tree singleton)
+# - we **only need this value** when one isn't provided to the
+#   runtime at boot and we want to implicitly provide a host-wide
+#   registrar.
+# - each rooted-actor-tree should likely have its own
+#   micro-registry (likely the root being it), also see
 _default_lo_addrs: dict[str, UnwrappedAddress] = {
     cls.proto_key: cls.get_root().unwrap()
     for cls in _address_protos
 }
 
 
-def get_address_cls(name: str) -> Type[Address]:
+def get_address_cls(name: str) -> _AddressType:
     try:
         return _address_types[name]
     except KeyError:
@@ -233,7 +87,7 @@ def get_address_cls(name: str) -> Type[Address]:
         )
 
 
-def is_wrapped_addr(addr: any) -> bool:
+def is_wrapped_addr(addr: object) -> bool:
     # XXX NOTE, a `TunnelledAddress` is genuinely "wrapped" but is
     # deliberately NOT in `_address_types`: it has no
     # `MsgTransport` of its own (a tunnel is transparent to
@@ -264,10 +118,9 @@ def wrap_address(
         |LegacyUnwrappedAddress
         |list[str|int]
         |str
-        |Address
-        |TunnelledAddress
+        |AddressDeclaration
     ),
-) -> Address|TunnelledAddress:
+) -> AddressDeclaration:
     '''
     Wrap an `UnwrappedAddress` as an `Address`-type based
     on matching builtin python data-structures which we adhoc
@@ -284,7 +137,7 @@ def wrap_address(
     if is_wrapped_addr(addr):
         return addr
 
-    cls: Type|None = None
+    cls: _AddressType|None = None
     # if 'sock' in addr[0]:
     #     import pdbp; pdbp.set_trace()
     match addr:
@@ -328,7 +181,7 @@ def wrap_address(
             |
             [None, None]
         ):
-            cls: Type[Address] = get_address_cls(_def_tpt_proto)
+            cls = get_address_cls(_def_tpt_proto)
             addr: UnwrappedAddress = cls.get_root().unwrap()
 
         # multiaddr-format string, e.g.
@@ -354,7 +207,7 @@ def wrap_address(
 
 def default_lo_addrs(
     transports: list[str],
-) -> list[Type[Address]]:
+) -> list[UnwrappedAddress]:
     '''
     Return the default, host-singleton, registry address
     for an input transport key set.

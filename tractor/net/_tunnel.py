@@ -93,6 +93,11 @@ import multibase
 import trio
 
 from ..msg._local import ProcessLocal
+from ..discovery.types import (
+    Address,
+    AddressDeclaration,
+    UnwrappedAddress,
+)
 from ._bindspace import (
     Bindspace,
     BindspaceRef,
@@ -102,16 +107,6 @@ from ._bindspace import (
 
 if TYPE_CHECKING:
     from multiaddr import Multiaddr
-
-    from ..discovery._addr import (
-        Address,
-        UnwrappedAddress,
-    )
-else:
-    Address = Any
-    Multiaddr = Any
-    UnwrappedAddress = Any
-
 
 class WGTunnelSpec(
     msgspec.Struct,
@@ -879,7 +874,7 @@ class TunnelledAddress(
     `strip_tunnels()`.
 
     '''
-    overlay: Address|TunnelledAddress
+    overlay: AddressDeclaration
     tunnel: TunnelSpec
     bindspace_ref: BindspaceRef|None = None
 
@@ -1057,7 +1052,7 @@ def parse_wg_maddr(
     match overlay_names:
         case [('ip4' | 'ip6'), 'tcp']:
             from ..discovery._multiaddr import parse_maddr
-            overlay: Address|TunnelledAddress = parse_maddr(
+            overlay: AddressDeclaration = parse_maddr(
                 str(overlay_ma)
             )
 
@@ -1172,7 +1167,7 @@ def mk_wg_maddr(
 
 
 def strip_tunnels(
-    addr: Address|TunnelledAddress,
+    addr: AddressDeclaration,
 ) -> Address:
     '''
     Deliver the bindable `Address`, peeling any tunnel
@@ -1191,7 +1186,7 @@ def strip_tunnels(
 
 
 def tunnels_of(
-    addr: Address|TunnelledAddress,
+    addr: AddressDeclaration,
 ) -> tuple[TunnelSpec, ...]:
     '''
     Deliver every tunnel spec wrapping `addr`, outermost first.

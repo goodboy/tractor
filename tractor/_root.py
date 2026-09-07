@@ -53,11 +53,14 @@ from .runtime import _state
 from . import log
 from .discovery._api import _probe_registry_addrs
 from .discovery._addr import (
-    Address,
-    UnwrappedAddress,
     default_lo_addrs,
+    get_address_cls,
     mk_uuid,
     wrap_address,
+)
+from .discovery.types import (
+    Address,
+    UnwrappedAddress,
 )
 from .trionics import (
     is_multi_cancelled,
@@ -69,8 +72,6 @@ from ._exceptions import (
 
 if TYPE_CHECKING:
     from .net._bindspace import Bindspace
-else:
-    Bindspace = Any
 
 
 logger = log.get_logger('tractor')
@@ -187,7 +188,7 @@ async def open_root_actor(
     bindspace: Bindspace|None = None,
 
     tpt_bind_addrs: list[
-        Address  # `Address.get_random()` case
+        Address  # concrete transport address case
         |UnwrappedAddress  # registrar case `= uw_reg_addrs`
     ]|None = None,
 
@@ -561,6 +562,9 @@ async def open_root_actor(
 
                 for addr in ponged_addrs:
                     bindable_addr: Address = strip_tunnels(addr)
+                    address_type = get_address_cls(
+                        bindable_addr.proto_key
+                    )
                     tpt_bind_addrs.append(
                         # XXX, these are `Address` NOT `UnwrappedAddress`.
                         #
@@ -568,7 +572,7 @@ async def open_root_actor(
                         # protos we allocate port=0 such that the system
                         # allocates a random value at bind time; this
                         # happens in the `.ipc.*` stack's backend.
-                        bindable_addr.get_random(
+                        address_type.get_random(
                             bindspace=bindable_addr.bindspace,
                         )
                     )

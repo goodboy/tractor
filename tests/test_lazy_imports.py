@@ -7,21 +7,6 @@ import os
 from statistics import median
 import subprocess
 import sys
-from typing import (
-    Any,
-    get_type_hints,
-)
-
-import tractor
-from tractor.discovery import (
-    _addr,
-    _multiaddr,
-)
-from tractor.ipc import (
-    _tcp,
-    _uds,
-)
-
 
 def run_cold_import(code: str) -> dict[str, object]:
     result = subprocess.run(
@@ -260,28 +245,56 @@ def test_net_root_export_and_old_discovery_surface():
     }
 
 
-def test_lazy_annotation_names_resolve():
+def test_discovery_types_are_dependency_neutral():
     '''
-    Resolve annotations without importing optional dependencies.
+    Keep canonical address types independent of runtime implementations.
 
-    Moving annotation-only third-party names under `TYPE_CHECKING`
-    left their runtime globals undefined, causing
-    `typing.get_type_hints()` to raise `NameError`. Resolve every
-    affected API and prove the lazy aliases retain import-free runtime
-    introspection.
+    Annotation-only imports previously rebound unavailable model names
+    to `Any` so `get_type_hints()` could resolve them. That test only
+    verified its own workaround and hid the `_addr`/transport import
+    cycle. Import the canonical declarations in a cold interpreter and
+    prove they do not pull in optional networking modules. Then prove
+    each implementation imports the same real declarations instead of
+    substituting `Any` under the model names.
 
     '''
-    assert get_type_hints(_multiaddr.mk_maddr)['return'] is Any
-    assert get_type_hints(_tcp.MsgpackTCPStream.maddr.fget)[
-        'return'
-    ] is Any
-    assert get_type_hints(_uds.MsgpackUDSStream.maddr.fget)[
-        'return'
-    ] == Any|str
-    assert get_type_hints(_addr.Address.get_random)[
-        'current_actor'
-    ] is Any
-    assert get_type_hints(tractor.open_root_actor)[
-        'bindspace'
-    ] == Any|None
-    assert _addr.__annotations__['_address_types'].startswith('dict')
+    cold = run_cold_import(
+        'import json, sys; '
+        'from tractor.discovery import types; '
+        'blocked = ('
+        '"multiaddr", "multibase", "pyroute2", '
+        '"tractor.discovery._multiaddr", "tractor.net", '
+        '"tractor.net._bindspace", "tractor.net._tunnel"); '
+        'print(json.dumps({'
+        '"address_module": types.Address.__module__, '
+        '"blocked": [name for name in blocked '
+        'if name in sys.modules]}))'
+    )
+    assert cold == {
+        'address_module': 'tractor.discovery.types',
+        'blocked': [],
+    }
+
+    from tractor.discovery import (
+        _addr,
+        _multiaddr,
+        types,
+    )
+    from tractor.ipc import (
+        _chan,
+        _server,
+        _tcp,
+        _transport,
+        _uds,
+    )
+    from tractor.net import _tunnel
+
+    assert _addr.Address is types.Address
+    assert _addr.UnwrappedAddress is types.UnwrappedAddress
+    assert _multiaddr.AddressDeclaration is types.AddressDeclaration
+    assert _tcp.TaggedTCPAddress is types.TaggedTCPAddress
+    assert _uds.TaggedUnixAddress is types.TaggedUnixAddress
+    assert _transport.Address is types.Address
+    assert _chan.AddressDeclaration is types.AddressDeclaration
+    assert _server.AddressDeclaration is types.AddressDeclaration
+    assert _tunnel.AddressDeclaration is types.AddressDeclaration

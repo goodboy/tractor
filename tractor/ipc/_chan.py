@@ -43,7 +43,10 @@ from ._types import (
 from tractor.discovery._addr import (
     is_wrapped_addr,
     wrap_address,
+)
+from tractor.discovery.types import (
     Address,
+    AddressDeclaration,
     UnwrappedAddress,
 )
 from tractor.log import get_logger
@@ -59,9 +62,6 @@ from tractor.msg import (
 
 if TYPE_CHECKING:
     from ._transport import MsgTransport
-    from tractor.net._tunnel import TunnelledAddress
-else:
-    TunnelledAddress = Any
 
 
 log = get_logger()
@@ -185,7 +185,7 @@ class Channel:
     @classmethod
     async def from_addr(
         cls,
-        addr: UnwrappedAddress|Address|TunnelledAddress,
+        addr: UnwrappedAddress|AddressDeclaration,
         **kwargs
     ) -> Channel:
 
@@ -557,7 +557,7 @@ class Channel:
 
 @acm
 async def _connect_chan(
-    addr: UnwrappedAddress|Address|TunnelledAddress,
+    addr: UnwrappedAddress|AddressDeclaration,
     close_timeout: float|None = None,
 ) -> typing.AsyncGenerator[Channel, None]:
     '''

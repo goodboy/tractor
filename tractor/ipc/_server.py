@@ -59,8 +59,10 @@ from ..msg import (
 from ..trionics import maybe_open_nursery
 from ..runtime import _state
 from .. import log
-from ..discovery._addr import (
+from ..discovery._addr import get_address_cls
+from ..discovery.types import (
     Address,
+    AddressDeclaration,
     UnwrappedAddress,
 )
 from ._chan import Channel
@@ -68,7 +70,6 @@ from ._transport import MsgTransport
 
 
 if TYPE_CHECKING:
-    from ..net._tunnel import TunnelledAddress
     from ..runtime._runtime import Actor
     from ..runtime._supervise import ActorNursery
 
@@ -631,7 +632,7 @@ class Endpoint(Struct):
 
     '''
     addr: Address
-    declared_addr: Address|TunnelledAddress
+    declared_addr: AddressDeclaration
     listen_tn: Nursery
     stream_handler_tn: Nursery|None = None
 
@@ -689,7 +690,8 @@ class Endpoint(Struct):
             !=
             self.addr.unwrap()
         ):
-            self.addr=self.addr.from_addr(unwrapped)
+            address_type = get_address_cls(self.addr.proto_key)
+            self.addr = address_type.from_addr(unwrapped)
 
         self._listener = lstnr
         return lstnr
@@ -991,7 +993,7 @@ class Server(Struct):
         self,
         *,
         accept_addrs: list[
-            UnwrappedAddress|Address|TunnelledAddress
+            UnwrappedAddress|AddressDeclaration
         ]|None = None,
         stream_handler_nursery: Nursery|None = None,
     ) -> list[Endpoint]:
@@ -1075,7 +1077,7 @@ async def _serve_ipc_eps(
     *,
     server: IPCServer,
     stream_handler_tn: Nursery,
-    listen_addrs: list[Address|TunnelledAddress],
+    listen_addrs: list[AddressDeclaration],
 
     task_status: TaskStatus[
         Nursery,

@@ -43,7 +43,6 @@ except ImportError:
     AF_UNIX = None
 import struct
 from typing import (
-    Any,
     Type,
     TYPE_CHECKING,
     ClassVar,
@@ -71,17 +70,13 @@ from tractor.runtime._state import (
     current_actor,
     is_root_process,
 )
+from tractor.discovery.types import TaggedUnixAddress
 
 if TYPE_CHECKING:
     # ONLY type-annots, the eager import costs
     # `import tractor` wall-time (gh #470).
     from multiaddr import Multiaddr
-    from tractor.discovery._addr import TaggedUnixAddress
     from tractor.runtime._runtime import Actor
-else:
-    Multiaddr = Any
-    Actor = Any
-    TaggedUnixAddress = Any
 
 
 # Platform-specific credential passing constants

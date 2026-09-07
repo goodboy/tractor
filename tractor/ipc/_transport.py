@@ -55,9 +55,7 @@ from tractor.msg import (
     types as msgtypes,
     pretty_struct,
 )
-
-if TYPE_CHECKING:
-    from tractor.discovery._addr import Address
+from tractor.discovery.types import Address
 
 log = get_logger()
 

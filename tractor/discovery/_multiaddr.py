@@ -27,24 +27,15 @@ Multiaddress support using the upstream `py-multiaddr` lib
 from __future__ import annotations
 import ipaddress
 from pathlib import Path
-from typing import (
-    Any,
-    TYPE_CHECKING,
-)
+from typing import TYPE_CHECKING
+
+from .types import AddressDeclaration
 
 if TYPE_CHECKING:
     # NOTE, `multiaddr` is lazy-imported at first use
     # (in the fns below) to keep it off the eager
     # `import tractor` path (gh #470).
     from multiaddr import Multiaddr
-    from tractor.discovery._addr import Address
-    from tractor.net._tunnel import (
-        TunnelledAddress,
-    )
-else:
-    Multiaddr = Any
-    Address = Any
-    TunnelledAddress = Any
 
 # map from tractor-internal `proto_key` identifiers
 # to the standard multiaddr protocol name strings.
@@ -61,7 +52,7 @@ _maddr_to_tpt_proto: dict[str, str] = {
 
 
 def mk_maddr(
-    addr: 'Address|TunnelledAddress',
+    addr: AddressDeclaration,
 ) -> Multiaddr:
     '''
     Construct a `Multiaddr` from a tractor `Address` instance,
@@ -111,7 +102,7 @@ def mk_maddr(
 
 def parse_maddr(
     maddr_str: str,
-) -> 'Address|TunnelledAddress':
+) -> AddressDeclaration:
     '''
     Parse a multiaddr string into a tractor `Address`.
 
@@ -173,15 +164,15 @@ def parse_maddr(
 # or raw unwrapped-address tuples (as accepted by
 # `wrap_address()`).
 EndpointsTable = dict[
-    str,                    # actor/service name
-    list[str|tuple],        # maddr strs or UnwrappedAddress
+    str,  # actor/service name
+    list[str|tuple|AddressDeclaration],
 ]
 
 # output table: actor/service name -> list of wrapped address
 # declarations ready for bindspace handling.
 ParsedEndpoints = dict[
-    str,                    # actor/service name
-    list['Address|TunnelledAddress'],
+    str,  # actor/service name
+    list[AddressDeclaration],
 ]
 
 
