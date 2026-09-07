@@ -27,6 +27,12 @@ class _ProcessLocalToken:
     '''
     Unsupported msgspec value embedded in every `ProcessLocal`.
 
+    A sentinel is one private, unique object used as an identity
+    marker instead of application data. Every `ProcessLocal` holds
+    the same `_PROCESS_LOCAL_TOKEN` instance so construction can
+    verify it by identity and msgspec must encounter its unsupported
+    type on encode.
+
     '''
     __slots__ = ()
 
@@ -40,15 +46,71 @@ class ProcessLocal(
     repr_omit_defaults=True,
 ):
     '''
-    Generic struct marker which rejects default msgspec encoding.
+    Struct whose `_process_local` field blocks msgspec encoding.
 
-    The hidden sentinel remains part of the encoded field set, so
-    msgspec encounters `_ProcessLocalToken` and raises `TypeError`
-    even when this value is nested inside another supported payload.
-    A custom encode hook may explicitly override that safeguard.
+    `_process_local` must remain the unsupported singleton
+    `_PROCESS_LOCAL_TOKEN`. Msgspec reaches that field during direct
+    or nested encoding and raises `TypeError`; replacing it with an
+    encodable value or omitting its default would bypass the guard.
+    A custom encode hook may still explicitly override the safeguard.
+
+    Construction therefore rejects a replacement sentinel and any
+    subclass configured with `omit_defaults=True`. A subclass
+    `__post_init__()` is wrapped with checks before and after its
+    body, preventing that hook from skipping or later replacing the
+    sentinel.
 
     Keyword-only fields let subclasses add required fields after the
     marker's default sentinel.
 
     '''
     _process_local: _ProcessLocalToken = _PROCESS_LOCAL_TOKEN
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        '''
+        Check the sentinel around a subclass post-init hook.
+
+        '''
+        super().__init_subclass__(**kwargs)
+        subclass_post_init = cls.__dict__.get('__post_init__')
+        if subclass_post_init is None:
+            return
+
+        def checked_post_init(self: ProcessLocal) -> None:
+            ProcessLocal.__post_init__(self)
+            subclass_post_init(self)
+            ProcessLocal.__post_init__(self)
+
+        cls.__post_init__ = checked_post_init
+
+    def __post_init__(self) -> None:
+        '''
+        Require the singleton sentinel and forbid default omission.
+
+        '''
+        if self._process_local is not _PROCESS_LOCAL_TOKEN:
+            raise TypeError(
+                '`ProcessLocal._process_local` must retain its '
+                'internal sentinel'
+            )
+
+        if self.__struct_config__.omit_defaults:
+            raise TypeError(
+                '`ProcessLocal` subclasses may not enable '
+                '`omit_defaults`'
+            )
+
+
+class FrozenProcessLocal(
+    ProcessLocal,
+    frozen=True,
+):
+    '''
+    Frozen `ProcessLocal` whose struct fields reject reassignment.
+
+    The inherited `_process_local` sentinel still blocks direct and
+    nested encoding. Freezing is shallow: struct fields cannot be
+    replaced, while mutable objects referenced by those fields retain
+    their own mutation semantics.
+
+    '''

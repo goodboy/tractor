@@ -28,6 +28,7 @@ from .pretty_struct import (
     Struct as Struct,
 )
 from ._local import (
+    FrozenProcessLocal as FrozenProcessLocal,
     ProcessLocal as ProcessLocal,
 )
 from ._codec import (
