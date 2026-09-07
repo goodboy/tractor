@@ -246,6 +246,7 @@ docs/conversations/
 # END ai.skillz: direct:symlink:opencode:code-nav-refs
 
 # BEGIN ai.skillz: runtime:code-review-changes
+.ai/state/review/
 .claude/review_context.md
 .claude/review_regression.md
 .claude/review_replies/
@@ -260,6 +261,9 @@ docs/conversations/
 # END ai.skillz: direct:symlink:opencode:code-review-changes
 
 # BEGIN ai.skillz: runtime:commit-msg
+.ai/state/commit-msg/
+.ai/state/migrations/
+.ai/commit-msg/conf.toml
 .claude/skills/commit-msg/msgs/
 .claude/git_commit_msg_LATEST.md
 # END ai.skillz: runtime:commit-msg
@@ -321,6 +325,8 @@ docs/conversations/
 # END ai.skillz: direct:symlink:opencode:plan-io
 
 # BEGIN ai.skillz: runtime:pr-msg
+.ai/state/pr-msg/
+.ai/pr-msg/conf.toml
 .claude/skills/pr-msg/msgs/
 .claude/skills/pr-msg/pr_msg_LATEST.md
 # END ai.skillz: runtime:pr-msg
@@ -432,3 +438,93 @@ docs/conversations/
 # BEGIN ai.skillz: direct:symlink:opencode:command:yt-url-lookup
 /.opencode/commands/yt-url-lookup.md
 # END ai.skillz: direct:symlink:opencode:command:yt-url-lookup
+
+# BEGIN ai.skillz: direct:symlink:agents:gish
+/.agents/skills/gish
+# END ai.skillz: direct:symlink:agents:gish
+
+# BEGIN ai.skillz: direct:symlink:agents:resolve-conflicts
+/.agents/skills/resolve-conflicts
+# END ai.skillz: direct:symlink:agents:resolve-conflicts
+
+# BEGIN ai.skillz: direct:symlink:agents:git-mgmt
+/.agents/skills/git-mgmt
+# END ai.skillz: direct:symlink:agents:git-mgmt
+
+# BEGIN ai.skillz: direct:symlink:agents:open-wkt
+/.agents/skills/open-wkt
+# END ai.skillz: direct:symlink:agents:open-wkt
+
+# BEGIN ai.skillz: direct:symlink:agents:run-tests
+/.agents/skills/run-tests
+# END ai.skillz: direct:symlink:agents:run-tests
+
+# BEGIN ai.skillz: direct:symlink:agents:close-wkt
+/.agents/skills/close-wkt
+# END ai.skillz: direct:symlink:agents:close-wkt
+
+# BEGIN ai.skillz: direct:symlink:agents:code-review
+/.agents/skills/code-review
+# END ai.skillz: direct:symlink:agents:code-review
+
+# BEGIN ai.skillz: direct:symlink:agents:code-nav-refs
+/.agents/skills/code-nav-refs
+# END ai.skillz: direct:symlink:agents:code-nav-refs
+
+# BEGIN ai.skillz: direct:symlink:agents:code-review-changes
+/.agents/skills/code-review-changes
+# END ai.skillz: direct:symlink:agents:code-review-changes
+
+# BEGIN ai.skillz: direct:symlink:agents:commit-msg
+/.agents/skills/commit-msg
+# END ai.skillz: direct:symlink:agents:commit-msg
+
+# BEGIN ai.skillz: direct:symlink:agents:commit-plan
+/.agents/skills/commit-plan
+# END ai.skillz: direct:symlink:agents:commit-plan
+
+# BEGIN ai.skillz: direct:symlink:agents:dep-supersede-scan
+/.agents/skills/dep-supersede-scan
+# END ai.skillz: direct:symlink:agents:dep-supersede-scan
+
+# BEGIN ai.skillz: direct:symlink:agents:harness-perf
+/.agents/skills/harness-perf
+# END ai.skillz: direct:symlink:agents:harness-perf
+
+# BEGIN ai.skillz: direct:symlink:agents:inter-skill-review
+/.agents/skills/inter-skill-review
+# END ai.skillz: direct:symlink:agents:inter-skill-review
+
+# BEGIN ai.skillz: direct:symlink:agents:opencode-cleaning
+/.agents/skills/opencode-cleaning
+# END ai.skillz: direct:symlink:agents:opencode-cleaning
+
+# BEGIN ai.skillz: direct:symlink:agents:plan-io
+/.agents/skills/plan-io
+# END ai.skillz: direct:symlink:agents:plan-io
+
+# BEGIN ai.skillz: direct:symlink:agents:pr-msg
+/.agents/skills/pr-msg
+# END ai.skillz: direct:symlink:agents:pr-msg
+
+# BEGIN ai.skillz: direct:symlink:agents:prompt-io
+/.agents/skills/prompt-io
+# END ai.skillz: direct:symlink:agents:prompt-io
+
+# BEGIN ai.skillz: direct:symlink:agents:py-codestyle
+/.agents/skills/py-codestyle
+# END ai.skillz: direct:symlink:agents:py-codestyle
+
+# BEGIN ai.skillz: direct:symlink:agents:taken-export
+/.agents/skills/taken-export
+# END ai.skillz: direct:symlink:agents:taken-export
+
+# BEGIN ai.skillz: direct:symlink:agents:yt-url-lookup
+/.agents/skills/yt-url-lookup
+# END ai.skillz: direct:symlink:agents:yt-url-lookup
+
+# BEGIN ai.skillz: workflow-state
+/.ai/state/
+/.ai/commit-msg/conf.toml
+/.ai/pr-msg/conf.toml
+# END ai.skillz: workflow-state
