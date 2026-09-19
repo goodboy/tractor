@@ -46,6 +46,7 @@ from trio import (
 from ..ipc import Channel
 from .._context import (
     Context,
+    Unresolved,
 )
 from .._exceptions import (
     ContextCancelled,
@@ -1368,6 +1369,35 @@ async def process_messages(
             )
 
     except TransportClosed as tc:
+        # MsgpackTransport._iter_pkts() raises TransportClosed for
+        # a socket EOF (including an empty frame header), or wraps
+        # a reset/read error. This is not MsgStream's EndOfChannel
+        # after a protocol Stop, nor a Context's final Return.
+        #
+        # Proposed policy, pending the transport-fault review:
+        # an unfinished parent Context has lost its connection,
+        # NOT necessarily its remote task. The call below cancels
+        # Context._scope even when its owner is blocked in unrelated
+        # application code. That checkpoint sees trio.Cancelled;
+        # open_context() subsequently raises TransportClosed while
+        # unwinding. This intentionally remains distinct from a
+        # peer's explicit cancellation request/remote Error msg.
+        #
+        # Actor._contexts can include multiple connections to one
+        # peer. Match Context.chan by identity to leave other channels
+        # alone. Preserve received outcomes, including a Return which
+        # its owner has not drained, instead of replacing them by EOF.
+        for ctx in tuple(actor._contexts.values()):
+            if (
+                ctx.chan is chan
+                and ctx.side == 'parent'
+                and ctx._scope is not None
+                and ctx._remote_error is None
+                and ctx._outcome_msg is Unresolved
+                and not ctx._final_result_is_set()
+            ):
+                ctx._maybe_cancel_and_set_remote_error(tc)
+
         # channels "breaking" (for TCP streams by EOF or 104
         # connection-reset) is ok since we don't have a teardown
         # handshake for them (yet) and instead we simply bail out of

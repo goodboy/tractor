@@ -828,6 +828,17 @@ class Context:
                 f'{error}'
             )
 
+        elif isinstance(error, TransportClosed):
+            # TransportClosed is observed locally, not an Error msg
+            # identifying a cancellation requester or failed task.
+            # Preserve Context._canceller rather than inventing a
+            # peer-originated cancellation from connection loss.
+            cid: str = self.cid
+            log.warning(
+                f'Locally observed transport fault for ctx {cid!r}\n'
+                f'{error!r}'
+            )
+
         elif isinstance(error, MsgTypeError):
             msgerr = True
             self._canceller = error.src_uid
@@ -855,7 +866,11 @@ class Context:
                 f'{error!r}'
             )
 
-        if self._canceller is None:
+        if (
+            self._canceller is None
+            and
+            not isinstance(error, TransportClosed)
+        ):
             log.error('Ctx has no canceller set!?')
 
         cs: trio.CancelScope = self._scope
@@ -878,7 +893,8 @@ class Context:
         # `.open_context()`  block.
         if (
             cs
-            and not cs.cancel_called
+            and
+            not cs.cancel_called
 
             # XXX this is an expected cancel request response
             # message and we **don't need to raise it** in the
@@ -1310,7 +1326,13 @@ class Context:
         #       runtime frames from the tb explicitly?
         # https://docs.python.org/3/reference/simple_stmts.html#the-raise-statement
         # https://stackoverflow.com/a/24752607
-        if from_src_exc is not False:
+        # A transport failure already carries the disconnect cause.
+        # Do not replace it with cancellation used to wake the owner.
+        if (
+            from_src_exc is not False
+            and
+            not isinstance(remote_error, TransportClosed)
+        ):
             raise remote_error from from_src_exc
 
         raise remote_error
@@ -1924,13 +1946,16 @@ class Context:
                         stream._stop_msg = msg
 
                 case Return():
-                    if not self._outcome_msg:
+                    if self._outcome_msg is Unresolved:
                         log.warning(
                             f'Setting final outcome msg AFTER '
-                            f'`._rx_chan.send()`??\n'
+                            f'`._send_chan.send_nowait()`??\n'
                             f'\n'
                             f'{msg}'
                         )
+                        # Record receipt even while the owner is
+                        # idle and has not drained the result yet.
+                        # A subsequent EOF must not replace Return.
                         self._outcome_msg = msg
 
             return True
