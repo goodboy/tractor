@@ -267,6 +267,7 @@ class Actor:
         self._cancel_complete = trio.Event()
         self._cancel_called_by: tuple[str, tuple]|None = None
         self._cancel_called: bool = False
+        self._cancel_soon_scheduled: bool = False
 
         # retrieve and store parent `__main__` data which
         # will be passed to children
@@ -1165,14 +1166,49 @@ class Actor:
             await self.cancel(req_chan=None)  # self cancel
             raise
 
-    def cancel_soon(self) -> None:
+    def cancel_soon(self) -> bool:
         '''
         Cancel this actor asap; can be called from a sync context.
 
-        Schedules runtime cancellation via `Actor.cancel()` inside
-        the RPC service nursery.
+        Schedule `Actor.cancel()` in the longer-lived root nursery,
+        then cancel that nursery once runtime teardown completes.
+
+        Return a `bool` indicating whether the runtime cancellation
+        was scheduled in the `Actor._root_tn` by this call.
 
         '''
+        root_tn: Nursery = self._root_tn
+        assert root_tn
+        if self.cancel_complete:
+            # A prior cancel already tore down services and the
+            # shielded parent-channel loop. The root may still be
+            # waiting, or already closed: neither needs a new task.
+            log.runtime(
+                'Actor cancellation already complete; cancelling '
+                'the root scope without scheduling another task'
+            )
+            root_tn.cancel_scope.cancel()
+            return False
+
+        if self._cancel_soon_scheduled:
+            log.runtime(
+                'Actor cancellation already scheduled; skipping '
+                'duplicate cancel_soon() request'
+            )
+            return False
+
+        # Actor._service_tn may already be closed after a service
+        # failure. Keep the canceller in Actor._root_tn so teardown
+        # still executes, including the shielded parent-loop cancel.
+        async def cancel_root_tn_after_services() -> None:
+            await self.cancel(None)  # self-cancel
+            log.cancel(
+                '>> cancelling `._root_tn`\n'
+                f'c>(\n'
+                f' |_{root_tn.cancel_scope!r}\n'
+            )
+            root_tn.cancel_scope.cancel()
+
         actor_repr: str = _pformat.nest_from_op(
             input_op='>c(',
             text=self.pformat(),
@@ -1183,37 +1219,11 @@ class Actor:
             f'>> scheduling `Actor.cancel()`\n'
             f'{actor_repr}'
         )
-        assert self._service_tn
-        self._service_tn.start_soon(
-            self.cancel,
-            None,  # self cancel all rpc tasks
-        )
-
-        # schedule a "canceller task" in the `._root_tn` once the
-        # `._service_tn` is fully shutdown; task waits for child-ish
-        # scopes to fully exit then finally cancels its parent,
-        # root-most, scope.
-        async def cancel_root_tn_after_services():
-            log.runtime(
-                'Waiting on service-tn to cancel..\n'
-                f'c>)\n'
-                f'|_{self._service_tn.cancel_scope!r}\n'
-            )
-            await self._cancel_complete.wait()
-            log.cancel(
-                f'`._service_tn` cancelled\n'
-                f'>c)\n'
-                f'|_{self._service_tn.cancel_scope!r}\n'
-                f'\n'
-                f'>> cancelling `._root_tn`\n'
-                f'c>(\n'
-                f' |_{self._root_tn.cancel_scope!r}\n'
-            )
-            self._root_tn.cancel_scope.cancel()
-
-        self._root_tn.start_soon(
+        root_tn.start_soon(
             cancel_root_tn_after_services
         )
+        self._cancel_soon_scheduled = True
+        return True
 
     @property
     def cancel_complete(self) -> bool:
