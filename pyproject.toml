@@ -39,7 +39,9 @@ dependencies = [
   # https://packaging.python.org/en/latest/discussions/install-requires-vs-requirements/#id5
   # TODO, for 3.13 we must go go `0.27` which means we have to
   # disable strict egs or port to handling them internally!
-  "trio>0.27",
+  # Cancelled.reason carries context fault metadata; 0.34 is the
+  # minimum exercised by the object-valued reason regressions.
+  "trio>=0.34.0",
   "tricycle>=0.4.1,<0.5",
   "wrapt>=1.16.0,<2",
   "colorlog>=6.8.2,<7",
