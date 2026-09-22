@@ -144,7 +144,8 @@ async def error_before_started(
                 # is part of a local error and we shouldn't raise
                 # ``ContextCancelled`` **iff** we **were not** the side
                 # of the context to initiate it, i.e.
-                # ``Context._cancel_called`` should **NOT** have been
+                # ``ContextStatus._cancel_called`` should **NOT**
+                # have been
                 # set. The special logic to handle this case is now
                 # inside ``Context._maybe_raise_from_remote_msg()`` XD
                 await peer_ctx.cancel()
@@ -270,7 +271,7 @@ async def stream_from_peer(
 
         # print("TRYING TO ENTER PAUSSE!!!")
         # await tractor.pause(shield=True)
-        re: ContextCancelled = peer_ctx._remote_error
+        re: ContextCancelled = peer_ctx._status._remote_error
 
         # XXX YES XXX, remote error should be unpacked only once!
         assert (
@@ -280,7 +281,7 @@ async def stream_from_peer(
             is
             ctxc
             is
-            peer_ctx._local_error
+            peer_ctx._status._local_error
         )
         # NOTE: these errors should all match!
         #   ------ - ------
@@ -293,7 +294,7 @@ async def stream_from_peer(
         # the same remote error bubbling out above vs what was
         # already unpacked and set inside `Context.
         assert (
-            peer_ctx._remote_error.msgdata
+            peer_ctx._status._remote_error.msgdata
             ==
             ctxc.msgdata
         )
@@ -301,10 +302,12 @@ async def stream_from_peer(
         # the above larger assert makes sense to also always be true!
 
         # XXX YES XXX, bc should be exact same msg instances
-        assert peer_ctx._remote_error._ipc_msg is ctxc._ipc_msg
+        assert (
+            peer_ctx._status._remote_error._ipc_msg is ctxc._ipc_msg
+        )
 
         # XXX NO XXX, bc new one always created for property accesss
-        assert peer_ctx._remote_error.ipc_msg != ctxc.ipc_msg
+        assert peer_ctx._status._remote_error.ipc_msg != ctxc.ipc_msg
 
         # the peer ctx is the canceller even though it's canceller
         # is the "canceller" XD
@@ -577,13 +580,19 @@ def test_peer_canceller(
                     # a `trio.Cancelled` due to a local
                     # `._scope.cancel()` call.
                     assert not sleeper_ctx._scope.cancelled_caught
-                    # assert sleeper_ctx._local_error is _loc_err
-                    # assert sleeper_ctx._local_error is _loc_err
+                    # assert (
+                    #     sleeper_ctx._status._local_error
+                    #     is _loc_err
+                    # )
+                    # assert (
+                    #     sleeper_ctx._status._local_error
+                    #     is _loc_err
+                    # )
                     assert not (
                         loc_err
                         is sleeper_ctx.maybe_error
                         is sleeper_ctx.outcome
-                        is sleeper_ctx._remote_error
+                        is sleeper_ctx._status._remote_error
                     )
 
                     # NOTE: this root actor task should have
@@ -595,8 +604,8 @@ def test_peer_canceller(
                         # cancelled all opened contexts except the
                         # sleeper which is obvi by the "canceller"
                         # peer.
-                        re = ctx._remote_error
-                        le = ctx._local_error
+                        re = ctx._status._remote_error
+                        le = ctx._status._local_error
 
                         assert ctx.cancel_called
 
@@ -666,13 +675,17 @@ def test_peer_canceller(
                     assert (
                         final_err is loc_err
                         is sleeper_ctx.maybe_error
-                        is sleeper_ctx._remote_error
+                        is sleeper_ctx._status._remote_error
                     )
 
                     for name, ctx in ctxs.items():
 
-                        re: BaseException|None = ctx._remote_error
-                        le: BaseException|None = ctx._local_error
+                        re: BaseException|None = (
+                            ctx._status._remote_error
+                        )
+                        le: BaseException|None = (
+                            ctx._status._local_error
+                        )
                         err = ctx.maybe_error
                         out = ctx.outcome
 
@@ -693,10 +706,10 @@ def test_peer_canceller(
                         if ctx is sleeper_ctx:
                             assert re
                             assert (
-                                ctx._remote_error
+                                ctx._status._remote_error
                                 is ctx.maybe_error
                                 is ctx.outcome
-                                is ctx._local_error
+                                is ctx._status._local_error
                             )
 
                             assert not ctx.cancel_called
@@ -715,7 +728,7 @@ def test_peer_canceller(
                             canceller_ctx,
                         ):
 
-                            assert not ctx._remote_error
+                            assert not ctx._status._remote_error
 
                             # neither of the `caller/canceller_ctx` should
                             # have called `ctx.cancel()` bc the
@@ -750,7 +763,7 @@ def test_peer_canceller(
                             assert not ctx._scope.cancelled_caught
 
                         # elif ctx is canceller_ctx:
-                        #     assert not ctx._remote_error
+                        #     assert not ctx._status._remote_error
 
                             # XXX NOTE XXX: ONLY the canceller
                             # will get a self-cancelled outcome
@@ -794,11 +807,11 @@ def test_peer_canceller(
                 # set in both outcomes including the case where
                 # ctx-cancel handling itself errors.
                 assert not sleeper_ctx._scope.cancelled_caught
-                assert _loc_err is sleeper_ctx._local_error
+                assert _loc_err is sleeper_ctx._status._local_error
                 assert (
                     sleeper_ctx.outcome
                     is sleeper_ctx.maybe_error
-                    is sleeper_ctx._remote_error
+                    is sleeper_ctx._status._remote_error
                 )
 
                 raise  # always to ensure teardown

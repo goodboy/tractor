@@ -1406,7 +1406,12 @@ def _raise_from_unexpected_msg(
             msg,
             ctx.chan,
         )
-        ctx._maybe_cancel_and_set_remote_error(exc)
+        ctx._maybe_cancel_and_set_remote_error(
+            exc,
+            # PldRx emulates a remote Error for local validation
+            # failures; src_uid alone cannot identify the observer.
+            local_protocol=isinstance(src_err, ValidationError),
+        )
         raise exc from src_err
 
     # `MsgStream` termination msg.

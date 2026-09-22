@@ -33,6 +33,7 @@ from tractor._exceptions import (
     ContextCancelled,
     TransportClosed,
 )
+from tractor._context import ContextStatus
 from tractor.runtime._state import current_ipc_ctx
 
 from tractor._testing import (
@@ -152,7 +153,7 @@ def test_overrun_error_send_tolerates_transport_close(
             repr_caller='test',
             _in_overrun=False,
             _actor=SimpleNamespace(aid=local_aid),
-            _stream_opened=True,
+            _status=ContextStatus(_stream_opened=True),
             _allow_overruns=False,
         )
         msg = tractor.msg.Yield(
@@ -644,9 +645,9 @@ def test_parent_cancels(
             assert (
                 err
                 is ctx.maybe_error
-                is ctx._remote_error
+                is ctx._status._remote_error
             )
-            if le := ctx._local_error:
+            if le := ctx._status._local_error:
                 assert err is le
 
             # else:
@@ -654,7 +655,7 @@ def test_parent_cancels(
                 # not defined until block closes right?
                 #
                 # await tractor.pause()
-                # assert ctx._local_error is None
+                # assert ctx._status._local_error is None
 
         # TODO: don't need this right?
         # if _ctxc:
@@ -892,11 +893,11 @@ async def expect_cancelled(
         assert not ctx._scope.cancelled_caught
 
         # should be the RPC cmd request for `._cancel_task()`
-        assert ctx._cancel_msg
+        assert ctx._status._cancel_msg
         # which, has not yet resolved to an error outcome
         # since this rpc func has not yet exited.
         assert not ctx.maybe_error
-        assert not ctx._final_result_is_set()
+        assert not ctx._status._final_result_is_set()
 
         # debug REPL if needed
         # with trio.CancelScope(shield=True):
@@ -1040,8 +1041,8 @@ async def test_parent_exits_ctx_after_child_enters_stream(
         # rxed ctxc response from far end
         assert ctx.cancel_acked
         assert (
-            ctx._remote_error
-            is ctx._local_error
+            ctx._status._remote_error
+            is ctx._status._local_error
             is ctx.maybe_error
             is ctx.outcome
         )

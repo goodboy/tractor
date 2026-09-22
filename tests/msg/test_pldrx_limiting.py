@@ -378,10 +378,10 @@ def test_basic_payload_spec(
                     # await tractor.pause(shield=True)
 
                     # verify expected remote mte deats
-                    assert ctx._local_error is None
+                    assert ctx._status._local_error is None
                     assert (
                         mte is
-                        ctx._remote_error is
+                        ctx._status._remote_error is
                         ctx.maybe_error is
                         ctx.outcome
                     )

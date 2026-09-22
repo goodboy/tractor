@@ -362,7 +362,7 @@ async def _errors_relayed_via_ipc(
                     not isinstance(err, ContextCancelled)
                     or (
                         isinstance(err, ContextCancelled)
-                        and ctx._cancel_called
+                        and ctx._status._cancel_called
 
                         # if the root blocks the debugger lock request from a child
                         # we will get a remote-cancelled condition.
@@ -720,7 +720,7 @@ async def _invoke(
                     unmask_from=(Cancelled,),
                 ) as _mbme,  # maybe boxed masked exc
             ):
-                ctx._scope_nursery = tn
+                ctx._scope_tn = tn
                 rpc_ctx_cs = ctx._scope = tn.cancel_scope
                 _register_rpc_task(
                     actor,
@@ -738,7 +738,7 @@ async def _invoke(
                     pld=res,
                 )
                 # set and shuttle final result to "parent"-side task.
-                ctx._result = res
+                ctx._status._result = res
                 log.runtime(
                     f'Sending result msg and exiting {ctx.side!r}\n'
                     f'\n'
@@ -791,7 +791,7 @@ async def _invoke(
                 # before raising any context cancelled case
                 # so that real remote errors don't get masked as
                 # ``ContextCancelled``s.
-                if re := ctx._remote_error:
+                if re := ctx._status._remote_error:
                     ctx._maybe_raise_remote_err(re)
 
                 if rpc_ctx_cs.cancel_called:
@@ -803,7 +803,7 @@ async def _invoke(
                     # ``Context.cancel()`` directly, we're going to
                     # need to change this logic branch since it
                     # will always enter..
-                    if ctx._cancel_called:
+                    if ctx._status._cancel_called:
                         # TODO: test for this!!!!!
                         canceller: tuple = our_uid
                         explain += 'itself '
@@ -879,7 +879,7 @@ async def _invoke(
 
             # always set this (child) side's exception as the
             # local error on the context
-            ctx._local_error: BaseException = scope_err
+            ctx._status._local_error: BaseException = scope_err
             # ^-TODO-^ question,
             # does this matter other then for
             # consistentcy/testing?
@@ -1392,9 +1392,9 @@ async def process_messages(
                 ctx.chan is chan
                 and ctx.side == 'parent'
                 and ctx._scope is not None
-                and ctx._remote_error is None
-                and ctx._outcome_msg is Unresolved
-                and not ctx._final_result_is_set()
+                and ctx._status._remote_error is None
+                and ctx._status._outcome_msg is Unresolved
+                and not ctx._status._final_result_is_set()
             ):
                 ctx._maybe_cancel_and_set_remote_error(tc)
 

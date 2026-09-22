@@ -190,8 +190,8 @@ class MsgStream(trio.abc.Channel):
                 #     from the `.aclose()` caller?
                 #
                 # breakpoint()  # to debug this RACE CASE!
-                ctx._result = pld
-                ctx._outcome_msg = msg
+                ctx._status._result = pld
+                ctx._status._outcome_msg = msg
 
         return pld
 
@@ -709,7 +709,7 @@ async def open_stream_from_ctx(
     # since it likely means the surrounding lexical-scope has
     # errored, been `trio.Cancelled` or at the least
     # `Context.cancel()` was called by some task.
-    if ctx._cancel_called:
+    if ctx._status._cancel_called:
 
         # XXX NOTE: ALWAYS RAISE any remote error here even if
         # it's an expected `ContextCancelled` due to a local
@@ -728,8 +728,8 @@ async def open_stream_from_ctx(
         # because we want to raise a ctxc on any task entering this `.open_stream()`
         # AFTER cancellation was already been requested,
         # we DO NOT want to absorb any ctxc ACK silently!
-        # if ctx._remote_error:
-        #     raise ctx._remote_error
+        # if ctx._status._remote_error:
+        #     raise ctx._status._remote_error
 
         # XXX NOTE: if no `ContextCancelled` has been responded
         # back from the other side (yet), we raise a different
@@ -744,7 +744,7 @@ async def open_stream_from_ctx(
 
     if (
         not ctx._portal
-        and not ctx._started_called
+        and not ctx._status._started_called
     ):
         raise RuntimeError(
             'Context.started()` must be called before opening a stream'
@@ -803,7 +803,7 @@ async def open_stream_from_ctx(
             ctx._portal._streams.add(stream)
 
         try:
-            ctx._stream_opened: bool = True
+            ctx._status._stream_opened: bool = True
             ctx._stream = stream
 
             # XXX: do we need this?

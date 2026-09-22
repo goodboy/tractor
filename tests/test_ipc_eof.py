@@ -146,7 +146,7 @@ async def consume_peer(
                         task_status.started(ctx)
                         if graceful:
                             await paused.wait()
-                            assert ctx._remote_error is None
+                            assert ctx._status._remote_error is None
                         elif wait_on == 'receive':
                             await stream.receive()
                         else:
@@ -155,7 +155,7 @@ async def consume_peer(
                             pytest.fail('resumed without EOF')
                 except TransportClosed as exc:
                     assert not graceful
-                    assert exc is ctx._remote_error
+                    assert exc is ctx._status._remote_error
                     assert exc.__cause__ is exc._src_exc
                     assert 'closed' in exc.message
                     # This is a local transport observation, not
@@ -181,8 +181,8 @@ async def consume_peer(
             async def send_after_notification(*args, **kwargs):
                 # Cleanup may send, but must not discover the EOF.
                 if checking_eof:
-                    assert first._remote_error is not None
-                    assert second._remote_error is not None
+                    assert first._status._remote_error is not None
+                    assert second._status._remote_error is not None
                 return await original_send(*args, **kwargs)
 
             if not graceful:
@@ -202,7 +202,7 @@ async def consume_peer(
                 checking_eof = False
             assert len(errors) == (0 if graceful else 2)
             assert paused.is_set() is graceful
-            assert good._remote_error is None
+            assert good._status._remote_error is None
             # Prove the unrelated peer still serves application
             # traffic after EOF handling, not just that it has no
             # recorded error yet.

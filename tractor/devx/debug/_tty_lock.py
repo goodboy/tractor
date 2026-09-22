@@ -1024,7 +1024,7 @@ async def request_root_stdio_lock(
         # `bdb.BdbQuit` directly, OW you get a trio cs stack
         # corruption!
         # Further, the since this task is spawned inside the
-        # `Context._scope_nursery: trio.Nursery`, once an RPC
+        # `Context._scope_tn: trio.Nursery`, once an RPC
         # task errors that cs is cancel_called and so if we want
         # to debug the TPC task that failed we need to shield
         # against that expected `.cancel()` call and instead

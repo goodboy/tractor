@@ -593,7 +593,7 @@ async def drain_to_final_msg(
     while not (
         ctx.maybe_error
         and
-        not ctx._final_result_is_set()
+        not ctx._status._final_result_is_set()
     ):
         try:
             # receive all msgs, scanning for either a final result
@@ -678,7 +678,7 @@ async def drain_to_final_msg(
                     f'\n'
                     f'{pretty_struct.pformat(msg)}'
                 )
-                ctx._result: Any = pld
+                ctx._status._result: Any = pld
                 result_msg = msg
                 break
 
@@ -697,7 +697,7 @@ async def drain_to_final_msg(
                             and
                             (reason := 'ctx cancelled other side')
                         )
-                        or (ctx._cancel_called
+                        or (ctx._status._cancel_called
                             and
                             (reason := 'ctx called `.cancel()`')
                         )
@@ -768,9 +768,9 @@ async def drain_to_final_msg(
                 #       if raises:
                 #           log.error('some msg about raising..')
                 #
-                re: Exception|None = ctx._remote_error
+                re: Exception|None = ctx._status._remote_error
                 if re:
-                    assert msg is ctx._cancel_msg
+                    assert msg is ctx._status._cancel_msg
                     # NOTE: this solved a super duper edge case XD
                     # this was THE super duper edge case of:
                     # - local task opens a remote task,

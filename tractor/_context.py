@@ -54,6 +54,7 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
+    Literal,
     Type,
     TypeAlias,
     TYPE_CHECKING,
@@ -119,10 +120,133 @@ log = get_logger()
 
 class Unresolved:
     '''
-    Placeholder value for `Context._result` until
+    Placeholder value for `ContextStatus._result` until
     a final return value or raised error is resolved.
 
     '''
+
+
+class ContextCancelReason(pretty_struct.Struct, frozen=True):
+    '''
+    Encapsulate an IPC ctx's task cancellation cause.
+
+    Metadata is shallow-frozen, not a wire message. `error` retains
+    a mutable exception (and possibly its traceback/resources) for
+    the lifetime of this reason. It is the first cancelling fault,
+    not necessarily the latest `ContextStatus._remote_error`.
+
+    `scope_token` is an opaque identity token, never a scope ref.
+    Compare the public `trio.Cancelled.reason` to distinguish this
+    scope's cancellation from an ancestor's cancellation.
+
+    '''
+    message: str
+    error: BaseException
+    cid: str
+    actor_uid: tuple[str, str]
+    peer_uid: tuple[str, str]
+    scope_token: object
+    origin: Literal[
+        'local_transport',
+        'remote_task',
+        'remote_cancel',
+        'local_protocol',
+        'local_error',
+    ]
+
+    # TODO, `.__str__()` impl for if/when trio-core operates
+    # on a `CancelScope.cancel(reason=)`-argument presuming it
+    # is always `str`.
+
+
+class ContextStatus(pretty_struct.Struct):
+    '''
+    Authoritative per-context outcome and IPC dialog state.
+
+    Live resources and policy remain on `Context`. Internal callers
+    access these fields through `Context._status`; only these
+    declared status fields appear in this diagnostic repr.
+
+    '''
+    _outcome_msg: Return|Error|ContextCancelled|type[Unresolved] = (
+        Unresolved
+    )
+
+    # on a clean exit there should be a final value
+    # delivered from the far end "child" task, so
+    # this value is only set on one side.
+    # _result: Any | int = None
+    _result: PayloadT|type[Unresolved] = Unresolved
+
+    # if the local "parent"  task errors this value is always set
+    # to the error that was captured in the
+    # `Portal.open_context().__aexit__()` teardown block OR, in
+    # 2 special cases when an (maybe) expected remote error
+    #   arrives that we purposely swallow silently:
+    # - `ContextCancelled` with `.canceller` set to our uid:
+    #    a self-cancel,
+    # - `RemoteActorError[StreamOverrun]` which was caught during
+    #   a self-cancellation teardown msg drain.
+    _local_error: BaseException|None = None
+
+    # if the either side gets an error from the other
+    # this value is set to that error unpacked from an
+    # IPC msg.
+    _remote_error: BaseException|None = None
+
+    # only set if an actor-local task called `.cancel()`
+    # did WE request cancel of the far end?
+    _cancel_called: bool = False
+
+    # TODO: do we even need this? we can assume that if we're
+    # cancelled that the other side is as well, so maybe we should
+    # instead just have a `.canceller` pulled from the
+    # `ContextCancelled`?
+    _canceller: tuple[str, str]|None = None
+
+    # NOTE: we try to ensure assignment of a "cancel msg" since
+    # there's always going to be an "underlying reason" that any
+    # context was closed due to either a remote side error or
+    # a call to `.cancel()` which triggers `ContextCancelled`.
+    _cancel_msg: str|dict|MsgType|None = None
+
+    # init and streaming state
+    _started_called: bool = False
+    _started_msg: MsgType|None = None
+    _started_pld: Any = None
+    _stream_opened: bool = False
+
+    def _final_result_is_set(self) -> bool:
+        '''
+        Report a resolved result, not merely a buffered Return.
+
+        '''
+        return self._result is not Unresolved
+
+    def pformat(
+        self,
+        field_indent: int = 2,
+        indent: int = 0,
+    ) -> str:
+        '''
+        Display status without changing global private-field rules.
+
+        Accept the same indentation arguments as `Struct.pformat`.
+        `repr(status)` and `str(status)` use this override; an
+        explicit `pretty_struct.pformat(status)` still uses the
+        global formatter's private-field filtering.
+
+        '''
+        prefix: str = ' ' * (indent + field_indent)
+        closing: str = ' ' * indent
+        fields: str = '\n'.join(
+            f'{prefix}{name}={getattr(self, name)!r},'
+            for name in self.__struct_fields__
+        )
+        return f'ContextStatus(\n{fields}\n{closing})'
+
+    __repr__ = pformat
+    __str__ = pformat
 
 
 # TODO: make this a .msg.types.Struct!
@@ -220,6 +344,14 @@ class Context:
     # full "namespace-path" to target RPC function
     _nsf: NamespacePath
 
+    _status: ContextStatus = field(
+        default_factory=ContextStatus,
+        init=False,
+    )
+    # Each Context owns one local scope lifetime. Reasons retain
+    # this identity marker, not the scope or its task tree.
+    _scope_token: object = field(default_factory=object, init=False)
+
     # the "invocation type" of the far end task-entry-point
     # function, normally matching a logic block inside
     # `._runtime.invoke()`.
@@ -252,45 +384,6 @@ class Context:
     # a drain loop?
     # _res_scope: trio.CancelScope|None = None
 
-    _outcome_msg: Return|Error|ContextCancelled = Unresolved
-
-    # on a clean exit there should be a final value
-    # delivered from the far end "child" task, so
-    # this value is only set on one side.
-    # _result: Any | int = None
-    _result: PayloadT|Unresolved = Unresolved
-
-    # if the local "parent"  task errors this value is always set
-    # to the error that was captured in the
-    # `Portal.open_context().__aexit__()` teardown block OR, in
-    # 2 special cases when an (maybe) expected remote error
-    #   arrives that we purposely swallow silently:
-    # - `ContextCancelled` with `.canceller` set to our uid:
-    #    a self-cancel,
-    # - `RemoteActorError[StreamOverrun]` which was caught during
-    #   a self-cancellation teardown msg drain.
-    _local_error: BaseException|None = None
-
-    # if the either side gets an error from the other
-    # this value is set to that error unpacked from an
-    # IPC msg.
-    _remote_error: BaseException|None = None
-
-    # only set if an actor-local task called `.cancel()`
-    _cancel_called: bool = False  # did WE request cancel of the far end?
-
-    # TODO: do we even need this? we can assume that if we're
-    # cancelled that the other side is as well, so maybe we should
-    # instead just have a `.canceller` pulled from the
-    # `ContextCancelled`?
-    _canceller: tuple[str, str]|None = None
-
-    # NOTE: we try to ensure assignment of a "cancel msg" since
-    # there's always going to be an "underlying reason" that any
-    # context was closed due to either a remote side error or
-    # a call to `.cancel()` which triggers `ContextCancelled`.
-    _cancel_msg: str|dict|None = None
-
     # NOTE: this state-var is used by the runtime to determine if the
     # `pdbp` REPL is allowed to engage on contexts terminated via
     # a `ContextCancelled` due to a call to `.cancel()` triggering
@@ -303,11 +396,6 @@ class Context:
     #   actors from being able to acquire the debugger lock.
     _enter_debugger_on_cancel: bool = True
 
-    # init and streaming state
-    _started_called: bool = False
-    _started_msg: MsgType|None = None
-    _started_pld: Any = None
-    _stream_opened: bool = False
     _stream: MsgStream|None = None
 
     # the parent-task's calling-fn's frame-info, the frame above
@@ -331,9 +419,7 @@ class Context:
     # starting a task inside this nursery that simply raised the
     # boxed exception. NOW, it's used for spawning overrun queuing
     # tasks when `.allow_overruns ==  True` !!!
-    _scope_nursery: trio.Nursery|None = None
-    # ^-TODO-^ change name?
-    # -> `._scope_tn` "scope task nursery"
+    _scope_tn: trio.Nursery|None = None
 
     # streaming overrun state tracking
     _in_overrun: bool = False
@@ -395,10 +481,10 @@ class Context:
             f' |_state: {self.repr_state!r}\n'
 
             f'   outcome{ds}{outcome_str}\n'
-            f'   result{ds}{self._result}\n'
+            f'   result{ds}{self._status._result}\n'
             f'   cancel_called{ds}{self.cancel_called}\n'
             f'   cancel_acked{ds}{self.cancel_acked}\n'
-            f'   canceller{ds}{self._canceller}\n'
+            f'   canceller{ds}{self._status._canceller}\n'
 
             # TODO: any other fields?
             # f'   maybe_error{ds}{self.maybe_error}\n'
@@ -406,7 +492,7 @@ class Context:
             # f'  cancelled_caught={self.cancelled_caught}\n'
             # -[ ] remove this ^ right?
 
-            # f'  _remote_error={self._remote_error}
+            # f'  _remote_error={self._status._remote_error}
         )
         if extra_fields:
             for key, val in extra_fields.items():
@@ -451,7 +537,7 @@ class Context:
           the `Portal.open_context()` block.
 
         '''
-        return self._cancel_called
+        return self._status._cancel_called
 
     # XXX, to debug who frickin sets it..
     # @cancel_called.setter
@@ -464,7 +550,7 @@ class Context:
     #         from .devx import pause_from_sync
     #         pause_from_sync()
 
-    #     self._cancel_called = val
+    #     self._status._cancel_called = val
 
     # TODO, use the `Actor.aid: Aid` instead!
     @property
@@ -475,7 +561,7 @@ class Context:
         (side of the) context to also be cancelled.
 
         '''
-        if canc := self._canceller:
+        if canc := self._status._canceller:
             return tuple(canc)
 
         return None
@@ -486,18 +572,18 @@ class Context:
 
     ) -> bool:
 
-        if not self._cancel_called:
+        if not self._status._cancel_called:
             return False
 
         re: BaseException|None = (
             remote_error
             or
-            self._remote_error
+            self._status._remote_error
         )
         # XXX we only report "this context" as self-cancelled
         # once we've received a ctxc from our direct-peer task
         # (aka we're `.cancel_acked`).
-        if not re:
+        if not isinstance(re, ContextCancelled):
             return False
 
         if from_uid := re.src_uid:
@@ -577,7 +663,7 @@ class Context:
             # and instead likely we received a remote side
             # # cancellation that was raised inside `.wait_for_result()`
             # or (
-            #     (se := self._local_error)
+            #     (se := self._status._local_error)
             #     and se is re
             # )
         )
@@ -709,6 +795,8 @@ class Context:
     def _maybe_cancel_and_set_remote_error(
         self,
         error: BaseException,
+        *,
+        local_protocol: bool = False,
 
         # TODO: manual toggle for cases where we wouldn't normally
         # mark ourselves cancelled but want to?
@@ -785,7 +873,7 @@ class Context:
         # result processing.
 
         # TODO: never do this right?
-        # if self._remote_error:
+        # if self._status._remote_error:
         #     return
 
         # XXX: denote and set the remote side's error so that
@@ -798,13 +886,16 @@ class Context:
             f'=> {self.side!r}: {self._actor.aid.reprol()}\n\n'
             f'{error!r}'
         )
-        self._remote_error: BaseException = error
+        self._status._remote_error: BaseException = error
 
         msgerr: bool = False
+        message: str|None = None
+        origin = 'local_error'
 
         # self-cancel (ack) or,
         # peer propagated remote cancellation.
         if isinstance(error, ContextCancelled):
+            origin = 'remote_cancel'
             # NOTE in the case error is a ctxc the canceller will
             # either be another peer or us. in the case where it's us
             # we mark ourself as the canceller of ourselves (a ctx
@@ -818,37 +909,53 @@ class Context:
             # !TODO, switching to `Actor.aid` here!
             if (canc := error.canceller) == self._actor.aid.uid:
                 whom: str = 'us'
-                self._canceller = canc
+                self._status._canceller = canc
             else:
                 whom = 'a remote peer (not us)'
-                self._canceller = error.src_uid
+                self._status._canceller = error.src_uid
 
-            log.cancel(
-                f'IPC context was cancelled by {whom}!\n\n'
-                f'{error}'
+            message: str = (
+                f'IPC context was cancelled by {whom}!\n'
+                f'\n'
+                f'{error!r}'
             )
+            log.cancel(message)
 
         elif isinstance(error, TransportClosed):
+            origin = 'local_transport'
             # TransportClosed is observed locally, not an Error msg
             # identifying a cancellation requester or failed task.
-            # Preserve Context._canceller rather than inventing a
-            # peer-originated cancellation from connection loss.
+            # Preserve ContextStatus._canceller rather than inventing
+            # a peer-originated cancellation from connection loss.
             cid: str = self.cid
-            log.warning(
+            message: str = (
                 f'Locally observed transport fault for ctx {cid!r}\n'
                 f'{error!r}'
             )
+            log.warning(message)
 
         elif isinstance(error, MsgTypeError):
+            # An emulated Error can name the peer as src_uid even
+            # when PldRx detected the invalid payload locally.
+            origin = (
+                'local_protocol' if local_protocol
+                else 'remote_task'
+            )
             msgerr = True
-            self._canceller = error.src_uid
-            log.error(
-                f'IPC dialog error due to msg-type caused by {self.peer_side!r} side\n\n'
+            self._status._canceller = error.src_uid
+            peer_side: str = self.peer_side
+            message: str = (
+                f'IPC dialog error due to msg-type caused by '
+                f'{peer_side!r} side\n'
+                f'\n'
                 f'{error}\n'
                 f'{pformat(self)}\n'
             )
+            log.error(message)
 
         else:
+            if isinstance(error, RemoteActorError):
+                origin = 'remote_task'
             # always record the cancelling actor's uid since its
             # cancellation state is linked and we want to know
             # which process was the cause / requester of the
@@ -859,7 +966,7 @@ class Context:
                 None,
             )
             # we mark the source actor as our canceller
-            self._canceller = maybe_error_src_uid
+            self._status._canceller = maybe_error_src_uid
             log.error(
                 f'Remote context error:\n\n'
                 # f'{pformat(self)}\n'
@@ -867,7 +974,7 @@ class Context:
             )
 
         if (
-            self._canceller is None
+            self._status._canceller is None
             and
             not isinstance(error, TransportClosed)
         ):
@@ -915,16 +1022,35 @@ class Context:
             ):
                 message: str = (
                     f'NOT Cancelling `Context._scope` since,\n'
-                    f'Context._cancel_on_msgerr = {self._cancel_on_msgerr}\n\n'
+                    f'Context._cancel_on_msgerr = {self._cancel_on_msgerr}\n'
+                    f'\n'
                     f'AND we got a msg-type-error!\n'
-                    f'{error}\n'
+                    f'{error!r}\n'
                 )
             else:
                 # TODO: it'd sure be handy to inject our own
                 # `trio.Cancelled` subtype here ;)
                 # https://github.com/goodboy/tractor/issues/368
-                message: str = 'Cancelling `Context._scope` !\n\n'
-                cs.cancel()
+                submsg: str = (
+                    message
+                    or
+                    f'{error!r}\n'
+                )
+                message: str = (
+                    'Cancelling `Context._scope` due to,\n'
+                    f'{submsg}'
+                )
+                cs.cancel(
+                    reason=ContextCancelReason(
+                        message=message,
+                        error=error,
+                        cid=self.cid,
+                        actor_uid=self._actor.aid.uid,
+                        peer_uid=self.chan.aid.uid,
+                        scope_token=self._scope_token,
+                        origin=origin,
+                    )
+                )
 
         # TODO, explicit condition for OoB (self-)cancellation?
         # - we called `Portal.cancel_actor()` from this actor
@@ -957,7 +1083,17 @@ class Context:
             # `._task` directly. IF the owner task is however
             # blocking elsewhere we need to interrupt it **now**.
             if not self._is_blocked_on_rx_chan():
-                cs.cancel()
+                cs.cancel(
+                    reason=ContextCancelReason(
+                        message=message,
+                        error=error,
+                        cid=self.cid,
+                        actor_uid=self._actor.aid.uid,
+                        peer_uid=self.chan.aid.uid,
+                        scope_token=self._scope_token,
+                        origin=origin,
+                    )
+                )
         else:
             # rx_stats = self._rx_chan.statistics()
             message: str = 'NOT cancelling `Context._scope` !\n\n'
@@ -1077,7 +1213,7 @@ class Context:
 
         '''
         side: str = self.side
-        self._cancel_called = True
+        self._status._cancel_called = True
         # ^ XXX for debug via the `@.setter`
         # self.cancel_called = True
 
@@ -1196,11 +1332,11 @@ class Context:
         our peer (task); if set immediately raise.
 
         This is a convenience wrapper for
-        `._maybe_raise_remote_err(self._remote_error)`.
+        `._maybe_raise_remote_err(self._status._remote_error)`.
 
         '''
         __tracebackhide__: bool = hide_tb
-        if re := self._remote_error:
+        if re := self._status._remote_error:
             return self._maybe_raise_remote_err(
                 re,
                 hide_tb=hide_tb,
@@ -1304,13 +1440,13 @@ class Context:
             # NOTE: we set the local scope error to any "self
             # cancellation" error-response thus "absorbing"
             # the error silently B)
-            if self._local_error is None:
-                self._local_error = remote_error
+            if self._status._local_error is None:
+                self._status._local_error = remote_error
 
             else:
                 log.warning(
                     'Local error already set for ctx?\n'
-                    f'{self._local_error}\n\n'
+                    f'{self._status._local_error}\n\n'
                     f'{self}'
                 )
 
@@ -1373,8 +1509,8 @@ class Context:
                 'Invalid usage of `Context.wait_for_result()`!\n'
                 'Not valid on child-side IPC ctx!\n'
             )
-        if self._final_result_is_set():
-            return self._result
+        if self._status._final_result_is_set():
+            return self._status._result
 
         assert self._rx_chan
         raise_overrun: bool = not self._allow_overruns
@@ -1408,12 +1544,12 @@ class Context:
             )
 
             # ?XXX, should already be set in `._deliver_msg()` right?
-            if self._outcome_msg is not Unresolved:
+            if self._status._outcome_msg is not Unresolved:
                 # from .devx import debug
                 # await debug.pause()
-                assert self._outcome_msg is outcome_msg
+                assert self._status._outcome_msg is outcome_msg
             else:
-                self._outcome_msg = outcome_msg
+                self._status._outcome_msg = outcome_msg
 
             if drained_msgs:
                 drained_status += (
@@ -1435,7 +1571,7 @@ class Context:
                 # should we raise overruns, bc ow we're
                 # raising something we know might happen
                 # during cancellation ;)
-                (not self._cancel_called)
+                (not self._status._cancel_called)
             ),
             hide_tb=hide_tb,
         )
@@ -1469,8 +1605,10 @@ class Context:
         Remote errors take precedence over local ones.
 
         '''
-        le: BaseException|None = self._local_error
-        re: RemoteActorError|ContextCancelled|None = self._remote_error
+        le: BaseException|None = self._status._local_error
+        re: RemoteActorError|ContextCancelled|None = (
+            self._status._remote_error
+        )
 
         match (le, re):
             # NOTE: remote errors always get precedence since even
@@ -1501,7 +1639,7 @@ class Context:
         if error:
             return error
 
-        if cancmsg := self._cancel_msg:
+        if cancmsg := self._status._cancel_msg:
             # NOTE: means we're prolly in the process of
             # processing the cancellation caused by
             # this msg (eg. logging from `Actor._cancel_task()`
@@ -1510,15 +1648,14 @@ class Context:
             # without it eventually resulting in this property
             # delivering a value!
             log.debug(
-                '`Context._cancel_msg` is set but has not yet resolved to `.maybe_error`?\n\n'
+                '`ContextStatus._cancel_msg` is set but has not yet '
+                'resolved to `Context.maybe_error`?\n'
+                '\n'
                 f'{cancmsg}\n'
             )
 
-        # assert not self._cancel_msg
+        # assert not self._status._cancel_msg
         return None
-
-    def _final_result_is_set(self) -> bool:
-        return self._result is not Unresolved
 
     # def get_result_nowait(self) -> Any|None:
     # def get_outcome_nowait(self) -> Any|None:
@@ -1554,12 +1691,15 @@ class Context:
         return (
             self.maybe_error
             or
-            self._result
+            self._status._result
         )
 
     @property
     def has_outcome(self) -> bool:
-        return bool(self.maybe_error) or self._final_result_is_set()
+        return (
+            bool(self.maybe_error)
+            or self._status._final_result_is_set()
+        )
 
     def repr_outcome(
         self,
@@ -1608,9 +1748,9 @@ class Context:
             )
 
         return (
-            str(self._result)
+            str(self._status._result)
             or
-            repr(self._result)
+            repr(self._status._result)
         )
 
     @property
@@ -1622,7 +1762,7 @@ class Context:
 
         '''
         merr: Exception|None = self.maybe_error
-        outcome: Unresolved|Exception|Any = self.outcome
+        outcome: type[Unresolved]|Exception|Any = self.outcome
         status: str|None = None
         match (
             outcome,
@@ -1637,7 +1777,7 @@ class Context:
                     status = 'self-cancelled'
                 elif (
                     self.canceller
-                    and not self._cancel_called
+                    and not self._status._cancel_called
                 ):
                     status = 'peer-cancelled'
 
@@ -1658,7 +1798,7 @@ class Context:
             case (
                 _,  # any non-unresolved value
                 None,
-            ) if self._final_result_is_set():
+            ) if self._status._final_result_is_set():
                 status = 'result-returned'
 
             # normal operation but still in a pre-`Return`-result
@@ -1673,7 +1813,7 @@ class Context:
                     else:
                         status = 'streaming'
 
-                elif self._started_called:
+                elif self._status._started_called:
                     status = 'started'
 
                 else:
@@ -1716,7 +1856,7 @@ class Context:
                 f'Caller side context {self} can not call started!'
             )
 
-        elif self._started_called:
+        elif self._status._started_called:
             raise RuntimeError(
                 f'called `.started()` twice on context with {self.chan.aid.uid}'
             )
@@ -1764,9 +1904,9 @@ class Context:
         await self.chan.send(started_msg)
 
         # set msg-related internal runtime-state
-        self._started_called: bool = True
-        self._started_msg: Started = started_msg
-        self._started_pld = value
+        self._status._started_called: bool = True
+        self._status._started_msg: Started = started_msg
+        self._status._started_pld = value
 
     async def _drain_overflows(
         self,
@@ -1831,7 +1971,7 @@ class Context:
 
         If `._allow_overruns == True` (maybe) append the msg to an
         "overflow queue" and start a "drainer task" (inside the
-        `._scope_nursery: trio.Nursery`) which ensures that such
+        `._scope_tn: trio.Nursery`) which ensures that such
         messages are queued up and eventually sent if possible.
 
          XXX RULES XXX
@@ -1883,7 +2023,7 @@ class Context:
                 f'{flow_body}'
                 f'{pformat(re)}\n'
             )
-            self._cancel_msg: dict = msg
+            self._status._cancel_msg: dict = msg
 
             # XXX NOTE: this will not raise an error, merely set
             # `._remote_error` and maybe cancel any task currently
@@ -1946,7 +2086,7 @@ class Context:
                         stream._stop_msg = msg
 
                 case Return():
-                    if self._outcome_msg is Unresolved:
+                    if self._status._outcome_msg is Unresolved:
                         log.warning(
                             f'Setting final outcome msg AFTER '
                             f'`._send_chan.send_nowait()`??\n'
@@ -1956,7 +2096,7 @@ class Context:
                         # Record receipt even while the owner is
                         # idle and has not drained the result yet.
                         # A subsequent EOF must not replace Return.
-                        self._outcome_msg = msg
+                        self._status._outcome_msg = msg
 
             return True
 
@@ -2009,7 +2149,7 @@ class Context:
                 f'  |_cid: {cid}\n'
                 f'  |_task: {self._task}\n'
             )
-            if not self._stream_opened:
+            if not self._status._stream_opened:
                 txt += (
                     f'\n'
                     f'*** No stream open on `{local_aid.name}` side! ***\n'
@@ -2030,7 +2170,7 @@ class Context:
                     not self._in_overrun
                 ):
                     self._overflow_q.append(msg)
-                    tn: trio.Nursery = self._scope_nursery
+                    tn: trio.Nursery = self._scope_tn
                     assert not tn.child_tasks
                     try:
                         tn.start_soon(
@@ -2222,7 +2362,7 @@ async def open_context_from_portal(
             # NOTE: this in an implicit runtime nursery used to,
             # - start overrun queuing tasks when as well as
             # for cancellation of the scope opened by the user.
-            ctx._scope_nursery: trio.Nursery = tn
+            ctx._scope_tn: trio.Nursery = tn
             ctx._scope: trio.CancelScope = tn.cancel_scope
 
             # XXX NOTE since `._scope` is NOT set BEFORE we retreive the
@@ -2272,9 +2412,9 @@ async def open_context_from_portal(
                     'Invalid cancellation during IPC ctx sync phase?\n'
                 ) from taskc
 
-            ctx._started_called: bool = True
-            ctx._started_msg: bool = started_msg
-            ctx._started_pld: bool = first
+            ctx._status._started_called: bool = True
+            ctx._status._started_msg: bool = started_msg
+            ctx._status._started_pld: bool = first
 
             # deliver context ref and `.started()` msg payload value
             # in `__aenter__` tuple.
@@ -2334,7 +2474,7 @@ async def open_context_from_portal(
     # of a `Context`. In both cases any `ContextCancelled`
     # raised in this scope-block came from a transport msg
     # relayed from some remote-actor-task which our runtime set
-    # as to `Context._remote_error`
+    # as to `ContextStatus._remote_error`
     #
     # the CASES:
     #
@@ -2366,7 +2506,7 @@ async def open_context_from_portal(
     #   `Nursery.cancel_scope.cancel()`)
     except ContextCancelled as ctxc:
         scope_err = ctxc
-        ctx._local_error: BaseException = scope_err
+        ctx._status._local_error: BaseException = scope_err
         ctxc_from_child = ctxc
 
         # XXX TODO XXX: FIX THIS debug_mode BUGGGG!!!
@@ -2384,9 +2524,9 @@ async def open_context_from_portal(
         # `.cancel()`, we don't raise and the exit block should
         # finish silently.
         if (
-            ctx._cancel_called
+            ctx._status._cancel_called
             and
-            ctxc is ctx._remote_error
+            ctxc is ctx._status._remote_error
             and
             ctxc.canceller == portal.actor.aid.uid
         ):
@@ -2411,7 +2551,7 @@ async def open_context_from_portal(
         # CASE 3: standard local error in this parent/yieldee
         Exception,
 
-        # CASES 1 & 2: can manifest as a `ctx._scope_nursery`
+        # CASES 1 & 2: can manifest as a `ctx._scope_tn`
         # exception-group of,
         #
         # 1.-`trio.Cancelled`s, since
@@ -2439,7 +2579,7 @@ async def open_context_from_portal(
 
     ) as rent_err:
         scope_err = rent_err
-        ctx._local_error: BaseException = scope_err
+        ctx._status._local_error: BaseException = scope_err
 
         # XXX: ALWAYS request the context to CANCEL ON any ERROR.
         # NOTE: `Context.cancel()` is conversely NEVER CALLED in
@@ -2509,7 +2649,7 @@ async def open_context_from_portal(
             # `Context.wait_for_result()` will ALWAYS raise
             # a `ContextCancelled` (via an embedded call to
             # `Context._maybe_raise_remote_err()`) IFF
-            # a `Context._remote_error` was set by the runtime
+            # a `ContextStatus._remote_error` was set by the runtime
             # via a call to
             # `Context._maybe_cancel_and_set_remote_error()`.
             # As per `Context._deliver_msg()`, that error IS
@@ -2526,7 +2666,7 @@ async def open_context_from_portal(
                 # this task didn't know until final teardown
                 # / value collection.
                 scope_err = berr
-                ctx._local_error: BaseException = scope_err
+                ctx._status._local_error: BaseException = scope_err
                 raise
 
             # yes this worx!
@@ -2624,17 +2764,17 @@ async def open_context_from_portal(
         # generally speaking mask runtime-machinery related
         # multi-`trio.Cancelled`s. As such, any `scope_error`
         # which was the underlying cause of this context's exit
-        # should be stored as the `Context._local_error` and
+        # should be stored as the `ContextStatus._local_error` and
         # used in determining `Context.cancelled_caught: bool`.
         if scope_err is not None:
             # sanity, tho can remove?
-            assert ctx._local_error is scope_err
-            # ctx._local_error: BaseException = scope_err
+            assert ctx._status._local_error is scope_err
+            # ctx._status._local_error: BaseException = scope_err
             # etype: Type[BaseException] = type(scope_err)
 
             # CASE 2
             if (
-                ctx._cancel_called
+                ctx._status._cancel_called
                 and ctx.cancel_acked
             ):
                 log.cancel(
@@ -2720,7 +2860,6 @@ def mk_context(
         _caller_info=caller_info,
         **kwargs,
     )
-    ctx._result = Unresolved
     return ctx
 
 

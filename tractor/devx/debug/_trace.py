@@ -696,7 +696,7 @@ async def pause(
     api_frame: FrameType = api_frame or inspect.currentframe()
 
     # XXX TODO: this was causing cs-stack corruption in trio due to
-    # usage within the `Context._scope_nursery` (which won't work
+    # usage within the `Context._scope_tn` (which won't work
     # based on scoping of it versus call to `_maybe_enter_debugger()`
     # from `._rpc._invoke()`)
     # with trio.CancelScope(

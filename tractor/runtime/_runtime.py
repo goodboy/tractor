@@ -1428,20 +1428,20 @@ class Actor:
             # f'    >> {ctx._nsf}()\n'
         )
         if (
-            ctx._canceller is None
+            ctx._status._canceller is None
             and requesting_aid
         ):
-            ctx._canceller: tuple = requesting_aid.uid
+            ctx._status._canceller: tuple = requesting_aid.uid
 
         # TODO: pack the RPC `{'cmd': <blah>}` msg into a ctxc and
         # then raise and pack it here?
         if (
             ipc_msg
-            and ctx._cancel_msg is None
+            and ctx._status._cancel_msg is None
         ):
             # assign RPC msg directly from the loop which usually
             # the case with `ctx.cancel()` on the other side.
-            ctx._cancel_msg = ipc_msg
+            ctx._status._cancel_msg = ipc_msg
 
         # don't allow cancelling this function mid-execution
         # (is this necessary?)
