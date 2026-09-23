@@ -1102,7 +1102,9 @@ async def request_root_stdio_lock(
 
                             # sync with child-side root locker task
                             # completion
-                            status: LockStatus = await req_ctx.result()
+                            status: LockStatus = (
+                                await req_ctx.wait_for_result()
+                            )
                             assert not status.locked
                             DebugStatus.lock_status = status
 

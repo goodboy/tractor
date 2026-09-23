@@ -80,7 +80,7 @@ def test_child_attaches_alot():
                         ==
                         _key
                     )
-                await ctx.result()
+                await ctx.wait_for_result()
 
             await portal.cancel_actor()
 

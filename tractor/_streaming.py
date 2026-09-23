@@ -516,7 +516,7 @@ class MsgStream(trio.abc.Channel):
         # is arguably more confusing since we lose detection of the
         # runtime's closure of ``rx_chan`` in the case where we may
         # still need to consume msgs that are "in transit" from the far
-        # end (eg. for ``Context.result()``).
+        # end (eg. for ``Context.wait_for_result()``).
         # self._closed = True
         return drained
 

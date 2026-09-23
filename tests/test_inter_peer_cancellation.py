@@ -468,12 +468,13 @@ def test_peer_canceller(
 
                     try:
                         print('PRE CONTEXT RESULT')
-                        res = await sleeper_ctx.result()
+                        res = await sleeper_ctx.wait_for_result()
                         assert res
 
                         # should never get here
                         pytest.fail(
-                            'Context.result() did not raise ctx-cancelled?'
+                            'Context.wait_for_result() did not '
+                            'raise ctx-cancelled?'
                         )
 
                     # should always raise since this root task does
@@ -650,7 +651,8 @@ def test_peer_canceller(
                 #   propagated
                 #
                 else:
-                    # since sleeper_ctx.result() IS called above
+                    # since sleeper_ctx.wait_for_result() IS called
+                    # above
                     # we should have (silently) absorbed the
                     # corresponding `ContextCancelled` for it and
                     # `._scope.cancel()` should never have been
@@ -694,7 +696,7 @@ def test_peer_canceller(
 
                         # the recorded local erro should always be
                         # the same as the one raised by the
-                        # `sleeper_ctx.result()` call
+                        # `sleeper_ctx.wait_for_result()` call
                         assert (
                             le
                             and
@@ -715,7 +717,8 @@ def test_peer_canceller(
                             assert not ctx.cancel_called
                             assert not ctx.cancel_acked
 
-                            # since sleeper_ctx.result() IS called
+                            # since sleeper_ctx.wait_for_result()
+                            # IS called
                             # above we should have (silently)
                             # absorbed the corresponding
                             # `ContextCancelled` for it and thus
@@ -736,7 +739,8 @@ def test_peer_canceller(
                             # a `Portal.cancel_actor()` to the
                             # sleeper and thus never should call
                             # `ctx.cancel()` per say UNLESS the
-                            # sleeper's `.result()` call above
+                            # sleeper's `.wait_for_result()` call
+                            # above
                             # ctxc exception results in the
                             # canceller's
                             # `.open_context().__aexit__()` error
@@ -1176,7 +1180,8 @@ def test_peer_spawns_and_cancels_service_subactor(
                         await client_ctx.cancel()
                         print(
                             '-> root cancelling client,\n'
-                            '-> root checking `client_ctx.result()`,\n'
+                            '-> root checking '
+                            '`client_ctx.wait_for_result()`,\n'
                             f'-> checking that sub-spawn {peer_name} is down\n'
                         )
 

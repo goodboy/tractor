@@ -51,9 +51,10 @@ The ``@context`` decorator
              maybe_error,
              outcome
 
-.. deprecated:: 0.1.0a6
+.. note::
 
-   ``Context.result()`` warns; use :meth:`Context.wait_for_result`.
+   ``Context.result()`` has been removed; replace calls with
+   :meth:`Context.wait_for_result`.
 
 .. note::
 

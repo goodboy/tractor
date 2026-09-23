@@ -82,7 +82,7 @@ class PayloadMsg(
     (i.e. any values passed by `tractor` application code using any of
 
       |_ `._streaming.MsgStream.send/receive()`
-      |_ `._context.Context.started/result()`
+      |_ `._context.Context.started/wait_for_result()`
       |_ `._ipc.Channel.send/recv()`
 
      aka our "IPC primitive APIs")

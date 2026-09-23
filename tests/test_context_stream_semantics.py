@@ -55,7 +55,7 @@ from ._helpers import (
 #   call ``Context.started()`` to unblock this entry on the parent side.
 #   the child task executes until complete and returns a final value
 #   which is delivered to the parent side and retreived via
-#   ``Context.result()``.
+#   ``Context.wait_for_result()``.
 
 # - cancel termination:
 #   context can be cancelled on either side where either end's task can
@@ -514,7 +514,9 @@ def test_simple_context(
                         if child_blocks_forever:
                             await portal.run(assert_state, value=True)
                         else:
-                            assert await ctx.result() == 'yo'
+                            assert (
+                                await ctx.wait_for_result() == 'yo'
+                            )
 
                         if pointlessly_open_stream:
                             async with ctx.open_stream():
@@ -593,7 +595,7 @@ def test_parent_cancels(
     '''
     Verify that when the opening side of a context (aka the parent)
     cancels that context, the ctx does not raise a cancelled when
-    either calling `.result()` or on context exit.
+    either calling `.wait_for_result()` or on context exit.
 
     '''
     async def check_canceller(
@@ -608,7 +610,7 @@ def test_parent_cancels(
             and not child_returns_early
         ):
             try:
-                res = await ctx.result()
+                res = await ctx.wait_for_result()
                 assert 0, 'Portal cancel should raise!'
 
             except ContextCancelled as ctxc:
@@ -624,7 +626,7 @@ def test_parent_cancels(
         # silently!
         else:
             try:
-                res = await ctx.result()
+                res = await ctx.wait_for_result()
             except ContextCancelled as ctxc:
                 pytest.fail(f'should not have raised ctxc\n{ctxc}')
 
@@ -726,8 +728,9 @@ def test_parent_cancels(
             #
             # WHY: the `.cancel_actor()` case (cancel_method='portal')
             # will cause both:
-            #  * the `ctx.result()` inside `.open_context().__aexit__()`
-            #  * AND the `ctx.result()` inside `check_canceller()`
+            #  * `ctx.wait_for_result()` inside
+            #    `.open_context().__aexit__()`
+            #  * AND `ctx.wait_for_result()` in `check_canceller()`
             # to raise ctxc.
             #
             #   which should in turn cause `ctx._scope` to
@@ -1504,7 +1507,9 @@ def test_maybe_allow_overruns_stream(
                         print('Requesting `ctx.cancel()` in parent!')
                         await ctx.cancel()
 
-                res: str|ContextCancelled = await ctx.result()
+                res: str|ContextCancelled = (
+                    await ctx.wait_for_result()
+                )
 
                 if cancel_ctx:
                     assert isinstance(res, ContextCancelled)

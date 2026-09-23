@@ -1376,7 +1376,7 @@ def _raise_from_unexpected_msg(
       and raised locally as -> `trio.EndOfChannel`
 
     - All other mis-keyed msgss (like say a "final result"
-      'return' msg, normally delivered from `Context.result()`)
+      'return' msg, normally from `Context.wait_for_result()`)
       are re-boxed inside a `MessagingError` with an explicit
       exc content describing the missing IPC-msg-key.
 
@@ -1433,7 +1433,8 @@ def _raise_from_unexpected_msg(
             log.debug(message)
 
             # TODO: if the a local task is already blocking on
-            # a `Context.result()` and thus a `.receive()` on the
+            # a `Context.wait_for_result()` and thus `.receive()`
+            # on the
             # rx-chan, we close the chan and set state ensuring that
             # an eoc is raised!
 
@@ -1450,7 +1451,8 @@ def _raise_from_unexpected_msg(
             # call (likely by another task using a broadcast receiver)
             # doesn't accidentally pull the `return` message
             # value out of the underlying feed mem chan which is
-            # destined for the `Context.result()` call during ctx-exit!
+            # destined for `Context.wait_for_result()` during
+            # ctx-exit!
             stream._eoc: Exception = eoc
 
             # in case there already is some underlying remote error

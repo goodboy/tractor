@@ -359,7 +359,9 @@ def test_basic_payload_spec(
                 assert first.field == 'yo'
 
                 try:
-                    res: None|PldMsg = await ctx.result(hide_tb=False)
+                    res: None|PldMsg = await ctx.wait_for_result(
+                        hide_tb=False,
+                    )
                     assert res is None
                 except MsgTypeError as mte:
                     maybe_mte = mte

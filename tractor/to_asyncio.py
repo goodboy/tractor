@@ -679,7 +679,7 @@ def _run_asyncio_task(
             #   and then set any final `res` from above as a field
             #   that can optionally be read by the trio-paren-task as
             #   needed (just like in our
-            #   `Context.wait_for_result()/.result` API yah?
+            #   `Context.wait_for_result()` API yah?
             #
             # if provide_channels:
 

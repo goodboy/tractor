@@ -725,7 +725,8 @@ async def drain_to_final_msg(
                 # a final result or error/ctxc.
                 else:
                     report: str = (
-                        'Ignoring "yield" msg during `ctx.result()` drain..\n'
+                        'Ignoring "yield" msg during '
+                        '`ctx.wait_for_result()` drain..\n'
                         f'<= {ctx.chan.aid.uid}\n'
                         f'  |_{ctx._nsf}()\n\n'
                         f'=> {ctx._task}\n'

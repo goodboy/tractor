@@ -400,7 +400,7 @@ def test_context_spawns_aio_task_that_errors(
                 async with expect_ctxc(
                     yay=parent_cancels == 'actor',
                 ):
-                    await ctx.result()
+                    await ctx.wait_for_result()
 
                 if parent_cancels == 'context':
                     # to tear down sub-acor

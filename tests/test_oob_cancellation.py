@@ -40,7 +40,7 @@ from tractor import (  # typing
 #     `raise scope_error from ctxc`?
 #
 # -[ ] a self-cancelled context, if not allowed to block on
-#     `ctx.result()` at some point will hang since the `ctx._scope`
+#     `ctx.wait_for_result()` will hang since the `ctx._scope`
 #     is never `.cancel_called`; cases for this include,
 #     - an `open_ctx()` which never starteds before being OoB actor
 #       cancelled.

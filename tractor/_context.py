@@ -1473,6 +1473,10 @@ class Context:
 
         raise remote_error
 
+    # TODO: consider renaming this API!
+    # -[ ] should be named `.wait_for_outcome()` and instead do
+    #     a `.outcome.Outcome.unwrap()` ?
+    #
     async def wait_for_result(
         self,
         hide_tb: bool = True,
@@ -1578,24 +1582,6 @@ class Context:
         # TODO: eventually make `.outcome: Outcome` and thus return
         # `self.outcome.unwrap()` here?
         return self.outcome
-
-    # TODO: switch this with above!
-    # -[ ] should be named `.wait_for_outcome()` and instead do
-    #     a `.outcome.Outcome.unwrap()` ?
-    #
-    async def result(
-        self,
-        *args,
-        **kwargs,
-    ) -> Any|Exception:
-        log.warning(
-            '`Context.result()` is DEPRECATED!\n'
-            'Use `Context.[no]wait_for_result()` instead!\n'
-        )
-        return await self.wait_for_result(
-            *args,
-            **kwargs,
-        )
 
     @property
     def maybe_error(self) -> BaseException|None:
