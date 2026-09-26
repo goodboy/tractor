@@ -46,7 +46,6 @@ from trio import (
 from ..ipc import Channel
 from .._context import (
     Context,
-    Unresolved,
 )
 from .._exceptions import (
     ContextCancelled,
@@ -1369,13 +1368,13 @@ async def process_messages(
             )
 
     except TransportClosed as tc:
-        # MsgpackTransport._iter_pkts() raises TransportClosed for
+        # MsgpackTransport._iter_packets() raises TransportClosed for
         # a socket EOF (including an empty frame header), or wraps
         # a reset/read error. This is not MsgStream's EndOfChannel
         # after a protocol Stop, nor a Context's final Return.
         #
-        # Proposed policy, pending the transport-fault review:
-        # an unfinished parent Context has lost its connection,
+        # Once this channel is terminally closed, an unfinished
+        # parent Context has lost its connection,
         # NOT necessarily its remote task. The call below cancels
         # Context._scope even when its owner is blocked in unrelated
         # application code. That checkpoint sees trio.Cancelled;
@@ -1385,16 +1384,17 @@ async def process_messages(
         #
         # Actor._contexts can include multiple connections to one
         # peer. Match Context.chan by identity to leave other channels
-        # alone. Preserve received outcomes, including a Return which
-        # its owner has not drained, instead of replacing them by EOF.
+        # alone. ContextStatus._outcome_is_unfinished() is shared with
+        # context teardown to preserve received outcomes, including
+        # a Return its owner has not drained. Here only notify if no
+        # error is recorded yet; teardown instead raises that error.
         for ctx in tuple(actor._contexts.values()):
             if (
                 ctx.chan is chan
                 and ctx.side == 'parent'
                 and ctx._scope is not None
                 and ctx._status._remote_error is None
-                and ctx._status._outcome_msg is Unresolved
-                and not ctx._status._final_result_is_set()
+                and ctx._status._outcome_is_unfinished()
             ):
                 ctx._maybe_cancel_and_set_remote_error(tc)
 
@@ -1407,7 +1407,7 @@ async def process_messages(
         # TODO: maybe add a teardown handshake? and,
         # -[x] don't show this msg if it's an ephemeral discovery ep call?
         #  |_ see the below `.report_n_maybe_raise()` impl as well as
-        #     tc-exc input details in `MsgpackTCPStream._iter_pkts()`
+        #     tc-exc input details in `MsgpackTCPStream._iter_packets()`
         #     for different read-failure cases.
         # -[ ] figure out how this will break with other transports?
         tc.report_n_maybe_raise(

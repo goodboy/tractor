@@ -24,6 +24,10 @@ from contextlib import (
 )
 import os
 import pathlib
+from multiprocessing.process import BaseProcess
+
+import psutil
+import trio
 
 import tractor
 from tractor.devx.debug import (
@@ -35,6 +39,24 @@ from .pytest import (
 from .fault_simulation import (
     break_ipc as break_ipc,
 )
+
+
+def assert_child_reaped(
+    proc: trio.Process|BaseProcess,
+) -> None:
+    '''
+    Check a test-owned child's completion without doing any cleanup.
+
+    The caller retains the handle from its own actor nursery. A
+    return code alone does not prove PID disappearance; check both.
+    Unlike `_reap.reap()`, this never discovers or signals processes.
+
+    '''
+    if isinstance(proc, trio.Process):
+        assert proc.returncode is not None
+    else:
+        assert proc.exitcode is not None
+    assert not psutil.pid_exists(proc.pid)
 
 
 # TODO, use dulwhich for this instead?

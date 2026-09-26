@@ -1,111 +1,78 @@
 '''
-Complex edge case where during real-time streaming the IPC tranport
-channels are wiped out (purposely in this example though it could have
-been an outage) and we want to ensure that despite being in debug mode
-(or not) the user can sent SIGINT once they notice the hang and the
-actor tree will eventually be cancelled without leaving any zombies.
+Detect a closed IPC transport during real-time streaming.
+
+Detected closure must fail an unfinished context promptly, including
+when the peer sent a stream stop first. Only the no-break example
+simulates a user pressing Ctrl-C to cancel a healthy actor tree.
 
 '''
 from contextlib import asynccontextmanager as acm
-from functools import partial
 
 from tractor import (
     open_nursery,
     context,
     Context,
-    ContextCancelled,
-    MsgStream,
     _testing,
-    trionics,
-    TransportClosed,
 )
 import trio
-import pytest
-
-
-async def break_ipc_then_error(
-    stream: MsgStream,
-    break_ipc_with: str|None = None,
-    pre_close: bool = False,
-):
-    await _testing.break_ipc(
-        stream=stream,
-        method=break_ipc_with,
-        pre_close=pre_close,
-    )
-    async for msg in stream:
-        await stream.send(msg)
-
-    assert 0
-
-
-async def iter_ipc_stream(
-    stream: MsgStream,
-    break_ipc_with: str|None = None,
-    pre_close: bool = False,
-):
-    async for msg in stream:
-        await stream.send(msg)
 
 
 @context
 async def recv_and_spawn_net_killers(
-
     ctx: Context,
     break_ipc_after: bool|int = False,
     pre_close: bool = False,
-
 ) -> None:
     '''
-    Receive stream msgs and spawn some IPC killers mid-stream.
+    Echo messages until a single, sequence-numbered IPC break.
+
+    Break before echoing the trigger so the caller is waiting for
+    that reply, rather than racing another send against peer close.
+    Keep this context unfinished: stream stop is not a final result.
 
     '''
-    broke_ipc: bool = False
     await ctx.started()
-    async with (
-        ctx.open_stream() as stream,
-        trionics.collapse_eg(),
-        trio.open_nursery() as tn,
-    ):
+    async with ctx.open_stream() as stream:
         async for i in stream:
-            print(f'child echoing {i}')
-            if not broke_ipc:
-                await stream.send(i)
-            else:
-                await trio.sleep(0.01)
-
             if (
                 break_ipc_after
                 and
                 i >= break_ipc_after
             ):
-                broke_ipc = True
-                tn.start_soon(
-                    iter_ipc_stream,
-                    stream,
+                if pre_close:
+                    await stream.aclose()
+                    # Protocol Stop closes the stream, not its IPC.
+                    assert stream.closed
+                    assert ctx.chan.connected()
+                await _testing.break_ipc(
+                    stream=stream,
+                    pre_close=False,
                 )
-                tn.start_soon(
-                    partial(
-                        break_ipc_then_error,
-                        stream=stream,
-                        pre_close=pre_close,
-                    )
-                )
+                await trio.sleep_forever()
+
+            print(f'child echoing {i}')
+            await stream.send(i)
 
 
 @acm
 async def stuff_hangin_ctlc(timeout: float = 1) -> None:
+    '''
+    Simulate Ctrl-C when a healthy stream makes no progress.
 
+    Detected-fault runs use a failing deadline instead, so a timeout
+    cannot masquerade as successful transport-failure propagation.
+
+    '''
     with trio.move_on_after(timeout) as cs:
         yield timeout
 
     if cs.cancelled_caught:
-        # pretend to be a user seeing no streaming action
-        # thinking it's a hang, and then hitting ctl-c..
+        # Pretend to be a user seeing no streaming action,
+        # thinking it's a hang, and then hitting Ctrl-C.
         print(
-            f"i'm a user on the PARENT side and thingz hangin "
-            f'after timeout={timeout} ???\n\n'
-            'MASHING CTlR-C..!?\n'
+            f'PARENT streaming stalled after {timeout}s\n'
+            f'\n'
+            f'MASHING Ctrl-C..!\n'
         )
         raise KeyboardInterrupt
 
@@ -115,153 +82,85 @@ async def main(
     start_method: str = 'trio',
     loglevel: str = 'cancel',
 
-    # by default we break the parent IPC first (if configured to break
-    # at all), but this can be changed so the child does first (even if
-    # both are set to break).
+    # By default the parent breaks first, if configured to break
+    # at all. Reverse the thresholds to make the child break first.
     break_parent_ipc_after: int|bool = False,
     break_child_ipc_after: int|bool = False,
     pre_close: bool = False,
     tpt_proto: str = 'tcp',
-
+    reg_addr: tuple[str, int|str]|None = None,
 ) -> None:
+    '''
+    Run a bounded close scenario or demonstrate Ctrl-C cancellation.
 
-    async with (
-        open_nursery(
-            start_method=start_method,
+    Tests pass their unique registrar address explicitly. Standalone
+    invocation retains the runtime's default address selection.
 
-            # NOTE: even debugger is used we shouldn't get
-            # a hang since it never engages due to broken IPC
-            debug_mode=debug_mode,
-            loglevel=loglevel,
-            enable_transports=[tpt_proto],
+    '''
+    registry_kwargs = {}
+    if reg_addr is not None:
+        registry_kwargs = {
+            'registry_addrs': [reg_addr],
+            'ensure_registry': True,
+        }
 
-        ) as an,
-    ):
-        sub_name: str = 'chitty_hijo'
+    async with open_nursery(
+        start_method=start_method,
+        # Even with debugging enabled, broken IPC must not hang
+        # trying to engage a debugger through the closed channel.
+        debug_mode=debug_mode,
+        loglevel=loglevel,
+        enable_transports=[tpt_proto],
+        **registry_kwargs,
+    ) as an:
         portal = await an.start_actor(
-            sub_name,
+            'chitty_hijo',
             enable_modules=[__name__],
         )
+        breaking = (
+            break_parent_ipc_after
+            or
+            break_child_ipc_after
+        )
+        async with portal.open_context(
+            recv_and_spawn_net_killers,
+            break_ipc_after=break_child_ipc_after,
+            pre_close=pre_close,
+        ) as (ctx, sent):
+            # A transport failure is not a remote cancellation RPC;
+            # do not require ContextCancelled or invent a canceller.
+            with trio.fail_after(3):
+                async with ctx.open_stream() as stream:
+                    for i in range(1000):
+                        if (
+                            break_parent_ipc_after
+                            and
+                            i >= break_parent_ipc_after
+                        ):
+                            # TODO: other methods? See break_ipc().
+                            # await ctx.chan.send(None)
+                            socket = ctx.chan.transport.stream
+                            # await socket.send_eof()
+                            await socket.aclose()
+                            assert not ctx.chan.connected()
+                            await trio.sleep_forever()
 
-        async with (
-            stuff_hangin_ctlc(timeout=2) as timeout,
-            _testing.expect_ctxc(
-                yay=(
-                    break_parent_ipc_after
-                    or
-                    break_child_ipc_after
-                ),
-                # TODO: we CAN'T remove this right?
-                # since we need the ctxc to bubble up from either
-                # the stream API after the `None` msg is sent
-                # (which actually implicitly cancels all remote
-                # tasks in the hijo) or from simluated
-                # KBI-mash-from-user
-                # or should we expect that a KBI triggers the ctxc
-                # and KBI in an eg?
-                reraise=True,
-            ),
-
-            portal.open_context(
-                recv_and_spawn_net_killers,
-                break_ipc_after=break_child_ipc_after,
-                pre_close=pre_close,
-            ) as (ctx, sent),
-        ):
-            rx_eoc: bool = False
-            ipc_break_sent: bool = False
-            async with ctx.open_stream() as stream:
-                for i in range(1000):
-
-                    if (
-                        break_parent_ipc_after
-                        and
-                        i > break_parent_ipc_after
-                        and
-                        not ipc_break_sent
-                    ):
-                        print(
-                            '#################################\n'
-                            'Simulating PARENT-side IPC BREAK!\n'
-                            '#################################\n'
-                        )
-
-                        # TODO: other methods? see break func above.
-                        # await stream._ctx.chan.send(None)
-                        # await stream._ctx.chan.transport.stream.send_eof()
-                        await stream._ctx.chan.transport.stream.aclose()
-                        ipc_break_sent = True
-
-                    # it actually breaks right here in the
-                    # mp_spawn/forkserver backends and thus the
-                    # zombie reaper never even kicks in?
-                    try:
-                        print(f'parent sending {i}')
                         await stream.send(i)
-                    except ContextCancelled as ctxc:
-                        print(
-                            'parent received ctxc on `stream.send()`\n'
-                            f'{ctxc}\n'
-                        )
-                        assert 'root' in ctxc.canceller
-                        assert sub_name in ctx.canceller
-
-                        # TODO: is this needed or no?
-                        raise
-
-                    except (
-                        trio.ClosedResourceError,
-                        TransportClosed,
-                    ) as _tpt_err:
-                        # NOTE: don't send if we already broke the
-                        # connection to avoid raising a closed-error
-                        # such that we drop through to the ctl-c
-                        # mashing by user.
-                        with trio.CancelScope(shield=True):
-                            await trio.sleep(0.01)
-
-                    # timeout: int = 1
-                    # with trio.move_on_after(timeout) as cs:
-                    async with stuff_hangin_ctlc() as timeout:
-                        print(
-                            f'PARENT `stream.receive()` with timeout={timeout}\n'
-                        )
-                        # NOTE: in the parent side IPC failure case this
-                        # will raise an ``EndOfChannel`` after the child
-                        # is killed and sends a stop msg back to it's
-                        # caller/this-parent.
-                        try:
+                        if breaking:
                             rx = await stream.receive()
-                            print(
-                                "I'm a happy PARENT user and echoed to me is\n"
-                                f'{rx}\n'
-                            )
-                        except trio.EndOfChannel:
-                            rx_eoc: bool = True
-                            print('MsgStream got EoC for PARENT')
-                            raise
+                        else:
+                            async with stuff_hangin_ctlc():
+                                rx = await stream.receive()
+                        assert rx == i
 
-            print(
-                'Streaming finished and we got Eoc.\n'
-                'Canceling `.open_context()` in root with\n'
-                'CTlR-C..'
-            )
-            if rx_eoc:
-                assert stream.closed
-                try:
-                    await stream.send(i)
-                    pytest.fail('stream not closed?')
-                except (
-                    TransportClosed,
-                    trio.ClosedResourceError,
-                    trio.EndOfChannel,
-                ) as send_err:
-                    if rx_eoc:
-                        assert send_err is stream._eoc
-                    else:
-                        assert send_err is stream._closed
+                if breaking:
+                    # open_stream() absorbs a peer's stop/EoC, but
+                    # open_context() still needs a result. EOF must
+                    # wake this wait without a later user SIGINT.
+                    await ctx.wait_for_result()
+                    raise AssertionError('broken ctx returned?')
 
-            raise KeyboardInterrupt
+                raise KeyboardInterrupt
 
 
 if __name__ == '__main__':

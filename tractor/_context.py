@@ -223,6 +223,23 @@ class ContextStatus(pretty_struct.Struct):
         '''
         return self._result is not Unresolved
 
+    def _outcome_is_unfinished(self) -> bool:
+        '''
+        Neither a received outcome nor a decoded result is available.
+
+        Shared by `process_messages()` on EOF notification and
+        `open_context_from_portal()` after absorbed scope
+        cancellation.
+        A buffered `Return` precedes decoding its payload; falsey
+        decoded values are still results, not `Unresolved`.
+
+        '''
+        return (
+            self._outcome_msg is Unresolved
+            and
+            self._result is Unresolved
+        )
+
     def pformat(
         self,
         field_indent: int = 2,
@@ -2623,24 +2640,46 @@ async def open_context_from_portal(
 
         raise  # duh
 
-    # no local scope error, the "clean exit with a result" case.
+    # No escaped scope error: either a result or absorbed task cancel.
     else:
-        if ctx.chan.connected():
+        if (
+            ctx.chan.connected()
+            or
+            (
+                # EOF cancels Context._scope, whose nursery absorbs
+                # its own trio.Cancelled. A disconnected channel must
+                # not bypass the recorded fault on that exit path.
+                # Share ContextStatus._outcome_is_unfinished() with
+                # process_messages(): preserve buffered Return and
+                # self-cancel ack state. Unlike that notification
+                # site, teardown checks for an already recorded
+                # TransportClosed rather than an absent error.
+                isinstance(
+                    ctx._status._remote_error,
+                    TransportClosed,
+                )
+                and
+                ctx._status._outcome_is_unfinished()
+            )
+        ):
             log.runtime(
                 'Waiting on final context result for\n'
                 f'peer: {uid}\n'
                 f'|_{ctx._task}\n'
             )
             # XXX NOTE XXX: the below call to
-            # `Context.wait_for_result()` will ALWAYS raise
-            # a `ContextCancelled` (via an embedded call to
-            # `Context._maybe_raise_remote_err()`) IFF
+            # `Context.wait_for_result()` raises a recorded error
+            # (via an embedded call to
+            # `Context._maybe_raise_remote_err()`) when
             # a `ContextStatus._remote_error` was set by the runtime
             # via a call to
             # `Context._maybe_cancel_and_set_remote_error()`.
-            # As per `Context._deliver_msg()`, that error IS
-            # ALWAYS SET any time "child" side fails and causes
-            # "parent side" cancellation via a `ContextCancelled` here.
+            # As per `Context._deliver_msg()`, that error is set
+            # when the "child" side fails and causes "parent side"
+            # cancellation. `process_messages()` also sets it for
+            # local transport loss: then we raise `TransportClosed`,
+            # not `ContextCancelled`, without waiting on IPC.
+            # The original cause and self-cancel ack policy survive.
             try:
                 result_or_err: Exception|Any = await ctx.wait_for_result()
             except BaseException as berr:

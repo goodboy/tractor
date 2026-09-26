@@ -19,7 +19,8 @@ _streams: dict[str, tractor.Context] = {}
 @tractor.context
 async def stream_peer(
     ctx: tractor.Context,
-) -> None:
+    result_value: None|bool|int|str = None,
+) -> None|bool|int|str:
     '''
     Publish a live stream and echo until its caller finishes.
 
@@ -32,6 +33,7 @@ async def stream_peer(
             if value == 'finish':
                 break
             await stream.send(value)
+    return result_value
 
 
 async def send_peer_eof(cid: str) -> None:
@@ -52,6 +54,7 @@ async def consume_peer(
     owner: tractor.Context,
     wait_on: str,
     reg_addr,
+    result_value: None|bool|int|str,
 ) -> bool:
     '''
     Exercise a sibling connection outside child supervision.
@@ -114,7 +117,10 @@ async def consume_peer(
             ):
                 try:
                     async with (
-                        peer.open_context(stream_peer) as (ctx, _),
+                        peer.open_context(
+                            stream_peer,
+                            result_value=result_value,
+                        ) as (ctx, _),
                         ctx.open_stream() as stream,
                     ):
                         assert await stream.receive() == 'ready'
@@ -139,7 +145,7 @@ async def consume_peer(
                             if wait_on == 'returned':
                                 assert (
                                     await ctx.wait_for_result()
-                                ) is None
+                                ) == result_value
                         # Export the cid only after stream startup
                         # and any graceful Return delivery. The root
                         # uses it to select the faulted connection.
@@ -153,6 +159,11 @@ async def consume_peer(
                             await paused.wait()
                         if not graceful:
                             pytest.fail('resumed without EOF')
+                    if graceful:
+                        assert ctx._status._result == result_value
+                        assert type(ctx._status._result) is type(
+                            result_value,
+                        )
                 except TransportClosed as exc:
                     assert not graceful
                     assert exc is ctx._status._remote_error
@@ -212,28 +223,35 @@ async def consume_peer(
 
 
 @pytest.mark.parametrize(
-    'wait_on',
+    'wait_on, result_value',
     [
         # Unfinished context blocked in its receive API: wake it
         # without requiring an outbound write to discover EOF.
-        'receive',
+        ('receive', None),
 
         # Unfinished context blocked on an application Event:
         # exercise the proposed interruption of non-IPC awaits.
-        'event',
+        ('event', None),
 
         # Final Return already consumed: preserve success when the
         # connection closes after its remote task has completed.
-        'returned',
+        ('returned', None),
+        ('returned', False),
+        ('returned', 0),
+        ('returned', ''),
 
         # Final Return received but not drained: preserve the same
         # success even though the owner has not requested its result.
-        'buffered',
+        ('buffered', None),
+        ('buffered', False),
+        ('buffered', 0),
+        ('buffered', ''),
     ],
 )
 def test_discovered_peer_eof(
     reg_addr,
     wait_on: str,
+    result_value: None|bool|int|str,
 ) -> None:
     '''
     Exercise the proposed EOF-driven cancellation of context owners.
@@ -257,6 +275,10 @@ def test_discovered_peer_eof(
     value or leaving it buffered while the owner pauses. Observing
     delivery and the EOF report synchronizes those races without a
     timing sleep. Neither completed owner may be cancelled by EOF.
+    Falsey payloads must remain completed outcomes in both states;
+    only the `Unresolved` sentinel permits EOF notification. Check
+    the final value and type after teardown so False and 0 cannot
+    accidentally pass as each other.
 
     '''
     async def main():
@@ -285,6 +307,7 @@ def test_discovered_peer_eof(
                 consume_peer,
                 wait_on=wait_on,
                 reg_addr=reg_addr,
+                result_value=result_value,
             ) as (ctx, cid):
                 # consume_peer exports cid after both owners are
                 # blocked; only then break their shared connection.

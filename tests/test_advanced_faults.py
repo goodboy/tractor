@@ -3,7 +3,7 @@ Sketchy network blackoutz, ugly byzantine gens, puedes eschuchar la
 cancelacion?..
 
 '''
-from functools import partial
+from contextlib import asynccontextmanager as acm
 from types import ModuleType
 
 import pytest
@@ -11,57 +11,184 @@ from _pytest.pathlib import import_path
 import trio
 import tractor
 from tractor import (
+    Portal,
     TransportClosed,
 )
+from tractor.runtime._supervise import ActorNursery
 from tractor._testing import (
     examples_dir,
     break_ipc,
+    assert_child_reaped,
 )
+
+
+@pytest.fixture
+def reaped_children(monkeypatch: pytest.MonkeyPatch):
+    '''
+    Retain spawned process handles and check synchronous reaping.
+
+    Snapshot each ActorNursery._children entry at publication, before
+    failure teardown removes it. Check both backend completion and
+    PID disappearance after trio.run(), without an external reaper.
+
+    '''
+    procs = []
+    start_actor = ActorNursery.start_actor
+
+    async def record_child(an, *args, **kwargs):
+        '''
+        Record only children spawned by this test's actor nursery.
+
+        '''
+        portal = await start_actor(an, *args, **kwargs)
+        procs.append(an._children[portal.channel.aid.uid][1])
+        return portal
+
+    monkeypatch.setattr(ActorNursery, 'start_actor', record_child)
+    yield procs
+    for proc in procs:
+        assert_child_reaped(proc)
+
+
+@pytest.fixture
+def fault_contexts(monkeypatch: pytest.MonkeyPatch):
+    '''
+    Observe fault state without altering cancellation or propagation.
+
+    Collect the entered `tractor.Context`s in a `list` delivered
+    to the consuming test. This allows introspecting a ctx's recorded
+    fault even if teardown incorrectly swallows that failure.
+
+    On teardown ensure transport-loss does not set
+    `ContextStatus._canceller`: connection loss alone supplies no
+    remote cancellation or task-error provenance. For the simulated
+    user-interrupt cases, ensure `Context.cancel_called` is True
+    because teardown requested cancellation of the remote task.
+
+    '''
+    contexts: list[tractor.Context] = []
+    open_context = Portal.open_context
+
+    @acm
+    async def record_context(portal, func, **kwargs):
+        '''
+        Hook into all `Portal.open_context() as pair` calls, stashing
+        their contexts in a `list` for consumption by dependent
+        tests for introspection.
+
+        '''
+        ctx: tractor.Context|None = None
+        try:
+            async with open_context(
+                portal,
+                func,
+                **kwargs,
+            ) as (ctx, sent):
+                if func.__name__ in {
+                    'recv_and_spawn_net_killers',
+                    'break_ipc_after_started',
+                }:
+                    contexts.append(ctx)
+                yield (ctx, sent)
+        finally:
+            if (
+                ctx in contexts
+                and
+                isinstance(ctx.maybe_error, TransportClosed)
+            ):
+                # MsgStream closure is distinct from transport loss.
+                # After teardown, send prioritizes the ctx error,
+                # while receive retains the stream's terminal marker.
+                stream = ctx._stream
+                assert stream.closed
+                assert not ctx.chan.connected()
+                with pytest.raises(TransportClosed) as err:
+                    await stream.send('after-close')
+                assert err.value is ctx.maybe_error
+                terminal = stream._eoc or stream._closed
+                assert isinstance(terminal, BaseException)
+                with pytest.raises(type(terminal)) as err:
+                    await stream.receive()
+                assert err.value is terminal
+
+    monkeypatch.setattr(Portal, 'open_context', record_context)
+    yield contexts
+    for ctx in contexts:
+        if isinstance(ctx.maybe_error, TransportClosed):
+            assert ctx.canceller is None
+        elif isinstance(ctx._status._local_error, KeyboardInterrupt):
+            assert ctx.cancel_called
+
+
+def assert_transport_closed(
+    exc: TransportClosed|BaseExceptionGroup,
+    local: bool,
+) -> tuple[TransportClosed, ...]:
+    '''
+    Validate every failure leaf, including its socket-level source.
+
+    Parent close interrupts receive with ClosedResourceError.
+    Peer close can report clean EOF or a reset, depending on buffered
+    traffic. No arbitrary exception or remote cancellation qualifies.
+
+    '''
+    if isinstance(exc, BaseExceptionGroup):
+        return tuple(
+            fault
+            for leaf in exc.exceptions
+            for fault in assert_transport_closed(leaf, local=local)
+        )
+
+    assert isinstance(exc, TransportClosed)
+    cause = exc.__cause__
+    assert exc.src_exc is cause
+    if local:
+        assert isinstance(cause, trio.ClosedResourceError)
+        assert 'closed locally' in str(exc)
+    elif cause is None:
+        assert 'gracefully closed' in str(exc)
+    else:
+        assert 'closed by peer' in str(exc)
+        assert isinstance(
+            cause,
+            (ValueError, trio.BrokenResourceError,
+             ConnectionResetError),
+        )
+        if isinstance(cause, ValueError):
+            assert 'unclean EOF' in str(cause)
+
+    # TODO, should we expect a certain exc-message (per tpt) too?
+    # e.g. cause.args[0] == 'another task closed this fd'
+    return (exc,)
 
 
 @pytest.mark.parametrize(
     'pre_aclose_msgstream',
-    [
-        False,
-        True,
-    ],
-    ids=[
-        'no_msgstream_aclose',
-        'pre_aclose_msgstream',
-    ],
+    [False, True],
+    ids=['no_msgstream_aclose', 'pre_aclose_msgstream'],
 )
 @pytest.mark.parametrize(
     'ipc_break',
     [
-        # no breaks
-        {
-            'break_parent_ipc_after': False,
-            'break_child_ipc_after': False,
-        },
+        # No breaks: retain the healthy Ctrl-C cancellation contract.
+        dict(break_parent_ipc_after=False,
+             break_child_ipc_after=False),
 
-        # only parent breaks
-        {
-            'break_parent_ipc_after': 500,
-            'break_child_ipc_after': False,
-        },
+        # Only parent breaks.
+        dict(break_parent_ipc_after=500,
+             break_child_ipc_after=False),
 
-        # only child breaks
-        {
-            'break_parent_ipc_after': False,
-            'break_child_ipc_after': 500,
-        },
+        # Only child breaks.
+        dict(break_parent_ipc_after=False,
+             break_child_ipc_after=500),
 
-        # both: break parent first
-        {
-            'break_parent_ipc_after': 500,
-            'break_child_ipc_after': 800,
-        },
-        # both: break child first
-        {
-            'break_parent_ipc_after': 800,
-            'break_child_ipc_after': 500,
-        },
+        # Both configured: parent breaks first.
+        dict(break_parent_ipc_after=500,
+             break_child_ipc_after=800),
 
+        # Both configured: child breaks first.
+        dict(break_parent_ipc_after=800,
+             break_child_ipc_after=500),
     ],
     ids=[
         'no_break',
@@ -75,238 +202,170 @@ def test_ipc_channel_break_during_stream(
     debug_mode: bool,
     loglevel: str,
     spawn_backend: str,
-    ipc_break: dict|None,
+    ipc_break: dict,
     pre_aclose_msgstream: bool,
     tpt_proto: str,
+    reg_addr: tuple[str, int|str],
+    reaped_children,
+    fault_contexts: list[tractor.Context],
 ):
     '''
-    Ensure we can have an IPC channel break its connection during
-    streaming and it's still possible for the (simulated) user to kill
-    the actor tree using SIGINT.
+    Detect local/peer closure without waiting for a later Ctrl-C.
 
-    We also verify the type of connection error expected in the parent
-    depending on which side if the IPC breaks first.
+    The old scenario required ContextCancelled and a hang even when
+    EOF had already notified the unfinished context. Sequence-number
+    thresholds choose the first breaker; the child closes before its
+    trigger reply, preventing the parent from advancing past it.
+
+    With pre-close, MsgStream absorbs the peer's `Stop`, but pending
+    Context.wait_for_result() must fail on transport loss. Check each
+    exception leaf and its source, bound teardown, and verify the
+    child is gone synchronously. No-break runs still raise synthetic
+    KeyboardInterrupt and reap the child through normal cancellation.
+
+    If Context._scope absorbs EOF-driven task cancellation, teardown
+    must raise the recorded fault despite a disconnected channel.
+    That path must not manufacture a cancel request or peer ack, and
+    must preserve the original TransportClosed object and its cause.
+
+    The fixture checks stream closure separately from transport
+    connectivity after unwinding, then retries send and receive to
+    verify their distinct error precedence and terminal identities.
 
     '''
-    if spawn_backend != 'trio':
-        if debug_mode:
-            pytest.skip('`debug_mode` only supported on `trio` spawner')
-
-        # non-`trio` spawners should never hit the hang condition that
-        # requires the user to do ctl-c to cancel the actor tree.
-        # expect_final_exc = trio.ClosedResourceError
-        expect_final_exc = TransportClosed
+    if spawn_backend != 'trio' and debug_mode:
+        pytest.skip('debug_mode only supported on trio spawner')
 
     mod: ModuleType = import_path(
-        examples_dir()
-        / 'advanced_faults'
+        examples_dir() / 'advanced_faults'
         / 'ipc_failure_during_stream.py',
         root=examples_dir(),
         consider_namespace_packages=False,
     )
-
-    # by def we expect KBI from user after a simulated "hang
-    # period" wherein the user eventually hits ctl-c to kill the
-    # root-actor tree.
-    expect_final_exc: BaseException = KeyboardInterrupt
-    expect_final_cause: BaseException|None = None
-
-    if (
-        # only expect EoC if trans is broken on the child side,
-        ipc_break['break_child_ipc_after'] is not False
+    parent = ipc_break['break_parent_ipc_after']
+    child = ipc_break['break_child_ipc_after']
+    breaking = parent or child
+    local = bool(
+        parent
         and
-        # AND we tell the child to call `MsgStream.aclose()`.
-        pre_aclose_msgstream
-    ):
-        # expect_final_exc = trio.EndOfChannel
-        # ^XXX NOPE! XXX^ since now `.open_stream()` absorbs this
-        # gracefully!
-        expect_final_exc = KeyboardInterrupt
-
-    # NOTE when ONLY the child breaks or it breaks BEFORE the
-    # parent we expect the parent to get a closed resource error
-    # on the next `MsgStream.receive()` and then fail out and
-    # cancel the child from there.
-    #
-    # ONLY CHILD breaks
-    if (
-        ipc_break['break_child_ipc_after']
-        and
-        ipc_break['break_parent_ipc_after'] is False
-    ):
-        # NOTE: we DO NOT expect this any more since
-        # the child side's channel will be broken silently
-        # and nothing on the parent side will indicate this!
-        # expect_final_exc = trio.ClosedResourceError
-
-        # NOTE: child will send a 'stop' msg before it breaks
-        # the transport channel BUT, that will be absorbed by the
-        # `ctx.open_stream()` block and thus the `.open_context()`
-        # should hang, after which the test script simulates
-        # a user sending ctl-c by raising a KBI.
-        if pre_aclose_msgstream:
-            expect_final_exc = KeyboardInterrupt
-
-            # XXX OLD XXX
-            # if child calls `MsgStream.aclose()` then expect EoC.
-            # ^ XXX not any more ^ since eoc is always absorbed
-            # gracefully and NOT bubbled to the `.open_context()`
-            # block!
-            # expect_final_exc = trio.EndOfChannel
-
-    # BOTH but, CHILD breaks FIRST
-    elif (
-        ipc_break['break_child_ipc_after'] is not False
-        and (
-            ipc_break['break_parent_ipc_after']
-            >
-            ipc_break['break_child_ipc_after']
+        (
+            (not child)
+            or
+            (parent < child)
         )
-    ):
-        if pre_aclose_msgstream:
-            expect_final_exc = KeyboardInterrupt
+    )
 
-    # NOTE when the parent IPC side dies (even if the child does as well
-    # but the child fails BEFORE the parent) we always expect the
-    # IPC layer to raise a closed-resource, NEVER do we expect
-    # a stop msg since the parent-side ctx apis will error out
-    # IMMEDIATELY before the child ever sends any 'stop' msg.
-    #
-    # ONLY PARENT breaks
-    elif (
-        ipc_break['break_parent_ipc_after']
-        and
-        ipc_break['break_child_ipc_after'] is False
-    ):
-        expect_final_exc = tractor.TransportClosed
-        expect_final_cause = trio.ClosedResourceError
+    async def run():
+        '''
+        Bound the example, including actor nursery teardown.
 
-    # BOTH but, PARENT breaks FIRST
-    elif (
-        ipc_break['break_parent_ipc_after'] is not False
-        and (
-            ipc_break['break_child_ipc_after']
-            >
-            ipc_break['break_parent_ipc_after']
-        )
-    ):
-        expect_final_exc = tractor.TransportClosed
-        expect_final_cause = trio.ClosedResourceError
-
-    with pytest.raises(
-        expected_exception=(
-            expect_final_exc,
-            ExceptionGroup,
-        ),
-    ) as excinfo:
-        try:
-            trio.run(
-                partial(
-                    mod.main,
-                    debug_mode=debug_mode,
-                    start_method=spawn_backend,
-                    loglevel=loglevel,
-                    pre_close=pre_aclose_msgstream,
-                    tpt_proto=tpt_proto,
-                    **ipc_break,
-                )
-            )
-        except KeyboardInterrupt as _kbi:
-            kbi = _kbi
-            if expect_final_exc is not KeyboardInterrupt:
-                pytest.fail(
-                    'Rxed unexpected KBI !?\n'
-                    f'{repr(kbi)}'
-                )
-
-            raise
-
-        except tractor.TransportClosed as _tc:
-            tc = _tc
-            if expect_final_exc is KeyboardInterrupt:
-                pytest.fail(
-                    'Unexpected transport failure !?\n'
-                    f'{repr(tc)}'
-                )
-            cause: Exception = tc.__cause__
-            assert (
-                # type(cause) is trio.ClosedResourceError
-                type(cause) is expect_final_cause
-
-                # TODO, should we expect a certain exc-message (per
-                # tpt) as well??
-                # and
-                # cause.args[0] == 'another task closed this fd'
+        '''
+        with trio.fail_after(10):
+            await mod.main(
+                debug_mode=debug_mode,
+                start_method=spawn_backend,
+                loglevel=loglevel,
+                pre_close=pre_aclose_msgstream,
+                tpt_proto=tpt_proto,
+                reg_addr=reg_addr,
+                **ipc_break,
             )
 
-            raise
-
-    # get raw instance from pytest wrapper
-    value = excinfo.value
-    if isinstance(value, ExceptionGroup):
-        excs: tuple[Exception] = value.exceptions
-        assert (
-            len(excs) <= 2
-            and
-            all(
-                isinstance(exc, TransportClosed)
-                for exc in excs
+    if not breaking:
+        with pytest.raises(KeyboardInterrupt):
+            trio.run(run)
+    else:
+        with pytest.raises((TransportClosed, ExceptionGroup)) as err:
+            trio.run(run)
+            ctx = fault_contexts[0]
+            pytest.fail(
+                'Transport failure was swallowed:\n'
+                f'{ctx.repr_outcome()}\n'
+                f'error={ctx.maybe_error!r}'
             )
-        )
-        final_exc = excs[0]
-        assert isinstance(final_exc, expect_final_exc)
+        faults = assert_transport_closed(err.value, local=local)
+        ctx = fault_contexts[0]
+        assert any(fault is ctx.maybe_error for fault in faults)
+        if ctx._scope.cancelled_caught:
+            error = ctx._status._remote_error
+            assert any(fault is error for fault in faults)
+            assert ctx._status._local_error is error
+            assert not ctx.cancel_called
+            assert not ctx.cancel_acked
+    assert len(reaped_children) == len(fault_contexts) == 1
 
 
 @tractor.context
 async def break_ipc_after_started(
     ctx: tractor.Context,
 ) -> None:
+    '''
+    Wait for the caller's stream barrier, then close unfinished IPC.
+
+    '''
     await ctx.started()
     async with ctx.open_stream() as stream:
+        assert await stream.receive() == 'ready'
 
         # TODO: make a test which verifies the error
         # for this, i.e. raises a `MsgTypeError`
         # await ctx.chan.send(None)
 
-        await break_ipc(
-            stream=stream,
-            pre_close=True,
-        )
-        print('child broke IPC and terminating')
+        await break_ipc(stream=stream, pre_close=True)
+        await trio.sleep_forever()
 
 
-def test_stream_closed_right_after_ipc_break_and_zombie_lord_engages():
+def test_stream_closed_right_after_ipc_break_and_zombie_lord_engages(
+    reg_addr: tuple[str, int|str],
+    tpt_proto: str,
+    spawn_backend: str,
+    loglevel: str,
+    reaped_children,
+    fault_contexts,
+):
     '''
-    Verify that is a subactor's IPC goes down just after bringing up
-    a stream the parent can trigger a SIGINT and the child will be
-    reaped out-of-IPC by the localhost process supervision machinery:
-    aka "zombie lord".
+    Reap a child after detected close without a later user SIGINT.
+
+    Previously the parent slept, timed out its context, then raised
+    KeyboardInterrupt to engage process supervision ("zombie lord").
+    EOF now notifies the unfinished context immediately. A ready
+    message ensures both streams exist before the child sends `Stop`
+    and closes IPC; the caller then waits for the missing result.
+
+    A bounded TransportClosed exit proves fault-driven teardown, and
+    reaped_children checks process completion and PID disappearance
+    synchronously. Timer-driven cancellation cannot pass this test.
 
     '''
     async def main():
-        with trio.fail_after(3):
-            async with tractor.open_nursery() as an:
+        '''
+        Await transport failure and bound the entire nursery exit.
+
+        '''
+        with trio.fail_after(10):
+            async with tractor.open_nursery(
+                registry_addrs=[reg_addr],
+                ensure_registry=True,
+                enable_transports=[tpt_proto],
+                start_method=spawn_backend,
+                loglevel=loglevel,
+            ) as an:
                 portal = await an.start_actor(
                     'ipc_breaker',
                     enable_modules=[__name__],
                 )
+                async with portal.open_context(
+                    break_ipc_after_started,
+                ) as (ctx, sent):
+                    async with ctx.open_stream() as stream:
+                        await stream.send('ready')
+                        await stream.receive()
+                    await ctx.wait_for_result()
+                    pytest.fail('broken context returned a result')
 
-                with trio.move_on_after(1):
-                    async with (
-                        portal.open_context(
-                            break_ipc_after_started
-                        ) as (ctx, sent),
-                    ):
-                        async with ctx.open_stream():
-                            await trio.sleep(0.5)
-
-                        print('parent waiting on context')
-
-                print(
-                    'parent exited context\n'
-                    'parent raising KBI..\n'
-                )
-                raise KeyboardInterrupt
-
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises((TransportClosed, ExceptionGroup)) as err:
         trio.run(main)
+    faults = assert_transport_closed(err.value, local=False)
+    ctx = fault_contexts[0]
+    assert any(fault is ctx.maybe_error for fault in faults)
+    assert len(reaped_children) == len(fault_contexts) == 1
