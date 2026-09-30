@@ -10,9 +10,15 @@ to the child, preserving cancellation through the subactor
 directions and the subactor ``Portal``'s cancel send. Registry
 traffic and the independent stdout control pipe remain usable.
 
+``stalled_context_with_shielded_peer`` parks both context directions
+but leaves ``staller_ptl`` usable. Only the child's ``probe_peer``
+task shields outer cancellation; this models a non-cooperative task,
+not an uninterruptible kernel call. Runtime hard-reaping is expected.
+
 '''
 import argparse
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from functools import partial
 import json
 import os
@@ -207,6 +213,8 @@ class StallableTransport:
 @tractor.context
 async def probe_peer(
     ctx: tractor.Context,
+    shield_peer: bool = False,
+    marker: str = '',
 ) -> None:
     '''
     Keep the peer context alive while the caller stalls IPC.
@@ -217,13 +225,51 @@ async def probe_peer(
     the previous response used buffered bytes. Only the external
     controller's SIGINT may terminate this test context.
 
+    With ``shield_peer``, enter an inner scope before publishing
+    ``Context.started()``. ``Actor._cancel_task()`` cancels the outer
+    ``Context._scope``, not this shield. Observe that pending cancel
+    and ``Actor._cancel_called`` inside the shield without completing
+    the task, so the parent must exhaust its cancel-ack budget.
+
     '''
-    await ctx.started(os.getpid())
-    async with ctx.open_stream() as stream:
-        assert await stream.receive() == 'probe'
-        await stream.send('probe-1')
-        await stream.send('probe-2')
-        await trio.sleep_forever()
+    with (
+        trio.CancelScope(shield=True)
+        if shield_peer else nullcontext()
+    ) as shield:
+        if shield_peer:
+            emit(
+                marker=marker,
+                event='shield_entered',
+                pid=os.getpid(),
+            )
+        await ctx.started(os.getpid())
+        async with ctx.open_stream() as stream:
+            assert await stream.receive() == 'probe'
+            await stream.send('probe-1')
+            await stream.send('probe-2')
+            if shield_peer:
+                actor: tractor.Actor = tractor.current_actor()
+                # Observe actor cancel-RPC receipt AND the outer
+                # context task's cancel request as distinct facts.
+                # Poll inside the shield so other child tasks can
+                # run; 0.01 is a scheduler yield, not a readiness
+                # delay or timeout. The controller verifies shield
+                # entry before SIGINT; runtime kill ends this task.
+                while not (
+                    actor._cancel_called
+                    and ctx._scope.cancel_called
+                ):
+                    await trio.sleep(0.01)
+                emit(
+                    marker=marker,
+                    event='shielded_cancel_pending',
+                    pid=os.getpid(),
+                    actor_cancel_received=actor._cancel_called,
+                    outer_cancel_called=ctx._scope.cancel_called,
+                    shield=shield.shield,
+                    shield_cancel_called=shield.cancel_called,
+                )
+            await trio.sleep_forever()
     raise AssertionError('Peer stream completed before cancellation')
 
 
@@ -267,10 +313,14 @@ async def root_main(
 
     ``mode`` selects ``healthy_ipc``, ``stalled_context_receive``,
     ``stalled_context_send``, ``stalled_context_send_and_receive``,
-    ``stalled_context_cancel_send``, or
+    ``stalled_context_cancel_send``,
+    ``stalled_context_with_shielded_peer``, or
     ``stalled_context_and_subactor_cancel_send``. The last case
     parks both context directions and the subactor ``Portal``'s
-    cancel request. ``port`` selects this root's registry address;
+    cancel request. The shielded-peer case also parks both context
+    directions, but retains usable control IPC and shields only
+    ``probe_peer``; both cases require runtime hard-reaping.
+    ``port`` selects this root's registry address;
     ``marker`` frames stdout events; ``state`` retains child and
     parked-I/O evidence for the SIGINT result.
 
@@ -309,10 +359,17 @@ async def root_main(
             # Most modes leave subactor ``Portal`` cancel usable.
             # ``stalled_context_and_subactor_cancel_send`` also
             # stalls its cancel send AND both context directions.
+            shield_peer: bool = mode == (
+                'stalled_context_with_shielded_peer'
+            )
             async with (
                 _connect_chan(peer_addr) as peer_channel,
                 open_portal(peer_channel) as peer_ptl,
-                peer_ptl.open_context(probe_peer) as (ctx, pid),
+                peer_ptl.open_context(
+                    probe_peer,
+                    shield_peer=shield_peer,
+                    marker=marker,
+                ) as (ctx, pid),
             ):
                 # Match the peer PID from ``Context.started()``.
                 assert pid == proc.pid
@@ -327,6 +384,7 @@ async def root_main(
                     'stalled_context_receive',
                     # Suspend context send and receive.
                     'stalled_context_send_and_receive',
+                    'stalled_context_with_shielded_peer',
                     # Also stall the subactor ``Portal`` cancel send.
                     'stalled_context_and_subactor_cancel_send',
                 }
@@ -338,7 +396,8 @@ async def root_main(
                 # ?TODO, in what cases is this set vs. not?
                 # sure would be handy to see that from this layer..
                 # ``stalled_context_receive``,
-                # ``stalled_context_send_and_receive``, and
+                # ``stalled_context_send_and_receive``,
+                # ``stalled_context_with_shielded_peer``, and
                 # ``stalled_context_and_subactor_cancel_send`` wait
                 # here; other cases consume both probe responses.
                 if stall_tpt.recv_stream.enabled:
@@ -358,12 +417,23 @@ async def root_main(
                     'stalled_context_send',
                     # Suspend both context directions.
                     'stalled_context_send_and_receive',
+                    'stalled_context_with_shielded_peer',
                     # Suspend ``Context.cancel()``'s timed send.
                     'stalled_context_cancel_send',
                     # Also suspend the subactor ``Portal`` cancel.
                     'stalled_context_and_subactor_cancel_send',
                 }
                 control_tpt: StallableTransport|None = None
+                if shield_peer:
+                    # Use the subactor ``Portal`` after shield entry,
+                    # ordered by its ``Context.started()`` call.
+                    # ``staller_ptl.channel`` remains usable despite
+                    # both directions of the distinct OOB context
+                    # ``ctx.chan`` being stalled.
+                    assert await staller_ptl.run(
+                        peer_address
+                    ) == peer_addr
+                    assert staller_ptl.cancel_timeout < float('inf')
                 if mode == (
                     'stalled_context_and_subactor_cancel_send'
                 ):
@@ -405,6 +475,13 @@ async def root_main(
                     emit(
                         marker=marker,
                         event='ready',
+                        **({
+                            'shield_peer': True,
+                            'control_usable': True,
+                            'cancel_timeout': (
+                                staller_ptl.cancel_timeout
+                            ),
+                        } if shield_peer else {}),
                         stalls=snapshot,
                         control=state.get(
                             'control_fault_active'
@@ -461,6 +538,7 @@ def main() -> None:
             'stalled_context_send_and_receive',
             'stalled_context_cancel_send',
             'stalled_context_and_subactor_cancel_send',
+            'stalled_context_with_shielded_peer',
         ),
     )
     parser.add_argument('port', type=int, nargs='?')

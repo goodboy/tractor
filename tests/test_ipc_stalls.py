@@ -229,6 +229,8 @@ def open_root_monitor(
         'stalled_context_cancel_send',
         # Both context directions plus subactor ``Portal`` cancel.
         'stalled_context_and_subactor_cancel_send',
+        # Shield the peer task; keep subactor control IPC usable.
+        'stalled_context_with_shielded_peer',
     ],
 )
 def test_stalled_channel_sigint(
@@ -278,6 +280,28 @@ def test_stalled_channel_sigint(
         ``Start(self.cancel)`` send. Require deadline expiration,
         runtime hard-reap logs, SIGKILL exit and completed waitpid.
 
+    - Shielded peer task with usable subactor ``Portal``:
+
+      - ``stalled_context_with_shielded_peer``: park both context
+        directions, but complete a control RPC after shield entry.
+        ``probe_peer`` enters its inner shield before publishing
+        ``Context.started()``.
+        Before SIGINT require that child's shield-entry event; after
+        SIGINT require its observation of ``Actor._cancel_called``
+        and cancelled outer ``Context._scope`` inside the still
+        uncancelled shield. Require cancel-ack budget expiry in the
+        runtime log, runtime hard-reaping, SIGKILL and waitpid proof.
+        ``tractor.runtime._supervise._try_cancel_then_kill()`` calls
+        ``Portal.cancel_actor(raise_on_timeout=True)``. Its bounded
+        RPC wait raises ``ActorTooSlowError`` in
+        ``tractor.runtime._portal``; the supervisor logs escalation
+        and calls ``proc.kill()``. The Trio spawner joins via
+        ``tractor.spawn._spawn.soft_kill()`` with
+        ``trio.Process.wait``; the root's ``os.waitpid()`` check
+        independently proves the child was already reaped.
+        An unshielded task's clean exit must fail these assertions.
+        This models outer-cancel resistance, not a kernel syscall.
+
     ``open_root_monitor()`` observes OS lifetime outside the actor
     tree. A ``Portal`` within the root cannot independently enforce
     a watchdog deadline or prove OS exit over stalled IPC. Missing
@@ -289,6 +313,8 @@ def test_stalled_channel_sigint(
     signalled: bool = False
     result: dict[str, Any]|None = None
     stalls: dict[str, bool]|None = None
+    shield_entered: bool = False
+    shield_cancel_pending: bool = False
     with open_root_monitor(mode=mode) as monitor:
         proc: subprocess.Popen[bytes] = monitor.proc
         for event in monitor.iter_events():
@@ -312,6 +338,7 @@ def test_stalled_channel_sigint(
                         'stalled_context_receive',
                         'stalled_context_send_and_receive',
                         'stalled_context_and_subactor_cancel_send',
+                        'stalled_context_with_shielded_peer',
                     }
                 )
                 assert stalls['send'] == (
@@ -320,6 +347,7 @@ def test_stalled_channel_sigint(
                         'stalled_context_send_and_receive',
                         'stalled_context_cancel_send',
                         'stalled_context_and_subactor_cancel_send',
+                        'stalled_context_with_shielded_peer',
                     }
                 )
                 assert stalls['finite_send'] == (
@@ -334,6 +362,12 @@ def test_stalled_channel_sigint(
                         'finite_send': True,
                     }
                 assert proc.poll() is None
+                if mode == 'stalled_context_with_shielded_peer':
+                    assert shield_entered
+                    assert event['shield_peer'] is True
+                    assert event['control_usable'] is True
+                    assert event['control'] is None
+                    assert 0 < event['cancel_timeout'] < 20
                 monitor.signal_root()
                 signalled = True
 
@@ -351,6 +385,27 @@ def test_stalled_channel_sigint(
                 assert mode == (
                     'stalled_context_and_subactor_cancel_send'
                 )
+
+            elif event['event'] == 'shield_entered':
+                assert mode == 'stalled_context_with_shielded_peer'
+                assert not signalled
+                assert not shield_entered
+                assert monitor.child is not None
+                assert event['pid'] == monitor.child.pid
+                shield_entered = True
+
+            elif event['event'] == 'shielded_cancel_pending':
+                assert mode == 'stalled_context_with_shielded_peer'
+                assert signalled
+                assert shield_entered
+                assert not shield_cancel_pending
+                assert monitor.child is not None
+                assert event['pid'] == monitor.child.pid
+                assert event['actor_cancel_received'] is True
+                assert event['outer_cancel_called'] is True
+                assert event['shield'] is True
+                assert event['shield_cancel_called'] is False
+                shield_cancel_pending = True
 
             else:
                 raise AssertionError(event)
@@ -384,6 +439,26 @@ def test_stalled_channel_sigint(
                 'escalating to `proc.kill()` (hard-reap)' in line
                 for line in monitor.transcript
             ), 'Missing runtime hard-reap evidence'
+        elif mode == 'stalled_context_with_shielded_peer':
+            assert shield_cancel_pending
+            assert result['control_fault_active'] is None
+            # ``_supervise._try_cancel_then_kill()`` kills the child
+            # when its shield prevents the cancel RPC completing:
+            # ``proc.kill()`` produces this negative SIGKILL status.
+            # ``_spawn.soft_kill()`` joins via ``trio.Process.wait``;
+            # ``child_reaped`` above proves the OS wait completed.
+            # This log identifies supervisor escalation, distinct
+            # from the Trio spawner's legacy ``hard_kill`` fallback.
+            assert result['child_returncode'] == -signal.SIGKILL
+            assert any(
+                'did not ack its `Actor.cancel()` RPC within '
+                'bounded wait' in line
+                for line in monitor.transcript
+            ), 'Missing runtime cancel-ack budget expiry'
+            assert any(
+                'escalating to `proc.kill()` (hard-reap)' in line
+                for line in monitor.transcript
+            ), 'Missing runtime hard-reap evidence'
         else:
             # The baseline and context-only faults retain a usable
             # subactor ``Portal``: cooperative child exit is clean.
@@ -395,8 +470,9 @@ def test_stalled_channel_sigint(
             'mode': mode,
             'root_returncode': proc.returncode,
             'watchdog_forced_cleanup': False,
-            'runtime_hard_reap': mode == (
-                'stalled_context_and_subactor_cancel_send'
-            ),
+            'runtime_hard_reap': mode in {
+                'stalled_context_and_subactor_cancel_send',
+                'stalled_context_with_shielded_peer',
+            },
             'control_deadline_expired': control_expired,
         }))
