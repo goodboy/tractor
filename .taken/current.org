@@ -1,0 +1,679 @@
+# vim: et sw=2 ts=2
+#+TITLE: tractor project store
+#+TODO: TODO(t) WIP(w!) WAIT(a@) | DONE(d!) NOPE(n@)
+
+# Checkbox states: [ ] open, [-] partial, [x] complete
+
+* tractor
+:PROPERTIES:
+:CATEGORY: tractor
+:GIT: ~/repos/tractor/
+:END:
+** TODO funding round 2
+:PROPERTIES:
+:CREATED: [2026-07-29]
+:CARRIED: 16
+:REPO: tractor/
+:END:
+- [ ] pursue funding only where tractor has a concrete, non-overlapping
+  work package
+- [ ] keep ordinary project progress separate from grant theatre
+- [ ] decide the disposition of the older `tractor/ngi0` and
+  `piker/proj_mgmt` submission trackers without changing their states
+  implicitly
+*** TODO prepare Restack submission
+:PROPERTIES:
+:CREATED: [2026-07-29]
+:CARRIED: 16
+:REPO: tractor/
+:END:
+- [ ] preserve the complete rejection email and extract any direct
+  reviewer feedback
+- [ ] monitor the official Restack call and revalidate the final guide,
+  eligibility rules, deadline, budget limits, and GenAI policy
+- [ ] secure a named EU or Horizon-associated participant with a real
+  testing, packaging, integration, or deployment role
+- [ ] retain the narrow beta-hardening scope:
+  * [ ] lifecycle and cancellation conformance
+  * [ ] scoped supervision, backpressure, and observability
+  * [ ] authenticated multi-host operation
+  * [ ] reproducible beta release and downstream demonstrators
+- [ ] keep completed docs, typed messaging, and multiaddr work outside
+  the requested budget
+- [ ] define acceptance artifacts, hours, rates, risks, and exclusions
+  for every milestone
+- [ ] have one distributed-systems reviewer and one outside FOSS
+  maintainer review the human-authored application
+- [ ] submit at least 24 hours before the announced deadline and archive
+  the exact application, attachments, and receipt
+*** TODO establish grant-ready public evidence
+:PROPERTIES:
+:CREATED: [2026-07-29]
+:CARRIED: 16
+:REPO: tractor/
+:END:
+- [ ] publish a current honest Alpha release with rebuilt changelog,
+  clean-install evidence, artifacts, checksums, and support matrix
+- [ ] publish a dated baseline covering test counts, skips, platforms,
+  transports, spawn backends, startup, cancellation, and streaming
+- [ ] document two concrete downstream cases:
+  * [ ] `piker` workload and historical failures captured by tests
+  * [ ] European partner workload and acceptance condition
+- [ ] add concise contribution, security, governance, release, and
+  support policies
+- [ ] identify at least one reviewer or backup maintainer for an
+  important release, CI, or documentation process
+- [ ] maintain a factual evidence sheet and lightweight proposal
+  attachment rather than attaching internal planning dossiers
+*** TODO restore forge continuity
+:PROPERTIES:
+:CREATED: [2026-07-29]
+:CARRIED: 16
+:REPO: tractor/
+:END:
+- [ ] keep GitHub as the canonical writable collaboration venue for
+  this application cycle
+- [ ] make `pikers.dev` the project-controlled landing domain and
+  eventual canonical Forgejo home
+- [ ] synchronize the stale `pikers.dev` and SourceHut mirrors,
+  including public branches and tags
+- [ ] automate mirror-freshness checks against canonical `main` and
+  release tags
+- [ ] label mirrors read-only and direct issues and patches to one
+  canonical venue
+- [ ] export forge metadata and maintain a verified Git bundle outside
+  GitHub and the `pikers.dev` host
+- [ ] keep SourceHut as a durable Git/email/build mirror only where its
+  workflow is actually maintained
+- [ ] keep build, test, and docs commands repository-owned and
+  forge-neutral
+- [ ] use a project-controlled docs URL when a suitable domain is
+  available without delaying submission
+*** TODO pursue immediate funding leads
+:PROPERTIES:
+:CREATED: [2026-07-29]
+:CARRIED: 16
+:REPO: tractor/
+:END:
+- [ ] GitHub Secure Open Source Fund:
+  * [ ] publish minimum security and governance prerequisites
+  * [ ] apply for the USD 10k security program after confirming the
+    next active cohort
+- [ ] FUTO:
+  * [ ] send a short inquiry for independent, self-hosted distributed
+    infrastructure work
+- [ ] FLOSS/fund:
+  * [ ] publish `funding.json`
+  * [ ] request USD 10k for release, security, and sustainability work
+- [ ] Sovereign Tech Resilience:
+  * [ ] request a bounded audit, technical-debt, documentation, or
+    direct-engineering engagement
+- [ ] And Other Stuff:
+  * [ ] approach only with a concrete freedom-tech downstream or
+    collaboration request, not as a grant application
+*** TODO prepare long-term funding infrastructure
+:PROPERTIES:
+:CREATED: [2026-07-29]
+:CARRIED: 16
+:REPO: tractor/
+:END:
+- [ ] create a reusable two-page funding brief with project evidence,
+  risks, rates, and non-overlapping work packages at multiple scales
+- [ ] track every active proposal's requested work to prevent duplicate
+  public funding
+- [ ] choose a fiscal host only when there is money, a grant, or a
+  contract to administer
+- [ ] compare fiscal-host paths when needed:
+  * [ ] Open Source Collective for immediate payment and contract
+    administration
+  * [ ] SPI for a lower-fee charitable home after stronger adoption
+  * [ ] Software Freedom Conservancy for long-term copyleft and legal
+    stewardship after broader community growth
+  * [ ] Open Source Europe when European grants and banking dominate
+- [ ] distinguish personal recurring maintainer support from project
+  funds and contracted deliverables
+*** TODO cultivate later funding routes
+:PROPERTIES:
+:CREATED: [2026-07-29]
+:CARRIED: 16
+:REPO: tractor/
+:END:
+- [ ] build prevalence and sector evidence for a greater-than-EUR-50k
+  Sovereign Tech Fund application
+- [ ] monitor future Sovereign Tech Fellowship and OTF FOSS
+  Sustainability rounds
+- [ ] pursue OTF Internet Freedom Fund only with named
+  censorship-resistance or secure-communications users
+- [ ] investigate NSF PESOSE only through a legitimate eligible US
+  research partner, targeting March 2027 or later
+- [ ] investigate Prototype Fund only with genuine German/EU team
+  eligibility
+- [ ] revisit Sloan, CZI, NumFOCUS, and Internet Society only when
+  organizational and domain-specific eligibility becomes real
+** TODO AI-sprint-PRS
+:PROPERTIES:
+:CREATED: [2026-07-20]
+:CARRIED: 26
+:END:
+*** TODO to_actor.open_taskman
+:PROPERTIES:
+:CREATED: [2026-07-21]
+:CARRIED: 23
+:REPO: tractor/
+:PR: https://github.com/goodboy/tractor/pull/486
+:ISSUE: https://github.com/goodboy/tractor/issues/485
+:END:
+- [ ] decide whether this design-only commit should land independently or
+  remain draft until implementation PR A
+- [ ] land #481 and #484 first, then retarget this one-commit PR to `main`
+- [ ] remove draft status only after the design is accepted
+- [ ] obtain human review; this PR currently has no review activity
+- [ ] remove or correct the closing relationship to #485; this documentation
+  PR does not implement the issue
+- [ ] revalidate the `hilevel_serman` and draft #363 prior-art references,
+  including removed `Portal.wait_for_result()` usage
+- [ ] review `ai/conc-anal/to_actor_taskman_design.md`
+- [ ] keep implementation follow-ups in canonical #485:
+  * [ ] PR A: `ActorTaskMngr`, `open_taskman()`, supervision strategies,
+    exit policy, cancellation, tests, and docs
+  * [ ] PR B: `open_worker_pool()`, #172 absorption, cluster modernization,
+    and example/test migrations
+  * [ ] PR C: optional downstream `piker` service-manager adoption
+- [ ] keep restart strategies outside PR A
+- [ ] ensure future implementation updates `docs/guide/spawning.rst`,
+  `docs/guide/rpc.rst`, and `docs/api/core.rst`
+*** WIP ng-tpts-plans
+:PROPERTIES:
+:CREATED: [2026-08-20]
+:CARRIED: 5
+:REPO: tractor/
+:PR: https://github.com/goodboy/tractor/pull/492
+:END:
+- [ ] rebase to latest main & push
+*** WIP wkt/addr_unpacking
+:PROPERTIES:
+:CREATED: [2026-08-20]
+:CARRIED: 4
+:REPO: tractor/
+:END:
+- pushed implementation evidence at `5d92595f`:
+  * `dd02c7c0` added `TunnelledAddress` wrapper primitives
+  * `3f675323` added nested WireGuard multiaddrs
+  * `f81fc5e5` moved examples onto discovery's WireGuard parser
+  * `d0a9593a` peeled tunnels before `Channel` connects
+  * `dfad66a0` peeled tunnels before `Endpoint` binding
+  * `ba07e09d` modeled bindspaces as scoped capabilities
+  * `284a9679` added tagged transport-address readers
+  * `5d92595f` switched address writers to canonical tagged forms
+- verification evidence:
+  * reader boundary passed Ruff and 53 focused tests
+  * final TCP boundary passed 412 non-debugger tests
+  * UDS reached 80 percent before the harness timeout and all 97
+    remaining tests passed on resume
+  * `github/wkt/addr_unpacking` and `dev/wkt/addr_unpacking` both
+    resolve to `5d92595f`
+- [ ] complete landing qualification
+  * [ ] run one uninterrupted non-debugger UDS full-suite pass
+  * [ ] rerun `tests/devx` and disposition the debugger PTY timeout
+  * [ ] create or identify the review PR for `wkt/addr_unpacking`
+  * [ ] obtain human review and land the branch
+**** TODO qualify downstream `piker` tagged-address compatibility
+:PROPERTIES:
+:CREATED: [2026-08-20]
+:CARRIED: 4
+:REPO: piker/
+:END:
+- [ ] normalize address equality and set operations in
+  `piker/service/_registry.py`
+- [ ] audit `piker/service/_actor_runtime.py` bootstrap and config
+  boundaries for mixed legacy inputs and tagged runtime outputs
+- [ ] run representative `piker` service startup, discovery, registry,
+  and reconnect coverage against `tractor@5d92595f`
+*** WIP implement runtime-managed WireGuard bindspaces
+:PROPERTIES:
+:CREATED: [2026-08-20]
+:CARRIED: 4
+:REPO: tractor/
+:ISSUE: https://github.com/goodboy/tractor/issues/482
+:END:
+- [ ] implement layer B WireGuard read and verification through
+  `pyroute2` under Trio
+  * [ ] start with the synchronous API under
+    `trio.to_thread.run_sync()`
+  * [ ] evaluate a small sans-I/O netlink read path without adding
+    `trio-asyncio`
+- [ ] implement layer C scoped bindspace capabilities
+  * [ ] add serializable `BindspaceSpec` and stable
+    `BindspaceIdentity`
+  * [ ] add owned or borrowed `BindspaceHandle` lifecycle
+  * [ ] enter namespaces during child bootstrap before runtime,
+    channels, listeners, sockets, or worker threads
+  * [ ] drop provisioning authority before actor application code
+  * [ ] implement role-aware listen/dial setup and idempotent teardown
+- [ ] add capability-gated integration coverage
+  * [ ] assert nested context enter/exit ordering with fakes
+  * [ ] create two netns plus a WireGuard pair under `CAP_NET_ADMIN`
+  * [ ] verify namespace inode before parent connect and listener setup
+  * [ ] cover FD-pinned identity, privilege drop, and owned versus
+    borrowed teardown
+- [ ] retain canonical follow-up scopes
+  * [ ] composed tunnel grammar under
+    https://github.com/goodboy/tractor/issues/443
+  * [ ] WireGuard multiaddr specification under
+    https://github.com/goodboy/tractor/issues/483
+  * [ ] veth-in-netns testing and runtime peer/key rotation
+*** WIP the TIPC backend
+:PROPERTIES:
+:CREATED: [2026-08-19]
+:CARRIED: 5
+:REPO: tractor/
+:PR: https://github.com/goodboy/tractor/pull/493
+:ISSUE: https://github.com/goodboy/tractor/issues/378
+:END:
+- [ ] manually qualify two physical Linux hosts with the committed
+  `examples/multihost/tipc_cluster/README.md` runbook
+  * [ ] record kernel, node, bearer, link and name-table state from
+    both motherboards
+  * [ ] exercise host-A publication and host-B RPC by service name
+  * [ ] exercise bearer withdrawal, name withdrawal, rejoin and
+    republication without risking the management connection
+- [ ] preserve both Python transcripts and TIPC diagnostics as landing
+  evidence
+- [ ] obtain human reviews and land only after PR #503 and PR #492
+  have reached the dependency state intended by PR #493
+  * [ ] get at least ONE other human-collab review!
+- [ ] keep broader physical-overlay work in canonical trackers
+  * [ ] issue #124 for reusable multi-host harness coverage
+  * [ ] issue #502 for the TIPC-over-WireGuard reference deployment
+**** TODO upstream the `/tipc` multiaddr codec and specification
+:PROPERTIES:
+:CREATED: [2026-08-19]
+:CARRIED: 5
+:REPO: tractor/
+:ISSUE: https://github.com/goodboy/tractor/issues/498
+:END:
+- [ ] review the concise `py-multiaddr` candidate at
+  `github/multiformats/py-multiaddr/issues/DRAFT_tipc.md`
+- [ ] open the implementation-first `py-multiaddr` issue and ask for
+  maintainer guidance on text shape, binary width, scope, ranges and
+  registration order
+- [ ] prepare a draft Python codec PR only after the issue direction is
+  accepted
+  * [ ] implement deterministic fixed-width and text codec vectors
+  * [ ] cover malformed, non-canonical and boundary values
+  * [ ] prove standalone `/tipc` string/binary round trips
+  * [ ] prove composed `/wg/.../tipc/...` round trips
+- [ ] incorporate maintainer review before freezing the specification
+  * [ ] file code/test polish separately, following py-multiaddr #130
+  * [ ] file the registration plan separately, following
+    py-multiaddr #123
+- [ ] register the protocol only after implementation semantics settle
+  * [ ] reserve the `multiaddr`-tagged code in `multiformats/multicodec`
+  * [ ] submit the protocol row and normative encoding to
+    `multiformats/multiaddr`
+  * [ ] add cross-implementation follow-ups only after registration
+- [ ] circle the accepted upstream shape back into tractor
+  * [ ] update issue #498 and plan 04 with canonical decisions
+  * [ ] replace the interim slash grammar and remove the parser special
+    case
+  * [ ] add the released `py-multiaddr` version floor when available
+**** TODO add TIPC management to the planned Python netlink stack
+:PROPERTIES:
+:CREATED: [2026-08-19]
+:CARRIED: 5
+:REPO: tractor/
+:ISSUE: https://github.com/goodboy/tractor/issues/502
+:END:
+- [ ] draft a focused `pyroute2` TIPC generic-netlink support issue
+  * [ ] link the kernel `TIPCv2` UAPI and iproute2 implementation
+  * [ ] confirm no current `pyroute2` TIPC codec duplicates the work
+  * [ ] link tractor issues #482, #498 and #502
+- [ ] prototype only the management surfaces required by the deployment
+  * [ ] network identity and node inspection
+  * [ ] Ethernet/UDP bearer add, list and remove
+  * [ ] link, name-table and statistics reads
+  * [ ] reuse the WireGuard/netns dependency without adding an asyncio
+    loop to tractor actors
+*** WIP mtf_backend
+:PROPERTIES:
+:CREATED: [2026-07-21]
+:CARRIED: 23
+:REPO: tractor/
+:PR: https://github.com/goodboy/tractor/pull/463
+:ISSUE: https://github.com/goodboy/tractor/issues/146
+:REVIEW: https://github.com/goodboy/tractor/pull/463#pullrequestreview-4547689545
+:END:
+- [ ] land last; both MTF transport CI rows currently fail across most of the
+  suite
+- [ ] transplant or rebase the `no_pidfd_open` capability fallback and make
+  MTF TCP and UDS CI green
+- [ ] address all five current unresolved review threads:
+  * [ ] race subinterpreter handshake against bootstrap-driver exit and
+    propagate the failure:
+    https://github.com/goodboy/tractor/pull/463#discussion_r3455085892
+  * [ ] correct the false `subint_forkserver` alias claim:
+    https://github.com/goodboy/tractor/pull/463#discussion_r3455085965
+  * [ ] correct the matching stale `_spawn.py` comment:
+    https://github.com/goodboy/tractor/pull/463#discussion_r3455085997
+  * [ ] reconcile the 3-second outer timeout with the documented 6.5-second
+    success budget:
+    https://github.com/goodboy/tractor/pull/463#discussion_r3455086033
+  * [ ] reconcile the orphan-SIGINT test's 6-second polling with its
+    documented 10-second budget:
+    https://github.com/goodboy/tractor/pull/463#discussion_r3455086072
+- [ ] run focused MTF and subinterpreter tests on Python 3.14 so the relevant
+  suites do not skip
+- [ ] refresh the stale PR stack description; #465/#467 are merged and the
+  live base is `main`
+- [ ] explicitly decide whether merging should close #146
+- [ ] record whether #449/#451 are accepted xfail/skip gates or blockers:
+  * [ ] https://github.com/goodboy/tractor/issues/449
+  * [ ] https://github.com/goodboy/tractor/issues/451
+- [ ] retain canonical follow-up trackers rather than copying their issue
+  checklists:
+  * [ ] subinterpreter umbrella:
+    https://github.com/goodboy/tractor/issues/379
+  * [ ] backend split follow-up:
+    https://github.com/goodboy/tractor/issues/445
+  * [ ] PEP 684/thread constraints:
+    https://github.com/goodboy/tractor/issues/450
+  * [ ] nested debugger behavior:
+    https://github.com/goodboy/tractor/issues/320
+  * [ ] upstream isolated-subinterpreter support:
+    https://github.com/msgspec/msgspec/issues/1026
+- [ ] follow up on bootstrap exception delivery, repr-based bootstrap
+  transport, `child_sigint='trio'`, and complete non-Linux pidfd behavior
+- [ ] review `docs/guide/testing.rst` and `docs/guide/debugging.rst` against
+  the actual backend behavior
+- [ ] reconcile the MTF analysis records under `ai/conc-anal/`, including
+  `dynamic_pub_sub_spawn_time_transport_close_under_mtf_issue.md`
+- [ ] obtain human review; no approval is currently recorded
+  n
+** WIP research `noq` + `iroh` for QUIC-tpt-backend
+:PROPERTIES:
+:CREATED: [2026-08-04]
+:CARRIED: 13
+:ISSUE: https://github.com/goodboy/tractor/issues/353
+:END:
+- [x] add to #353 descr as section
+- [ ] https://github.com/n0-computer/iroh
+  https://docs.iroh.computer/deployment/dedicated-infrastructure
+  * [ ] docs/api: iface-design compare-n-contrast with libp2p?
+    - [ ] https://docs.iroh.computer/what-is-iroh
+    - [ ] https://docs.iroh.computer/deployment/dedicated-infrastructure
+    - [ ] ep-API: https://docs.iroh.computer/concepts/endpoints
+      https://docs.rs/noq/1.0.0/noq/struct.Endpoint.html
+  * [ ] QUIC-stack: https://github.com/n0-computer/noq
+- [ ] pigeons ssh hole punching,
+  * docs: https://pigeons.computer/
+  * repo: https://github.com/n0-computer/pigeons
+- [ ] py integration via FFI,
+  https://github.com/n0-computer/iroh-ffi
+  https://pypi.org/project/iroh/
+  https://github.com/n0-computer/iroh-ffi/blob/main/python/main.py
+  https://github.com/n0-computer/iroh-ffi/blob/main/README.python.md
+  https://github.com/n0-computer/iroh-ffi/blob/main/python/main.py
+- [ ] awesome list,
+  https://github.com/n0-computer/awesome-iroh#browsers
+** TODO add `fowl` + `shwim`: magic-wormhole ecosys
+:PROPERTIES:
+:CREATED: [2026-08-04]
+:CARRIED: 13
+:ISSUE: https://github.com/goodboy/tractor/issues/353
+:END:
+- [ ] https://github.com/magic-wormhole/fowl
+- [ ] https://github.com/magic-wormhole/shwim
+  * haskell? https://git.sr.ht/~meejah/pear-on
+- [ ] checkout rust proto + relay impl,
+  https://github.com/magic-wormhole/magic-wormhole.rs
+** TODO GH summer cleaning
+:PROPERTIES:
+:CREATED: [2026-07-18]
+:CARRIED: 26
+:END:
+- [ ] teardown legacy docs deploy @
+  https://tractor.readthedocs.io/en/latest/
+** TODO multiOS_support
+:PROPERTIES:
+:CREATED: [2026-08-17]
+:CARRIED: 6
+:END:
+*** TODO Carry multi-OS follow-up after PR #475
+:PROPERTIES:
+:CREATED: [2026-08-17]
+:CARRIED: 6
+:REPO: /home/goodboy/repos/tractor
+:PR: https://github.com/goodboy/tractor/pull/475
+:ISSUE: https://github.com/goodboy/tractor/issues/476
+:REVIEW: https://github.com/goodboy/tractor/pull/475#discussion_r3495262399
+:END:
+- [ ] Carry remaining Windows-suite work through
+  [[https://github.com/goodboy/tractor/issues/476][issue #476]].
+  * [ ] Correct the stale Windows-CI statement in
+    ``docs/start/install.rst`` or explicitly track its correction in
+    #476.
+  * [ ] Finish the tracked suite-cleanup packages and promote the
+    Windows ``pytest`` step to a hard CI gate.
+- [ ] Preserve the remaining multi-OS issue scopes.
+  * [ ] Keep [[https://github.com/goodboy/tractor/issues/404][issue #404]]
+    open for broader multi-platform support.
+  * [ ] Keep [[https://github.com/goodboy/tractor/issues/405][issue #405]]
+    open for native Windows UDS support.
+** TODO anyio feats stealin
+:PROPERTIES:
+:CREATED: [2026-07-24]
+:CARRIED: 21
+:END:
+- [ ] adopt the `typing_extensions.sentinel` internally,
+  https://github.com/goodboy/tractor/issues/489
+- [ ] any places we were using `UNDEFINED = object()`,
+  * :FapRefs object(), (should show at least placeholder_retvalue)
+** WIP subinterpreters
+ :PROPERTIES:
+ :CATEGORY: subints
+:CREATED: [2026-07-15]
+:CARRIED: 29
+ :END:
+*** WIP vibe a first patch from the issue,
+ :PROPERTIES:
+ :CREATED: [2026-05-21]
+:CARRIED: 33
+ :END:
+ - https://github.com/goodboy/tractor/issues/379
+ - subint_spawner_backend
+ - subint_fork_backend
+ - subint_forkserver_backend
+ - [X] (spawn_modularize) https://github.com/goodboy/tractor/pull/444
+   - [X] mask 314 borked deps
+     * cffi
+     * greenback
+   - [X] rebase out repo xonsh
+   - [X] drop hist from big_boi docs
+   - [X] /code-review-changes
+   - [X] /pr-msg update
+ - [X] (subint_spawner_backend)
+   - [X] checkout `anyio` impl,
+     * https://anyio.readthedocs.io/en/stable/subinterpreters.html
+     * https://anyio.readthedocs.io/en/stable/api.html#anyio.to_interpreter.run_sync
+     * https://github.com/agronholm/anyio/blob/master/src/anyio/to_interpreter.py
+   - [X] checkout `trio-parallel` impl,
+     * https://github.com/richardsheridan/trio-parallel/compare/main...sint
+ - [X] param test suites
+ - [ ] try out in piker
+ - [ ] try out in modden
+ - [ ] examples for various stdlib use cases,
+   * [ ] the `concurrent.futures` worker pool,
+    https://docs.python.org/3.14/library/concurrent.futures.html#concurrent.futures.InterpreterPoolExecutor
+*** TODO followups & blockers
+:PROPERTIES:
+:CREATED: [2026-07-16]
+:CARRIED: 27
+:END:
+- [ ] wait on `msgspec` full subints support
+  * <link to msgspec issue>
+- [ ] various (x)failures in pytest suite
+- [ ] variuos follow up (investigative) issues
+  * <put#here>
+** TODO AI-SKILLZ
+ :PROPERTIES:
+ :CATEGORY: claude_skillz
+:CREATED: [2026-07-30]
+:CARRIED: 16
+ :END:
+*** TODO follow up ish: https://github.com/goodboy/tractor/issues/417
+:PROPERTIES:
+:CREATED: [2026-07-06]
+:CARRIED: 33
+:END:
+- [ ] mk formal `tractor-dev` skill like cpython and anyio?
+  * cpython: https://github.com/gpshead/cpython-skills
+  * anyio: https://gist.github.com/dhirschfeld/6c3f588075d84c6d2b94b7cf22c908aa
+*** TODO miscelaneous?
+ :PROPERTIES:
+ :CREATED: [2026-05-21]
+:CARRIED: 33
+ :END:
+- [ ] need a `/commit-msg` readme somewhere?
+  - base it on what we do in piker?
+- [ ] check out skill from anyio room,
+ https://gist.github.com/dhirschfeld/6c3f588075d84c6d2b94b7cf22c908aa
+  * [ ] make a tractor/trio equiv!
+- [ ] land EET?
+** TODO mk ai.skillz/ adjust to `.agents/`
+:PROPERTIES:
+:CREATED: [2026-08-27]
+:CARRIED: 1
+:END:
+** TODO type_checkin_n_lintin
+ :PROPERTIES:
+ :CATEGORY: tracttor.type_checkin
+:CREATED: [2026-07-30]
+:CARRIED: 16
+ :END:
+*** TODO get `ty` running clean in CI
+:PROPERTIES:
+:CREATED: [2026-05-21]
+:CARRIED: 33
+:ISSUE: https://github.com/goodboy/tractor/issues/383
+:END:
+- [ ] also obvi as part of local claude workflows
+  - /type-check which should use local `ty`
+  - /lint already started in piker and with `ruff`
+*** TODO get `ruff` in CI (with "our prefs")
+:PROPERTIES:
+:CREATED: [2026-07-16]
+:CARRIED: 27
+:END:
+- [ ] namely the stuff the ai's seem to have no trouble replicating?
+
+** Restack: September submission detail
+:PROPERTIES:
+:CATEGORY: tractor
+:GIT: ~/repos/tractor/
+:END:
+*** TODO funding round 2
+:PROPERTIES:
+:CREATED: [2026-09-30]
+:CARRIED: 0
+:REPO: tractor/
+:ID: tractor-restack-funding-round2-2026
+:END:
+Local detail for the November Restack submission. The older broad
+funding checklist remains in the personal Taken corpus. Reconcile
+ownership during federation rather than importing this twice.
+
+**** TODO resolve Canadian eligibility and learn from mgmt
+:PROPERTIES:
+:CREATED: [2026-09-30]
+:CARRIED: 0
+:REPO: tractor/
+:END:
+- [ ] ask NLnet how Canadian citizenship versus current residence,
+  and Canada's partial Horizon association, affect Restack eligibility
+- [ ] clarify what residence evidence and European dimension are needed;
+  do not assume citizenship or tax residency settles the question
+- [ ] sync with James on mgmt's eligibility route, proposal scope,
+  review changes, milestone payments, and AI provenance requirements
+- [ ] refine the Matrix opener and selected follow-up questions in
+  plans/opencode/restack-collaborator-outreach.md
+
+**** TODO recover prior application and professional evidence
+:PROPERTIES:
+:CREATED: [2026-09-30]
+:CARRIED: 0
+:REPO: tractor/
+:END:
+- [ ] supply the original application receipt and rejection email;
+  separate actual feedback from the July plan's inferred diagnosis
+- [ ] supply CV/profile links and a dated concurrency/queueing career
+  chronology with attributable outcomes and public references
+- [ ] refine the first-pass professional audit and publish a concise
+  maintainer evidence page with a reliable contact link
+- [ ] use plans/opencode/restack-evidence-refresh-2026-09-30.md
+  as the sourced research baseline
+
+**** TODO recruit robotics validation collaborators
+:PROPERTIES:
+:CREATED: [2026-09-30]
+:CARRIED: 0
+:REPO: tractor/
+:END:
+- [ ] identify both collaborators' projects, locations, actual adoption
+  stage, and permission for public attribution
+- [ ] refine and send the robotics outreach draft in
+  plans/opencode/restack-collaborator-outreach.md
+- [ ] agree a small publishable workload or simulator, a concrete
+  validation role, acceptance conditions, and realistic availability
+- [ ] clarify licensing blockers and any integration work needing a
+  budgeted role; obtain confirmation of the proposed collaboration
+
+**** TODO freeze Restack baseline and bounded scope
+:PROPERTIES:
+:CREATED: [2026-09-30]
+:CARRIED: 0
+:REPO: tractor/
+:END:
+- [ ] record source commit, release/support status, downstream evidence,
+  and reproducible lifecycle/failure tests
+- [ ] distinguish landed work, review-stage prototypes, proposed
+  standards contributions, and the future AOT runtime direction
+- [ ] choose bounded supervision-conformance, deployment, upstream,
+  and downstream-release outcomes from the October plan
+- [ ] define semantic contracts and transport-loss limits beyond schema
+  compatibility; avoid claiming already-proven cross-language guarantees
+- [ ] link canonical transport work rather than duplicate its checklists
+  * [ ] TIPC backend: https://github.com/goodboy/tractor/pull/493
+  * [ ] WireGuard bindspaces: https://github.com/goodboy/tractor/pull/511
+  * [ ] TIPC codec proposal:
+    https://github.com/multiformats/py-multiaddr/issues/133
+
+**** TODO build milestones budget and human-authored application
+:PROPERTIES:
+:CREATED: [2026-09-30]
+:CARRIED: 0
+:REPO: tractor/
+:END:
+- [ ] by 18 October, define acceptance artifacts, hours, rates, owners,
+  dependencies, fallback outcomes, and an exact EUR request
+- [ ] account for payment after delivery and non-overlap with other
+  funding; exclude already completed work from the requested budget
+- [ ] by 23 October, write concise form answers in the applicant's own
+  words, supported by experience, user evidence, and comparisons
+- [ ] follow plans/opencode/restack-october-submission-plan.md
+  and prepare the assistance disclosure required at submission
+
+**** TODO monitor policy review and submit first Restack round
+DEADLINE: <2026-11-03 Tue 12:00>
+:PROPERTIES:
+:CREATED: [2026-09-30]
+:CARRIED: 0
+:REPO: tractor/
+:END:
+- [ ] check the call, form, and GenAI policy weekly, after announcements,
+  and immediately before submission; monitoring is not automated yet
+- [ ] by 30 October, obtain technical, outsider-clarity, partner-role,
+  and budget reviews; resolve remaining eligibility questions
+- [ ] aim to submit on 2 November, ahead of the official deadline of
+  3 November 2026 at 12:00 CET; convert correctly to local time
+- [ ] archive exact answers, disclosure files, attachments, and receipt;
+  prepare for reviewer questions and update milestones if work lands

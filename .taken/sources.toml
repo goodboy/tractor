@@ -1,0 +1,8 @@
+version = 1
+
+[[sources]]
+id = "tractor"
+path = "current.org"
+repo = ".."
+enabled = true
+agenda = true

@@ -528,3 +528,6 @@ docs/conversations/
 /.ai/commit-msg/conf.toml
 /.ai/pr-msg/conf.toml
 # END ai.skillz: workflow-state
+
+# Local worktrees and taken runtime artifacts
+.*.taken.lock
