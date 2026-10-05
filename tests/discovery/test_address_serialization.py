@@ -157,3 +157,64 @@ def test_registrar_stores_canonical_addresses(
     assert registrar._registry == {
         new_uid: [canonical],
     }
+
+
+@pytest.mark.parametrize('container', [tuple, list])
+@pytest.mark.parametrize(
+    'declaration',
+    [
+        pytest.param(('127.0.0.1', 1616), id='legacy-tcp'),
+        pytest.param(
+            ('tcp', '127.0.0.1', 1616),
+            id='tagged-tcp',
+        ),
+        pytest.param(
+            ('/tmp/tractor', 'registry.sock'),
+            id='legacy-uds',
+        ),
+        pytest.param(
+            ('unix', '/tmp/tractor/registry.sock'),
+            id='tagged-unix',
+        ),
+        pytest.param(
+            ('uds', '/tmp/tractor/registry.sock'),
+            id='uds-alias',
+        ),
+    ],
+)
+def test_registrar_deletes_equivalent_address_forms(
+    declaration: tuple,
+    container: type,
+):
+    '''
+    Delete a canonical registration using any accepted spelling.
+
+    ``Registrar.register_actor()`` stores canonical tagged addresses,
+    but ``Registrar.delete_addr()`` previously compared the supplied
+    tuple unchanged. A legacy declaration or ``uds`` alias therefore
+    left a stale entry in ``Registrar._registry``. Register each
+    declaration, verify its stored canonical form, then delete with
+    the original spelling as a tuple or msgpack-style list. Returning
+    the registered uid and leaving no entry proves normalization at
+    the deletion boundary without requiring a mixed-version tree.
+
+    '''
+    registrar = SimpleNamespace(
+        _registry={},
+        _waiters={},
+    )
+    uid = ('service', 'service-uid')
+    canonical = wrap_address(declaration).unwrap()
+
+    async def register_then_delete():
+        await Registrar.register_actor(registrar, uid, declaration)
+        assert registrar._registry == {uid: [canonical]}
+
+        deleted_uid = await Registrar.delete_addr(
+            registrar,
+            container(declaration),
+        )
+        assert deleted_uid == uid
+        assert registrar._registry == {}
+
+    trio.run(register_then_delete)

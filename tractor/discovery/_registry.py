@@ -234,9 +234,9 @@ class Registrar(Actor):
         addr: tuple[str, int|str]|list[str|int],
     ) -> tuple[str, str]|None:
         # NOTE: `addr` arrives as a `list` over IPC
-        # (msgpack deserializes tuples -> lists) so
-        # coerce to `tuple` for the linear scan.
-        addr = tuple(addr)
+        # (msgpack deserializes tuples -> lists). Normalize legacy
+        # and tagged forms to match `Registrar._registry` entries.
+        addr = wrap_address(addr).unwrap()
         uid: tuple[str, str]|None = None
 
         for _uid, addrs in self._registry.items():
