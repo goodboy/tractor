@@ -48,7 +48,10 @@ dependencies = [
   # typed IPC msging
   "msgspec>=0.20.0",
   "bidict>=0.23.1",
-  "multiaddr>=0.2.0",
+  # unreleased `/wg/` codec from py-multiaddr#108
+  "multiaddr @ git+https://github.com/multiformats/py-multiaddr.git@f86519daaa21699023d0037c58cdff600313dd09",
+  # encode/decode `wg` pubkeys carried by multiaddrs
+  "py-multibase>=2.0.0,<3",
   "platformdirs>=4.4.0",
   # per-actor `argv[0]` proc-title for OS-level diag tools
   # (`ps`, `top`, `psutil`-backed tooling like `acli.pytree`).
@@ -169,17 +172,6 @@ sync_pause = {requires-python = ">=3.13, <3.14"}
 # linux kernel networking
 # 'pyroute2
 
-# XXX TEMP, the `/wg/u<key>` maddr proto is MERGED upstream (in
-# py-multiaddr#108, 2026-07-28) but is in NO release yet; the
-# latest `0.2.0` (2026-03-17) predates the merge by ~4 months.
-# Pinned by `rev` (not `branch`) so CI stays reproducible.
-#
-# Drop this pin (and bump the `multiaddr` dep floor above) the
-# moment a release carries the `wg` codec; the only consumer is
-# `examples/multihost/wg_lan/`.
-# |_https://github.com/multiformats/py-multiaddr/pull/108
-multiaddr = { git = 'https://github.com/multiformats/py-multiaddr.git', rev = 'f86519daaa21699023d0037c58cdff600313dd09' }
-
 # ------ tool.uv.sources ------
 
 [tool.uv]
@@ -193,6 +185,9 @@ multiaddr = { git = 'https://github.com/multiformats/py-multiaddr.git', rev = 'f
 python-preference = 'system'
 
 # ------ tool.uv ------
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 include = ["tractor"]

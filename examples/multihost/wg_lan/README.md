@@ -21,16 +21,16 @@ Supersedes the example set in gh
 /ip4/192.168.1.50/udp/51820/wg/u<A_pub>/ip4/10.0.11.1/tcp/1616
 \____ wg bearer ___________/\__ key __/\____ tractor ep _____/
  underlay, wg `ListenPort`              overlay, on the wg iface
- (kernel/`wg(8)` owns it)               (the ONLY part tractor binds)
+ (kernel owns the socket)               (`MsgTransport` binds this)
 ```
 
 Three parts, three different owners:
 
-| part | who binds it | in the runtime? |
+| part | socket owner / provisioner | runtime role |
 | --- | --- | --- |
-| `/ip4/../udp/51820` bearer | kernel via `wg-quick`/`pyroute2` | no |
-| `/wg/u<key>` | nothing — it's an identity | no, verified out-of-band |
-| `/ip4/../tcp/1616` overlay | `tractor`'s `IPCServer` | **yes**, as `.overlay` |
+| `/ip4/../udp/51820` bearer | kernel-owned; `wg-quick` now, tractor bindspace later | control-plane metadata |
+| `/wg/u<key>` | nothing — it's an identity | parsed, verified explicitly |
+| `/ip4/../tcp/1616` overlay | `tractor`'s `IPCServer` | application `MsgTransport` |
 
 Verified against py-multiaddr
 [#108](https://github.com/multiformats/py-multiaddr/pull/108):
@@ -41,30 +41,29 @@ this composed form parses and round-trips
 
 py-multiaddr #108 is **merged** (2026-07-28) but ships in no
 release yet — the latest `0.2.0` (2026-03-17) predates it and has
-no `wg` codec. So `pyproject.toml` carries a temporary
-`[tool.uv.sources]` `rev` pin at the merge commit, and a plain
+no `wg` codec. So `pyproject.toml` temporarily pins the merge commit
+in its PEP 621 dependency metadata, and a plain
 
 ```bash
 uv sync
 ```
 
 gets you a `wg`-aware `multiaddr`. That pin goes away once a
-release carries the codec. Its `py-multibase` dependency provides
-the imported `multibase` module; no separate install command is
-needed.
+release carries the codec. `py-multibase` is a direct project
+dependency, so no separate install command is needed.
 
 Without the codec `parse_wg_maddr()` raises immediately with an
 actionable message — there is deliberately **no** degraded
-hand-split fallback. `_have_wg_maddr_proto()` is the predicate.
+hand-split fallback. `_wg_proto_code()` performs the capability
+check before parsing.
 
 Every peel and re-compose here goes through `py-multiaddr`'s own
 tunnel API (`.decapsulate_code()`, `.split()`, `.join()`,
 `.encapsulate()`, `.value_for_protocol()`) rather than any
 bespoke segment slicing — see its README "En/decapsulate" and
 "Tunneling" sections. gh #429 was about *dropping* our NIH
-parser, and that applies to peeling this composed maddr just as
-much as to decoding one proto. This example rejects multiple
-`/wg/` segments because `WGTunnelledAddr` stores one tunnel.
+parser, and that applies to peeling nested tunnel stacks just as
+much as to decoding one proto.
 
 ## 0. tunnel setup (out-of-band, both hosts)
 
@@ -120,7 +119,7 @@ ping -c1 10.0.11.1     # from B
 
 ```bash
 python -c "
-from wg_maddr import mb_pubkey
+from tractor.discovery import mb_pubkey
 key = open('wg_pub.key').read().strip()
 print(mb_pubkey(key))
 "
@@ -197,7 +196,7 @@ Four corrections, all from
    never escalate or run `tractor` as root. Privileged tunnel
    setup and key inspection are separate shell steps.
 4. **no new `Address` proto-type.** The tunnel rides *beside* the
-   overlay addr in a frozen `WGTunnelledAddr`, and only `.overlay`
+   overlay addr in a frozen `TunnelledAddress`, and only `.overlay`
    crosses into `open_nursery()`. #482 §6 floated a `WGAddress`
    registered in `_address_types` — that registry maps available
    transport keys to concrete address types, and
@@ -206,8 +205,7 @@ Four corrections, all from
 
 ## next
 
-`WGTunnelledAddr` is deliberately example-local. Promoting it to
-`tractor.discovery` as a `TunnelledAddress` whose
-`.proto_key`/`.unwrap()` delegate to `.overlay`, plus
-`open_bindspace()` `@acm`s that create/tear down the iface +
-netns via `pyroute2`, is layers A→C of the plan doc.
+Layer A's `TunnelledAddress` and native maddr parser now live in
+`tractor.discovery`. Next, replace this example's `wg(8)` verification
+probe with `pyroute2`, then add `open_bindspace()` `@acm`s which
+create/tear down the iface and netns.

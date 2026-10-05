@@ -432,3 +432,9 @@ docs/conversations/
 # BEGIN ai.skillz: direct:symlink:opencode:command:yt-url-lookup
 /.opencode/commands/yt-url-lookup.md
 # END ai.skillz: direct:symlink:opencode:command:yt-url-lookup
+
+# BEGIN ai.skillz: workflow-state
+/.ai/state/
+/.ai/commit-msg/conf.toml
+/.ai/pr-msg/conf.toml
+# END ai.skillz: workflow-state

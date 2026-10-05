@@ -273,9 +273,9 @@ name = "greenback"
 version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "greenlet" },
-    { name = "outcome" },
-    { name = "sniffio" },
+    { name = "greenlet", marker = "python_full_version < '3.14'" },
+    { name = "outcome", marker = "python_full_version < '3.14'" },
+    { name = "sniffio", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dc/c1/ab3a42c0f3ed56df9cd33de1539b3198d98c6ccbaf88a73d6be0b72d85e0/greenback-1.2.1.tar.gz", hash = "sha256:de3ca656885c03b96dab36079f3de74bb5ba061da9bfe3bb69dccc866ef95ea3", size = 42597, upload-time = "2024-02-20T21:23:13.239Z" }
 wheels = [
@@ -1126,6 +1126,7 @@ dependencies = [
     { name = "multiaddr" },
     { name = "pdbp" },
     { name = "platformdirs" },
+    { name = "py-multibase" },
     { name = "setproctitle" },
     { name = "tricycle" },
     { name = "trio" },
@@ -1192,6 +1193,7 @@ requires-dist = [
     { name = "multiaddr", git = "https://github.com/multiformats/py-multiaddr.git?rev=f86519daaa21699023d0037c58cdff600313dd09" },
     { name = "pdbp", specifier = ">=1.8.2,<2" },
     { name = "platformdirs", specifier = ">=4.4.0" },
+    { name = "py-multibase", specifier = ">=2.0.0,<3" },
     { name = "setproctitle", specifier = ">=1.3,<2" },
     { name = "tricycle", specifier = ">=0.4.1,<0.5" },
     { name = "trio", specifier = ">0.27" },

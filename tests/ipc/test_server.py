@@ -20,6 +20,7 @@ from tractor import (
 from tractor._testing.addr import (
     get_rando_addr,
 )
+from tractor.discovery import _addr
 from tractor._exceptions import TransportClosed
 from tractor.ipc._chan import Channel
 from tractor.ipc import _server
@@ -235,6 +236,54 @@ def test_basic_ipc_server(
 
         # !TODO! actually make a bg-task connection from a client
         # using `ipc._chan._connect_chan()`
+
+    with devx.maybe_open_crash_handler(
+        pdb=debug_mode,
+    ):
+        trio.run(main)
+
+
+@pytest.mark.parametrize(
+    '_tpt_proto',
+    ['uds', 'tcp']
+)
+def test_default_ipc_server_addr_is_wrapped(
+    _tpt_proto: str,
+    debug_mode: bool,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Wrap the default listener declaration before endpoint startup.
+
+    Tagged address emission changed `default_lo_addrs()` from legacy
+    socket pairs to protocol-tagged tuples. The no-argument
+    `Server.listen_on()` path passed that tuple directly to
+    `_serve_ipc_eps()`, where endpoint reflection requires a concrete
+    `Address`. Supply a collision-free default declaration, omit
+    `accept_addrs`, and prove listener startup receives the same
+    wrapped address type for both transport backends.
+
+    '''
+    default_addr: tuple = get_rando_addr(
+        tpt_proto=_tpt_proto,
+    )
+    monkeypatch.setattr(
+        _addr,
+        'default_lo_addrs',
+        lambda _transports: [default_addr],
+    )
+
+    async def main():
+        async with ipc._server.open_ipc_server() as server:
+            eps = await server.listen_on()
+            assert len(eps) == 1
+
+            endpoint = eps[0]
+            expected_addr = _addr.wrap_address(default_addr)
+            assert type(endpoint.addr) is type(expected_addr)
+            assert endpoint.addr.unwrap() == expected_addr.unwrap()
+
+            server._parent_tn.cancel_scope.cancel()
 
     with devx.maybe_open_crash_handler(
         pdb=debug_mode,

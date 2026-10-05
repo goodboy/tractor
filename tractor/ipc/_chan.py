@@ -46,6 +46,10 @@ from tractor.discovery._addr import (
     Address,
     UnwrappedAddress,
 )
+from tractor.discovery._tunnel import (
+    TunnelledAddress,
+    strip_tunnels,
+)
 from tractor.log import get_logger
 from tractor._exceptions import (
     MsgTypeError,
@@ -182,16 +186,17 @@ class Channel:
     @classmethod
     async def from_addr(
         cls,
-        addr: UnwrappedAddress,
+        addr: UnwrappedAddress|Address|TunnelledAddress,
         **kwargs
     ) -> Channel:
 
         if not is_wrapped_addr(addr):
-            addr: Address = wrap_address(addr)
+            addr = wrap_address(addr)
 
-        transport_cls = transport_from_addr(addr)
+        transport_addr: Address = strip_tunnels(addr)
+        transport_cls = transport_from_addr(transport_addr)
         transport = await transport_cls.connect_to(
-            addr,
+            transport_addr,
             **kwargs,
         )
         # XXX, for UDS *no!* since we recv the peer-pid and build out
@@ -551,7 +556,7 @@ class Channel:
 
 @acm
 async def _connect_chan(
-    addr: UnwrappedAddress,
+    addr: UnwrappedAddress|Address|TunnelledAddress,
     close_timeout: float|None = None,
 ) -> typing.AsyncGenerator[Channel, None]:
     '''
