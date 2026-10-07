@@ -8,17 +8,14 @@ tunnel's *overlay* addr, declared as a single `wg` maddr.
 '''
 from __future__ import annotations
 
-import os
-
 import tractor
 import trio
-from tractor.discovery import (
+from tractor.net import (
     TunnelledAddress,
     mk_maddr,
     parse_wg_maddr,
+    verify_wg_peer,
 )
-
-from wg_maddr import verify_wg_key
 
 # bearer = host A's underlay `(ip, wg ListenPort)`
 # key    = host A's OWN tunnel pubkey
@@ -37,12 +34,7 @@ async def echo(msg: str) -> str:
 
 async def main():
     addr: TunnelledAddress = parse_wg_maddr(WG_MADDR)
-    inspection: str | None = os.environ.get('WG_KEY_INSPECTION')
-    if not await verify_wg_key(
-        addr,
-        role='local',
-        inspection=inspection,
-    ):
+    if not await verify_wg_peer(addr.tunnel):
         raise RuntimeError(
             f'Maddr key is not wg0 local public key!\n'
             f'maddr: {WG_MADDR}\n'

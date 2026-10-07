@@ -14,7 +14,8 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from tractor.discovery import (
+from tractor.net import (
+    BindspaceRef,
     TunnelledAddress,
     WGTunnelSpec,
     mb_pubkey,
@@ -27,6 +28,7 @@ from tractor.discovery._addr import (
     wrap_address,
 )
 from tractor.ipc._tcp import TCPAddress
+from tractor.ipc._uds import UDSAddress
 
 
 # a valid-looking std-base64 `wg(8)` pubkey (32B -> 44 chars)
@@ -174,16 +176,13 @@ def test_namespace_comes_from_the_tunnel(
     overlay: TCPAddress,
 ):
     '''
-    First real consumer of `Address.namespace`, spec'd in the
-    protocol since day one and implemented by no backend.
+    Plain transport addresses explicitly select no namespace, while
+    a tunnel can select one for the same concrete overlay.
 
     '''
-    # XXX, "no backend implements it" is literal — the member
-    # isn't even declared, so this is `AttributeError` not `None`.
-    # This assert is the guard: when a backend finally declares
-    # `.namespace`, it fails and the `getattr()` fallback in
-    # `TunnelledAddress.namespace` can go.
-    assert not hasattr(overlay, 'namespace')
+    uds_addr: UDSAddress = UDSAddress('/tmp', 'tractor-test.sock')
+    assert overlay.namespace is None
+    assert uds_addr.namespace is None
 
     no_ns = TunnelledAddress(
         overlay=overlay,
@@ -196,6 +195,71 @@ def test_namespace_comes_from_the_tunnel(
         tunnel=WGTunnelSpec(peer_pubkey=_PUBKEY, netns='wg-test'),
     )
     assert in_ns.namespace == ('netns', 'wg-test')
+
+
+def test_realized_namespace_uses_stable_ref(
+    overlay: TCPAddress,
+) -> None:
+    '''
+    Realization must retain a stable ref without mutating the maddr.
+
+    Build an unrealized named declaration, annotate it with the
+    matching realized key and inode, and prove the frozen original is
+    unchanged. The annotated copy must preserve transport delegation
+    and expose the stable inode through `.namespace`. Direct msgspec
+    encoding also proves only serializable ref metadata was retained.
+
+    '''
+    declared: TunnelledAddress = TunnelledAddress(
+        overlay=overlay,
+        tunnel=WGTunnelSpec(
+            peer_pubkey=_PUBKEY,
+            netns='wg-test',
+        ),
+    )
+    ref: BindspaceRef = BindspaceRef(
+        kind='netns',
+        key='wg-test',
+        inode=1234,
+    )
+    realized: TunnelledAddress = declared.with_bindspace_ref(
+        ref,
+    )
+
+    assert declared.bindspace_ref is None
+    assert realized.bindspace_ref is ref
+    assert realized.namespace == ('netns', 1234)
+    assert realized.overlay is declared.overlay
+    assert realized.tunnel is declared.tunnel
+    assert realized.unwrap() == declared.unwrap()
+    assert realized.bindspace == declared.bindspace
+
+    declared_payload: dict[str, object] = msgspec.msgpack.decode(
+        msgspec.msgpack.encode(declared)
+    )
+    assert 'bindspace_ref' not in declared_payload
+
+    decoded: dict[str, object] = msgspec.msgpack.decode(
+        msgspec.msgpack.encode(realized)
+    )
+    assert decoded['bindspace_ref'] == {
+        'kind': 'netns',
+        'key': 'wg-test',
+        'inode': 1234,
+    }
+
+    mismatched: BindspaceRef = BindspaceRef(
+        kind='netns',
+        key='other-netns',
+        inode=5678,
+    )
+    with pytest.raises(
+        ValueError,
+        match='wg-test.*other-netns',
+    ):
+        declared.with_bindspace_ref(
+            mismatched,
+        )
 
 
 def test_strip_tunnels(

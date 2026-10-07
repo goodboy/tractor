@@ -12,6 +12,7 @@ from typing import (
     get_type_hints,
 )
 
+import tractor
 from tractor.discovery import (
     _addr,
     _multiaddr,
@@ -44,8 +45,8 @@ def test_lazy_to_asyncio_package_api():
     Before the lazy conversion, package import side effects exposed
     `to_asyncio` to `dir()` and wildcard imports. Exercise those APIs
     in cold interpreters so this test proves normal `import tractor`
-    leaves `asyncio` unloaded, while discovery and wildcard access
-    still advertise and resolve the public submodule.
+    leaves `asyncio` unloaded, while introspection and wildcard
+    access still advertise and resolve the public submodule.
 
     '''
     cold = run_cold_import(
@@ -102,6 +103,12 @@ def test_cold_import_budget():
         'bidict',
         'colorlog',
         'multiaddr',
+        'multibase',
+        'pyroute2',
+        'tractor.discovery._multiaddr',
+        'tractor.net',
+        'tractor.net._bindspace',
+        'tractor.net._tunnel',
         'wrapt',
     )
     code = (
@@ -136,6 +143,123 @@ def test_cold_import_budget():
     )
 
 
+def test_lazy_net_package_api():
+    '''
+    Keep the public network package cold until symbol access.
+
+    The old discovery re-exports imported bindspace, tunnel,
+    multiaddr and optional dependencies while initializing a package.
+    Import `tractor.net` in a clean interpreter, inspect its public
+    surface, and prove no implementation or optional dependency was
+    loaded. Then resolve one symbol from each backing module and
+    prove the facade caches each value while preserving boundaries.
+
+    '''
+    modules: tuple[str, ...] = (
+        'tractor.net._bindspace',
+        'tractor.net._tunnel',
+        'tractor.discovery._multiaddr',
+        'multiaddr',
+        'multibase',
+        'pyroute2',
+    )
+    cold: dict[str, object] = run_cold_import(
+        'import json, sys; import tractor.net as net; '
+        f'names = {modules!r}; '
+        'print(json.dumps({'
+        '"public": all(name in dir(net) for name in net.__all__), '
+        '"loaded": [name for name in names if name in sys.modules]'
+        '}))'
+    )
+    assert cold == {
+        'public': True,
+        'loaded': [],
+    }
+
+    resolved: dict[str, object] = run_cold_import(
+        'import json, sys; import tractor.net as net; '
+        'bindspace = net.BindspaceSpec; '
+        'bindspace_cached = net.BindspaceSpec is bindspace; '
+        'maddr = net.mk_maddr; '
+        'maddr_cached = net.mk_maddr is maddr; '
+        'tunnel = net.WGTunnelSpec; '
+        'tunnel_cached = net.WGTunnelSpec is tunnel; '
+        'print(json.dumps({'
+        '"bindspace_cached": bindspace_cached, '
+        '"maddr_cached": maddr_cached, '
+        '"tunnel_cached": tunnel_cached, '
+        '"bindspace_module": bindspace.__module__, '
+        '"maddr_module": maddr.__module__, '
+        '"tunnel_module": tunnel.__module__, '
+        '"multiaddr_loaded": "multiaddr" in sys.modules, '
+        '"pyroute2_loaded": "pyroute2" in sys.modules'
+        '}))'
+    )
+    assert resolved == {
+        'bindspace_cached': True,
+        'maddr_cached': True,
+        'tunnel_cached': True,
+        'bindspace_module': 'tractor.net._bindspace',
+        'maddr_module': 'tractor.discovery._multiaddr',
+        'tunnel_module': 'tractor.net._tunnel',
+        'multiaddr_loaded': False,
+        'pyroute2_loaded': False,
+    }
+
+
+def test_net_root_export_and_old_discovery_surface():
+    '''
+    Publish networking only from its approved namespace.
+
+    Before extraction, unshipped network names and implementation
+    modules lived under `tractor.discovery`. Exercise root attribute
+    and wildcard access in clean interpreters, proving `tractor.net`
+    is discoverable and cached without loading implementations. Also
+    prove the old exports are absent and their modules no longer
+    resolve, preventing accidental compatibility aliases.
+
+    '''
+    root: dict[str, object] = run_cold_import(
+        'import json, sys, tractor; '
+        'advertised = "net" in dir(tractor); '
+        'net = tractor.net; '
+        'print(json.dumps({'
+        '"advertised": advertised, '
+        '"cached": tractor.net is net, '
+        '"module": net.__name__, '
+        '"bindspace_loaded": '
+        '"tractor.net._bindspace" in sys.modules, '
+        '"tunnel_loaded": "tractor.net._tunnel" in sys.modules'
+        '}))'
+    )
+    assert root == {
+        'advertised': True,
+        'cached': True,
+        'module': 'tractor.net',
+        'bindspace_loaded': False,
+        'tunnel_loaded': False,
+    }
+
+    old: dict[str, object] = run_cold_import(
+        'import importlib.util, json; '
+        'import tractor.discovery as discovery; '
+        'old_names = ("Bindspace", "TunnelledAddress", '
+        '"mk_maddr", "parse_maddr", "parse_endpoints"); '
+        'old_modules = ("tractor.discovery._bindspace", '
+        '"tractor.discovery._tunnel"); '
+        'print(json.dumps({'
+        '"exports": [name for name in old_names '
+        'if hasattr(discovery, name)], '
+        '"modules": [name for name in old_modules '
+        'if importlib.util.find_spec(name) is not None]'
+        '}))'
+    )
+    assert old == {
+        'exports': [],
+        'modules': [],
+    }
+
+
 def test_lazy_annotation_names_resolve():
     '''
     Resolve annotations without importing optional dependencies.
@@ -157,4 +281,7 @@ def test_lazy_annotation_names_resolve():
     assert get_type_hints(_addr.Address.get_random)[
         'current_actor'
     ] is Any
+    assert get_type_hints(tractor.open_root_actor)[
+        'bindspace'
+    ] == Any|None
     assert _addr.__annotations__['_address_types'].startswith('dict')

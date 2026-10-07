@@ -46,10 +46,6 @@ from tractor.discovery._addr import (
     Address,
     UnwrappedAddress,
 )
-from tractor.discovery._tunnel import (
-    TunnelledAddress,
-    strip_tunnels,
-)
 from tractor.log import get_logger
 from tractor._exceptions import (
     MsgTypeError,
@@ -63,6 +59,9 @@ from tractor.msg import (
 
 if TYPE_CHECKING:
     from ._transport import MsgTransport
+    from tractor.net._tunnel import TunnelledAddress
+else:
+    TunnelledAddress = Any
 
 
 log = get_logger()
@@ -189,6 +188,8 @@ class Channel:
         addr: UnwrappedAddress|Address|TunnelledAddress,
         **kwargs
     ) -> Channel:
+
+        from tractor.net._tunnel import strip_tunnels
 
         if not is_wrapped_addr(addr):
             addr = wrap_address(addr)

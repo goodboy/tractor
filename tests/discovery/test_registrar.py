@@ -18,7 +18,7 @@ from tractor.devx import dump_on_hang
 from tractor.trionics import collapse_eg
 from tractor._testing import tractor_test
 from tractor.discovery._addr import wrap_address
-from tractor.discovery._multiaddr import mk_maddr
+from tractor.net import mk_maddr
 import trio
 
 

@@ -6,17 +6,15 @@ Host B: workstation dialing host A's actor tree through the
 '''
 from __future__ import annotations
 
-import os
-
 import tractor
 import trio
-from tractor.discovery import (
+from tractor.net import (
     TunnelledAddress,
     parse_wg_maddr,
+    verify_wg_peer,
 )
 
 from host_a_srv import echo  # noqa: F401  (RPC refs it by mod path)
-from wg_maddr import verify_wg_key
 
 # same maddr as host A: A's bearer, A's key, A's overlay ep
 WG_MADDR: str = (
@@ -29,12 +27,7 @@ LOCAL_OVERLAY_BIND: tuple[str, int] = ('10.0.11.2', 0)
 
 async def main():
     addr: TunnelledAddress = parse_wg_maddr(WG_MADDR)
-    inspection: str | None = os.environ.get('WG_KEY_INSPECTION')
-    if not await verify_wg_key(
-        addr,
-        role='peer',
-        inspection=inspection,
-    ):
+    if not await verify_wg_peer(addr.tunnel):
         raise RuntimeError(
             f'Maddr key is not a configured wg0 peer!\n'
             f'maddr: {WG_MADDR}\n'
