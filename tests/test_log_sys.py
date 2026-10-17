@@ -2,7 +2,9 @@
 `tractor.log`-wrapping unit tests.
 
 '''
+from collections.abc import Callable, Iterator
 import importlib
+from functools import partial
 import logging
 from pathlib import Path
 import shutil
@@ -272,6 +274,204 @@ def test_add_log_level_pluggable():
         log.BOLD_PALETTE['bold'].pop(name, None)
         if hasattr(log.StackLevelAdapter, name.lower()):
             delattr(log.StackLevelAdapter, name.lower())
+
+
+@pytest.fixture(params=[False, True], ids=['raw', 'adapter'])
+def level_guard(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[logging.Logger, Callable[[int|str], bool]]]:
+    '''
+    Return an INFO(20) logger and a log-level enablement query.
+
+    `is_info_level_enabled(level)` returns True when the requested
+    log level meets the logger's current threshold and logging is
+    not disabled. It queries that decision; it does not emit a msg.
+    The initial INFO threshold permits INFO(20), CANCEL(22) and
+    WARNING(30), but blocks DEBUG(10) and NOTSET(0). Tests may change
+    the logger's threshold or disable flag to query those settings.
+
+    Each case allocates a fresh raw `logging.Logger` as `std_log`;
+    consuming tests do not supply a logger. `request.param` selects
+    only the returned query:
+    - False (`raw`): bind `tractor.log.at_least_level` to `std_log`.
+    - True (`adapter`): wrap that same logger in `StackLevelAdapter`
+      and return its `at_least_level` method. The raw logger never
+      supplies an `at_least_level` method.
+
+    Register only `std_log` under its name in
+    `Logger.manager.loggerDict` so `Logger.setLevel()` and
+    `logging.disable()` can invalidate its enabled-level cache.
+    `std_log.setLevel(...)` and changes to `std_log.disabled` affect
+    that logger, not other loggers. The registration is temporary;
+    `logging.disable()` changes the process-global cutoff. Restore
+    that cutoff and the registration after each case.
+
+    A consumer can use either query form in the same way::
+
+        def test_info_query(level_guard):
+            std_log, is_info_level_enabled = level_guard
+            assert std_log.level == logging.INFO
+            assert is_info_level_enabled('INFO')
+            assert not is_info_level_enabled('DEBUG')
+
+    '''
+    std_log = logging.Logger('level_guard_test', logging.INFO)
+    monkeypatch.setitem(
+        logging.Logger.manager.loggerDict,
+        std_log.name,
+        std_log,
+    )
+    orig_disable: int = logging.root.manager.disable
+    # Clear inherited global suppression so INFO queries can pass.
+    # NOTSET(0) removes logging.disable()'s positive-level cutoff.
+    logging.disable(logging.NOTSET)
+    try:
+        is_info_level_enabled: Callable[[int|str], bool]
+        if request.param:
+            guarded_log = log.StackLevelAdapter(std_log, {})
+            is_info_level_enabled = guarded_log.at_least_level
+        else:
+            is_info_level_enabled = partial(
+                log.at_least_level, std_log,
+            )
+
+        yield std_log, is_info_level_enabled
+    finally:
+        logging.disable(orig_disable)
+
+
+@pytest.mark.parametrize(
+    'level, enabled',
+    [
+        # String log levels are compared with the INFO(20) threshold.
+        ('INFO', True),
+        ('info', True),
+        ('WARNING', True),
+        ('warning', True),
+        ('DEBUG', False),
+        ('debug', False),
+        ('ERROR', True),
+        ('CRITICAL', True),
+        ('WARN', True),  # WARNING(30) alias, above INFO(20).
+        ('FATAL', True),  # CRITICAL(50) alias, above INFO(20).
+        ('CANCEL', True),  # Custom CANCEL(22), above INFO(20).
+        ('cancel', True),
+        ('TRANSPORT', False),  # TRANSPORT(5), below INFO(20).
+        (logging.INFO, True),  # 20 equals the INFO(20) threshold.
+        (logging.DEBUG, False),  # 10 is below INFO(20).
+        (22, True),  # CANCEL(22) is above INFO(20).
+        (0, False),  # NOTSET(0) is below INFO(20).
+        ('NOTSET', False),
+        ('notset', False),
+    ],
+)
+def test_at_least_level_names_and_integers(
+    level_guard,
+    level: int|str,
+    enabled: bool,
+):
+    '''
+    String names of built-in log levels must not raise `KeyError`.
+
+    `tractor.log.at_least_level()` indexed `CUSTOM_LEVELS` for every
+    string query, so built-in logging levels such as 'INFO' raised
+    `KeyError` before testing whether logging was enabled. Query the
+    documented log levels and aliases, lowercase spellings, custom
+    levels and integer equivalents. Each result must match its
+    expected INFO(20) threshold comparison without changing that
+    threshold; NOTSET must resolve even though its value is zero.
+
+    See Python's `logging` docs for built-in level values:
+    https://docs.python.org/3/library/logging.html#logging-levels
+
+    '''
+    std_log, is_info_level_enabled = level_guard
+    assert is_info_level_enabled(level) is enabled
+    # A query must not reconfigure the INFO(20) logger.
+    assert std_log.level == logging.INFO
+
+
+def test_at_least_level_registered_name(
+    level_guard,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    '''
+    Query a custom log level registered with `logging.addLevelName()`.
+
+    `tractor.log.at_least_level()` raised `KeyError` when a string
+    log level was absent from `CUSTOM_LEVELS`, even when registered
+    by `logging.addLevelName()`. Register APP_LEVEL_GUARD(35), between
+    WARNING(30) and ERROR(40). Its lowercase query must pass at
+    INFO(20), and its uppercase query must fail at ERROR(40). Restore
+    the logging registrations afterward so later tests do not inherit
+    this custom level.
+
+    '''
+    monkeypatch.setattr(
+        logging, '_nameToLevel', logging._nameToLevel.copy(),
+    )
+    monkeypatch.setattr(
+        logging, '_levelToName', logging._levelToName.copy(),
+    )
+    # Custom 35 is above INFO(20), but below ERROR(40).
+    logging.addLevelName(35, 'APP_LEVEL_GUARD')
+    std_log, is_level_enabled = level_guard
+    assert is_level_enabled('app_level_guard') is True
+    std_log.setLevel(logging.ERROR)
+    assert is_level_enabled('APP_LEVEL_GUARD') is False
+
+
+@pytest.mark.parametrize('level', ['unknown_level_guard', '20', ''])
+def test_at_least_level_unknown_name(
+    level_guard,
+    level: str,
+):
+    '''
+    Reject unknown log-level names with an explicit `KeyError`.
+
+    The old `CUSTOM_LEVELS` lookup raised `KeyError` with the
+    uppercase query as its key. Log-level name lookup must not
+    silently enable misspelled levels or treat numeric strings as
+    integer inputs. Each invalid name must still raise `KeyError`
+    carrying its uppercase spelling, including an empty name.
+
+    '''
+    std_log, is_info_level_enabled = level_guard
+    with pytest.raises(KeyError) as excinfo:
+        is_info_level_enabled(level)
+    assert excinfo.value.args == (level.upper(),)
+    assert std_log.level == logging.INFO
+
+
+@pytest.mark.parametrize('level', ['info', 'cancel', logging.INFO, 22])
+@pytest.mark.parametrize('suppression', ['logger', 'global'])
+def test_at_least_level_disable_controls(
+    level_guard,
+    level: int|str,
+    suppression: str,
+):
+    '''
+    Log-level name resolution must honor logging disable controls.
+
+    Earlier guards checked only `Logger.getEffectiveLevel()` and
+    rendered payloads despite disable controls. Prime a positive
+    enabled-level result, then disable the logger or all logging.
+    Built-in INFO and custom CANCEL string names, plus their integer
+    equivalents, must return False even though the logger's effective
+    INFO(20) threshold remains unchanged. Query once before disabling
+    to ensure a cached True result cannot bypass suppression.
+
+    '''
+    std_log, is_info_level_enabled = level_guard
+    assert is_info_level_enabled(level) is True
+    if suppression == 'logger':
+        std_log.disabled = True
+    else:
+        logging.disable(logging.CRITICAL)
+
+    assert is_info_level_enabled(level) is False
+    assert std_log.getEffectiveLevel() == logging.INFO
 
 
 @pytest.mark.parametrize(

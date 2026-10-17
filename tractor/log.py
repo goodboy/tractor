@@ -106,11 +106,20 @@ def at_least_level(
     level: int|str,
 ) -> bool:
     '''
-    Predicate to test if a given level is active.
+    Return whether `log.isEnabledFor()` permits `level`.
+
+    Accept integer log levels or their case-insensitive string names.
+    `CUSTOM_LEVELS` takes precedence over names registered with
+    `logging.addLevelName()`, including the built-in logging levels.
+    Unknown names raise `KeyError` with the uppercased name.
 
     '''
     if isinstance(level, str):
-        level: int = CUSTOM_LEVELS[level.upper()]
+        name: str = level.upper()
+        level = CUSTOM_LEVELS.get(name)
+        # Resolve stdlib registrations only on a CUSTOM_LEVELS miss.
+        if level is None:
+            level = logging.getLevelNamesMapping()[name]
 
     return log.isEnabledFor(level)
 
@@ -138,7 +147,7 @@ class StackLevelAdapter(LoggerAdapter):
 
     def at_least_level(
         self,
-        level: str,
+        level: int|str,
     ) -> bool:
         return at_least_level(
             log=self,
