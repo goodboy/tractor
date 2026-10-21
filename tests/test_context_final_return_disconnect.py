@@ -10,6 +10,7 @@ import tractor
 import trio
 
 from tractor.ipc import Channel
+from tractor.devx import pformat as _pformat
 from tractor.msg import Aid, StartAck, Started
 from tractor.runtime import _rpc
 
@@ -19,15 +20,18 @@ async def finish_after_disconnect(
     ctx: tractor.Context,
     peer_closed: trio.Event,
     endpoint_finished: trio.Event,
+    endpoint_error: tractor.TransportClosed|None = None,
 
 ) -> str:
     '''
-    Finish successfully only after the caller connection is closed.
+    Return or raise the supplied error after the caller disconnects.
 
     '''
     await ctx.started('ready')
     await peer_closed.wait()
     endpoint_finished.set()
+    if endpoint_error is not None:
+        raise endpoint_error
     return 'finished'
 
 
@@ -46,13 +50,14 @@ async def ordinary_result(
 
 
 @pytest.mark.parametrize(
-    'context_endpoint',
-    [False, True],
-    ids=['ordinary-rpc', 'context'],
+    'context_endpoint, endpoint_transport_error',
+    [(False, False), (True, False), (True, True)],
+    ids=['ordinary-rpc', 'context', 'endpoint-transport-error'],
 )
 def test_final_return_disconnect_preserves_sibling(
     reg_addr: tuple,
     context_endpoint: bool,
+    endpoint_transport_error: bool,
 
 ) -> None:
     '''
@@ -74,11 +79,20 @@ def test_final_return_disconnect_preserves_sibling(
     Capture the sibling's task, actor, nursery and cancellation reprs
     while unwinding so the failure identifies the collateral victim
     and the cancellation source even after the runtime has exited.
+    Snapshot the endpoint task and its nursery's owning task before
+    they exit, retaining their coroutine and nursery ownership fields.
+    An endpoint-raised TransportClosed is a separate control: it
+    must retain its identity and current nursery propagation rather
+    than being suppressed as a final-result delivery failure.
     This isolates response delivery; it does not exercise discovery,
     process supervision, the asyncio bridge, or Qt cancellation.
 
     '''
     collateral_cancellations: list[tuple[trio.Cancelled, str]] = []
+    endpoint_error: tractor.TransportClosed|None = (
+        tractor.TransportClosed('endpoint transport failure')
+        if endpoint_transport_error else None
+    )
 
     async def main() -> None:
         '''
@@ -91,6 +105,8 @@ def test_final_return_disconnect_preserves_sibling(
         ping = trio.Event()
         pong = trio.Event()
         sibling_stopped = trio.Event()
+        endpoint_task_info: str = ''
+        endpoint_owner_info: str = ''
 
         async def sibling(
             task_status: trio.TaskStatus = trio.TASK_STATUS_IGNORED,
@@ -115,12 +131,20 @@ def test_final_return_disconnect_preserves_sibling(
                     cancel_scope: trio.CancelScope = (
                         nursery.cancel_scope
                     )
+                    sibling_info: str = _pformat.pformat_task(task)
+                    scope_info: str = _pformat.pformat_cs(
+                        cancel_scope,
+                        var_name='services.cancel_scope',
+                    )
                     runtime_info: str = (
-                        f'\nSibling task: {task!r}\n'
                         f'Actor identity: {aid!r}\n'
-                        f'Parent nursery: {nursery!r}\n'
-                        f'Parent cancel scope: {cancel_scope!r}\n'
-                        f'Cancellation: {exc!r}'
+                        f'\n'
+                        f'Sibling task:\n{sibling_info}\n'
+                        f'Endpoint task:\n{endpoint_task_info}\n'
+                        f'Endpoint nursery owner:\n'
+                        f'{endpoint_owner_info}\n'
+                        f'{scope_info}\n'
+                        f'Cancellation: {exc!r}\n'
                     )
                     collateral_cancellations.append(
                         (exc, runtime_info),
@@ -165,6 +189,8 @@ def test_final_return_disconnect_preserves_sibling(
                         'peer_closed': peer_closed,
                         'endpoint_finished': endpoint_finished,
                     }
+                    if context_endpoint:
+                        kwargs['endpoint_error'] = endpoint_error
 
                     async def invoke(
                         task_status: trio.TaskStatus,
@@ -173,14 +199,29 @@ def test_final_return_disconnect_preserves_sibling(
                         Run the actual RPC dispatcher to completion.
 
                         '''
-                        await _rpc._invoke(
-                            actor,
-                            cid,
-                            callee,
-                            endpoint,
-                            kwargs,
-                            task_status=task_status,
-                        )
+                        nonlocal endpoint_task_info
+                        nonlocal endpoint_owner_info
+                        try:
+                            await _rpc._invoke(
+                                actor,
+                                cid,
+                                callee,
+                                endpoint,
+                                kwargs,
+                                task_status=task_status,
+                            )
+                        finally:
+                            endpoint_task: trio.lowlevel.Task = (
+                                trio.lowlevel.current_task()
+                            )
+                            endpoint_task_info = (
+                                _pformat.pformat_task(endpoint_task)
+                            )
+                            endpoint_owner_info = (
+                                _pformat.pformat_task(
+                                    services.parent_task,
+                                )
+                            )
                         invoke_finished.set()
 
                     async with trio.open_nursery() as services:
@@ -219,9 +260,14 @@ def test_final_return_disconnect_preserves_sibling(
         assert collateral_cancellations
         cancelled, runtime_info = collateral_cancellations[0]
         assert 'TransportClosed' in str(cancelled)
+        if endpoint_transport_error:
+            assert exc is endpoint_error
+            return
         exc.add_note(
             'The unrelated sibling was cancelled before it could '
-            'answer the post-disconnect request.'
-            + runtime_info
+            'answer the post-disconnect request.\n'
+            f'\n'
+            f'{runtime_info}'
         )
         raise
+    assert not endpoint_transport_error, 'endpoint error suppressed'

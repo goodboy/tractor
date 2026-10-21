@@ -743,7 +743,38 @@ async def _invoke(
                     f'\n'
                     f'{pretty_struct.pformat(return_msg)}\n'
                 )
-                await chan.send(return_msg)
+                try:
+                    await chan.send(return_msg)
+                except TransportClosed as ipc_err:
+                    # The endpoint completed successfully. Failure to
+                    # deliver its Return to a departed peer must not
+                    # cancel sibling RPCs in Actor._service_tn.
+                    # Keep this guard outside `await coro` so an
+                    # endpoint's own transport errors still propagate.
+                    actor_info: str = actor.pformat(privates=True)
+                    ctx_info: str = ctx.pformat(
+                        extra_fields={'scope_nursery': tn},
+                        indent='',
+                    )
+                    scope_info: str = _pformat.pformat_cs(
+                        rpc_ctx_cs,
+                        var_name='ctx._scope',
+                    )
+                    chan_info: str = chan.pformat(privates=True)
+                    ipc_info: str = _pformat.nest_from_op(
+                        input_op='x=>',
+                        text=repr(ipc_err),
+                    )
+                    log.warning(
+                        'Final context result delivery failed: '
+                        'peer disconnected\n'
+                        f'\n'
+                        f'{actor_info}\n'
+                        f'{ctx_info}\n'
+                        f'{scope_info}\n'
+                        f'{chan_info}\n'
+                        f'{ipc_info}\n'
+                    )
 
             # NOTE: this happens IFF `ctx._scope.cancel()` is
             # called by any of,
