@@ -25,7 +25,14 @@ import sys
 import textwrap
 import traceback
 
-from trio import CancelScope
+from trio import (
+    CancelScope,
+    Nursery,
+)
+from trio.lowlevel import (
+    Task,
+    current_task,
+)
 
 
 def add_div(
@@ -217,6 +224,70 @@ def pformat_caller_frame(
             field_prefix='  ',
         )
     return tb_str
+
+
+# TODO IDEAs:
+# -[ ] move to `.devx.pformat`?
+# -[ ] do per task-name and actor-name color coding
+# -[ ] unique color per task-id and actor-uuid
+def pformat_task_uid(
+    id_part: str = 'tail',
+    *,
+    task: Task|None = None,
+
+) -> str:
+    '''
+    Render a task's name and a decimal head/tail slice of its ID.
+
+    Default to the current task, or select an explicit `task` when
+    rendering another task's identity from diagnostic tooling.
+
+    '''
+    if task is None:
+        task = current_task()
+    tid: str = str(id(task))
+    if id_part == 'tail':
+        tid_part: str = tid[-6:]
+    else:
+        tid_part: str = tid[:6]
+
+    return f'{task.name}[{tid_part}]'
+
+
+def pformat_task(
+    task: Task|None = None,
+
+) -> str:
+    '''
+    Render a Trio task's identity, execution and nursery ownership.
+
+    Default to the current task. An explicit `task` lets a caller
+    inspect a sibling or nursery owner without selecting itself.
+    Capture the report while that task is alive to retain its active
+    `Task.parent_nursery` and `Task.child_nurseries` relationships.
+
+    '''
+    if task is None:
+        task = current_task()
+    task_uid: str = pformat_task_uid(task=task)
+    nursery: Nursery|None = task.parent_nursery
+    parent_task: Task|None = (
+        nursery.parent_task if nursery is not None else None
+    )
+    child_nurseries: tuple[Nursery, ...] = tuple(
+        task.child_nurseries,
+    )
+    return (
+        f'<Task(\n'
+        f' |_name: {task.name!r}\n'
+        f'   uid={task_uid!r}\n'
+        f'   task={task!r}\n'
+        f'   coro={task.coro!r}\n'
+        f' |_parent_nursery: {nursery!r}\n'
+        f'   parent_task={parent_task!r}\n'
+        f' |_child_nurseries: {child_nurseries!r}\n'
+        f')>\n'
+    )
 
 
 def pformat_cs(

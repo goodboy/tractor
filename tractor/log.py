@@ -332,26 +332,20 @@ def add_log_level(
 add_log_level('IO', 21, 'purple')
 
 
-# TODO IDEAs:
-# -[ ] move to `.devx.pformat`?
-# -[ ] do per task-name and actor-name color coding
-# -[ ] unique color per task-id and actor-uuid
 def pformat_task_uid(
-    id_part: str = 'tail'
-):
+    id_part: str = 'tail',
+    *,
+    task: trio.lowlevel.Task|None = None,
+
+) -> str:
     '''
-    Return `str`-ified unique for a `trio.Task` via a combo of its
-    `.name: str` and `id()` truncated output.
+    Forward the logging entry point to devx.pformat's UID renderer.
 
     '''
-    task: trio.Task = trio.lowlevel.current_task()
-    tid: str = str(id(task))
-    if id_part == 'tail':
-        tid_part: str = tid[-6:]
-    else:
-        tid_part: str = tid[:6]
+    # Import lazily: devx initialization itself imports tractor.log.
+    from .devx.pformat import pformat_task_uid as render_task_uid
 
-    return f'{task.name}[{tid_part}]'
+    return render_task_uid(id_part, task=task)
 
 
 _curr_actor_no_exc = partial(

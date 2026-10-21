@@ -5,13 +5,80 @@ Unit tests for the `tractor.devx.pformat` render helpers.
 from __future__ import annotations
 
 import pytest
+import trio
 
 from tractor._exceptions import _mk_send_mte
+from tractor.log import pformat_task_uid as log_task_uid
 from tractor.devx.pformat import (
     pformat_boxed_tb,
     pformat_caller_frame,
+    pformat_task,
+    pformat_task_uid,
 )
 from tractor.msg._codec import _def_tractor_codec
+
+
+def test_pformat_task_selects_another_tasks_identity() -> None:
+    '''
+    Describe the selected task rather than the diagnostic caller.
+
+    The final-Return regression needs to snapshot an endpoint and its
+    nursery owner from another task. Hold a real child in an active
+    nursery and inspect it from its parent, checking both identities
+    and public nursery relationships without requiring an actor.
+    Preserve the log header's decimal head/tail ID convention while
+    allowing that existing helper to select an explicit task too.
+
+    '''
+    async def main() -> None:
+        '''
+        Keep the inspected child alive through all report assertions.
+
+        '''
+        async def child(
+            task_status: trio.TaskStatus[trio.lowlevel.Task],
+        ) -> None:
+            '''
+            Publish the real task before waiting for cancellation.
+
+            '''
+            task_status.started(trio.lowlevel.current_task())
+            await trio.sleep_forever()
+
+        owner: trio.lowlevel.Task = trio.lowlevel.current_task()
+        owner_id: str = str(id(owner))
+        assert pformat_task_uid() == f'{owner.name}[{owner_id[-6:]}]'
+        assert pformat_task_uid('head') == (
+            f'{owner.name}[{owner_id[:6]}]'
+        )
+        assert log_task_uid() == pformat_task_uid()
+        assert log_task_uid('head') == pformat_task_uid('head')
+        async with trio.open_nursery() as nursery:
+            task: trio.lowlevel.Task = await nursery.start(child)
+            task_id: str = str(id(task))
+            task_uid: str = f'{task.name}[{task_id[-6:]}]'
+            report: str = pformat_task(task)
+            assert pformat_task_uid(task=task) == task_uid
+            assert pformat_task_uid('head', task=task) == (
+                f'{task.name}[{task_id[:6]}]'
+            )
+            assert log_task_uid(task=task) == task_uid
+            assert log_task_uid('head', task=task) == (
+                pformat_task_uid('head', task=task)
+            )
+            assert f'uid={task_uid!r}' in report
+            assert f'task={task!r}' in report
+            assert f'coro={task.coro!r}' in report
+            assert f'parent_nursery: {nursery!r}' in report
+            assert f'parent_task={owner!r}' in report
+            assert 'child_nurseries: ()' in report
+            assert f'child_nurseries: ({nursery!r},)' in (
+                pformat_task(owner)
+            )
+            assert pformat_task() == pformat_task(owner)
+            nursery.cancel_scope.cancel()
+
+    trio.run(main)
 
 
 @pytest.mark.parametrize(
