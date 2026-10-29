@@ -279,6 +279,13 @@ absorbs the two ``*TaskExited`` signals so happy-path teardown
 stays silent; pass ``False`` when your app wants to handle early
 peer-exit explicitly.
 
+Suppression applies to the exact owner-exit signal issued by the
+channel, not to every exception of the same type. A producer's own
+cleanup exception still propagates, even if it is a newly created
+``TrioTaskExited``. This also applies when ``maybe_open_context()``
+owns the channel: the final consumer releases that resource through
+normal owner exit, including when that consumer was cancelled.
+
 Past the task pair, everything composes with the normal actor
 story: an unhandled ``asyncio`` error is translated into the
 ``trio`` side, propagates out of your ``@tractor.context``

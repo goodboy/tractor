@@ -50,6 +50,7 @@ from tractor.runtime._state import (
 )
 from tractor._context import Unresolved
 from tractor import devx
+from tractor.devx.pformat import pformat_task
 from tractor.log import (
     get_logger,
     StackLevelAdapter,
@@ -151,6 +152,33 @@ class LinkedTaskChannel(
     # set after `asyncio.create_task()`
     _aio_task: asyncio.Task|None = None
     _aio_err: BaseException|None = None
+    # Identity of OUR shutdown signal, not any TrioTaskExited raised
+    # independently by the producer. open_channel_from() sets this
+    # in its finally block BEFORE maybe_signal_aio_task(), iff the
+    # aio task is still running. This covers normal owner exit,
+    # owner error/cancellation, and last-user cached-context exit.
+    # An already completed aio task leaves this as None; run_task()
+    # does not set it. The signal retains the in-flight owner's
+    # exception as __cause__, including trio.Cancelled when present.
+    #
+    # Readers identify the original issued signal by `is`:
+    # - wait_on_coro_final_result() records it in _aio_err and logs
+    #   an acknowledgement instead of an independent producer fault.
+    # - signal_trio_when_done() retrieves the task exception, logs
+    #   its acknowledgement and, with _trio_exited, returns without
+    #   recancelling the owner or raising a second callback failure.
+    # - translate_aio_errors(), with _trio_exited, raises a captured
+    #   trio_err first. Otherwise suppress_graceful_exits=True
+    #   absorbs the acknowledged signal; False raises that object.
+    #   Raising trio_err bare avoids making its signal its cause.
+    #
+    # A different TrioTaskExited or other producer error does not
+    # match: existing independent-error/relay-cause handling applies.
+    # This field never authorizes blanket suppression by exc type.
+    _aio_owner_exit: TrioTaskExited|None = None
+    # Actual delivery report from maybe_signal_aio_task(), retained
+    # for both acknowledgement sites; diagnostic only, not policy.
+    _aio_owner_exit_report: str|None = None
     _aio_to_raise: (
         TrioTaskExited|  # trio task exits while aio ongoing
         BaseException|
@@ -479,6 +507,15 @@ def _run_asyncio_task(
                 log.runtime(
                     '`asyncio` task was cancelled..\n'
                 )
+            elif aio_err is chan._aio_owner_exit:
+                owner: str = pformat_task(chan._trio_task)
+                log.cancel(
+                    f'Asyncio task acknowledged owner exit\n'
+                    f'owner:\n{owner}\n'
+                    f'owner error/cancel: {aio_err.__cause__!r}\n'
+                    f'{chan._aio_owner_exit_report}\n'
+                )
+
             else:
                 log.exception(
                     '`asyncio` task errored\n'
@@ -681,6 +718,15 @@ def _run_asyncio_task(
                     msg.format(etype_str='cancelled')
                 )
 
+            elif aio_err is chan._aio_owner_exit:
+                owner: str = pformat_task(chan._trio_task)
+                log.cancel(
+                    f'Asyncio completion acknowledged exit\n'
+                    f'owner:\n{owner}\n'
+                    f'owner error/cancel: {aio_err.__cause__!r}\n'
+                    f'{chan._aio_owner_exit_report}\n'
+                )
+
             # XXX when the asyncio.Task exits early (before the trio
             # side) we relay through an exc-as-signal which is
             # normally suppressed unless the trio.Task also errors
@@ -718,6 +764,25 @@ def _run_asyncio_task(
         # is trio the src of the aio task's exc-as-outcome?
         trio_err: BaseException|None = chan._trio_err
         curr_aio_err: BaseException|None = chan._aio_err
+        if (
+            chan._trio_exited
+            and aio_err is not None
+            and aio_err is chan._aio_owner_exit
+        ):
+            # The owner is already unwinding and waiting for this
+            # task. Let translate_aio_errors() apply its reporting
+            # policy; cancelling the owner or raising here
+            # would report our exit signal as a second failure.
+            owner: str = pformat_task(chan._trio_task)
+            log.runtime(
+                f'Owner-exit acknowledged; skipping recancellation\n'
+                f'and callback error relay\n'
+                f'translate_aio_errors() decides what to raise\n'
+                f'owner:\n{owner}\n'
+                f'owner-exit signal: {aio_err!r}\n'
+            )
+            return
+
         if (
             curr_aio_err
             or
@@ -907,7 +972,7 @@ def maybe_signal_aio_task(
     See the "cross-loop cause-chain matrix" comment in
     `translate_aio_errors()`'s final-raise block for how this
     `cause` interacts with every `raise X [from Y]` exit path
-    (esp. the relay-echo guard which prevents a cause CYCLE).
+    (especially the relay-signal guard preventing a cause cycle).
 
     '''
     if cause is not None and exc.__cause__ is None:
@@ -1337,7 +1402,7 @@ async def translate_aio_errors(
         #                     relay exc (`AsyncioCancelled`/`AsyncioTaskExited`).
         # - raise_from      : `trio_err if (aio_err is trio_to_raise)
         #                      else aio_err` (the chosen `__cause__`).
-        # - relay-echo      : an `aio_err` that is one of OUR OWN
+        # - relay-signal    : an `aio_err` that is one of OUR OWN
         #                     `TrioTaskExited|TrioCancelled` signals,
         #                     synth'd + delivered to the aio-side by
         #                     `maybe_signal_aio_task()`; its `__cause__`
@@ -1347,12 +1412,15 @@ async def translate_aio_errors(
         # this block (final-raise in `translate_aio_errors`):
         #   condition                            =>  raises         from
         #   -----------------------------------      -------------  -----------
+        #   owner-exit acknowledgement + trio_err => trio_err (bare)
+        #   owner-exit acknowledgement, suppressed => return
+        #   owner-exit acknowledgement, strict => aio_err (bare)
         #   not suppress_graceful_exits          =>  trio_to_raise  raise_from
         #   AsyncioTaskExited + trio Cancelled/None  => return (aio-exit ignored)
         #   AsyncioTaskExited + trio EoC         =>  trio_err       (bare)
         #   AsyncioCancelled  + trio Cancelled   =>  return (co-cancel ignored)
         #   trio_to_raise match catch-all        =>  trio_to_raise  raise_from
-        #   aio_err is relay-echo  ◄── the GUARD  =>  trio_err       (bare)
+        #   aio_err is our relay signal => trio_err (bare)
         #   aio_err independent (real aio fail)  =>  trio_err       aio_err
         #   aio_err independent, no trio_err     =>  aio_err        (bare)
         #   only trio_err                        =>  trio_err       (bare)
@@ -1361,7 +1429,7 @@ async def translate_aio_errors(
         #   AsyncioTaskExited relay-out          =>  trio_to_raise  aio_err
         #   plain aio_err re-raise               =>  aio_err  (__cause__ preset)
         #
-        # INVARIANT: a relay-echo must NEVER become `trio_err.__cause__`
+        # Our relay signal must NEVER become `trio_err.__cause__`
         #  (it's ALREADY caused-BY `trio_err`) → doing so would CYCLE
         #  (`trio_err ◄─► relay`). So the guard raises the root
         #  `trio_err` bare; the relay still keeps its own correct
@@ -1379,6 +1447,37 @@ async def translate_aio_errors(
             trio_err if (aio_err is trio_to_raise)
             else aio_err
         )
+
+        if (
+            chan._trio_exited
+            and aio_err is not None
+            and aio_err is chan._aio_owner_exit
+        ):
+            owner: str = pformat_task(chan._trio_task)
+            if trio_err is not None:
+                log.runtime(
+                    f'Preserving Trio error after owner exit\n'
+                    f'owner:\n{owner}\n'
+                    f'trio_err: {trio_err!r}\n'
+                )
+                raise trio_err
+
+            if suppress_graceful_exits:
+                log.runtime(
+                    f'Suppressing acknowledged owner-exit signal\n'
+                    f'suppress_graceful_exits=True, trio_err=None\n'
+                    f'owner:\n{owner}\n'
+                    f'owner-exit signal: {aio_err!r}\n'
+                )
+                return
+
+            log.runtime(
+                f'Raising acknowledged owner-exit signal\n'
+                f'suppress_graceful_exits=False, trio_err=None\n'
+                f'owner:\n{owner}\n'
+                f'owner-exit signal: {aio_err!r}\n'
+            )
+            raise aio_err
 
         if not suppress_graceful_exits:
             raise trio_to_raise from raise_from
@@ -1427,8 +1526,8 @@ async def translate_aio_errors(
             # (`TrioTaskExited`/`TrioCancelled`) that we delivered
             # to the aio-side via `maybe_signal_aio_task()`, AND
             # its `__cause__` already points back at `trio_err`,
-            # then it's just a derivative ECHO of the trio-side
-            # error, NOT an independent asyncio failure.
+            # then it is our relay signal for the Trio-side error,
+            # NOT an independent asyncio failure.
             #
             # Raising `trio_err from aio_err` here would invert
             # (and cyclically tangle) the cause chain since the
@@ -1571,16 +1670,28 @@ async def open_channel_from(
                     # `sys.exc_info()[1]` is non-`None` only when
                     # the `try` body raised (graceful exit -> None).
                     trio_exc: BaseException|None = sys.exc_info()[1]
+                    owner_exit: TrioTaskExited = TrioTaskExited(
+                        f'but the child `asyncio` task is still '
+                        f'running?\n'
+                        f'>>\n'
+                        f' |_{aio_task!r}\n'
+                    )
+                    chan._aio_owner_exit = owner_exit
                     _, report = maybe_signal_aio_task(
                         aio_task,
-                        TrioTaskExited(
-                            f'but the child `asyncio` task is still running?\n'
-                            f'>>\n'
-                            f' |_{aio_task!r}\n'
-                        ),
+                        owner_exit,
                         cause=trio_exc,
                     )
-                    log.cancel(report)
+                    chan._aio_owner_exit_report = report
+                    owner: str = pformat_task(chan._trio_task)
+                    log.cancel(
+                        f'Trio owner exited with aio task ongoing\n'
+                        f'owner:\n{owner}\n'
+                        f'owner error/cancel: {trio_exc!r}\n'
+                        f'bridge cancel_called: {cs.cancel_called}\n'
+                        f'{report}\n'
+                    )
+
                 else:
                     chan._to_trio.close()
 
