@@ -1479,7 +1479,13 @@ async def translate_aio_errors(
             )
             raise aio_err
 
-        if not suppress_graceful_exits:
+        # Strict reporting preserves an existing error; it must not
+        # raise None when the asyncio-side task handled TTE and
+        # returned successfully (and no trio-side error remains).
+        if (
+            not suppress_graceful_exits
+            and trio_to_raise is not None
+        ):
             raise trio_to_raise from raise_from
 
         if trio_to_raise:
