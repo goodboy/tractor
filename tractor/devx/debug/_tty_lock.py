@@ -172,7 +172,7 @@ class Lock:
             f'|_ .ctx_in_debug: {cls.ctx_in_debug}\n'
             f'|_ .req_handler_finished: {req}\n'
         )
-        if req:
+        if req is not None:
             req_stats: trio.EventStatistics = req.statistics()
             fields += f'  {req_stats}\n'
 
@@ -288,7 +288,8 @@ class Lock:
                 )
 
             elif (
-                req_handler_finished  # new IPC ctx debug request active
+                # new IPC ctx debug request active
+                req_handler_finished is not None
                 and
                 lock.locked()  # someone has the lock
             ):

@@ -1137,7 +1137,7 @@ async def process_messages(
                         # runtime cancellation if this actor is
                         # currently in debug mode!
                         pdb_complete: trio.Event|None = debug.DebugStatus.repl_release
-                        if pdb_complete:
+                        if pdb_complete is not None:
                             await pdb_complete.wait()
 
                         # Either of  `Actor.cancel()`/`.cancel_soon()`

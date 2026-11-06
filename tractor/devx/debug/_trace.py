@@ -285,7 +285,7 @@ async def _pause(
     # the `PdbREPL`.
     repl_task: Thread|Task|None = DebugStatus.repl_task
     if (
-        not DebugStatus.repl_release
+        DebugStatus.repl_release is None
         or
         DebugStatus.repl_release.is_set()
     ):
@@ -849,7 +849,7 @@ async def _pause_from_bg_root_thread(
     stats: trio.LockStatistics= lock.statistics()
     assert stats.owner is task
     assert Lock._owned_by_root
-    assert DebugStatus.repl_release
+    assert DebugStatus.repl_release is not None
 
     # TODO: do we actually need this?
     # originally i was trying to solve wy this was
