@@ -251,7 +251,7 @@ def test_final_return_disconnect_preserves_sibling(
                         ping.set()
                         await pong.wait()
                         if context_endpoint:
-                            assert ctx._result == 'finished'
+                            assert ctx._status._result == 'finished'
                         services.cancel_scope.cancel()
 
     try:
